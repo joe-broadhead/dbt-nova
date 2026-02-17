@@ -1,0 +1,56 @@
+{
+  "metadata": {
+    "dbt_version": "1.10.2",
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json"
+  },
+  "nodes": {
+    "model.pkg.src": {
+      "name": "src",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "db",
+      "schema": "sch",
+      "raw_code": "select 1 as num_col",
+      "columns": {
+        "num_col": {
+          "name": "num_col",
+          "data_type": "int"
+        }
+      },
+      "original_file_path": "models/src.sql"
+    },
+    "model.pkg.dst": {
+      "name": "dst",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "db",
+      "schema": "sch",
+      "raw_code": "select num_col as txt_col from {{ ref('src') }}",
+      "columns": {
+        "txt_col": {
+          "name": "txt_col",
+          "data_type": "string"
+        }
+      },
+      "original_file_path": "models/dst.sql"
+    }
+  },
+  "sources": {},
+  "macros": {},
+  "docs": {},
+  "groups": {},
+  "exposures": {},
+  "metrics": {},
+  "parent_map": {
+    "model.pkg.dst": [
+      "model.pkg.src"
+    ],
+    "model.pkg.src": []
+  },
+  "child_map": {
+    "model.pkg.src": [
+      "model.pkg.dst"
+    ],
+    "model.pkg.dst": []
+  }
+}

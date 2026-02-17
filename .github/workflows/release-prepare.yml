@@ -1,0 +1,77 @@
+name: Prepare Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g., 1.2.3)"
+        required: true
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+
+      - name: Create release branch
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Version must be in semantic x.y.z format (e.g., 1.0.0)"
+            exit 1
+          fi
+
+          git fetch origin master
+          git checkout master
+          git pull origin master
+
+          branch="release/${VERSION}"
+          if git show-ref --verify --quiet "refs/remotes/origin/${branch}"; then
+            echo "Release branch already exists: ${branch}"
+            exit 0
+          fi
+
+          git checkout -b "${branch}"
+          git push origin "${branch}"
+
+      - name: Open release PR (release -> master)
+        env:
+          VERSION: ${{ inputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo="${GITHUB_REPOSITORY}"
+          api="https://api.github.com/repos/${repo}/pulls"
+          branch="release/${VERSION}"
+
+          existing=$(curl -fsSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${api}?state=open&base=master&head=${repo%/*}:${branch}" \
+            | jq 'length')
+
+          if [ "${existing}" -gt 0 ]; then
+            echo "Release PR already exists."
+            exit 0
+          fi
+
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${api}" \
+            -d @- <<JSON
+          {
+            "title": "release: v${VERSION}",
+            "head": "${branch}",
+            "base": "master",
+            "body": "Release branch for v${VERSION}. Merge into master to tag and publish."
+          }
+          JSON

@@ -1,0 +1,165 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
+    "dbt_version": "1.10.2",
+    "project_name": "nova_test"
+  },
+  "nodes": {
+    "model.nova_test.perfect_model": {
+      "name": "perfect_model",
+      "resource_type": "model",
+      "package_name": "nova_test",
+      "description": "This is a perfect model with a very long and detailed description that is over 100 characters long to ensure a perfect score.",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "path": "test_models/perfect_model.sql",
+      "original_file_path": "test_models/perfect_model.sql",
+      "unique_id": "model.nova_test.perfect_model",
+      "fqn": ["nova_test", "test_models", "perfect_model"],
+      "alias": "perfect_model",
+      "checksum": { "name": "sha256", "checksum": "perfect_model" },
+      "config": { "enabled": true },
+      "access": "protected",
+      "meta": {
+        "owner": "test.owner@example.com",
+        "nova": {
+          "canonical": true,
+          "tier": "gold",
+          "role": "dimension",
+          "semantic_type": "test_type",
+          "synonyms": ["synonym1", "synonym2", "synonym3"],
+          "domains": ["domain1", "domain2", "domain3"],
+          "use_cases": ["use_case1", "use_case2", "use_case3"],
+          "grain": {
+            "primary_key": ["pk_col"],
+            "time_field": "date_col"
+          },
+          "governance": {
+            "sensitivity": "high",
+            "pii": "true",
+            "compliance": ["gdpr", "ccpa", "hipaa"]
+          },
+          "metrics": [
+            {
+              "name": "a_metric",
+              "expression": "count(*)",
+              "synonyms": ["a_synonym"]
+            }
+          ],
+          "measures": [
+            {
+                "name": "a_measure",
+                "expression": "count(*)",
+                "synonyms": ["a_synonym"]
+            }
+          ]
+        }
+      },
+      "columns": {
+          "pk_col": {
+              "name": "pk_col",
+              "description": "This is a primary key column with a very long and detailed description that is over 100 characters long.",
+              "data_type": "string",
+              "constraints": [{"type": "not_null"}, {"type": "unique"}],
+              "meta": {
+                  "primary_key": true,
+                  "nova": {
+                      "role": "identifier",
+                      "semantic_type": "primary_key"
+                  }
+              }
+          },
+          "date_col": {
+              "name": "date_col",
+              "description": "This is a date column with a very long and detailed description that is definitely over 100 characters long for test.",
+              "data_type": "date",
+              "constraints": [{"type": "not_null"}],
+              "meta": {
+                  "nova": {
+                      "role": "time",
+                      "semantic_type": "date"
+                  }
+              }
+          }
+      }
+    },
+    "test.nova_test.unique_perfect_model_pk_col": {
+      "name": "unique_perfect_model_pk_col",
+      "resource_type": "test",
+      "package_name": "nova_test",
+      "unique_id": "test.nova_test.unique_perfect_model_pk_col",
+      "fqn": ["nova_test", "unique_perfect_model_pk_col"],
+      "alias": "unique_perfect_model_pk_col",
+      "checksum": { "name": "sha256", "checksum": "unique_perfect_model_pk_col" },
+      "attached_node": "model.nova_test.perfect_model",
+      "column_name": "pk_col",
+      "test_metadata": { "name": "unique" },
+      "depends_on": { "nodes": ["model.nova_test.perfect_model"], "macros": [] }
+    },
+    "test.nova_test.not_null_perfect_model_pk_col": {
+      "name": "not_null_perfect_model_pk_col",
+      "resource_type": "test",
+      "package_name": "nova_test",
+      "unique_id": "test.nova_test.not_null_perfect_model_pk_col",
+      "fqn": ["nova_test", "not_null_perfect_model_pk_col"],
+      "alias": "not_null_perfect_model_pk_col",
+      "checksum": { "name": "sha256", "checksum": "not_null_perfect_model_pk_col" },
+      "attached_node": "model.nova_test.perfect_model",
+      "column_name": "pk_col",
+      "test_metadata": { "name": "not_null" },
+      "depends_on": { "nodes": ["model.nova_test.perfect_model"], "macros": [] }
+    },
+    "test.nova_test.not_null_perfect_model_date_col": {
+      "name": "not_null_perfect_model_date_col",
+      "resource_type": "test",
+      "package_name": "nova_test",
+      "unique_id": "test.nova_test.not_null_perfect_model_date_col",
+      "fqn": ["nova_test", "not_null_perfect_model_date_col"],
+      "alias": "not_null_perfect_model_date_col",
+      "checksum": { "name": "sha256", "checksum": "not_null_perfect_model_date_col" },
+      "attached_node": "model.nova_test.perfect_model",
+      "column_name": "date_col",
+      "test_metadata": { "name": "not_null" },
+      "depends_on": { "nodes": ["model.nova_test.perfect_model"], "macros": [] }
+    },
+    "test.nova_test.model_level_test": {
+      "name": "model_level_test",
+      "resource_type": "test",
+      "package_name": "nova_test",
+      "unique_id": "test.nova_test.model_level_test",
+      "fqn": ["nova_test", "model_level_test"],
+      "alias": "model_level_test",
+      "checksum": { "name": "sha256", "checksum": "model_level_test" },
+      "attached_node": "model.nova_test.perfect_model",
+      "column_name": null,
+      "test_metadata": { "name": "row_count" },
+      "depends_on": { "nodes": ["model.nova_test.perfect_model"], "macros": [] }
+    },
+    "test.nova_test.model_level_test2": {
+      "name": "model_level_test2",
+      "resource_type": "test",
+      "package_name": "nova_test",
+      "unique_id": "test.nova_test.model_level_test2",
+      "fqn": ["nova_test", "model_level_test2"],
+      "alias": "model_level_test2",
+      "checksum": { "name": "sha256", "checksum": "model_level_test2" },
+      "attached_node": "model.nova_test.perfect_model",
+      "column_name": null,
+      "test_metadata": { "name": "freshness" },
+      "depends_on": { "nodes": ["model.nova_test.perfect_model"], "macros": [] }
+    },
+    "test.nova_test.model_level_test3": {
+      "name": "model_level_test3",
+      "resource_type": "test",
+      "package_name": "nova_test",
+      "unique_id": "test.nova_test.model_level_test3",
+      "fqn": ["nova_test", "model_level_test3"],
+      "alias": "model_level_test3",
+      "checksum": { "name": "sha256", "checksum": "model_level_test3" },
+      "attached_node": "model.nova_test.perfect_model",
+      "column_name": null,
+      "test_metadata": { "name": "schema_check" },
+      "depends_on": { "nodes": ["model.nova_test.perfect_model"], "macros": [] }
+    }
+  }
+}

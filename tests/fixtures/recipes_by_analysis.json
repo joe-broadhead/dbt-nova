@@ -1,0 +1,65 @@
+{
+  "metadata": {
+    "dbt_version": "1.10.2",
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json"
+  },
+  "nodes": {
+    "analysis.test.analysis__weekly_headline__01": {
+      "name": "analysis__weekly_headline__01",
+      "resource_type": "analysis",
+      "package_name": "test_pkg",
+      "original_file_path": "analyses/recipes/marketplace/weekly_report/analysis__weekly_headline__01.sql",
+      "meta": {
+        "nova": {
+          "recipe": {
+            "parameters": {
+              "COUNTRY_CODE": {
+                "type": "string",
+                "required": true,
+                "description": "ISO country code"
+              },
+              "TOP_N": {
+                "type": "number",
+                "required": false,
+                "default": 10
+              }
+            }
+          }
+        }
+      },
+      "raw_code": "select 'weekly' as report_scope, '__COUNTRY_CODE__' as country_code, __TOP_N__ as top_n, 1 as value",
+      "compiled_code": "select 'weekly' as report_scope, '__COUNTRY_CODE__' as country_code, __TOP_N__ as top_n, 1 as value"
+    },
+    "analysis.test.analysis__weekly_channel_mix__02": {
+      "name": "analysis__weekly_channel_mix__02",
+      "resource_type": "analysis",
+      "package_name": "test_pkg",
+      "original_file_path": "analyses/recipes/marketplace/weekly_report/analysis__weekly_channel_mix__02.sql",
+      "raw_code": "select 'weekly' as report_scope, 2 as value",
+      "compiled_code": "select 'weekly' as report_scope, 2 as value"
+    },
+    "analysis.test.non_recipe_analysis": {
+      "name": "non_recipe_analysis",
+      "resource_type": "analysis",
+      "package_name": "test_pkg",
+      "original_file_path": "analyses/non_recipe.sql",
+      "raw_code": "select 1 as non_recipe_value",
+      "compiled_code": "select 1 as non_recipe_value"
+    }
+  },
+  "sources": {},
+  "macros": {},
+  "docs": {},
+  "groups": {},
+  "exposures": {},
+  "metrics": {},
+  "saved_queries": {},
+  "tests": {},
+  "semantic_models": {},
+  "parent_map": {
+    "analysis.test.analysis__weekly_headline__01": [],
+    "analysis.test.analysis__weekly_channel_mix__02": [],
+    "analysis.test.non_recipe_analysis": []
+  },
+  "child_map": {}
+}

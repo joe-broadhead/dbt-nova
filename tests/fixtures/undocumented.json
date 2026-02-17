@@ -1,0 +1,40 @@
+{
+  "metadata": {
+    "dbt_version": "1.10.2",
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json"
+  },
+  "nodes": {
+    "model.pkg.docless": {
+      "name": "docless",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "db",
+      "schema": "sch",
+      "raw_code": "select 1 as c1",
+      "columns": {
+        "c1": {
+          "name": "c1",
+          "data_type": "int",
+          "description": ""
+        },
+        "c2": {
+          "name": "c2",
+          "data_type": "int",
+          "description": ""
+        }
+      },
+      "tags": [],
+      "original_file_path": "models/docless.sql"
+    }
+  },
+  "sources": {},
+  "macros": {},
+  "docs": {},
+  "groups": {},
+  "exposures": {},
+  "metrics": {},
+  "parent_map": {
+    "model.pkg.docless": []
+  },
+  "child_map": {}
+}

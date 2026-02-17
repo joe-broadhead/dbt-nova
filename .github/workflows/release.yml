@@ -1,0 +1,165 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to publish (for example: v0.0.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  validate:
+    name: Validate Release Flow
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.resolve_tag.outputs.release_tag }}
+    permissions:
+      contents: read
+    steps:
+      - name: Resolve tag
+        id: resolve_tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_tag="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            release_tag="${{ inputs.tag }}"
+          fi
+          if ! [[ "${release_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release tag: ${release_tag}"
+            exit 1
+          fi
+          echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+
+      - name: Fetch master and tag
+        run: |
+          git fetch --no-tags origin master
+          git fetch --tags origin
+
+      - name: Ensure tag is on master
+        run: |
+          TAG_COMMIT="$(git rev-list -n1 "${{ steps.resolve_tag.outputs.release_tag }}")"
+          if ! git merge-base --is-ancestor "$TAG_COMMIT" origin/master; then
+            echo "Release tags must point to a commit on master."
+            exit 1
+          fi
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+
+      - name: Test (all features)
+        run: cargo test --locked --all-features
+
+  build:
+    name: Build (${{ matrix.asset }})
+    runs-on: ${{ matrix.os }}
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset: linux-x86_64
+            ext: ""
+          - os: macos-14
+            target: aarch64-apple-darwin
+            asset: macos-arm64
+            ext: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ needs.validate.outputs.release_tag }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac
+        with:
+          cosign-release: "v2.4.1"
+
+      - name: Build (release, all features)
+        run: cargo build --locked --release --all-features --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="target/${{ matrix.target }}/release/dbt-nova${{ matrix.ext }}"
+          mkdir -p dist/slim dist/bundled/models
+          cp "$BIN" dist/slim/
+          cp "$BIN" dist/bundled/
+
+          export DBT_NOVA_BIN="$PWD/dist/bundled/dbt-nova${{ matrix.ext }}"
+          export DBT_NOVA_EMBEDDINGS_CACHE_DIR="$PWD/dist/bundled/models"
+          export DBT_NOVA_WARMUP_REQUIRED_MODELS=2
+          export DBT_NOVA_WARMUP_TIMEOUT_SECS=900
+          export DBT_NOVA_WARMUP_LOG_PATH="$PWD/dist/bundled/model-warmup.log"
+          bash "$PWD/scripts/warm_models.sh" partial
+
+          onnx_count="$(find "$PWD/dist/bundled/models" -type f -name "model.onnx" | wc -l | tr -d ' ')"
+          if [ "${onnx_count}" -lt 2 ]; then
+            echo "Model warmup incomplete: expected >=2 model.onnx files, found ${onnx_count}." >&2
+            if [ -f "$PWD/dist/bundled/model-warmup.log" ]; then
+              echo "Warmup log:" >&2
+              tail -n 120 "$PWD/dist/bundled/model-warmup.log" >&2 || true
+            fi
+            exit 1
+          fi
+
+          tar -C dist/slim -czf "dbt-nova-${{ matrix.asset }}.tar.gz" "dbt-nova${{ matrix.ext }}"
+          tar -C dist/bundled -czf "dbt-nova-${{ matrix.asset }}-bundled.tar.gz" "dbt-nova${{ matrix.ext }}" models
+          shasum -a 256 "dbt-nova-${{ matrix.asset }}.tar.gz" "dbt-nova-${{ matrix.asset }}-bundled.tar.gz" > "dbt-nova-${{ matrix.asset }}.sha256"
+          for artifact in \
+            "dbt-nova-${{ matrix.asset }}.tar.gz" \
+            "dbt-nova-${{ matrix.asset }}-bundled.tar.gz" \
+            "dbt-nova-${{ matrix.asset }}.sha256"
+          do
+            COSIGN_EXPERIMENTAL=1 COSIGN_YES=1 cosign sign-blob \
+              --output-signature "${artifact}.sig" \
+              --output-certificate "${artifact}.crt" \
+              "$artifact"
+          done
+
+      - name: Publish build provenance
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-path: |
+            dbt-nova-${{ matrix.asset }}.tar.gz
+            dbt-nova-${{ matrix.asset }}-bundled.tar.gz
+            dbt-nova-${{ matrix.asset }}.sha256
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b
+        with:
+          tag_name: ${{ needs.validate.outputs.release_tag }}
+          files: |
+            dbt-nova-${{ matrix.asset }}.tar.gz
+            dbt-nova-${{ matrix.asset }}-bundled.tar.gz
+            dbt-nova-${{ matrix.asset }}.sha256
+            dbt-nova-${{ matrix.asset }}.tar.gz.sig
+            dbt-nova-${{ matrix.asset }}.tar.gz.crt
+            dbt-nova-${{ matrix.asset }}-bundled.tar.gz.sig
+            dbt-nova-${{ matrix.asset }}-bundled.tar.gz.crt
+            dbt-nova-${{ matrix.asset }}.sha256.sig
+            dbt-nova-${{ matrix.asset }}.sha256.crt

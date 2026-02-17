@@ -1,0 +1,92 @@
+name: Tag Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - master
+
+jobs:
+  tag:
+    if: >
+      github.event.pull_request.merged == true &&
+      (startsWith(github.event.pull_request.head.ref, 'release/') ||
+       startsWith(github.event.pull_request.head.ref, 'hotfix/'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+
+      - name: Verify release tag token
+        env:
+          RELEASE_TAG_TOKEN: ${{ secrets.RELEASE_TAG_TOKEN }}
+        run: |
+          if [ -z "${RELEASE_TAG_TOKEN}" ]; then
+            echo "Missing secret RELEASE_TAG_TOKEN."
+            echo "Set it to a PAT/GitHub App token with repo contents:write and actions:write."
+            exit 1
+          fi
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create and push tag
+        env:
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          RELEASE_TAG_TOKEN: ${{ secrets.RELEASE_TAG_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version_raw="${BRANCH#*/}"
+          if ! [[ "${version_raw}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Skipping tag: branch is not a release/hotfix semantic version (${BRANCH})."
+            exit 0
+          fi
+
+          version="${version_raw#v}"
+          tag="v${version}"
+          if git rev-parse "${tag}" >/dev/null 2>&1; then
+            echo "Tag already exists: ${tag}"
+            exit 0
+          fi
+
+          if [ -z "${MERGE_SHA}" ]; then
+            echo "Missing merge commit SHA."
+            exit 1
+          fi
+
+          git tag -a "${tag}" "${MERGE_SHA}" -m "Release ${tag}"
+          git push "https://x-access-token:${RELEASE_TAG_TOKEN}@github.com/${REPOSITORY}.git" "${tag}"
+
+          api="https://api.github.com/repos/${REPOSITORY}/actions/workflows"
+          auth_header="Authorization: Bearer ${RELEASE_TAG_TOKEN}"
+          accept_header="Accept: application/vnd.github+json"
+
+          # Trigger release build immediately with explicit tag input.
+          curl -fsSL -X POST \
+            -H "${auth_header}" \
+            -H "${accept_header}" \
+            "${api}/release.yml/dispatches" \
+            -d @- <<JSON
+          {
+            "ref": "master",
+            "inputs": {
+              "tag": "${tag}"
+            }
+          }
+          JSON
+
+          # Trigger docs deployment workflow for the release tag.
+          curl -fsSL -X POST \
+            -H "${auth_header}" \
+            -H "${accept_header}" \
+            "${api}/docs.yml/dispatches" \
+            -d '{"ref":"master"}'

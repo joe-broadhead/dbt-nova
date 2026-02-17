@@ -1,0 +1,37 @@
+{
+  "metadata": {
+    "dbt_version": "1.10.2",
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json"
+  },
+  "nodes": {
+    "model.pkg.model_a": {
+      "name": "model_a",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "db",
+      "schema": "sch",
+      "raw_code": "select 1 as col",
+      "columns": {
+        "col": {
+          "name": "col",
+          "data_type": "int",
+          "description": ""
+        }
+      },
+      "tags": [
+        "t1"
+      ],
+      "original_file_path": "models/model_a.sql"
+    }
+  },
+  "sources": {},
+  "macros": {},
+  "docs": {},
+  "groups": {},
+  "exposures": {},
+  "metrics": {},
+  "parent_map": {
+    "model.pkg.model_a": []
+  },
+  "child_map": {}
+}

@@ -1,0 +1,98 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
+    "dbt_version": "1.10.2",
+    "project_name": "nova_test"
+  },
+  "nodes": {
+    "model.nova_test.metric_like_model": {
+      "name": "metric_like_model",
+      "resource_type": "model",
+      "package_name": "nova_test",
+      "description": "Metric-style model for analyst payload testing.",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "path": "models/metrics/metric_like_model.sql",
+      "original_file_path": "models/metrics/metric_like_model.sql",
+      "unique_id": "model.nova_test.metric_like_model",
+      "fqn": ["nova_test", "models", "metrics", "metric_like_model"],
+      "alias": "metric_like_model",
+      "checksum": {
+        "name": "sha256",
+        "checksum": "metric_like_model"
+      },
+      "config": {
+        "enabled": true
+      },
+      "tags": ["sql", "metric"],
+      "meta": {
+        "nova": {
+          "domains": ["web", "ecommerce"],
+          "metrics": [
+            {
+              "name": "checkout_step_1",
+              "description": "Checkout started per cart viewed.",
+              "expression": "sum(checkout_started) / nullif(sum(cart_viewed), 0)",
+              "grain": {
+                "dimensions": ["country_code", "device_type"],
+                "time_field": "period"
+              }
+            }
+          ]
+        }
+      },
+      "columns": {
+        "country_code": {
+          "name": "country_code",
+          "description": "Country code dimension.",
+          "data_type": "string",
+          "meta": {
+            "nova": {
+              "role": "dimension",
+              "semantic_type": "country_code"
+            }
+          }
+        },
+        "device_type": {
+          "name": "device_type",
+          "description": "Device type dimension.",
+          "data_type": "string",
+          "meta": {
+            "nova": {
+              "role": "dimension",
+              "semantic_type": "device"
+            }
+          }
+        },
+        "period": {
+          "name": "period",
+          "description": "Period bucket.",
+          "data_type": "date",
+          "meta": {
+            "nova": {
+              "role": "time",
+              "semantic_type": "date"
+            }
+          }
+        },
+        "checkout_step_1": {
+          "name": "checkout_step_1",
+          "description": "Metric value column.",
+          "data_type": "double",
+          "meta": {
+            "nova": {
+              "role": "measure",
+              "semantic_type": "rate"
+            }
+          }
+        }
+      },
+      "depends_on": {
+        "nodes": [],
+        "macros": []
+      },
+      "raw_code": "select 1",
+      "compiled_code": "select 1"
+    }
+  }
+}

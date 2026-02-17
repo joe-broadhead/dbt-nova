@@ -1,0 +1,63 @@
+{
+  "child_map": {
+    "model.pkg.downstream": [],
+    "model.pkg.upstream": [
+      "model.pkg.downstream"
+    ]
+  },
+  "docs": {},
+  "exposures": {},
+  "groups": {},
+  "macros": {},
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
+    "dbt_version": "1.10.2"
+  },
+  "metrics": {},
+  "nodes": {
+    "model.pkg.downstream": {
+      "columns": {
+        "new_col": {
+          "data_type": "int",
+          "description": "",
+          "name": "new_col"
+        },
+        "other": {
+          "data_type": "string",
+          "description": "",
+          "name": "other"
+        }
+      },
+      "database": "db",
+      "name": "downstream",
+      "original_file_path": "models/downstream.sql",
+      "package_name": "pkg",
+      "raw_code": "select coalesce(old_col, 0) as new_col from upstream",
+      "resource_type": "model",
+      "schema": "sch"
+    },
+    "model.pkg.upstream": {
+      "columns": {
+        "old_col": {
+          "data_type": "int",
+          "description": "",
+          "name": "old_col"
+        }
+      },
+      "database": "db",
+      "name": "upstream",
+      "original_file_path": "models/upstream.sql",
+      "package_name": "pkg",
+      "raw_code": "select 1 as old_col",
+      "resource_type": "model",
+      "schema": "sch"
+    }
+  },
+  "parent_map": {
+    "model.pkg.downstream": [
+      "model.pkg.upstream"
+    ],
+    "model.pkg.upstream": []
+  },
+  "sources": {}
+}

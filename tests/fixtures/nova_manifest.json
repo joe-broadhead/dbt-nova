@@ -1,0 +1,520 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
+    "dbt_version": "1.10.2",
+    "project_name": "nova_test"
+  },
+  "selectors": {},
+  "nodes": {
+    "model.nova_test.stg__traffic_sessions": {
+      "name": "stg__traffic_sessions",
+      "resource_type": "model",
+      "package_name": "nova_test",
+      "description": "Staging traffic sessions model.",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "path": "staging/traffic/stg__traffic_sessions.sql",
+      "original_file_path": "models/staging/traffic/stg__traffic_sessions.sql",
+      "unique_id": "model.nova_test.stg__traffic_sessions",
+      "fqn": [
+        "nova_test",
+        "staging",
+        "traffic",
+        "stg__traffic_sessions"
+      ],
+      "alias": "stg__traffic_sessions",
+      "checksum": {
+        "name": "sha256",
+        "checksum": "ions_sql"
+      },
+      "config": {
+        "enabled": true
+      },
+      "tags": [
+        "sql",
+        "traffic"
+      ],
+      "columns": {
+        "referring_domain": {
+          "name": "referring_domain",
+          "description": "Domain name of the referring website.",
+          "data_type": "string",
+          "meta": {
+            "nova": {
+              "role": "dimension",
+              "semantic_type": "referrer_domain",
+              "synonyms": [
+                "referral_domain"
+              ]
+            }
+          },
+          "constraints": [],
+          "config": {
+            "meta": {},
+            "tags": []
+          },
+          "tags": []
+        },
+        "session_id": {
+          "name": "session_id",
+          "description": "Session identifier.",
+          "data_type": "string",
+          "meta": {
+            "primary_key": true
+          },
+          "constraints": [],
+          "config": {
+            "meta": {},
+            "tags": []
+          },
+          "tags": []
+        }
+      },
+      "depends_on": {
+        "nodes": [],
+        "macros": []
+      },
+      "raw_code": "select 1",
+      "compiled_code": "select 1"
+    },
+    "model.nova_test.int__campaign_features": {
+      "name": "int__campaign_features",
+      "resource_type": "model",
+      "package_name": "nova_test",
+      "description": "Intermediate campaign features rollup.",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "path": "intermediate/marketing/int__campaign_features.sql",
+      "original_file_path": "models/intermediate/marketing/int__campaign_features.sql",
+      "unique_id": "model.nova_test.int__campaign_features",
+      "fqn": [
+        "nova_test",
+        "intermediate",
+        "marketing",
+        "int__campaign_features"
+      ],
+      "alias": "int__campaign_features",
+      "checksum": {
+        "name": "sha256",
+        "checksum": "ures_sql"
+      },
+      "config": {
+        "enabled": true
+      },
+      "tags": [
+        "sql",
+        "campaign"
+      ],
+      "columns": {
+        "campaign_name": {
+          "name": "campaign_name",
+          "description": "Campaign name.",
+          "data_type": "string",
+          "meta": {},
+          "constraints": [],
+          "config": {
+            "meta": {},
+            "tags": []
+          },
+          "tags": []
+        }
+      },
+      "depends_on": {
+        "nodes": [
+          "model.nova_test.stg__traffic_sessions"
+        ],
+        "macros": []
+      },
+      "raw_code": "select 1",
+      "compiled_code": "select 1"
+    },
+    "model.nova_test.dim__customers": {
+      "name": "dim__customers",
+      "resource_type": "model",
+      "package_name": "nova_test",
+      "description": "Customer dimension.",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "path": "marts/core/dim__customers.sql",
+      "original_file_path": "models/marts/core/dim__customers.sql",
+      "unique_id": "model.nova_test.dim__customers",
+      "fqn": [
+        "nova_test",
+        "marts",
+        "core",
+        "dim__customers.sql"
+      ],
+      "alias": "dim__customers",
+      "checksum": {
+        "name": "sha256",
+        "checksum": "ustomers"
+      },
+      "config": {
+        "enabled": true
+      },
+      "tags": [
+        "sql",
+        "core"
+      ],
+      "columns": {
+        "customer_id": {
+          "name": "customer_id",
+          "data_type": "string",
+          "description": "PK"
+        }
+      },
+      "depends_on": {
+        "nodes": [],
+        "macros": []
+      },
+      "raw_code": "select 1",
+      "compiled_code": "select 1"
+    },
+    "model.nova_test.dim__products": {
+      "name": "dim__products",
+      "resource_type": "model",
+      "package_name": "nova_test",
+      "description": "Product dimension.",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "path": "marts/core/dim__products.sql",
+      "original_file_path": "models/marts/core/dim__products.sql",
+      "unique_id": "model.nova_test.dim__products",
+      "fqn": [
+        "nova_test",
+        "marts",
+        "core",
+        "dim__products.sql"
+      ],
+      "alias": "dim__products",
+      "checksum": {
+        "name": "sha256",
+        "checksum": "products"
+      },
+      "config": {
+        "enabled": true
+      },
+      "tags": [
+        "sql",
+        "core"
+      ],
+      "columns": {
+        "product_id": {
+          "name": "product_id",
+          "data_type": "string",
+          "description": "PK"
+        }
+      },
+      "depends_on": {
+        "nodes": [],
+        "macros": []
+      },
+      "raw_code": "select 1",
+      "compiled_code": "select 1"
+    },
+    "model.nova_test.fct__orders": {
+      "name": "fct__orders",
+      "resource_type": "model",
+      "package_name": "nova_test",
+      "description": "Orders fact table.",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "path": "marts/sales/fct__orders.sql",
+      "original_file_path": "models/marts/sales/fct__orders.sql",
+      "unique_id": "model.nova_test.fct__orders",
+      "fqn": [
+        "nova_test",
+        "marts",
+        "sales",
+        "fct__orders.sql"
+      ],
+      "alias": "fct__orders",
+      "checksum": {
+        "name": "sha256",
+        "checksum": "__orders"
+      },
+      "config": {
+        "enabled": true
+      },
+      "tags": [
+        "sql",
+        "fact"
+      ],
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "data_type": "string",
+          "description": "PK"
+        }
+      },
+      "depends_on": {
+        "nodes": [
+          "model.nova_test.dim__customers",
+          "model.nova_test.dim__products"
+        ],
+        "macros": []
+      },
+      "raw_code": "select 1",
+      "compiled_code": "select 1"
+    },
+    "model.nova_test.stg__raw_events": {
+      "name": "stg__raw_events",
+      "resource_type": "model",
+      "package_name": "nova_test",
+      "description": "Staging raw events.",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "path": "staging/raw/stg__raw_events.sql",
+      "original_file_path": "models/staging/raw/stg__raw_events.sql",
+      "unique_id": "model.nova_test.stg__raw_events",
+      "fqn": [
+        "nova_test",
+        "staging",
+        "raw",
+        "stg__raw_events.sql"
+      ],
+      "alias": "stg__raw_events",
+      "checksum": {
+        "name": "sha256",
+        "checksum": "w_events"
+      },
+      "config": {
+        "enabled": true
+      },
+      "tags": [
+        "sql",
+        "stg"
+      ],
+      "columns": {
+        "event_id": {
+          "name": "event_id",
+          "data_type": "string",
+          "description": "Event id"
+        }
+      },
+      "depends_on": {
+        "nodes": [],
+        "macros": []
+      },
+      "raw_code": "select 1",
+      "compiled_code": "select 1"
+    },
+    "model.nova_test.model_extra_a": {
+      "name": "model_extra_a",
+      "resource_type": "model",
+      "package_name": "nova_test",
+      "description": "Extra model A.",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "path": "staging/misc/model_extra_a.sql",
+      "original_file_path": "models/staging/misc/model_extra_a.sql",
+      "unique_id": "model.nova_test.model_extra_a",
+      "fqn": [
+        "nova_test",
+        "staging",
+        "misc",
+        "model_extra_a.sql"
+      ],
+      "alias": "model_extra_a",
+      "checksum": {
+        "name": "sha256",
+        "checksum": "_extra_a"
+      },
+      "config": {
+        "enabled": true
+      },
+      "tags": [
+        "sql"
+      ],
+      "columns": {},
+      "depends_on": {
+        "nodes": [],
+        "macros": []
+      },
+      "raw_code": "select 1",
+      "compiled_code": "select 1"
+    },
+    "model.nova_test.model_extra_b": {
+      "name": "model_extra_b",
+      "resource_type": "model",
+      "package_name": "nova_test",
+      "description": "Extra model B.",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "path": "staging/misc/model_extra_b.sql",
+      "original_file_path": "models/staging/misc/model_extra_b.sql",
+      "unique_id": "model.nova_test.model_extra_b",
+      "fqn": [
+        "nova_test",
+        "staging",
+        "misc",
+        "model_extra_b.sql"
+      ],
+      "alias": "model_extra_b",
+      "checksum": {
+        "name": "sha256",
+        "checksum": "_extra_b"
+      },
+      "config": {
+        "enabled": true
+      },
+      "tags": [
+        "sql"
+      ],
+      "columns": {},
+      "depends_on": {
+        "nodes": [],
+        "macros": []
+      },
+      "raw_code": "select 1",
+      "compiled_code": "select 1"
+    },
+    "test.nova_test.not_null_referring_domain": {
+      "name": "not_null_referring_domain",
+      "resource_type": "test",
+      "package_name": "nova_test",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "path": "tests/stg__traffic_sessions.yml",
+      "original_file_path": "models/tests/stg__traffic_sessions.yml",
+      "unique_id": "test.nova_test.not_null_referring_domain",
+      "fqn": [
+        "nova_test",
+        "tests",
+        "not_null_referring_domain"
+      ],
+      "alias": "not_null_referring_domain",
+      "checksum": {
+        "name": "sha256",
+        "checksum": "not_null_referring_domain"
+      },
+      "attached_node": "model.nova_test.stg__traffic_sessions",
+      "column_name": "referring_domain",
+      "test_metadata": {
+        "name": "not_null",
+        "kwargs": {
+          "column_name": "referring_domain"
+        }
+      },
+      "depends_on": {
+        "nodes": [
+          "model.nova_test.stg__traffic_sessions"
+        ],
+        "macros": []
+      }
+    },
+    "test.nova_test.unique_referring_domain": {
+      "name": "unique_referring_domain",
+      "resource_type": "test",
+      "package_name": "nova_test",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "path": "tests/stg__traffic_sessions.yml",
+      "original_file_path": "models/tests/stg__traffic_sessions.yml",
+      "unique_id": "test.nova_test.unique_referring_domain",
+      "fqn": [
+        "nova_test",
+        "tests",
+        "unique_referring_domain"
+      ],
+      "alias": "unique_referring_domain",
+      "checksum": {
+        "name": "sha256",
+        "checksum": "unique_referring_domain"
+      },
+      "attached_node": "model.nova_test.stg__traffic_sessions",
+      "column_name": "referring_domain",
+      "test_metadata": {
+        "name": "unique",
+        "kwargs": {
+          "column_name": "referring_domain"
+        }
+      },
+      "depends_on": {
+        "nodes": [
+          "model.nova_test.stg__traffic_sessions"
+        ],
+        "macros": []
+      }
+    }
+  },
+  "disabled": {},
+  "sources": {
+    "source.nova_test.raw.events": {
+      "name": "events",
+      "resource_type": "source",
+      "package_name": "nova_test",
+      "database": "analytics",
+      "schema": "raw",
+      "path": "sources/raw.yml",
+      "original_file_path": "models/sources/raw.yml",
+      "unique_id": "source.nova_test.raw.events",
+      "fqn": [
+        "nova_test",
+        "raw",
+        "events"
+      ],
+      "source_name": "raw",
+      "source_description": "Raw source data.",
+      "loader": "manual",
+      "identifier": "events",
+      "columns": {
+        "event_id": {
+          "name": "event_id",
+          "data_type": "string",
+          "description": "event id"
+        }
+      }
+    }
+  },
+  "macros": {
+    "macro.nova_test.sample_macro": {
+      "name": "sample_macro",
+      "resource_type": "macro",
+      "package_name": "nova_test",
+      "path": "macros/sample.sql",
+      "original_file_path": "macros/sample.sql",
+      "unique_id": "macro.nova_test.sample_macro",
+      "macro_sql": "select 1"
+    }
+  },
+  "docs": {},
+  "unit_tests": {},
+  "groups": {
+    "group.nova_test.analytics": {
+      "name": "analytics",
+      "resource_type": "group",
+      "package_name": "nova_test",
+      "path": "groups/analytics.yml",
+      "original_file_path": "models/groups/analytics.yml",
+      "unique_id": "group.nova_test.analytics",
+      "owner": {}
+    }
+  },
+  "group_map": {},
+  "semantic_models": {},
+  "saved_queries": {},
+  "exposures": {},
+  "metrics": {},
+  "parent_map": {
+    "model.nova_test.stg__traffic_sessions": [],
+    "model.nova_test.int__campaign_features": [
+      "model.nova_test.stg__traffic_sessions"
+    ],
+    "model.nova_test.dim__customers": [],
+    "model.nova_test.dim__products": [],
+    "model.nova_test.fct__orders": [
+      "model.nova_test.dim__customers",
+      "model.nova_test.dim__products"
+    ],
+    "model.nova_test.stg__raw_events": [],
+    "model.nova_test.model_extra_a": [],
+    "model.nova_test.model_extra_b": []
+  },
+  "child_map": {
+    "model.nova_test.stg__traffic_sessions": [
+      "model.nova_test.int__campaign_features"
+    ],
+    "model.nova_test.int__campaign_features": []
+  }
+}

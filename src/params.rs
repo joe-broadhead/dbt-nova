@@ -1,0 +1,536 @@
+#![allow(clippy::doc_markdown)]
+
+use schemars::JsonSchema;
+use serde::Deserialize;
+use serde_json::Value as JsonValue;
+use std::collections::HashMap;
+
+pub const DEFAULT_LIMIT: usize = 50;
+pub const DEFAULT_METADATA_SCORE_LIMIT: usize = 1000;
+pub const DEFAULT_TEST_COVERAGE_COLUMNS_LIMIT: usize = 50;
+pub const DEFAULT_CONFIDENCE: &str = "medium";
+pub const DEFAULT_ENTITY_SCOPE: &str = "entity";
+
+/// Default `true` for boolean parameters.
+#[must_use]
+pub fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+#[serde(default)]
+pub struct PaginationParams {
+    /// Maximum results
+    pub limit: usize,
+    /// Pagination offset
+    pub offset: usize,
+}
+
+impl Default for PaginationParams {
+    fn default() -> Self {
+        Self {
+            limit: DEFAULT_LIMIT,
+            offset: 0,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+#[serde(default)]
+pub struct ContextLimits {
+    /// Maximum depth for lineage traversal (default: 1 for immediate only)
+    pub lineage_depth: usize,
+    /// Maximum upstream entities to include (default: 10)
+    pub upstream_limit: usize,
+    /// Maximum downstream entities to include (default: 10)
+    pub downstream_limit: usize,
+}
+
+impl Default for ContextLimits {
+    fn default() -> Self {
+        Self {
+            lineage_depth: 1,
+            upstream_limit: 10,
+            downstream_limit: 10,
+        }
+    }
+}
+
+/// Detail level for entity-returning responses.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DetailLevel {
+    #[default]
+    Standard,
+    Full,
+}
+
+/// Parameters for the search tool.
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct SearchParams {
+    /// Search query - matches names, descriptions, SQL code, file paths, column names.
+    /// Supports boolean operators, phrases, field-specific queries, and prefix wildcards.
+    #[serde(default)]
+    pub query: String,
+    /// Filter by resource types: model, source, macro, doc, test, seed, snapshot, analysis, exposure, metric, group
+    #[serde(default)]
+    pub resource_types: Vec<String>,
+    /// Optional search persona: "analyst", "engineer", "governance"
+    #[serde(default)]
+    pub persona: Option<String>,
+    /// Response detail level: standard (summary) or full (entire entity)
+    #[serde(default)]
+    pub detail: DetailLevel,
+    #[serde(default, flatten)]
+    pub pagination: PaginationParams,
+    /// Minimum relevance score threshold (0.0+, default: no threshold). Higher values return only the most relevant results.
+    #[serde(default)]
+    pub min_score: Option<f32>,
+    /// Enable fuzzy matching for typo tolerance (default: false)
+    #[serde(default)]
+    pub fuzzy: bool,
+    /// Include highlight snippets in search results (default: false)
+    #[serde(default)]
+    pub include_highlights: bool,
+    /// Include raw/compiled SQL in full detail responses (default: false)
+    #[serde(default)]
+    pub include_sql: bool,
+}
+
+/// Parameters for the get_entity tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetEntityParams {
+    /// Unique ID (e.g., "model.package.name") or entity name
+    pub id_or_name: String,
+    /// Optional: specify resource_type to disambiguate when using name
+    pub resource_type: Option<String>,
+    /// Response detail level: standard (summary) or full (entire entity)
+    #[serde(default)]
+    pub detail: DetailLevel,
+}
+
+/// Parameters for the list_entities tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct ListEntitiesParams {
+    /// Resource type: model, source, macro, doc, test, seed, snapshot, analysis, exposure, metric, group
+    pub resource_type: String,
+    /// Filter by package name
+    pub package: Option<String>,
+    /// Filter by tags (entities must have ALL specified tags)
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Filter by database.schema pattern
+    pub database_schema: Option<String>,
+    /// Response detail level: standard (summary) or full (entire entity)
+    #[serde(default)]
+    pub detail: DetailLevel,
+    #[serde(default, flatten)]
+    pub pagination: PaginationParams,
+}
+
+/// Parameters for searching and discovering recipe templates.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct SearchRecipesParams {
+    /// Optional text filter on recipe id, description, or tags.
+    #[serde(default)]
+    pub query: String,
+    /// Optional topic prefix filter (e.g., `weekly`)
+    #[serde(default)]
+    pub topic: String,
+    /// Include query names in the search response.
+    #[serde(default)]
+    pub include_queries: bool,
+    #[serde(default, flatten)]
+    pub pagination: PaginationParams,
+}
+
+/// Parameters for loading a recipe definition.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetRecipeParams {
+    /// Recipe identifier derived from manifest analysis path (e.g. `weekly_country_kpi_report` or `marketplace/weekly_report`)
+    pub recipe_id: String,
+    /// Include full SQL text for each query file.
+    #[serde(default)]
+    pub include_sql: bool,
+    /// Include query order and tags metadata.
+    #[serde(default)]
+    pub include_queries: bool,
+    /// Optional execution parameter map for SQL template placeholders.
+    #[serde(default)]
+    pub parameters: Option<HashMap<String, JsonValue>>,
+    /// Optional placeholder type hints (e.g. {"country_code":"string","target_table":"identifier"}).
+    #[serde(default)]
+    pub placeholder_types: Option<HashMap<String, String>>,
+    /// Deprecated alias for placeholder type hints.
+    #[serde(default)]
+    pub parameter_types: Option<HashMap<String, String>>,
+}
+
+/// Parameters for running a recipe as a reusable, deterministic analysis sequence.
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
+pub struct RunRecipeParams {
+    /// Recipe identifier derived from manifest analysis path (e.g. `weekly_country_kpi_report` or `marketplace/weekly_report`)
+    pub recipe_id: String,
+    /// Optional explicit query file names to execute.
+    #[serde(default)]
+    pub query_names: Vec<String>,
+    /// Optional explicit 1-based query order indexes to execute.
+    #[serde(default)]
+    pub query_indexes: Vec<usize>,
+    /// Continue executing remaining queries when one fails.
+    #[serde(default = "default_true")]
+    pub stop_on_failure: bool,
+    /// Include SQL text in response payload.
+    #[serde(default)]
+    pub include_sql: bool,
+    /// Optional row limit for each query execution.
+    #[serde(default)]
+    pub row_limit: Option<u64>,
+    /// Optional byte limit for each query execution.
+    #[serde(default)]
+    pub byte_limit: Option<u64>,
+    /// Optional maximum poll timeout in seconds for each query execution.
+    #[serde(default)]
+    pub max_poll_seconds: Option<u64>,
+    /// Optional polling interval in milliseconds for each query execution.
+    #[serde(default)]
+    pub poll_interval_ms: Option<u64>,
+    /// Optional timeout in seconds for each query execution.
+    #[serde(default)]
+    pub wait_timeout_s: Option<u64>,
+    /// Optional execution parameter map for SQL templates.
+    #[serde(default)]
+    pub parameters: Option<HashMap<String, JsonValue>>,
+    /// Optional placeholder type hints for `__TOKEN__` substitution
+    /// (e.g., {"country_code":"string","target_table":"identifier"}).
+    #[serde(default)]
+    pub placeholder_types: Option<HashMap<String, String>>,
+    /// Optional SQL bind parameter type hints for warehouse execution
+    /// (e.g., {"as_of_date":"DATE"}).
+    #[serde(default)]
+    pub sql_parameter_types: Option<HashMap<String, String>>,
+    /// Deprecated alias for type hints. When provided, it is used as a fallback for both
+    /// `placeholder_types` and `sql_parameter_types`.
+    #[serde(default)]
+    pub parameter_types: Option<HashMap<String, String>>,
+    /// Fetch all result chunks for each query (default true in client)
+    #[serde(default)]
+    pub fetch_all_chunks: Option<bool>,
+    /// Max chunks to fetch when fetch_all_chunks=true
+    #[serde(default)]
+    pub max_chunks: Option<usize>,
+}
+
+/// Parameters for the get_lineage tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetLineageParams {
+    /// Unique ID or name of the entity
+    pub id_or_name: String,
+    /// Direction: "upstream" (what this depends on) or "downstream" (what depends on this)
+    pub direction: String,
+    /// Maximum depth (1 = direct only). Values above the config max are clamped.
+    pub depth: Option<usize>,
+    /// Filter results by resource types
+    #[serde(default)]
+    pub resource_types: Vec<String>,
+    /// Response detail level: standard (summary) or full (entire entity)
+    #[serde(default)]
+    pub detail: DetailLevel,
+}
+
+/// Parameters for the get_sql tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetSqlParams {
+    /// Unique ID or name of the model
+    pub id_or_name: String,
+    /// Return compiled SQL if true, raw SQL if false (default: false)
+    #[serde(default)]
+    pub compiled: bool,
+}
+
+/// Parameters for the get_columns tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetColumnsParams {
+    /// Unique ID or name of the model/source
+    pub id_or_name: String,
+}
+
+/// Parameters for the diff_entities tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DiffEntitiesParams {
+    /// First entity unique ID or name
+    pub entity1: String,
+    /// Optional resource_type to disambiguate entity1 when using name
+    #[serde(default)]
+    pub entity1_resource_type: Option<String>,
+    /// Second entity unique ID or name
+    pub entity2: String,
+    /// Optional resource_type to disambiguate entity2 when using name
+    #[serde(default)]
+    pub entity2_resource_type: Option<String>,
+    /// Fields to compare (default: columns)
+    #[serde(default)]
+    pub compare_fields: Vec<String>,
+}
+
+/// Parameters for the get_impact tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetImpactParams {
+    /// Unique ID or name of the entity to assess
+    pub id_or_name: String,
+}
+
+/// Parameters for the get_column_lineage tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetColumnLineageParams {
+    /// Unique ID or name of the model/source
+    pub id_or_name: String,
+    /// Optional resource_type to disambiguate when using name
+    #[serde(default)]
+    pub resource_type: Option<String>,
+    /// Column name to trace
+    pub column_name: String,
+    /// Direction: "upstream" (find column origins) or "downstream" (find column usage)
+    pub direction: String,
+    /// Maximum depth to traverse. Values above the config max are clamped.
+    pub depth: Option<usize>,
+    /// Confidence threshold: "high", "medium", or "low"
+    #[serde(default)]
+    pub confidence: Option<String>,
+}
+
+/// Parameters for the get_test_coverage tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetTestCoverageParams {
+    /// Unique ID or name of the model/source to analyze
+    pub id_or_name: String,
+    /// Optional resource_type to disambiguate when using name
+    #[serde(default)]
+    pub resource_type: Option<String>,
+    /// Include full test details (default: true)
+    #[serde(default = "default_true")]
+    pub include_full: bool,
+    /// Maximum columns to return in columns_without_tests (default: 50)
+    #[serde(default)]
+    pub columns_limit: Option<usize>,
+}
+
+/// Parameters for the batch_get_entities tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct BatchGetParams {
+    /// List of unique IDs to retrieve
+    pub unique_ids: Vec<String>,
+    /// Response detail level: standard (summary) or full (entire entity)
+    #[serde(default)]
+    pub detail: DetailLevel,
+}
+
+/// Parameters for the find_by_path tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FindByPathParams {
+    /// File path pattern to match (e.g., "models/staging/**", "models/*.sql")
+    pub path_pattern: String,
+    /// Filter by resource types (empty = all types)
+    #[serde(default)]
+    pub resource_types: Vec<String>,
+    /// Response detail level: standard (summary) or full (entire entity)
+    #[serde(default)]
+    pub detail: DetailLevel,
+    #[serde(default, flatten)]
+    pub pagination: PaginationParams,
+}
+
+/// Parameters for the get_undocumented tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetUndocumentedParams {
+    /// Resource type to check: model, source, macro, etc.
+    pub resource_type: String,
+    /// Optional entity identifier (unique_id or name) to scope results
+    pub id_or_name: Option<String>,
+    /// Optional package name to scope results
+    pub package: Option<String>,
+    /// Optional file path prefix to scope results (e.g. "models/staging/")
+    pub path_prefix: Option<String>,
+    /// Also check for undocumented columns (default: true)
+    #[serde(default = "default_true")]
+    pub include_columns: bool,
+    /// Include full entity data (default: false for performance)
+    #[serde(default)]
+    pub include_full: bool,
+    #[serde(default, flatten)]
+    pub pagination: PaginationParams,
+}
+
+/// Detail level for validate_dag responses.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ValidateDagDetail {
+    /// Return full issues and orphaned lists (default).
+    #[default]
+    Full,
+    /// Return only summary counts and orphaned types.
+    Summary,
+}
+
+/// Parameters for the validate_dag tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ValidateDagParams {
+    /// Detail level: full or summary (default: full)
+    #[serde(default)]
+    pub detail: ValidateDagDetail,
+}
+
+/// Parameters for the get_context tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct GetContextParams {
+    /// Unique ID or name of the entity to get context for
+    pub id_or_name: String,
+    /// Optional resource_type to disambiguate when using name
+    pub resource_type: Option<String>,
+    /// Include column details with types and descriptions (default: true)
+    #[serde(default = "default_true")]
+    pub include_columns: bool,
+    /// Include upstream lineage (default: true)
+    #[serde(default = "default_true")]
+    pub include_upstream: bool,
+    /// Include downstream lineage (default: true)
+    #[serde(default = "default_true")]
+    pub include_downstream: bool,
+    /// Include test coverage analysis (default: true)
+    #[serde(default = "default_true")]
+    pub include_tests: bool,
+    /// Include related documentation (default: true)
+    #[serde(default = "default_true")]
+    pub include_docs: bool,
+    /// Include raw and compiled SQL in the entity context (default: false)
+    #[serde(default)]
+    pub include_sql: bool,
+    /// Context mode: standard (default) or engineer
+    #[serde(default)]
+    pub context_mode: ContextMode,
+    #[serde(default, flatten)]
+    pub limits: ContextLimits,
+}
+
+/// Output shaping for get_context responses.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextMode {
+    /// Standard context output (default).
+    #[default]
+    Standard,
+    /// Engineer-focused output (suppresses long descriptions).
+    Engineer,
+}
+
+/// Parameters for the get_metadata_score tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetMetadataScoreParams {
+    /// Entity to score (optional for project scope)
+    #[serde(default)]
+    pub id_or_name: Option<String>,
+    /// Optional resource_type to disambiguate when using name
+    #[serde(default)]
+    pub resource_type: Option<String>,
+    /// Optional persona: "analyst", "engineer", "governance"
+    #[serde(default)]
+    pub persona: Option<String>,
+    /// Scope: "entity", "column", or "project"
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// Include per-check details (default: true)
+    #[serde(default = "default_true")]
+    pub include_breakdown: bool,
+    /// Include improvement suggestions (default: true)
+    #[serde(default = "default_true")]
+    pub include_recommendations: bool,
+    /// Filter resource types for project scope
+    #[serde(default)]
+    pub resource_types: Vec<String>,
+    /// Maximum entities to score for project scope
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// Pagination offset for project scope
+    #[serde(default)]
+    pub offset: Option<usize>,
+}
+
+impl Default for GetMetadataScoreParams {
+    fn default() -> Self {
+        Self {
+            id_or_name: None,
+            resource_type: None,
+            persona: None,
+            scope: None,
+            include_breakdown: true,
+            include_recommendations: true,
+            resource_types: Vec::new(),
+            limit: None,
+            offset: None,
+        }
+    }
+}
+
+/// Parameters for the reload_manifest tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReloadManifestParams {
+    /// Manifest URI to load (e.g. http(s)://, s3://, gs://, dbfs://)
+    pub manifest_uri: Option<String>,
+    /// Local manifest path to load (clears manifest_uri if provided)
+    pub manifest_path: Option<String>,
+    /// Optional refresh interval override (seconds)
+    pub refresh_secs: Option<u64>,
+    /// Optional explicit storage instance id for index storage
+    pub storage_instance_id: Option<String>,
+}
+
+/// Parameters for the execute_sql tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
+pub struct ExecuteSqlParams {
+    /// SQL statement to execute.
+    /// Optional when `preflight_only=true`.
+    #[serde(default)]
+    pub statement: String,
+    /// Optional override for Databricks warehouse id or http path
+    pub warehouse_id: Option<String>,
+    /// Run provider diagnostics without executing the main statement.
+    #[serde(default)]
+    pub preflight_only: bool,
+    /// Optional catalog to check during SQL preflight.
+    #[serde(default)]
+    pub preflight_catalog: Option<String>,
+    /// Optional schema to check during SQL preflight.
+    #[serde(default)]
+    pub preflight_schema: Option<String>,
+    /// Optional relation (table/view) to check during SQL preflight.
+    #[serde(default)]
+    pub preflight_relation: Option<String>,
+    /// Optional row limit for result payload
+    #[serde(default)]
+    pub row_limit: Option<u64>,
+    /// Optional byte limit for result payload
+    #[serde(default)]
+    pub byte_limit: Option<u64>,
+    /// Optional wait timeout in seconds (0 or 5-50 for Databricks)
+    #[serde(default)]
+    pub wait_timeout_s: Option<u64>,
+    /// Optional polling interval in milliseconds
+    #[serde(default)]
+    pub poll_interval_ms: Option<u64>,
+    /// Optional max poll time in seconds
+    #[serde(default)]
+    pub max_poll_seconds: Option<u64>,
+    /// Optional named parameters for the statement
+    #[serde(default)]
+    pub parameters: Option<HashMap<String, JsonValue>>,
+    /// Optional SQL types for parameters (e.g. {"d":"DATE"})
+    #[serde(default)]
+    pub parameter_types: Option<HashMap<String, String>>,
+    /// Fetch all result chunks (default true in client)
+    #[serde(default)]
+    pub fetch_all_chunks: Option<bool>,
+    /// Max chunks to fetch when fetch_all_chunks is true
+    #[serde(default)]
+    pub max_chunks: Option<usize>,
+}

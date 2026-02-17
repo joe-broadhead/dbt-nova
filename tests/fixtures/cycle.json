@@ -1,0 +1,48 @@
+{
+  "metadata": {
+    "dbt_version": "1.10.2",
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json"
+  },
+  "nodes": {
+    "model.pkg.a": {
+      "name": "a",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "db",
+      "schema": "sch",
+      "raw_code": "select 1",
+      "original_file_path": "models/a.sql"
+    },
+    "model.pkg.b": {
+      "name": "b",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "db",
+      "schema": "sch",
+      "raw_code": "select 1",
+      "original_file_path": "models/b.sql"
+    }
+  },
+  "sources": {},
+  "macros": {},
+  "docs": {},
+  "groups": {},
+  "exposures": {},
+  "metrics": {},
+  "parent_map": {
+    "model.pkg.a": [
+      "model.pkg.b"
+    ],
+    "model.pkg.b": [
+      "model.pkg.a"
+    ]
+  },
+  "child_map": {
+    "model.pkg.a": [
+      "model.pkg.b"
+    ],
+    "model.pkg.b": [
+      "model.pkg.a"
+    ]
+  }
+}

@@ -1,0 +1,187 @@
+# Analyst Tool Recipes
+
+## Table of contents
+
+- Discovery
+  - Search for metrics (start here)
+  - Search by Nova fields
+- Inspection
+  - Inspect entity
+  - Inspect columns
+  - Inspect SQL
+- Trust and lineage
+  - Upstream lineage
+  - Column lineage
+  - Test coverage
+  - Metadata score
+- Execution
+  - Validate filter values
+  - Execute final SQL
+  - Health check
+
+## Discovery
+
+### Search for metrics (start here)
+**When:** Beginning any analysis.
+**Why:** Analyst persona prioritizes well-documented models.
+
+```json
+{"query":"conversion rate","persona":"analyst","resource_types":["model"],"detail":"standard","limit":10,"include_highlights":true}
+```
+
+Key fields: `persona_payload`, `relation_name`, `primary_key_columns`, `description`.
+
+### Search by Nova fields
+**When:** You already know the semantic target.
+**Why:** Pinpoint models with specific measures/metrics/domains.
+
+```text
+nova_measures:sessions
+nova_metric:conversion_rate
+nova_domains:ecommerce AND nova_use_cases:weekly_report
+```
+
+Key fields: meta.nova.* fields present in search highlights.
+
+## Inspection
+
+### Inspect entity
+**When:** You need a model definition and metadata.
+**Why:** Validate grain, measures, and ownership.
+
+```json
+{"name":"get_entity","arguments":{"id_or_name":"model.package.model_name"}}
+```
+
+Key fields: description, meta.nova, columns.
+
+### Inspect columns
+**When:** Confirm dimensions, PKs, or filter fields.
+**Why:** Avoid invalid filters and wrong grain.
+
+```json
+{"name":"get_columns","arguments":{"id_or_name":"model.package.model_name"}}
+```
+
+Key fields: data_type, meta.primary_key, meta.nova.
+
+### Inspect SQL
+**When:** Validate computation logic.
+**Why:** Ensure measure expressions are correct.
+
+```json
+{"name":"get_sql","arguments":{"id_or_name":"model.package.model_name","compiled":false}}
+```
+
+Key fields: SQL expressions for metrics, joins, filters.
+
+## Trust and lineage
+
+### Upstream lineage
+**When:** Impact or provenance matters.
+**Why:** Confirm sources and upstream dependencies.
+
+```json
+{"name":"get_lineage","arguments":{"id_or_name":"model.package.model_name","direction":"upstream","depth":2,"resource_types":["source","model"],"detail":"standard"}}
+```
+
+Key fields: upstream nodes, source tables.
+
+### Column lineage
+**When:** A specific column drives a metric.
+**Why:** Validate its origin and transformations.
+
+```json
+{"name":"get_column_lineage","arguments":{"id_or_name":"model.package.model_name","column_name":"session_date","direction":"upstream","depth":2,"confidence":"medium"}}
+```
+
+Key fields: matches and confidence levels.
+
+### Test coverage
+**When:** Results need higher trust.
+**Why:** Confirm tests exist on key columns.
+
+```json
+{"name":"get_test_coverage","arguments":{"id_or_name":"model.package.model_name","include_full":false}}
+```
+
+Key fields: coverage_pct, missing_pk_tests.
+
+### Metadata score
+**When:** You need documentation/trust signal.
+**Why:** Explain limitations in outputs.
+
+```json
+{"name":"get_metadata_score","arguments":{"id_or_name":"model.package.model_name","scope":"entity","persona":"analyst"}}
+```
+
+Key fields: score, grade, missing_fields.
+
+### Context summary (lean by default)
+**When:** You need fast triage without large doc payloads.
+**Why:** Keep analysis flow high-signal.
+
+```json
+{"name":"get_context","arguments":{"id_or_name":"model.package.model_name","lineage_depth":1,"include_columns":true,"include_tests":true,"include_upstream":true,"include_downstream":false,"include_docs":false}}
+```
+
+Key fields: grain_summary, nova_summary, tests.summary, upstream.entities.
+
+## Execution
+
+### Validate filter values
+**When:** The question includes geography/segment filters.
+**Why:** Prevent wrong mappings (for example UK/GB/United Kingdom confusion).
+
+```json
+{"name":"execute_sql","arguments":{"statement":"select <geo_col>, count(*) as rows from <relation> where <time_col> between <start> and <end> group by 1 order by rows desc limit 50"}}
+```
+
+Key fields: candidate value strings for exact SQL filter.
+
+### Execute SQL
+**When:** You must compute metrics.
+**Why:** Produce the final numbers for reporting.
+
+```json
+{"name":"execute_sql","arguments":{"statement":"SELECT ..."}}
+```
+
+Key fields: result rows and column names.
+
+### Execute final SQL (sessions + CR pattern)
+**When:** User asks for a volume metric and conversion rate together.
+**Why:** Keep one scoped dataset and compute both metrics consistently.
+
+```json
+{"name":"execute_sql","arguments":{"statement":"with scoped as (...) select sessions, conversion_rate from ..."}}
+```
+
+Key fields: sessions, conversion_rate, and any requested breakdown columns.
+
+### Health check
+**When:** After reloads or if queries fail unexpectedly.
+**Why:** Ensure manifest is ready.
+
+```json
+{"name":"health","arguments":{}}
+```
+
+Key fields: status, refresh details.
+
+### Find by path (model scoped)
+**When:** You know the folder structure and want models only.
+**Why:** Avoid test-only matches.
+
+```json
+{"name":"find_by_path","arguments":{"path_pattern":"models/**/ecommerce/**","resource_types":["model"],"limit":10,"detail":"standard"}}
+```
+
+## End-to-end recipe: "sessions and CR last week for UK"
+
+1. `search` with query `"sessions conversion rate ecommerce uk"` and `persona: "analyst"`.
+2. `get_entity` on top 1-3 candidates; choose one execution relation.
+3. `get_columns` to pick `<time_col>` and `<geo_col>`.
+4. `execute_sql` filter-value validation query to find UK value(s).
+5. `execute_sql` final aggregate query with validated value(s).
+6. Return result table and include: selected relation, selected columns, validated UK mapping.

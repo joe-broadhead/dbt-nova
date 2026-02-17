@@ -1,0 +1,141 @@
+site_name: dbt-nova
+site_description: High-performance MCP server for dbt manifest search and analysis
+site_url: https://joe-broadhead.github.io/dbt-nova/
+repo_url: https://github.com/joe-broadhead/dbt-nova
+repo_name: dbt-nova
+edit_uri: edit/master/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+  icon:
+    repo: fontawesome/brands/github
+  font:
+    text: Inter
+    code: JetBrains Mono
+
+plugins:
+  - search
+  - minify:
+      minify_html: true
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/joe-broadhead/dbt-nova
+  generator: false
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - https://unpkg.com/mermaid@10.9.0/dist/mermaid.min.js
+  - javascripts/mermaid-init.js
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+    - MCP Clients: getting-started/mcp-clients.md
+    - Agent Skills: getting-started/skills.md
+    - Glossary: getting-started/glossary.md
+  - Personas:
+    - Overview: personas/overview.md
+    - Analyst: personas/analyst.md
+    - Engineer: personas/engineer.md
+    - Governance: personas/governance.md
+  - Configuration:
+    - Reference: configuration/reference.md
+    - Manifest Sources: configuration/manifest-sources.md
+    - Search Defaults: configuration/search-defaults.md
+    - Tuning: configuration/tuning.md
+  - API:
+    - Quick Reference: api/quick-reference.md
+    - Tools Reference: api/tools.md
+    - Response Format: api/response-format.md
+    - Error Codes: api/error-codes.md
+    - Metrics Reference: api/metrics-reference.md
+  - Features:
+    - Analysis Recipes: features/recipes.md
+    - Column Lineage: features/column-lineage.md
+    - Metadata Scoring: features/metadata-scoring.md
+    - Search Ranking: features/search-ranking.md
+    - Persona Summaries: features/persona-summaries.md
+    - Nova Meta Overview: features/nova-meta-overview.md
+    - Nova Meta (Models): features/nova-meta-models.md
+    - Nova Meta (Metrics): features/nova-meta-metrics.md
+  - Operations:
+    - Ops & Troubleshooting: operations/ops.md
+    - Performance: operations/performance.md
+    - Limitations: operations/limitations.md
+    - Troubleshooting: operations/troubleshooting.md
+    - Security: operations/security.md
+    - Testing: operations/testing.md
+  - Development:
+    - Architecture: development/architecture.md
+    - CI & Automation: development/ci.md
+    - Release: development/release.md

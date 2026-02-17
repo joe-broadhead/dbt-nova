@@ -1,0 +1,53 @@
+---
+source: tests/snapshots.rs
+assertion_line: 39
+expression: result
+---
+{
+  "count": 1,
+  "data": {
+    "breakdown": null,
+    "categories": {
+      "documentation": {
+        "score": 14,
+        "weight": 0.15000000596046448,
+        "weighted": 2.470588445663452
+      },
+      "governance": {
+        "score": 0,
+        "weight": 0.550000011920929,
+        "weighted": 0.0
+      },
+      "quality": {
+        "score": 0,
+        "summary": {
+          "test_coverage": {
+            "baseline": 0,
+            "critical_columns": 0,
+            "critical_columns_tested": 0,
+            "critical_coverage_percent": 0,
+            "dimension_columns": 0,
+            "dimension_columns_tested": 0,
+            "dimension_coverage_percent": 0
+          }
+        },
+        "weight": 0.15000000596046448,
+        "weighted": 0.0
+      },
+      "semantic": {
+        "score": 0,
+        "weight": 0.15000000596046448,
+        "weighted": 0.0
+      }
+    },
+    "grade": "F",
+    "name": "fct__orders",
+    "overall_score": 2,
+    "persona": "governance",
+    "recommendations": [],
+    "resource_type": "model",
+    "scope": "entity",
+    "unique_id": "model.nova_test.fct__orders"
+  },
+  "success": true
+}

@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/joe-broadhead/dbt-nova/schemas/nova/v0.json",
+  "title": "Nova Meta Schema v0",
+  "x-nova-release": "0.0.0",
+  "type": "object",
+  "properties": {
+    "nova": {
+      "type": "object",
+      "properties": {
+        "role": { "enum": ["dimension", "measure", "metric", "identifier", "time"] },
+        "semantic_type": { "type": "string" },
+        "synonyms": { "type": "array", "items": { "type": "string" } },
+        "domains": { "type": "array", "items": { "type": "string" } },
+        "use_cases": { "type": "array", "items": { "type": "string" } },
+        "canonical": { "type": "boolean" },
+        "tier": { "enum": ["alpha", "beta", "gamma", "gold", "silver", "bronze"] },
+        "example_values": { "type": "array", "items": { "type": "string" } },
+        "grain": { "$ref": "#/$defs/NovaGrain" },
+        "measures": { "type": "array", "items": { "$ref": "#/$defs/NovaMeasure" } },
+        "metric": { "$ref": "#/$defs/NovaMetric" },
+        "metrics": { "type": "array", "items": { "$ref": "#/$defs/NovaMetric" } },
+        "governance": { "$ref": "#/$defs/NovaGovernance" }
+      }
+    }
+  },
+  "$defs": {
+    "NovaGrain": {
+      "type": "object",
+      "properties": {
+        "primary_key": { "type": "array", "items": { "type": "string" } },
+        "time_field": { "type": "string" },
+        "dimensions": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "NovaMeasure": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "type": {
+          "enum": ["sum", "count", "avg", "min", "max", "count_distinct", "ratio"]
+        },
+        "expression": { "type": "string" },
+        "description": { "type": "string" },
+        "field": { "type": "string" },
+        "synonyms": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["name", "type"]
+    },
+    "NovaMetric": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "expression": { "type": "string" },
+        "synonyms": { "type": "array", "items": { "type": "string" } },
+        "template": { "type": "boolean" },
+        "grain": { "$ref": "#/$defs/NovaGrain" },
+        "recommended_filters": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NovaRecommendedFilter" }
+        }
+      },
+      "required": ["name"]
+    },
+    "NovaRecommendedFilter": {
+      "type": "object",
+      "properties": {
+        "field": { "type": "string" },
+        "operator": {
+          "type": "string",
+          "description": "Expected values: in, not_in, =, !=, >, >=, <, <=, between, is_null, is_not_null."
+        },
+        "values": { "type": "array", "items": { "type": "string" } },
+        "label": { "type": "string" }
+      },
+      "required": ["field", "operator"]
+    },
+    "NovaGovernance": {
+      "type": "object",
+      "properties": {
+        "sensitivity": {
+          "enum": ["none", "public", "internal", "confidential", "low", "medium", "high", "restricted"]
+        },
+        "pii": {
+          "oneOf": [
+            { "type": "boolean" },
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ]
+        },
+        "compliance": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

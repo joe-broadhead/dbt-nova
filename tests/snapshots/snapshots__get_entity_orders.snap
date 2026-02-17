@@ -1,0 +1,20 @@
+---
+source: tests/snapshots.rs
+assertion_line: 22
+expression: result
+---
+{
+  "count": 1,
+  "data": {
+    "alias": "fct__orders",
+    "database": "analytics",
+    "description": "Orders fact table.",
+    "name": "fct__orders",
+    "original_file_path": "models/marts/sales/fct__orders.sql",
+    "package_name": "nova_test",
+    "resource_type": "model",
+    "schema": "dbt_test",
+    "unique_id": "model.nova_test.fct__orders"
+  },
+  "success": true
+}
