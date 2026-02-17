@@ -1,0 +1,100 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
+    "dbt_version": "1.10.2",
+    "project_name": "nova_test"
+  },
+  "nodes": {
+    "model.nova_test.model_extra_a": {
+      "name": "model_extra_a",
+      "resource_type": "model",
+      "package_name": "nova_test",
+      "description": "Basic model without metrics for testing.",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "path": "test_models/model_extra_a.sql",
+      "original_file_path": "test_models/model_extra_a.sql",
+      "unique_id": "model.nova_test.model_extra_a",
+      "fqn": ["nova_test", "test_models", "model_extra_a"],
+      "alias": "model_extra_a",
+      "checksum": { "name": "sha256", "checksum": "model_extra_a" },
+      "config": { "enabled": true },
+      "meta": {}
+    },
+    "model.nova_test.metrics_no_expression": {
+      "name": "metrics_no_expression",
+      "resource_type": "model",
+      "package_name": "nova_test",
+      "description": "Model with metrics but no expression.",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "path": "test_models/metrics_no_expression.sql",
+      "original_file_path": "test_models/metrics_no_expression.sql",
+      "unique_id": "model.nova_test.metrics_no_expression",
+      "fqn": ["nova_test", "test_models", "metrics_no_expression"],
+      "alias": "metrics_no_expression",
+      "checksum": { "name": "sha256", "checksum": "metrics_no_expression" },
+      "config": { "enabled": true },
+      "meta": {
+          "nova": {
+              "metrics": [
+                  {
+                      "name": "a_metric"
+                  }
+              ]
+          }
+      }
+    },
+    "model.nova_test.metrics_with_expression": {
+      "name": "metrics_with_expression",
+      "resource_type": "model",
+      "package_name": "nova_test",
+      "description": "Model with metrics and expression.",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "path": "test_models/metrics_with_expression.sql",
+      "original_file_path": "test_models/metrics_with_expression.sql",
+      "unique_id": "model.nova_test.metrics_with_expression",
+      "fqn": ["nova_test", "test_models", "metrics_with_expression"],
+      "alias": "metrics_with_expression",
+      "checksum": { "name": "sha256", "checksum": "metrics_with_expression" },
+      "config": { "enabled": true },
+      "meta": {
+          "nova": {
+              "metrics": [
+                  {
+                      "name": "a_metric",
+                      "expression": "count(*)"
+                  }
+              ]
+          }
+      }
+    },
+    "model.nova_test.metrics_with_expression_and_synonyms": {
+      "name": "metrics_with_expression_and_synonyms",
+      "resource_type": "model",
+      "package_name": "nova_test",
+      "description": "Model with metrics, expression and synonyms.",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "path": "test_models/metrics_with_expression_and_synonyms.sql",
+      "original_file_path": "test_models/metrics_with_expression_and_synonyms.sql",
+      "unique_id": "model.nova_test.metrics_with_expression_and_synonyms",
+      "fqn": ["nova_test", "test_models", "metrics_with_expression_and_synonyms"],
+      "alias": "metrics_with_expression_and_synonyms",
+      "checksum": { "name": "sha256", "checksum": "metrics_with_expression_and_synonyms" },
+      "config": { "enabled": true },
+      "meta": {
+          "nova": {
+              "metrics": [
+                  {
+                      "name": "a_metric",
+                      "expression": "count(*)",
+                      "synonyms": ["a_synonym"]
+                  }
+              ]
+          }
+      }
+    }
+  }
+}

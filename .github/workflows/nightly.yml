@@ -1,0 +1,52 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust Nightly
+        uses: dtolnay/rust-toolchain@0f1b44df7e9cbb178d781a242338dfa5e243ad7f
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@288875dd3d64326724fa6d9593062d9f8ba0b131
+        with:
+          tool: cargo-fuzz@0.12.0
+
+      - name: Run Fuzz Targets (short)
+        run: |
+          cargo fuzz run manifest_entity -- -max_total_time=60
+
+  deny:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@288875dd3d64326724fa6d9593062d9f8ba0b131
+        with:
+          tool: cargo-deny@0.19.0
+
+      - name: Validate advisory ignore expiry metadata
+        run: scripts/check_advisory_ignores.sh
+
+      - name: Cargo Deny
+        run: cargo deny check

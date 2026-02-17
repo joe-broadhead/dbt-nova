@@ -1,0 +1,98 @@
+{
+  "manifest_path": "tests/fixtures/nova_manifest.json",
+  "top_k": 10,
+  "queries": [
+    {
+      "id": "orders_fact",
+      "query": "orders fact table",
+      "persona": "analyst",
+      "resource_types": ["model"],
+      "relevant": [
+        { "unique_id": "model.nova_test.fct__orders", "grade": 3.0 }
+      ]
+    },
+    {
+      "id": "customer_dimension",
+      "query": "customer dimension",
+      "persona": "analyst",
+      "resource_types": ["model"],
+      "relevant": [
+        { "unique_id": "model.nova_test.dim__customers", "grade": 3.0 }
+      ]
+    },
+    {
+      "id": "product_dimension",
+      "query": "product dimension",
+      "persona": "analyst",
+      "resource_types": ["model"],
+      "relevant": [
+        { "unique_id": "model.nova_test.dim__products", "grade": 3.0 }
+      ]
+    },
+    {
+      "id": "traffic_sessions_stage",
+      "query": "traffic sessions staging",
+      "persona": "analyst",
+      "resource_types": ["model"],
+      "relevant": [
+        { "unique_id": "model.nova_test.stg__traffic_sessions", "grade": 3.0 }
+      ]
+    },
+    {
+      "id": "raw_events_stage",
+      "query": "raw events staging model",
+      "persona": "engineer",
+      "resource_types": ["model"],
+      "relevant": [
+        { "unique_id": "model.nova_test.stg__raw_events", "grade": 3.0 }
+      ]
+    },
+    {
+      "id": "campaign_rollup",
+      "query": "campaign features rollup",
+      "persona": "engineer",
+      "resource_types": ["model"],
+      "relevant": [
+        { "unique_id": "model.nova_test.int__campaign_features", "grade": 3.0 }
+      ]
+    },
+    {
+      "id": "referring_domain_column",
+      "query": "referrer domain",
+      "persona": "governance",
+      "resource_types": ["model", "test"],
+      "relevant": [
+        { "unique_id": "model.nova_test.stg__traffic_sessions", "grade": 3.0 },
+        { "unique_id": "test.nova_test.not_null_referring_domain", "grade": 2.0 },
+        { "unique_id": "test.nova_test.unique_referring_domain", "grade": 2.0 }
+      ]
+    },
+    {
+      "id": "source_raw_events",
+      "query": "raw events source",
+      "persona": "engineer",
+      "resource_types": ["source"],
+      "relevant": [
+        { "unique_id": "source.nova_test.raw.events", "grade": 3.0 }
+      ]
+    },
+    {
+      "id": "not_null_test",
+      "query": "not null referring domain test",
+      "persona": "governance",
+      "resource_types": ["test"],
+      "relevant": [
+        { "unique_id": "test.nova_test.not_null_referring_domain", "grade": 3.0 }
+      ]
+    },
+    {
+      "id": "unique_test",
+      "query": "unique referring domain",
+      "persona": "governance",
+      "resource_types": ["test"],
+      "relevant": [
+        { "unique_id": "test.nova_test.unique_referring_domain", "grade": 3.0 }
+      ]
+    }
+  ]
+}

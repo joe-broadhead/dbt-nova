@@ -1,0 +1,70 @@
+[package]
+name = "dbt-nova"
+version = "0.0.0"
+rust-version = "1.93"
+edition = "2024"
+description = "High-performance MCP server for searching and analyzing dbt manifest files"
+license = "MIT"
+repository = "https://github.com/joe-broadhead/dbt-nova"
+keywords = ["dbt", "mcp", "search", "metadata", "lineage"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+rmcp = { version = "0.14.0", features = ["server", "macros", "transport-io"] }
+schemars = { version = "1.2", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+regress = "0.9"
+uuid = { version = "1", features = ["serde"] }
+rkyv = { version = "0.8", features = ["bytecheck", "std"] }
+rkyv_derive = { version = "0.8", features = ["bytecheck"] }
+bytecheck = "0.8"
+tokio = { version = "1.0", features = ["full"] }
+thiserror = "1.0"
+sqlparser = "0.60"
+tantivy = "0.22"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rayon = "1.10"
+lru = "0.16.3"
+moka = { version = "0.12", features = ["sync"] }
+memmap2 = "0.9"
+blake3 = "1.5"
+fs4 = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+jsonwebtoken = "9"
+base64 = "0.22"
+zstd = "0.13"
+aws-config = { version = "1.1", optional = true, features = ["behavior-version-latest"] }
+aws-sdk-s3 = { version = "1.1", optional = true }
+google-cloud-storage = { version = "0.17", optional = true }
+fastembed = { version = "3.14.1", optional = true, default-features = false, features = ["online", "ort-download-binaries"] }
+ort-sys = "=2.0.0-rc.4"
+
+[features]
+default = ["embeddings", "s3", "gcs"]
+embeddings = ["fastembed"]
+s3 = ["aws-config", "aws-sdk-s3"]
+gcs = ["google-cloud-storage"]
+
+[dev-dependencies]
+proptest = "1"
+tempfile = "3"
+jsonschema = "0.40.2"
+wiremock = "0.6"
+criterion = "0.5"
+insta = { version = "1.39", features = ["json"] }
+
+[build-dependencies]
+typify = "0.1"
+serde_json = "1.0"
+schemars = "1.2"
+schemars_0_8 = { package = "schemars", version = "0.8" }
+
+[[bench]]
+name = "search_bench"
+harness = false
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

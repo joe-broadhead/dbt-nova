@@ -1,0 +1,14 @@
+/target
+/site
+*.log
+
+.dbt-nova
+.fastembed_cache
+
+.gemini
+.claude
+.codex
+
+/fuzz/target
+/fuzz/corpus
+/fuzz/artifacts

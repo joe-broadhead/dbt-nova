@@ -1,0 +1,16 @@
+pub mod entity;
+pub(crate) mod lineage_sql;
+pub mod loader;
+pub mod rkyv_cache;
+pub mod rkyv_embeddings;
+pub mod rkyv_indexes;
+pub mod rkyv_sparse_embeddings;
+pub mod rkyv_types;
+pub mod search;
+pub mod source;
+pub mod store;
+pub mod tantivy_search;
+pub mod vector_search;
+
+pub use search::ManifestSearch;
+pub use tantivy_search::TantivySearcher;

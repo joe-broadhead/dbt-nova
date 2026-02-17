@@ -1,0 +1,287 @@
+{
+  "manifest_path": "manifest.json",
+  "manifest_uri": "",
+  "manifest_cache_dir": "",
+  "recipes_dir": "analyses/recipes",
+  "manifest_refresh_secs": 300,
+  "manifest_max_bytes": 268435456,
+  "manifest_http_connect_timeout_secs": 10,
+  "manifest_http_timeout_secs": 120,
+  "manifest_fetch_timeout_secs": 300,
+  "manifest_allow_http": false,
+  "storage_dir": ".dbt-nova",
+  "storage_instance_id": "",
+  "cleanup_storage_on_start": false,
+  "storage_max_instances": 3,
+  "storage_min_versions": 2,
+  "storage_max_bytes": 5368709120,
+  "storage_build_lock_wait_secs": 300,
+  "storage_read_only": false,
+  "tool_rate_limits": "search=60,execute_sql=20,default=120",
+  "tool_rate_limit_window_secs": 60,
+  "sql_provider": "databricks",
+  "sql_max_row_limit": 10000,
+  "sql_max_byte_limit": 25000000,
+  "sql_max_chunks": 100,
+  "sql_max_poll_seconds": 900,
+  "sql_min_poll_interval_ms": 200,
+  "sql_max_concurrent": 10,
+  "sql_max_queue": 20,
+  "sql_queue_timeout_ms": 30000,
+  "entity_cache_size": 1000,
+  "batch_get_max_items": 5000,
+  "lineage_max_depth": 200,
+  "lineage_max_results": 10000,
+  "column_lineage": {
+    "default_confidence": "medium",
+    "levenshtein_threshold": 0.75,
+    "sql_proximity_max_distance": 100,
+    "min_prefix_suffix_length": 2,
+    "min_levenshtein_length": 3,
+    "max_results": 10000,
+    "max_depth": 100,
+    "max_match_candidates": 10000,
+    "matching": {
+      "exact_match": {
+        "enabled": true,
+        "confidence_tier": "high",
+        "weight": 1.0
+      },
+      "sql_alias": {
+        "enabled": true,
+        "confidence_tier": "medium",
+        "weight": 0.9
+      },
+      "sql_proximity": {
+        "enabled": true,
+        "confidence_tier": "medium",
+        "weight": 0.8
+      },
+      "suffix_match": {
+        "enabled": true,
+        "confidence_tier": "low",
+        "weight": 0.4
+      },
+      "prefix_match": {
+        "enabled": true,
+        "confidence_tier": "low",
+        "weight": 0.4
+      },
+      "normalized_match": {
+        "enabled": true,
+        "confidence_tier": "low",
+        "weight": 0.5
+      },
+      "levenshtein_match": {
+        "enabled": true,
+        "confidence_tier": "low",
+        "weight": 0.6
+      }
+    }
+  },
+  "search": {
+    "manifest_hash": null,
+    "default_limit": 50,
+    "max_page_size": 2000,
+    "max_offset": 10000,
+    "lineage_cache_size": 2048,
+    "column_lineage_precompute": true,
+    "min_word_length": 2,
+    "max_query_length": 2000,
+    "max_path_pattern_length": 1000,
+    "index_dir": "index",
+    "index_writer_heap_bytes": 128000000,
+    "max_sql_chunk_bytes": 262144,
+    "dedup_fetch_multiplier": 8,
+    "enable_ngram": true,
+    "ngram_min": 3,
+    "ngram_max": 3,
+    "ngram_boost": 0.35,
+    "fuzzy_min_length": 4,
+    "fuzzy_mid_length": 7,
+    "fuzzy_max_distance": 2,
+    "highlight_max_chars": 240,
+    "highlight_max_fields": 5,
+    "highlight_format": "text",
+    "enable_suggestions": true,
+    "suggestions_limit": 7,
+    "field_boosts": {
+      "alias": 18.0,
+      "name": 12.0,
+      "description": 6.0,
+      "column": 4.0,
+      "tag": 3.0,
+      "path": 2.0,
+      "code": 1.5,
+      "nova_synonyms": 7.0,
+      "nova_domains": 4.0,
+      "nova_use_cases": 4.0,
+      "nova_measures": 8.0,
+      "nova_metric": 10.0,
+      "nova_sensitivity": 6.0,
+      "nova_pii": 8.0,
+      "nova_compliance": 6.0
+    },
+    "default_persona": null,
+    "persona_weights": {
+      "analyst": {
+        "bm25": 1.0,
+        "ngram": 1.1,
+        "fuzzy": 1.0,
+        "vector": 1.5,
+        "sparse": 1.2,
+        "measures": 1.3,
+        "metrics": 1.4,
+        "synonyms": 1.2,
+        "docs": 1.2,
+        "tests": 1.2,
+        "tags": 1.0,
+        "path": 0.9
+      },
+      "engineer": {
+        "bm25": 1.5,
+        "ngram": 1.0,
+        "fuzzy": 0.8,
+        "vector": 0.8,
+        "sparse": 1.0,
+        "measures": 0.9,
+        "metrics": 0.9,
+        "synonyms": 0.9,
+        "docs": 0.9,
+        "tests": 1.0,
+        "tags": 0.9,
+        "path": 1.3
+      },
+      "governance": {
+        "bm25": 1.2,
+        "ngram": 1.0,
+        "fuzzy": 1.0,
+        "vector": 1.0,
+        "sparse": 1.3,
+        "measures": 0.9,
+        "metrics": 0.9,
+        "synonyms": 1.0,
+        "docs": 1.3,
+        "tests": 1.4,
+        "tags": 1.4,
+        "path": 1.0
+      },
+      "default": {
+        "bm25": 1.0,
+        "ngram": 1.0,
+        "fuzzy": 1.0,
+        "vector": 1.0,
+        "sparse": 1.0,
+        "measures": 1.0,
+        "metrics": 1.0,
+        "synonyms": 1.0,
+        "docs": 1.0,
+        "tests": 1.0,
+        "tags": 1.0,
+        "path": 1.0
+      }
+    },
+    "analyst_semantic": {
+      "metric_definition_multiplier": 1.09,
+      "measure_definition_multiplier": 1.05,
+      "grain_multiplier": 1.05,
+      "time_field_multiplier": 1.03,
+      "dimension_overlap_one_multiplier": 1.03,
+      "dimension_overlap_two_multiplier": 1.06,
+      "dimension_overlap_three_plus_multiplier": 1.09,
+      "missing_metric_or_measure_multiplier": 0.96,
+      "missing_grain_multiplier": 0.97,
+      "min_multiplier": 0.85,
+      "max_multiplier": 1.35
+    },
+    "staging_deboost_factor": 0.6,
+    "nova_measure_match_multiplier": 1.15,
+    "nova_metric_match_multiplier": 1.2,
+    "nova_synonym_match_multiplier": 1.2,
+    "nova_canonical_multiplier": 1.08,
+    "nova_canonical_match_multiplier": 1.35,
+    "nova_canonical_match_bonus": 2.5,
+    "engineer_exact_match_multiplier": 2.0,
+    "enable_rrf": true,
+    "rrf_k": 60.0,
+    "rrf_overfetch": 3,
+    "search_circuit_failure_threshold": 3,
+    "search_circuit_open_seconds": 60,
+    "search_timeout_ms": 30000,
+    "search_max_concurrent": 4,
+    "search_max_queue": 8,
+    "enable_vector_search": true,
+    "embedding_model": "intfloat/multilingual-e5-base",
+    "vector_top_k": 200,
+    "vector_max_chars": 4000,
+    "embeddings_max_decompressed_bytes": 4294967296,
+    "enable_vector_ann": true,
+    "enable_vector_quantization": false,
+    "vector_ann_bits": 16,
+    "vector_ann_hamming": 1,
+    "vector_ann_max_candidates": 5000,
+    "vector_ann_min_candidates": 200,
+    "embedding_cache_dir": "",
+    "embedding_batch_size": 128,
+    "enable_sparse_search": true,
+    "sparse_top_k": 200,
+    "enable_reranker": true,
+    "reranker_model": "jinaai/jina-reranker-v2-base-multilingual",
+    "rerank_top_n": 20
+  },
+  "metadata_score": {
+    "persona_weights": {
+      "analyst": {
+        "documentation": 0.2,
+        "semantic": 0.45,
+        "governance": 0.15,
+        "quality": 0.2
+      },
+      "engineer": {
+        "documentation": 0.2,
+        "semantic": 0.15,
+        "governance": 0.15,
+        "quality": 0.5
+      },
+      "governance": {
+        "documentation": 0.15,
+        "semantic": 0.15,
+        "governance": 0.55,
+        "quality": 0.15
+      },
+      "default": {
+        "documentation": 0.3,
+        "semantic": 0.25,
+        "governance": 0.25,
+        "quality": 0.2
+      }
+    }
+  },
+  "layer_rules": [],
+  "governance_required_fields": {
+    "model": [
+      "nova.domains",
+      "nova.use_cases",
+      "nova.synonyms",
+      "nova.tier",
+      "nova.governance.sensitivity",
+      "nova.governance.pii",
+      "nova.governance.compliance"
+    ],
+    "source": [
+      "nova.domains",
+      "nova.governance.sensitivity",
+      "nova.governance.pii",
+      "nova.governance.compliance"
+    ]
+  },
+  "governance_gate": {
+    "min_metadata_score": 90,
+    "min_documentation_coverage_pct": 80.0,
+    "require_tests": true,
+    "require_owner": true,
+    "require_required_fields": true,
+    "require_compliance_for_pii": true,
+    "block_on_failure": true
+  }
+}

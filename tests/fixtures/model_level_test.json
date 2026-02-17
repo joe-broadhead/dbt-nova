@@ -1,0 +1,60 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
+    "dbt_version": "1.10.2",
+    "project_name": "nova_test"
+  },
+  "nodes": {
+    "model.nova_test.model_with_model_level_tests": {
+      "name": "model_with_model_level_tests",
+      "resource_type": "model",
+      "package_name": "nova_test",
+      "description": "A model with model-level data tests.",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "path": "test_models/model_with_model_level_tests.sql",
+      "original_file_path": "test_models/model_with_model_level_tests.sql",
+      "unique_id": "model.nova_test.model_with_model_level_tests",
+      "fqn": ["nova_test", "test_models", "model_with_model_level_tests"],
+      "alias": "model_with_model_level_tests",
+      "checksum": { "name": "sha256", "checksum": "model_with_model_level_tests" },
+      "config": { "enabled": true }
+    },
+    "test.nova_test.dbt_expectations_expect_table_row_count_to_be_between_1_and_1000": {
+        "name": "dbt_expectations_expect_table_row_count_to_be_between_1_and_1000",
+        "resource_type": "test",
+        "package_name": "nova_test",
+        "database": "analytics",
+        "schema": "dbt_test",
+        "path": "tests/generic/dbt_expectations.yml",
+        "original_file_path": "models/tests/generic/dbt_expectations.yml",
+        "unique_id": "test.nova_test.dbt_expectations_expect_table_row_count_to_be_between_1_and_1000",
+        "fqn": [
+            "nova_test",
+            "tests",
+            "generic",
+            "dbt_expectations_expect_table_row_count_to_be_between_1_and_1000"
+        ],
+        "alias": "dbt_expectations_expect_table_row_count_to_be_between_1_and_1000",
+        "checksum": {
+            "name": "sha256",
+            "checksum": "dbt_expectations_expect_table_row_count_to_be_between_1_and_1000"
+        },
+        "attached_node": "model.nova_test.model_with_model_level_tests",
+        "column_name": null,
+        "test_metadata": {
+            "name": "expect_table_row_count_to_be_between",
+            "kwargs": {
+                "min_value": 1,
+                "max_value": 1000
+            }
+        },
+        "depends_on": {
+            "nodes": [
+            "model.nova_test.model_with_model_level_tests"
+            ],
+            "macros": []
+        }
+    }
+  }
+}

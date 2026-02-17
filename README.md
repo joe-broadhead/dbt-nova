@@ -1,0 +1,200 @@
+# DBT Nova
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/Rust-1.93%2B-orange.svg?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Docs](https://img.shields.io/badge/docs-mkdocs%20material-blue.svg?logo=materialformkdocs&logoColor=white)](https://joe-broadhead.github.io/dbt-nova)
+[![Release](https://img.shields.io/github/v/release/joe-broadhead/dbt-nova?label=release&logo=github)](https://github.com/joe-broadhead/dbt-nova/releases/latest)
+
+
+```
+    ____  ____ ______   _   __                
+   / __ \/ __ )_  __/  / | / /___ _   ______ _
+  / / / / __  |/ /    /  |/ / __ \ | / / __ `/
+ / /_/ / /_/ // /    / /|  / /_/ / |/ / /_/ / 
+/_____/_____//_/    /_/ |_/\____/|___/\__,_/  
+
+     The metadata bridge
+          for agents.
+```
+
+DBT Nova is the **metadata bridge** between your dbt project and agentic workflows.
+In practice, DBT Nova bridges raw dbt artifacts to agent-ready intelligence by
+normalizing manifest and `meta.nova` metadata into indexed, queryable
+representations and exposing them through MCP tools for discovery, lineage,
+scoring, and governance.
+
+Use it with MCP clients to power **team productivity**: analyst, engineer, and
+governance skills that deliver trusted answers, safe impact analysis, and
+consistent metadata quality.
+
+## What Nova Does
+
+- **Connects dbt to MCP** so agents can discover and reason about your project.
+- **Unifies search + lineage + scoring** under one fast local service.
+- **Enforces governance** through metadata scoring and compliance signals.
+- **Scales with teams** via personas, skills, and standard workflows.
+
+## 30-Second Example
+
+Question:
+`"Give me the UK weekly digital KPI report with YoY deltas."`
+
+The agent can run a deterministic workflow:
+
+```json
+{"name":"search_recipes","arguments":{"topic":"weekly","query":"digital country","include_queries":true,"limit":5}}
+```
+
+```json
+{"name":"run_recipe","arguments":{"recipe_id":"weekly_country_kpi_report","parameters":{"COUNTRY_CODE":"GB","WEEK_START":"2026-02-01","WEEK_END":"2026-02-07"},"stop_on_failure":true}}
+```
+
+Then optionally validate context and trust:
+
+```json
+{"name":"get_context","arguments":{"id_or_name":"model.package.country_kpi_base","include_columns":true,"include_tests":true,"include_upstream":true,"include_downstream":false}}
+```
+
+Result:
+- One repeatable workflow
+- Consistent KPI definitions from dbt + `meta.nova`
+- Reusable output format across teams and weeks
+
+## Why Semantic Sovereignty Matters
+
+DBT Nova is built around semantic sovereignty:
+
+- Your definitions live in **dbt code + `meta.nova`**, versioned in your repo.
+- Nova reads open dbt artifacts (`manifest.json`) and serves them to agents.
+- You can move warehouses or clouds without rewriting your semantic layer into a vendor-specific system.
+- Analysts and agents use the same governed definitions engineering maintains.
+
+## How It Works (Short Version)
+
+1. Load a dbt manifest (local or remote).
+2. Build indexes + embeddings (cached for fast restarts).
+3. Serve MCP tools for search, lineage, coverage, scoring, SQL, and recipe workflows.
+4. Agents call those tools through persona skills.
+
+## Architecture at a Glance
+
+```mermaid
+flowchart LR
+  A[dbt manifest] --> B[dbt-nova]
+  B --> C[Index + embeddings cache]
+  B --> D[MCP tools]
+  D --> E[Agents / clients]
+```
+
+## Nova Meta (Core Concept)
+
+Nova meta is the human‑intent layer (`meta.nova`) that powers discovery,
+scoring, and governance. Start here:
+**[Nova Meta Overview](docs/features/nova-meta-overview.md)**.
+
+## Highlights
+
+- **MCP‑First**: plug into agent runtimes with tool schemas and skills
+- **Agent Skills & Personas**: analyst, engineer, governance workflows
+- **Deterministic Recipes**: reusable analysis workflows via `search_recipes`, `get_recipe`, `run_recipe`
+- **Hybrid Search**: BM25 + n‑gram + fuzzy + dense + sparse + reranker
+- **Governance‑grade Metadata**: scoring, gaps, and A‑grade standards
+- **100% Field Access**: full JSON preserved on disk
+- **Background Indexing** with readiness via `health`
+- **Column & Entity Lineage**, test coverage, documentation gaps
+- **Warehouse SQL Execution** for Databricks and BigQuery
+
+## Who It’s For
+
+| Persona | Typical work |
+| --- | --- |
+| Analyst | Find datasets, validate metrics, build reports |
+| Engineer | Build models, assess impact, add tests |
+| Governance | Audit metadata, enforce standards, track gaps |
+
+## MCP Client Example
+
+Minimal MCP client config:
+
+```json
+{
+  "mcpServers": {
+    "dbt-nova": {
+      "command": "dbt-nova",
+      "args": [],
+      "env": {
+        "DBT_MANIFEST_PATH": "/path/to/manifest.json"
+      }
+    }
+  }
+}
+```
+
+## Quick Start
+
+```bash
+# Install (defaults to bundled artifact with pre-downloaded models)
+# Public repo (unauthenticated)
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | bash
+
+# Private repo (authenticated)
+GH_TOKEN="$(gh auth token)"
+curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
+  https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+  DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash
+
+export DBT_MANIFEST_PATH=/path/to/manifest.json
+./dbt-nova
+
+# Remote manifest (optional)
+export DBT_NOVA_MANIFEST_URI=dbfs:///mnt/analytics/manifest.json
+./dbt-nova
+```
+
+See installation options in the docs:
+**[Installation](docs/getting-started/installation.md)**.
+
+For recurring analysis topics, start with:
+- **[Analysis Recipes](docs/features/recipes.md)** to design deterministic workflows.
+- `search_recipes` -> `get_recipe` -> `run_recipe` in your MCP client.
+
+## Release Size
+
+Default builds include embeddings + S3/GCS SDK support. For a minimal binary, build
+with `--no-default-features` and selectively enable `embeddings`, `s3`, or `gcs`.
+
+See `docs/configuration/manifest-sources.md` for manifest auth details.
+
+## Storage & Concurrency
+
+Nova stores artifacts under `<manifest_dir>/.dbt-nova/` with shared embeddings cache and
+per‑manifest instances in `instances/`. Multiple processes safely reuse the same indexes
+via build locks and in‑use locks; pruning removes only inactive instances.
+
+## Documentation
+
+- [Docs Index](docs/index.md)
+- [Installation](docs/getting-started/installation.md)
+- [Quick Start](docs/getting-started/quickstart.md)
+- [MCP Client Configs](docs/getting-started/mcp-clients.md)
+- [Configuration Reference](docs/configuration/reference.md)
+- [Manifest Sources](docs/configuration/manifest-sources.md)
+- [Search Defaults](docs/configuration/search-defaults.md)
+- [Tools Reference](docs/api/tools.md)
+- [Response Format](docs/api/response-format.md)
+- [Analysis Recipes](docs/features/recipes.md)
+- [Search Ranking](docs/features/search-ranking.md)
+- [Nova Meta Overview](docs/features/nova-meta-overview.md)
+- [Nova Meta: Models](docs/features/nova-meta-models.md)
+- [Nova Meta: Metrics](docs/features/nova-meta-metrics.md)
+- [Personas](docs/personas/overview.md)
+- [Architecture](docs/development/architecture.md)
+- [Operations & Troubleshooting](docs/operations/ops.md)
+- [Performance](docs/operations/performance.md)
+- [Security & Limits](docs/operations/security.md)
+- [Testing](docs/operations/testing.md)
+- [Release & Distribution](docs/development/release.md)
+
+## License
+
+MIT
