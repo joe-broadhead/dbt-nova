@@ -5,6 +5,24 @@ All notable changes to dbt-nova will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.1] - 2026-02-18
+
+### Fixed
+
+- Bundled model layout normalization now handles both `snapshots/<rev>/model.onnx` and
+  `snapshots/<rev>/onnx/model.onnx` layouts in install and warmup flows.
+- Bundled model discovery now falls back to `~/.local/bin/models` when executable-relative
+  model lookup is unavailable in client runtime environments.
+- Nightly fuzz workflow now uses explicit fuzz directory resolution and cargo-fuzz manifest
+  metadata compatibility.
+- Warmup model readiness now counts distinct snapshot roots, preventing duplicate-path
+  inflation.
+
+### Changed
+
+- Release packaging now requires and bundles all 3 model families by default
+  (embedding, sparse, reranker).
+
 ## [0.0.0] - 2026-02-17
 
 ### Added
