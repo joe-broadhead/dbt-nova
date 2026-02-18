@@ -111,14 +111,14 @@ jobs:
 
           export DBT_NOVA_BIN="$PWD/dist/bundled/dbt-nova${{ matrix.ext }}"
           export DBT_NOVA_EMBEDDINGS_CACHE_DIR="$PWD/dist/bundled/models"
-          export DBT_NOVA_WARMUP_REQUIRED_MODELS=2
+          export DBT_NOVA_WARMUP_REQUIRED_MODELS=3
           export DBT_NOVA_WARMUP_TIMEOUT_SECS=900
           export DBT_NOVA_WARMUP_LOG_PATH="$PWD/dist/bundled/model-warmup.log"
           bash "$PWD/scripts/warm_models.sh" partial
 
           onnx_count="$(find "$PWD/dist/bundled/models" -type f -name "model.onnx" | wc -l | tr -d ' ')"
-          if [ "${onnx_count}" -lt 2 ]; then
-            echo "Model warmup incomplete: expected >=2 model.onnx files, found ${onnx_count}." >&2
+          if [ "${onnx_count}" -lt 3 ]; then
+            echo "Model warmup incomplete: expected >=3 model.onnx files, found ${onnx_count}." >&2
             if [ -f "$PWD/dist/bundled/model-warmup.log" ]; then
               echo "Warmup log:" >&2
               tail -n 120 "$PWD/dist/bundled/model-warmup.log" >&2 || true
