@@ -70,6 +70,8 @@ export DBT_MANIFEST_PATH=/path/to/your/dbt/project/target/manifest.json
 export DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/models"
 ```
 
+Use the same `DBT_NOVA_EMBEDDINGS_CACHE_DIR` value in your MCP client config.
+
 !!! tip "Pro Tip"
     Add this to your shell profile (`~/.bashrc`, `~/.zshrc`) to persist across sessions.
 
