@@ -105,33 +105,13 @@ jobs:
         run: |
           set -euo pipefail
           BIN="target/${{ matrix.target }}/release/dbt-nova${{ matrix.ext }}"
-          mkdir -p dist/slim dist/bundled/models
+          mkdir -p dist/slim
           cp "$BIN" dist/slim/
-          cp "$BIN" dist/bundled/
-
-          export DBT_NOVA_BIN="$PWD/dist/bundled/dbt-nova${{ matrix.ext }}"
-          export DBT_NOVA_EMBEDDINGS_CACHE_DIR="$PWD/dist/bundled/models"
-          export DBT_NOVA_WARMUP_REQUIRED_MODELS=3
-          export DBT_NOVA_WARMUP_TIMEOUT_SECS=900
-          export DBT_NOVA_WARMUP_LOG_PATH="$PWD/dist/bundled/model-warmup.log"
-          bash "$PWD/scripts/warm_models.sh" partial
-
-          onnx_count="$(find "$PWD/dist/bundled/models" -type f -name "model.onnx" | wc -l | tr -d ' ')"
-          if [ "${onnx_count}" -lt 3 ]; then
-            echo "Model warmup incomplete: expected >=3 model.onnx files, found ${onnx_count}." >&2
-            if [ -f "$PWD/dist/bundled/model-warmup.log" ]; then
-              echo "Warmup log:" >&2
-              tail -n 120 "$PWD/dist/bundled/model-warmup.log" >&2 || true
-            fi
-            exit 1
-          fi
 
           tar -C dist/slim -czf "dbt-nova-${{ matrix.asset }}.tar.gz" "dbt-nova${{ matrix.ext }}"
-          tar -C dist/bundled -czf "dbt-nova-${{ matrix.asset }}-bundled.tar.gz" "dbt-nova${{ matrix.ext }}" models
-          shasum -a 256 "dbt-nova-${{ matrix.asset }}.tar.gz" "dbt-nova-${{ matrix.asset }}-bundled.tar.gz" > "dbt-nova-${{ matrix.asset }}.sha256"
+          shasum -a 256 "dbt-nova-${{ matrix.asset }}.tar.gz" > "dbt-nova-${{ matrix.asset }}.sha256"
           for artifact in \
             "dbt-nova-${{ matrix.asset }}.tar.gz" \
-            "dbt-nova-${{ matrix.asset }}-bundled.tar.gz" \
             "dbt-nova-${{ matrix.asset }}.sha256"
           do
             COSIGN_EXPERIMENTAL=1 COSIGN_YES=1 cosign sign-blob \
@@ -146,7 +126,6 @@ jobs:
         with:
           subject-path: |
             dbt-nova-${{ matrix.asset }}.tar.gz
-            dbt-nova-${{ matrix.asset }}-bundled.tar.gz
             dbt-nova-${{ matrix.asset }}.sha256
 
       - name: Publish release assets
@@ -155,11 +134,8 @@ jobs:
           tag_name: ${{ needs.validate.outputs.release_tag }}
           files: |
             dbt-nova-${{ matrix.asset }}.tar.gz
-            dbt-nova-${{ matrix.asset }}-bundled.tar.gz
             dbt-nova-${{ matrix.asset }}.sha256
             dbt-nova-${{ matrix.asset }}.tar.gz.sig
             dbt-nova-${{ matrix.asset }}.tar.gz.crt
-            dbt-nova-${{ matrix.asset }}-bundled.tar.gz.sig
-            dbt-nova-${{ matrix.asset }}-bundled.tar.gz.crt
             dbt-nova-${{ matrix.asset }}.sha256.sig
             dbt-nova-${{ matrix.asset }}.sha256.crt

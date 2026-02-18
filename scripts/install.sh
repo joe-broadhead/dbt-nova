@@ -18,7 +18,7 @@ Usage: install.sh [--bundled|--slim] [--non-interactive|-y] [--install-dir <path
 Downloads and installs dbt-nova from GitHub releases.
 
 Defaults:
-  - flavor: bundled
+  - flavor: slim
   - install dir: $HOME/.local/bin
 
 Environment overrides:
@@ -27,7 +27,7 @@ Environment overrides:
   DBT_NOVA_VERSION                 Release tag (default: latest)
   DBT_NOVA_INSTALL_DIR             Install directory for dbt-nova
   DBT_NOVA_INSTALL_FLAVOR          bundled|slim
-  DBT_NOVA_INSTALL_NONINTERACTIVE  1 to skip prompts (defaults to bundled)
+  DBT_NOVA_INSTALL_NONINTERACTIVE  1 to skip prompts (defaults to slim)
   DBT_NOVA_VERIFY_CHECKSUM         1 to verify artifact checksum (default: 1)
   DBT_NOVA_VERIFY_SIGNATURE        1 to verify artifact signature (default: 0)
   DBT_NOVA_COSIGN_BINARY           Path to cosign executable (default: cosign)
@@ -227,48 +227,62 @@ fi
 
 if [[ -z "$INSTALL_FLAVOR" ]]; then
   if [[ "$NON_INTERACTIVE" == "1" || ! -t 0 ]]; then
-    INSTALL_FLAVOR="bundled"
+    INSTALL_FLAVOR="slim"
   else
-    read -r -p "Install bundled artifact with pre-downloaded models? (Recommended) [Y/n]: " choice
-    choice="${choice:-Y}"
-    if [[ "${choice,,}" == "n" ]]; then
-      INSTALL_FLAVOR="slim"
-    else
+    read -r -p "Install bundled artifact with pre-downloaded models? [y/N]: " choice
+    choice="${choice:-N}"
+    if [[ "${choice,,}" == "y" ]]; then
       INSTALL_FLAVOR="bundled"
+    else
+      INSTALL_FLAVOR="slim"
     fi
   fi
 fi
 
-if [[ "$INSTALL_FLAVOR" == "bundled" ]]; then
-  flavor_suffix="-bundled"
-elif [[ "$INSTALL_FLAVOR" == "slim" ]]; then
-  flavor_suffix=""
-else
-  echo "Invalid flavor '${INSTALL_FLAVOR}'. Use bundled or slim." >&2
-  exit 1
-fi
+set_artifact_urls() {
+  if [[ "$INSTALL_FLAVOR" == "bundled" ]]; then
+    flavor_suffix="-bundled"
+  elif [[ "$INSTALL_FLAVOR" == "slim" ]]; then
+    flavor_suffix=""
+  else
+    echo "Invalid flavor '${INSTALL_FLAVOR}'. Use bundled or slim." >&2
+    exit 1
+  fi
 
-asset="dbt-nova-${asset_os}-${asset_arch}${flavor_suffix}.tar.gz"
-checksum_file="dbt-nova-${asset_os}-${asset_arch}.sha256"
-signature_file="${checksum_file}.sig"
-certificate_file="${checksum_file}.crt"
-if [[ "${VERSION}" == "latest" ]]; then
-  url="https://github.com/${REPO_SLUG}/releases/latest/download/${asset}"
-  checksum_url="https://github.com/${REPO_SLUG}/releases/latest/download/${checksum_file}"
-  signature_url="https://github.com/${REPO_SLUG}/releases/latest/download/${signature_file}"
-  certificate_url="https://github.com/${REPO_SLUG}/releases/latest/download/${certificate_file}"
-else
-  url="https://github.com/${REPO_SLUG}/releases/download/${VERSION}/${asset}"
-  checksum_url="https://github.com/${REPO_SLUG}/releases/download/${VERSION}/${checksum_file}"
-  signature_url="https://github.com/${REPO_SLUG}/releases/download/${VERSION}/${signature_file}"
-  certificate_url="https://github.com/${REPO_SLUG}/releases/download/${VERSION}/${certificate_file}"
-fi
+  asset="dbt-nova-${asset_os}-${asset_arch}${flavor_suffix}.tar.gz"
+  checksum_file="dbt-nova-${asset_os}-${asset_arch}.sha256"
+  signature_file="${checksum_file}.sig"
+  certificate_file="${checksum_file}.crt"
+  if [[ "${VERSION}" == "latest" ]]; then
+    url="https://github.com/${REPO_SLUG}/releases/latest/download/${asset}"
+    checksum_url="https://github.com/${REPO_SLUG}/releases/latest/download/${checksum_file}"
+    signature_url="https://github.com/${REPO_SLUG}/releases/latest/download/${signature_file}"
+    certificate_url="https://github.com/${REPO_SLUG}/releases/latest/download/${certificate_file}"
+  else
+    url="https://github.com/${REPO_SLUG}/releases/download/${VERSION}/${asset}"
+    checksum_url="https://github.com/${REPO_SLUG}/releases/download/${VERSION}/${checksum_file}"
+    signature_url="https://github.com/${REPO_SLUG}/releases/download/${VERSION}/${signature_file}"
+    certificate_url="https://github.com/${REPO_SLUG}/releases/download/${VERSION}/${certificate_file}"
+  fi
+}
+
+set_artifact_urls
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
 echo "Downloading ${url}"
-download_file "${asset}" "${url}" "${tmp_dir}/${asset}"
+if ! download_file "${asset}" "${url}" "${tmp_dir}/${asset}"; then
+  if [[ "${INSTALL_FLAVOR}" == "bundled" ]]; then
+    echo "Bundled artifact unavailable. Falling back to slim artifact." >&2
+    INSTALL_FLAVOR="slim"
+    set_artifact_urls
+    echo "Downloading ${url}"
+    download_file "${asset}" "${url}" "${tmp_dir}/${asset}"
+  else
+    exit 1
+  fi
+fi
 
 if [[ "${VERIFY_CHECKSUM}" == "1" ]]; then
   echo "Downloading ${checksum_url}"

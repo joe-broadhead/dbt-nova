@@ -133,7 +133,7 @@ Minimal MCP client config:
 ## Quick Start
 
 ```bash
-# Install (defaults to bundled artifact with pre-downloaded models)
+# Install (defaults to slim artifact; models download on first run)
 # Public repo (unauthenticated)
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | bash
 

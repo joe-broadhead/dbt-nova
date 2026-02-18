@@ -10,8 +10,8 @@ Get dbt-nova running in under 5 minutes.
 ## Step 1: Install
 
 !!! tip "All-in-one option"
-    Use the installer script. It defaults to the **bundled** release with
-    pre-downloaded models for instant startup.
+    Use the installer script. It defaults to the **slim** release and
+    downloads models on first run.
 
 ```bash
 # Public repo (unauthenticated)

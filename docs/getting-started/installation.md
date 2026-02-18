@@ -17,7 +17,7 @@ Remote manifests are supported via `DBT_NOVA_MANIFEST_URI` (http(s), dbfs, s3, g
 
 ## Quick Install (Recommended)
 
-Use the installer script (defaults to **bundled** for instant startup):
+Use the installer script (defaults to **slim**):
 
 ```bash
 # Public repo (unauthenticated)
@@ -33,7 +33,7 @@ curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
 Non-interactive examples:
 
 ```bash
-# Public repo: force bundled (default in non-interactive mode)
+# Public repo: default slim in non-interactive mode
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
   DBT_NOVA_INSTALL_NONINTERACTIVE=1 bash
 
@@ -41,7 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scrip
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
   DBT_NOVA_INSTALL_NONINTERACTIVE=1 DBT_NOVA_INSTALL_FLAVOR=slim bash
 
-# Private repo: force bundled (default in non-interactive mode)
+# Private repo: default slim in non-interactive mode
 GH_TOKEN="$(gh auth token)"
 curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
   https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
@@ -54,8 +54,8 @@ curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
   DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" DBT_NOVA_INSTALL_NONINTERACTIVE=1 DBT_NOVA_INSTALL_FLAVOR=slim bash
 ```
 
-The installer places `dbt-nova` in `~/.local/bin` and, for bundled installs,
-also places `models/` next to the binary so Nova auto-discovers it.
+The installer places `dbt-nova` in `~/.local/bin`. For bundled installs, it also
+places `models/` next to the binary so Nova auto-discovers it.
 
 ## Verify Installation
 
@@ -112,10 +112,8 @@ cargo install --path . --features embeddings --locked
 
 ## Release Artifacts
 
-Two release types are published:
-
-- **Slim**: binary only (downloads models on first run)
-- **Bundled**: binary + pre-downloaded embedding and reranker models for instant start
+Published release assets are **slim** (binary only). Models download on first run
+or can be pre-warmed with `scripts/warm_models.sh`.
 
 Published targets:
 
@@ -131,14 +129,8 @@ Example:
 ```bash
 gh release download --repo joe-broadhead/dbt-nova \
   --pattern dbt-nova-linux-x86_64.tar.gz --output dbt-nova-linux-x86_64.tar.gz
-gh release download --repo joe-broadhead/dbt-nova \
-  --pattern dbt-nova-linux-x86_64-bundled.tar.gz --output dbt-nova-linux-x86_64-bundled.tar.gz
-tar -xzf dbt-nova-linux-x86_64-bundled.tar.gz
+tar -xzf dbt-nova-linux-x86_64.tar.gz
 ```
-
-When using a bundled release, a `models/` directory lives next to the binary and is
-used automatically as the embeddings cache. Manifests, indexes, and vector stores
-are **not** bundled and are built per user at runtime.
 
 ## Installer Script
 
@@ -146,7 +138,7 @@ are **not** bundled and are built per user at runtime.
 DBT_NOVA_REPO=joe-broadhead/dbt-nova bash scripts/install.sh
 ```
 
-The installer defaults to **bundled** and supports:
+The installer defaults to **slim** and supports:
 
 - `DBT_NOVA_INSTALL_FLAVOR=bundled|slim`
 - `DBT_NOVA_INSTALL_NONINTERACTIVE=1`
@@ -204,8 +196,9 @@ DBT_NOVA_WARMUP_MANIFEST_PATH=/path/to/manifest.json \
 ```
 
 If direct model downloads fail (for example, restricted access to Hugging Face),
-`scripts/warm_models.sh` now auto-falls back first to direct cache seeding from
-Hugging Face URLs, then to seeding models from the latest bundled GitHub release.
+`scripts/warm_models.sh` auto-falls back first to direct cache seeding from
+Hugging Face URLs, then to seeding models from the latest GitHub release (when a
+model bundle is available).
 You can control this behavior with:
 
 - `DBT_NOVA_WARMUP_FALLBACK_FROM_HF_DIRECT=1|0`

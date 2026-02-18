@@ -39,7 +39,7 @@ This repository uses GitHub Actions for CI, releases, and documentation.
 - **Action:**
   - validates tag is on `master`
   - runs one all-features Linux test gate
-  - builds and publishes **slim** + **bundled** assets for `linux-x86_64` and `macos-arm64`
+  - builds and publishes **slim** assets for `linux-x86_64` and `macos-arm64`
 
 ### Docs Deploy
 

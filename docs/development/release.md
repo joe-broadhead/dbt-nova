@@ -32,7 +32,7 @@ Before tagging:
 After merge to `master`:
 
 - [ ] Tagging happens automatically when the release PR is merged
-- [ ] Verify release assets (slim + bundled) on GitHub
+- [ ] Verify release assets on GitHub
 
 ## CI & Automation
 
@@ -58,7 +58,7 @@ This repo uses four GitHub Actions workflows for releases and documentation:
    - Actions:
      - validates tag is on `master`
      - runs one all-features test gate on Linux before packaging
-     - builds and publishes slim + bundled assets for `linux-x86_64` (Cloud Run)
+     - builds and publishes slim assets for `linux-x86_64` (Cloud Run)
        and `macos-arm64` (standard Apple Silicon macOS)
 
 4. **Docs Deploy** (`.github/workflows/docs.yml`)
@@ -72,7 +72,7 @@ Note: GitHub provenance attestations are only emitted when supported by the repo
 For user-owned private repositories, the attestation step is skipped.
 
 - `release.yml` emits `dbt-nova-<asset>.sha256` for each platform tarball.
-- The checksum files are uploaded with both slim and bundled assets.
+- The checksum files are uploaded with slim assets.
 - Signature files are also uploaded:
   - `<tarball>.sig` / `<tarball>.crt`
   - `<checksum_file>.sig` / `<checksum_file>.crt` (for example: `dbt-nova-linux-x86_64.sha256.sig`)
@@ -109,13 +109,9 @@ gh attestation verify dbt-nova-linux-x86_64.tar.gz \
   --owner joe-broadhead
 ```
 
-## Release Types
+## Release Type
 
 - **Slim**: binary only (downloads models on first run)
-- **Bundled**: binary + pre-downloaded models (`models/` beside binary)
-
-Bundled releases use the colocated `models/` directory as the embeddings cache so
-startup is instant and offline-friendly.
 
 By default, releases include S3/GCS SDK support. If you need a minimal binary,
 build with `--no-default-features` and enable only the features you need.
@@ -126,8 +122,8 @@ build with `--no-default-features` and enable only the features you need.
 DBT_NOVA_REPO=joe-broadhead/dbt-nova bash scripts/install.sh
 ```
 
-The installer defaults to **bundled**, can fetch either slim or bundled artifacts,
-and places the binary in `~/.local/bin` by default.
+The installer defaults to **slim**, supports bundled when available, and places
+the binary in `~/.local/bin` by default.
 
 Useful overrides:
 
@@ -138,5 +134,4 @@ Useful overrides:
 
 ## Packaging Notes
 
-- Bundled artifacts include multilingual embedding + reranker models.
 - Slim artifacts download models into the configured cache directory.
