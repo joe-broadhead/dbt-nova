@@ -22,6 +22,12 @@ GH_TOKEN="$(gh auth token)"
 curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
   https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
   DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash
+
+# Optional: pre-warm models now (instead of waiting for first semantic query)
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/warm_models.sh | \
+  DBT_NOVA_BIN="$HOME/.local/bin/dbt-nova" \
+  DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/models" \
+  bash -s partial
 ```
 
 === "macOS (Apple Silicon)"
@@ -61,6 +67,7 @@ Set your manifest path:
 
 ```bash
 export DBT_MANIFEST_PATH=/path/to/your/dbt/project/target/manifest.json
+export DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/models"
 ```
 
 !!! tip "Pro Tip"
@@ -98,7 +105,8 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
     "dbt-nova": {
       "command": "dbt-nova",
       "env": {
-        "DBT_MANIFEST_PATH": "/path/to/manifest.json"
+        "DBT_MANIFEST_PATH": "/path/to/manifest.json",
+        "DBT_NOVA_EMBEDDINGS_CACHE_DIR": "/Users/<you>/.dbt-nova/models"
       }
     }
   }
@@ -115,7 +123,8 @@ Add to `.cursor/mcp.json` in your project:
     "dbt-nova": {
       "command": "dbt-nova",
       "env": {
-        "DBT_MANIFEST_PATH": "/path/to/manifest.json"
+        "DBT_MANIFEST_PATH": "/path/to/manifest.json",
+        "DBT_NOVA_EMBEDDINGS_CACHE_DIR": "/Users/<you>/.dbt-nova/models"
       }
     }
   }
