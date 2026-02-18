@@ -287,6 +287,13 @@ impl DbtNovaConfig {
                 return;
             }
         }
+        if let Ok(home) = std::env::var("HOME") {
+            let bundled = PathBuf::from(home).join(".local").join("bin").join("models");
+            if bundled.is_dir() {
+                self.search.embedding_cache_dir = bundled.to_string_lossy().to_string();
+                return;
+            }
+        }
         if let Ok(storage_root) = self.storage_root_dir() {
             self.search.embedding_cache_dir = storage_root
                 .join(".fastembed_cache")
