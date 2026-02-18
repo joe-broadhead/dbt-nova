@@ -6,6 +6,7 @@ VERSION="${DBT_NOVA_VERSION:-latest}"
 INSTALL_DIR="${DBT_NOVA_INSTALL_DIR:-$HOME/.local/bin}"
 INSTALL_FLAVOR="${DBT_NOVA_INSTALL_FLAVOR:-}"
 NON_INTERACTIVE="${DBT_NOVA_INSTALL_NONINTERACTIVE:-0}"
+INSTALL_WARM_MODELS="${DBT_NOVA_INSTALL_WARM_MODELS:-0}"
 VERIFY_CHECKSUM="${DBT_NOVA_VERIFY_CHECKSUM:-1}"
 VERIFY_SIGNATURE="${DBT_NOVA_VERIFY_SIGNATURE:-0}"
 COSIGN_BINARY="${DBT_NOVA_COSIGN_BINARY:-cosign}"
@@ -13,7 +14,7 @@ DOWNLOAD_TOKEN="${DBT_NOVA_GITHUB_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}"
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [--bundled|--slim] [--non-interactive|-y] [--install-dir <path>]
+Usage: install.sh [--bundled|--slim] [--warm-models] [--non-interactive|-y] [--install-dir <path>]
 
 Downloads and installs dbt-nova from GitHub releases.
 
@@ -27,6 +28,7 @@ Environment overrides:
   DBT_NOVA_VERSION                 Release tag (default: latest)
   DBT_NOVA_INSTALL_DIR             Install directory for dbt-nova
   DBT_NOVA_INSTALL_FLAVOR          bundled|slim
+  DBT_NOVA_INSTALL_WARM_MODELS     1 to pre-warm model files after install (default: 0)
   DBT_NOVA_INSTALL_NONINTERACTIVE  1 to skip prompts (defaults to slim)
   DBT_NOVA_VERIFY_CHECKSUM         1 to verify artifact checksum (default: 1)
   DBT_NOVA_VERIFY_SIGNATURE        1 to verify artifact signature (default: 0)
@@ -138,6 +140,35 @@ download_file() {
   return 1
 }
 
+download_raw_script() {
+  local url="$1"
+  local out="$2"
+  if [[ -n "${DOWNLOAD_TOKEN}" ]]; then
+    curl -fsSL -H "Authorization: Bearer ${DOWNLOAD_TOKEN}" "${url}" -o "${out}"
+  else
+    curl -fsSL "${url}" -o "${out}"
+  fi
+}
+
+repo_default_branch() {
+  local api_url="https://api.github.com/repos/${REPO_SLUG}"
+  local response=""
+
+  if [[ -n "${DOWNLOAD_TOKEN}" ]]; then
+    response="$(curl -fsSL -H "Authorization: Bearer ${DOWNLOAD_TOKEN}" "${api_url}" 2>/dev/null || true)"
+  else
+    response="$(curl -fsSL "${api_url}" 2>/dev/null || true)"
+  fi
+
+  if [[ -z "${response}" ]]; then
+    return 0
+  fi
+
+  printf '%s' "${response}" \
+    | tr -d '\n' \
+    | sed -n 's/.*"default_branch"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+}
+
 normalize_model_layout() {
   local models_root="$1"
   local normalized=0
@@ -180,6 +211,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --non-interactive|-y)
       NON_INTERACTIVE="1"
+      ;;
+    --warm-models)
+      INSTALL_WARM_MODELS="1"
       ;;
     --install-dir)
       if [[ $# -lt 2 ]]; then
@@ -324,7 +358,48 @@ if [[ "${INSTALL_FLAVOR}" == "bundled" && -d "${tmp_dir}/models" ]]; then
   echo "dbt-nova will auto-discover this colocated models/ directory."
 elif [[ "${INSTALL_FLAVOR}" == "slim" ]]; then
   echo "Slim install selected. Models will be downloaded on first run."
-  echo "Optional: pre-warm models with scripts/warm_models.sh after building from source."
+  echo "Optional: set DBT_NOVA_INSTALL_WARM_MODELS=1 (or pass --warm-models) to pre-warm now."
+fi
+
+if [[ "${INSTALL_WARM_MODELS}" == "1" && "${INSTALL_FLAVOR}" == "slim" ]]; then
+  warm_script_path="${tmp_dir}/warm_models.sh"
+  warm_cache_dir="${DBT_NOVA_EMBEDDINGS_CACHE_DIR:-$HOME/.dbt-nova/models}"
+  warm_required_models="${DBT_NOVA_WARMUP_REQUIRED_MODELS:-3}"
+  warm_script_downloaded="0"
+  warm_script_url=""
+
+  warm_script_refs=()
+  if [[ "${VERSION}" != "latest" ]]; then
+    warm_script_refs+=("${VERSION}")
+  else
+    detected_default_branch="$(repo_default_branch)"
+    if [[ -n "${detected_default_branch}" ]]; then
+      warm_script_refs+=("${detected_default_branch}")
+    fi
+    warm_script_refs+=("main" "master")
+  fi
+
+  for warm_script_ref in "${warm_script_refs[@]}"; do
+    [[ -n "${warm_script_ref}" ]] || continue
+    warm_script_url="https://raw.githubusercontent.com/${REPO_SLUG}/${warm_script_ref}/scripts/warm_models.sh"
+    echo "Downloading ${warm_script_url}"
+    if download_raw_script "${warm_script_url}" "${warm_script_path}"; then
+      warm_script_downloaded="1"
+      break
+    fi
+  done
+
+  if [[ "${warm_script_downloaded}" != "1" ]]; then
+    echo "Could not download warm_models.sh; skipping optional model warmup." >&2
+  else
+    chmod +x "${warm_script_path}"
+
+    echo "Pre-warming models into ${warm_cache_dir} (required snapshots: ${warm_required_models})"
+    DBT_NOVA_BIN="${INSTALL_DIR}/dbt-nova${ext}" \
+      DBT_NOVA_EMBEDDINGS_CACHE_DIR="${warm_cache_dir}" \
+      DBT_NOVA_WARMUP_REQUIRED_MODELS="${warm_required_models}" \
+      bash "${warm_script_path}" partial
+  fi
 fi
 
 echo "Installed dbt-nova to ${INSTALL_DIR}/dbt-nova${ext}"

@@ -123,7 +123,8 @@ Minimal MCP client config:
       "command": "dbt-nova",
       "args": [],
       "env": {
-        "DBT_MANIFEST_PATH": "/path/to/manifest.json"
+        "DBT_MANIFEST_PATH": "/path/to/manifest.json",
+        "DBT_NOVA_EMBEDDINGS_CACHE_DIR": "/Users/<you>/.dbt-nova/models"
       }
     }
   }
@@ -142,6 +143,12 @@ GH_TOKEN="$(gh auth token)"
 curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
   https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
   DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash
+
+# Optional: pre-warm model files during install
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+  DBT_NOVA_INSTALL_WARM_MODELS=1 \
+  DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/models" \
+  bash
 
 export DBT_MANIFEST_PATH=/path/to/manifest.json
 ./dbt-nova

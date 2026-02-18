@@ -59,14 +59,13 @@ places `models/` next to the binary so Nova auto-discovers it.
 
 ### Optional: Install + Pre-Warm Models
 
-If you want users to avoid first-run model downloads, pre-warm immediately after install:
+If you want users to avoid first-run model downloads, pre-warm during install:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | bash
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/warm_models.sh | \
-  DBT_NOVA_BIN="$HOME/.local/bin/dbt-nova" \
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+  DBT_NOVA_INSTALL_WARM_MODELS=1 \
   DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/models" \
-  bash -s partial
+  bash
 ```
 
 Use the same `DBT_NOVA_EMBEDDINGS_CACHE_DIR` value in your MCP client config so every
@@ -156,9 +155,10 @@ DBT_NOVA_REPO=joe-broadhead/dbt-nova bash scripts/install.sh
 The installer defaults to **slim** and supports:
 
 - `DBT_NOVA_INSTALL_FLAVOR=bundled|slim`
+- `DBT_NOVA_INSTALL_WARM_MODELS=1` (pre-warm model files after install)
 - `DBT_NOVA_INSTALL_NONINTERACTIVE=1`
 - `DBT_NOVA_INSTALL_DIR=/custom/path`
-- `--bundled`, `--slim`, `--non-interactive`, `--install-dir <path>`
+- `--bundled`, `--slim`, `--warm-models`, `--non-interactive`, `--install-dir <path>`
 - `DBT_NOVA_VERIFY_CHECKSUM=1|0`
 - `DBT_NOVA_VERIFY_SIGNATURE=1|0`
 - `DBT_NOVA_COSIGN_BINARY=cosign`

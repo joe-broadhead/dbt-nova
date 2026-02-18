@@ -5,8 +5,15 @@ Databricks variables are required only if you use the `execute_sql` tool with
 `DBT_NOVA_SQL_PROVIDER=databricks` (default).
 BigQuery variables are required only if you use `DBT_NOVA_SQL_PROVIDER=bigquery`.
 
-For slim installs, set a stable `DBT_NOVA_EMBEDDINGS_CACHE_DIR` (for example
+For slim installs, set a stable `DBT_NOVA_EMBEDDINGS_CACHE_DIR` (recommended:
 `~/.dbt-nova/models`) so model downloads are reused across sessions/clients.
+If you installed with:
+
+```bash
+DBT_NOVA_INSTALL_WARM_MODELS=1 DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/models"
+```
+
+use that exact same `DBT_NOVA_EMBEDDINGS_CACHE_DIR` path in your MCP client env.
 
 ## Claude Desktop (`claude_desktop_config.json`)
 
