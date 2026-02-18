@@ -17,7 +17,10 @@ pub(crate) fn embeddings_cache_dir(config: &SearchConfig) -> PathBuf {
             }
         }
         if let Ok(home) = std::env::var("HOME") {
-            let bundled = PathBuf::from(home).join(".local").join("bin").join("models");
+            let bundled = PathBuf::from(home)
+                .join(".local")
+                .join("bin")
+                .join("models");
             if bundled.is_dir() {
                 return bundled;
             }

@@ -288,7 +288,10 @@ impl DbtNovaConfig {
             }
         }
         if let Ok(home) = std::env::var("HOME") {
-            let bundled = PathBuf::from(home).join(".local").join("bin").join("models");
+            let bundled = PathBuf::from(home)
+                .join(".local")
+                .join("bin")
+                .join("models");
             if bundled.is_dir() {
                 self.search.embedding_cache_dir = bundled.to_string_lossy().to_string();
                 return;
