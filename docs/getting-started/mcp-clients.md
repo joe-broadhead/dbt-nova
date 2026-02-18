@@ -5,6 +5,9 @@ Databricks variables are required only if you use the `execute_sql` tool with
 `DBT_NOVA_SQL_PROVIDER=databricks` (default).
 BigQuery variables are required only if you use `DBT_NOVA_SQL_PROVIDER=bigquery`.
 
+For slim installs, set a stable `DBT_NOVA_EMBEDDINGS_CACHE_DIR` (for example
+`~/.dbt-nova/models`) so model downloads are reused across sessions/clients.
+
 ## Claude Desktop (`claude_desktop_config.json`)
 
 ```json
@@ -14,6 +17,7 @@ BigQuery variables are required only if you use `DBT_NOVA_SQL_PROVIDER=bigquery`
       "command": "/path/to/dbt-nova",
       "env": {
         "DBT_MANIFEST_PATH": "/path/to/manifest.json",
+        "DBT_NOVA_EMBEDDINGS_CACHE_DIR": "/Users/<you>/.dbt-nova/models",
         "DATABRICKS_HOST": "https://<workspace>.cloud.databricks.com",
         "DATABRICKS_HTTP_PATH": "/sql/1.0/warehouses/<warehouse_id>",
         "DATABRICKS_ACCESS_TOKEN": "<token>"
@@ -35,7 +39,7 @@ DBT_MANIFEST_PATH = "/path/to/manifest.json"
 DATABRICKS_HOST = "https://<workspace>.cloud.databricks.com"
 DATABRICKS_HTTP_PATH = "/sql/1.0/warehouses/<warehouse_id>"
 DATABRICKS_ACCESS_TOKEN = "<token>"
-DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/path/to/models" # optional (not needed for bundled installs)
+DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/models"
 ```
 
 ## Gemini CLI (config JSON)
@@ -56,6 +60,7 @@ hints from tool definitions.
       "command": "/path/to/dbt-nova",
       "env": {
         "DBT_MANIFEST_PATH": "/path/to/manifest.json",
+        "DBT_NOVA_EMBEDDINGS_CACHE_DIR": "/Users/<you>/.dbt-nova/models",
         "DBT_NOVA_DISABLE_TOOL_SCHEMAS": "1",
         "DATABRICKS_HOST": "https://<workspace>.cloud.databricks.com",
         "DATABRICKS_HTTP_PATH": "/sql/1.0/warehouses/<warehouse_id>",

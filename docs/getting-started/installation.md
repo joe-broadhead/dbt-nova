@@ -57,6 +57,21 @@ curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
 The installer places `dbt-nova` in `~/.local/bin`. For bundled installs, it also
 places `models/` next to the binary so Nova auto-discovers it.
 
+### Optional: Install + Pre-Warm Models
+
+If you want users to avoid first-run model downloads, pre-warm immediately after install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/warm_models.sh | \
+  DBT_NOVA_BIN="$HOME/.local/bin/dbt-nova" \
+  DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/models" \
+  bash -s partial
+```
+
+Use the same `DBT_NOVA_EMBEDDINGS_CACHE_DIR` value in your MCP client config so every
+client process reuses that cache.
+
 ## Verify Installation
 
 ```bash
