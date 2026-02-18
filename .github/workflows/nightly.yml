@@ -29,7 +29,7 @@ jobs:
 
       - name: Run Fuzz Targets (short)
         run: |
-          cargo fuzz run manifest_entity -- -max_total_time=60
+          cargo fuzz run --fuzz-dir fuzz manifest_entity -- -max_total_time=60
 
   deny:
     runs-on: ubuntu-22.04
