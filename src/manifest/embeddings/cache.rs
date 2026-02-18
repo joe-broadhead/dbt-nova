@@ -16,6 +16,15 @@ pub(crate) fn embeddings_cache_dir(config: &SearchConfig) -> PathBuf {
                 return bundled;
             }
         }
+        if let Ok(home) = std::env::var("HOME") {
+            let bundled = PathBuf::from(home)
+                .join(".local")
+                .join("bin")
+                .join("models");
+            if bundled.is_dir() {
+                return bundled;
+            }
+        }
         PathBuf::from(".dbt-nova").join(".fastembed_cache")
     } else {
         PathBuf::from(raw)
