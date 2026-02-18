@@ -23,11 +23,11 @@ curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
   https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
   DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash
 
-# Optional: pre-warm models now (instead of waiting for first semantic query)
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/warm_models.sh | \
-  DBT_NOVA_BIN="$HOME/.local/bin/dbt-nova" \
+# Optional: pre-warm models during install (instead of first semantic query)
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+  DBT_NOVA_INSTALL_WARM_MODELS=1 \
   DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/models" \
-  bash -s partial
+  bash
 ```
 
 === "macOS (Apple Silicon)"
