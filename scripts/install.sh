@@ -138,6 +138,38 @@ download_file() {
   return 1
 }
 
+normalize_model_layout() {
+  local models_root="$1"
+  local normalized=0
+  local source_file
+  local snapshot_dir
+  local onnx_dir
+  local target_file
+
+  while IFS= read -r -d '' source_file; do
+    snapshot_dir="$(dirname "$source_file")"
+    onnx_dir="$snapshot_dir/onnx"
+    target_file="$onnx_dir/model.onnx"
+
+    if [[ -f "$target_file" ]]; then
+      continue
+    fi
+
+    mkdir -p "$onnx_dir"
+    cp "$source_file" "$target_file"
+    normalized=$((normalized + 1))
+  done < <(
+    find "$models_root" -type f \
+      -path "*/snapshots/*/model.onnx" \
+      ! -path "*/snapshots/*/onnx/model.onnx" \
+      -print0 2>/dev/null
+  )
+
+  if (( normalized > 0 )); then
+    echo "Normalized ONNX layout for ${normalized} model snapshot(s)."
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --bundled)
@@ -273,6 +305,7 @@ if [[ "${INSTALL_FLAVOR}" == "bundled" && -d "${tmp_dir}/models" ]]; then
   rm -rf "${models_dir}"
   mkdir -p "${models_dir}"
   cp -R "${tmp_dir}/models/." "${models_dir}/"
+  normalize_model_layout "${models_dir}"
   echo "Models installed to ${models_dir}"
   echo "dbt-nova will auto-discover this colocated models/ directory."
 elif [[ "${INSTALL_FLAVOR}" == "slim" ]]; then

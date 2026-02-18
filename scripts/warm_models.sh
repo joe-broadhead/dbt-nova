@@ -83,6 +83,37 @@ count_model_files() {
   find "$cache_dir" -type f -name "model.onnx" 2>/dev/null | wc -l | tr -d ' '
 }
 
+normalize_onnx_layout() {
+  local normalized=0
+  local source_file
+  local snapshot_dir
+  local onnx_dir
+  local target_file
+
+  while IFS= read -r -d '' source_file; do
+    snapshot_dir="$(dirname "$source_file")"
+    onnx_dir="$snapshot_dir/onnx"
+    target_file="$onnx_dir/model.onnx"
+
+    if [[ -f "$target_file" ]]; then
+      continue
+    fi
+
+    mkdir -p "$onnx_dir"
+    cp "$source_file" "$target_file"
+    normalized=$((normalized + 1))
+  done < <(
+    find "$cache_dir" -type f \
+      -path "*/snapshots/*/model.onnx" \
+      ! -path "*/snapshots/*/onnx/model.onnx" \
+      -print0 2>/dev/null
+  )
+
+  if (( normalized > 0 )); then
+    echo "Normalized ONNX layout for $normalized model snapshot(s)."
+  fi
+}
+
 count_embedding_cache_files() {
   local found=0
   if [[ -f "$cache_dir/embeddings.rkyv.zst" || -f "$cache_dir/embeddings.rkyv" ]]; then
@@ -319,6 +350,8 @@ echo "  cache:  $cache_dir"
 if ! ensure_model_files; then
   exit 1
 fi
+
+normalize_onnx_layout
 
 if [[ "$mode" == "partial" ]]; then
   downloaded="$(count_model_files)"
