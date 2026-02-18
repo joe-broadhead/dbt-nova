@@ -35,7 +35,7 @@ Optional env overrides:
   DBT_NOVA_WARMUP_MANIFEST_PATH        Manifest file for full mode
   DBT_NOVA_WARMUP_TIMEOUT_SECS         Timeout in seconds (default: 480)
   DBT_NOVA_WARMUP_POLL_SECS            Poll interval in seconds (default: 2)
-  DBT_NOVA_WARMUP_REQUIRED_MODELS      Required model.onnx file count (default: 3)
+  DBT_NOVA_WARMUP_REQUIRED_MODELS      Required distinct model snapshot count (default: 3)
                                        Direct HF fallback seeds models in priority order
                                        (embedding -> sparse -> reranker) up to this count.
   DBT_NOVA_WARMUP_REQUIRED_CACHE_FILES Required embedding cache files in full mode (default: 2)
@@ -79,8 +79,17 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+list_model_snapshots() {
+  {
+    find "$cache_dir" -type f -path "*/snapshots/*/onnx/model.onnx" 2>/dev/null \
+      | sed -E 's#/onnx/model\.onnx$##'
+    find "$cache_dir" -type f -path "*/snapshots/*/model.onnx" ! -path "*/snapshots/*/onnx/model.onnx" 2>/dev/null \
+      | sed -E 's#/model\.onnx$##'
+  } | sort -u
+}
+
 count_model_files() {
-  find "$cache_dir" -type f -name "model.onnx" 2>/dev/null | wc -l | tr -d ' '
+  list_model_snapshots | sed '/^$/d' | wc -l | tr -d ' '
 }
 
 normalize_onnx_layout() {
@@ -355,8 +364,8 @@ normalize_onnx_layout
 
 if [[ "$mode" == "partial" ]]; then
   downloaded="$(count_model_files)"
-  echo "Warmup complete (partial). Found $downloaded model file(s):"
-  find "$cache_dir" -type f -name "model.onnx" 2>/dev/null
+  echo "Warmup complete (partial). Found $downloaded model snapshot(s):"
+  list_model_snapshots
   exit 0
 fi
 
