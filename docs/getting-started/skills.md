@@ -20,6 +20,20 @@ preflight -> scope freeze -> paged scoring -> blocker classification -> remediat
 
 ## Install in common tools
 
+### Installer shortcut (`~/.agents/skills`)
+
+If you installed dbt-nova via `scripts/install.sh`, you can also install skills into
+the standard Agent Skills user directory in one step:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+  DBT_NOVA_INSTALL_SKILLS=1 \
+  bash
+```
+
+Set `DBT_NOVA_SKILLS_DIR` to use a different destination (for example
+`~/.codex/skills` or `~/.claude/skills`).
+
 ### Codex (CLI and IDE)
 
 Codex supports Agent Skills for both the CLI and IDE extensions. You can install skills per user or per repository:

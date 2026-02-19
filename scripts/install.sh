@@ -5,6 +5,8 @@ REPO_SLUG="${DBT_NOVA_REPO:-joe-broadhead/dbt-nova}"
 VERSION="${DBT_NOVA_VERSION:-latest}"
 INSTALL_DIR="${DBT_NOVA_INSTALL_DIR:-$HOME/.local/bin}"
 INSTALL_FLAVOR="${DBT_NOVA_INSTALL_FLAVOR:-}"
+INSTALL_SKILLS="${DBT_NOVA_INSTALL_SKILLS:-0}"
+SKILLS_DIR="${DBT_NOVA_SKILLS_DIR:-$HOME/.agents/skills}"
 NON_INTERACTIVE="${DBT_NOVA_INSTALL_NONINTERACTIVE:-0}"
 INSTALL_WARM_MODELS="${DBT_NOVA_INSTALL_WARM_MODELS:-0}"
 VERIFY_CHECKSUM="${DBT_NOVA_VERIFY_CHECKSUM:-1}"
@@ -14,7 +16,7 @@ DOWNLOAD_TOKEN="${DBT_NOVA_GITHUB_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}"
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [--bundled|--slim] [--warm-models] [--non-interactive|-y] [--install-dir <path>]
+Usage: install.sh [--bundled|--slim] [--warm-models] [--install-skills] [--skills-dir <path>] [--non-interactive|-y] [--install-dir <path>]
 
 Downloads and installs dbt-nova from GitHub releases.
 
@@ -28,6 +30,8 @@ Environment overrides:
   DBT_NOVA_VERSION                 Release tag (default: latest)
   DBT_NOVA_INSTALL_DIR             Install directory for dbt-nova
   DBT_NOVA_INSTALL_FLAVOR          bundled|slim
+  DBT_NOVA_INSTALL_SKILLS          1 to install Agent Skills (default: 0)
+  DBT_NOVA_SKILLS_DIR              Skills destination (default: $HOME/.agents/skills)
   DBT_NOVA_INSTALL_WARM_MODELS     1 to pre-warm model files after install (default: 0)
   DBT_NOVA_INSTALL_NONINTERACTIVE  1 to skip prompts (defaults to slim)
   DBT_NOVA_VERIFY_CHECKSUM         1 to verify artifact checksum (default: 1)
@@ -150,6 +154,24 @@ download_raw_script() {
   fi
 }
 
+download_repo_archive() {
+  local ref="$1"
+  local out="$2"
+  local archive_url="https://api.github.com/repos/${REPO_SLUG}/tarball/${ref}"
+  if [[ -n "${DOWNLOAD_TOKEN}" ]]; then
+    curl -fsSL \
+      -H "Authorization: Bearer ${DOWNLOAD_TOKEN}" \
+      -H "Accept: application/vnd.github+json" \
+      "${archive_url}" \
+      -o "${out}"
+  else
+    curl -fsSL \
+      -H "Accept: application/vnd.github+json" \
+      "${archive_url}" \
+      -o "${out}"
+  fi
+}
+
 repo_default_branch() {
   local api_url="https://api.github.com/repos/${REPO_SLUG}"
   local response=""
@@ -201,6 +223,41 @@ normalize_model_layout() {
   fi
 }
 
+install_skills_from_ref() {
+  local ref="$1"
+  local skills_dest="$2"
+  local archive_ref="${ref//\//-}"
+  local archive_path="${tmp_dir}/repo-${archive_ref}.tar.gz"
+  local extract_dir="${tmp_dir}/repo-${archive_ref}"
+  local skills_source=""
+  local skill_count=0
+  local skill_name=""
+
+  download_repo_archive "${ref}" "${archive_path}"
+  mkdir -p "${extract_dir}"
+  tar -xzf "${archive_path}" -C "${extract_dir}"
+  skills_source="$(find "${extract_dir}" -type d -path "*/.github/skills" | head -n 1)"
+  if [[ -z "${skills_source}" ]]; then
+    echo "Skills directory not found in repository archive for ref '${ref}'." >&2
+    return 1
+  fi
+
+  mkdir -p "${skills_dest}"
+  while IFS= read -r -d '' skill_dir; do
+    skill_name="$(basename "${skill_dir}")"
+    rm -rf "${skills_dest}/${skill_name}"
+    cp -R "${skill_dir}" "${skills_dest}/${skill_name}"
+    skill_count=$((skill_count + 1))
+  done < <(find "${skills_source}" -mindepth 1 -maxdepth 1 -type d -print0)
+
+  if (( skill_count < 1 )); then
+    echo "No skills were found to install for ref '${ref}'." >&2
+    return 1
+  fi
+
+  echo "Installed ${skill_count} skill(s) to ${skills_dest}"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --bundled)
@@ -214,6 +271,17 @@ while [[ $# -gt 0 ]]; do
       ;;
     --warm-models)
       INSTALL_WARM_MODELS="1"
+      ;;
+    --install-skills)
+      INSTALL_SKILLS="1"
+      ;;
+    --skills-dir)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --skills-dir" >&2
+        exit 1
+      fi
+      SKILLS_DIR="$2"
+      shift
       ;;
     --install-dir)
       if [[ $# -lt 2 ]]; then
@@ -399,6 +467,35 @@ if [[ "${INSTALL_WARM_MODELS}" == "1" && "${INSTALL_FLAVOR}" == "slim" ]]; then
       DBT_NOVA_EMBEDDINGS_CACHE_DIR="${warm_cache_dir}" \
       DBT_NOVA_WARMUP_REQUIRED_MODELS="${warm_required_models}" \
       bash "${warm_script_path}" partial
+  fi
+fi
+
+if [[ "${INSTALL_SKILLS}" == "1" ]]; then
+  skills_refs=()
+  skills_installed="0"
+
+  if [[ "${VERSION}" != "latest" ]]; then
+    skills_refs+=("${VERSION}")
+  else
+    detected_default_branch="$(repo_default_branch)"
+    if [[ -n "${detected_default_branch}" ]]; then
+      skills_refs+=("${detected_default_branch}")
+    fi
+    skills_refs+=("main" "master")
+  fi
+
+  for skills_ref in "${skills_refs[@]}"; do
+    [[ -n "${skills_ref}" ]] || continue
+    echo "Installing skills from ref '${skills_ref}' into ${SKILLS_DIR}"
+    if install_skills_from_ref "${skills_ref}" "${SKILLS_DIR}"; then
+      skills_installed="1"
+      break
+    fi
+  done
+
+  if [[ "${skills_installed}" != "1" ]]; then
+    echo "Failed to install skills into ${SKILLS_DIR}." >&2
+    exit 1
   fi
 fi
 
