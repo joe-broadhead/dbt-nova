@@ -150,6 +150,11 @@ curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scrip
   DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/models" \
   bash
 
+# Optional: install bundled persona skills to ~/.agents/skills
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+  DBT_NOVA_INSTALL_SKILLS=1 \
+  bash
+
 export DBT_MANIFEST_PATH=/path/to/manifest.json
 ./dbt-nova
 
