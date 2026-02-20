@@ -15,19 +15,24 @@ Get dbt-nova running in under 5 minutes.
 
 ```bash
 # Public repo (unauthenticated)
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+  bash -s -- --slim --non-interactive
 
 # Private repo (authenticated)
 GH_TOKEN="$(gh auth token)"
 curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
   https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash
+  DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --slim --non-interactive
 
 # Optional: pre-warm models during install (instead of first semantic query)
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  DBT_NOVA_INSTALL_WARM_MODELS=1 \
   DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/models" \
-  bash
+  DBT_NOVA_WARMUP_REQUIRED_MODELS=3 \
+  bash -s -- --slim --warm-models --non-interactive
+
+# Optional: install Agent Skills into ~/.agents/skills
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+  bash -s -- --slim --install-skills --non-interactive
 ```
 
 === "macOS (Apple Silicon)"
@@ -66,6 +71,7 @@ curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scrip
 Set your manifest path:
 
 ```bash
+export PATH="$HOME/.local/bin:$PATH"
 export DBT_MANIFEST_PATH=/path/to/your/dbt/project/target/manifest.json
 export DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/models"
 ```
