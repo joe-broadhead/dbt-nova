@@ -134,33 +134,34 @@ Minimal MCP client config:
 ## Quick Start
 
 ```bash
-# Install (defaults to slim artifact; models download on first run)
+# Install (recommended: slim + non-interactive)
 # Public repo (unauthenticated)
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+  bash -s -- --slim --non-interactive
 
 # Private repo (authenticated)
 GH_TOKEN="$(gh auth token)"
 curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
   https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash
+  DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --slim --non-interactive
 
-# Optional: pre-warm model files during install
+# Optional: pre-warm model files during install (recommended for first-time setup)
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  DBT_NOVA_INSTALL_WARM_MODELS=1 \
   DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/models" \
-  bash
+  DBT_NOVA_WARMUP_REQUIRED_MODELS=3 \
+  bash -s -- --slim --warm-models --non-interactive
 
-# Optional: install bundled persona skills to ~/.agents/skills
+# Optional: install built-in persona skills to ~/.agents/skills
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  DBT_NOVA_INSTALL_SKILLS=1 \
-  bash
+  bash -s -- --slim --install-skills --non-interactive
 
 export DBT_MANIFEST_PATH=/path/to/manifest.json
-./dbt-nova
+export PATH="$HOME/.local/bin:$PATH"
+dbt-nova
 
 # Remote manifest (optional)
 export DBT_NOVA_MANIFEST_URI=dbfs:///mnt/analytics/manifest.json
-./dbt-nova
+dbt-nova
 ```
 
 See installation options in the docs:

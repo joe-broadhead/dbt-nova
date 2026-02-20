@@ -10,7 +10,10 @@ For slim installs, set a stable `DBT_NOVA_EMBEDDINGS_CACHE_DIR` (recommended:
 If you installed with:
 
 ```bash
-DBT_NOVA_INSTALL_WARM_MODELS=1 DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/models"
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+  DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/models" \
+  DBT_NOVA_WARMUP_REQUIRED_MODELS=3 \
+  bash -s -- --slim --warm-models --non-interactive
 ```
 
 use that exact same `DBT_NOVA_EMBEDDINGS_CACHE_DIR` path in your MCP client env.

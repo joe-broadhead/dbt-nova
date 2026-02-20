@@ -27,8 +27,7 @@ the standard Agent Skills user directory in one step:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  DBT_NOVA_INSTALL_SKILLS=1 \
-  bash
+  bash -s -- --slim --install-skills --non-interactive
 ```
 
 Set `DBT_NOVA_SKILLS_DIR` to use a different destination (for example

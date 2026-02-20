@@ -21,13 +21,14 @@ Use the installer script (defaults to **slim**):
 
 ```bash
 # Public repo (unauthenticated)
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+  bash -s -- --slim --non-interactive
 
 # Private repo (authenticated)
 GH_TOKEN="$(gh auth token)"
 curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
   https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash
+  DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --slim --non-interactive
 ```
 
 Non-interactive examples:
@@ -35,23 +36,23 @@ Non-interactive examples:
 ```bash
 # Public repo: default slim in non-interactive mode
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  DBT_NOVA_INSTALL_NONINTERACTIVE=1 bash
+  bash -s -- --non-interactive
 
 # Public repo: force slim
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  DBT_NOVA_INSTALL_NONINTERACTIVE=1 DBT_NOVA_INSTALL_FLAVOR=slim bash
+  bash -s -- --slim --non-interactive
 
 # Private repo: default slim in non-interactive mode
 GH_TOKEN="$(gh auth token)"
 curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
   https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" DBT_NOVA_INSTALL_NONINTERACTIVE=1 bash
+  DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --non-interactive
 
 # Private repo: force slim
 GH_TOKEN="$(gh auth token)"
 curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
   https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" DBT_NOVA_INSTALL_NONINTERACTIVE=1 DBT_NOVA_INSTALL_FLAVOR=slim bash
+  DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --slim --non-interactive
 ```
 
 The installer places `dbt-nova` in `~/.local/bin`. For bundled installs, it also
@@ -63,9 +64,9 @@ If you want users to avoid first-run model downloads, pre-warm during install:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  DBT_NOVA_INSTALL_WARM_MODELS=1 \
   DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/models" \
-  bash
+  DBT_NOVA_WARMUP_REQUIRED_MODELS=3 \
+  bash -s -- --slim --warm-models --non-interactive
 ```
 
 Use the same `DBT_NOVA_EMBEDDINGS_CACHE_DIR` value in your MCP client config so every
@@ -78,24 +79,33 @@ standard Agent Skills user directory:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  DBT_NOVA_INSTALL_SKILLS=1 \
-  bash
+  bash -s -- --slim --install-skills --non-interactive
 ```
 
 To choose a different destination:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  DBT_NOVA_INSTALL_SKILLS=1 \
   DBT_NOVA_SKILLS_DIR="$HOME/.codex/skills" \
-  bash
+  bash -s -- --slim --install-skills --non-interactive
 ```
 
 ## Verify Installation
 
 ```bash
+export PATH="$HOME/.local/bin:$PATH"
+command -v dbt-nova
+dbt-nova --version
 export DBT_MANIFEST_PATH=/path/to/manifest.json
 echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | dbt-nova
+```
+
+If you pre-warmed models, verify three required model snapshots exist:
+
+```bash
+find "$HOME/.dbt-nova/models" -type f \
+  \( -path "*/snapshots/*/onnx/model.onnx" -o -path "*/snapshots/*/model.onnx" \) \
+  | sed -E 's#/(onnx/)?model\.onnx$##' | sort -u | wc -l
 ```
 
 The installer verifies SHA-256 checksums for downloaded archives by default.

@@ -128,9 +128,17 @@ the binary in `~/.local/bin` by default.
 Useful overrides:
 
 - `DBT_NOVA_INSTALL_FLAVOR=bundled|slim`
+- `DBT_NOVA_INSTALL_WARM_MODELS=1`
+- `DBT_NOVA_EMBEDDINGS_CACHE_DIR=/path/to/models`
+- `DBT_NOVA_WARMUP_REQUIRED_MODELS=3`
+- `DBT_NOVA_INSTALL_SKILLS=1`
+- `DBT_NOVA_SKILLS_DIR=/custom/skills/path`
 - `DBT_NOVA_INSTALL_NONINTERACTIVE=1`
 - `DBT_NOVA_INSTALL_DIR=/custom/path`
-- `--bundled`, `--slim`, `--non-interactive`, `--install-dir <path>`
+- `DBT_NOVA_VERIFY_CHECKSUM=1|0`
+- `DBT_NOVA_VERIFY_SIGNATURE=1|0`
+- `DBT_NOVA_COSIGN_BINARY=cosign`
+- `--bundled`, `--slim`, `--warm-models`, `--install-skills`, `--skills-dir <path>`, `--non-interactive`, `--install-dir <path>`
 
 ## Packaging Notes
 
