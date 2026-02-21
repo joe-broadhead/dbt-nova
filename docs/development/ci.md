@@ -62,7 +62,7 @@ Additional secret required:
 
 ## Monthly Jobs
 
-- **File:** `.github/workflows/nightly.yml`
+- **File:** `.github/workflows/monthly.yml`
 - **Trigger:** monthly schedule (first day of month) + manual
 - **Action:** short fuzz run (`cargo fuzz`) and `cargo deny` checks
 - **Security guard:** advisory ignore metadata/expiry check (`scripts/check_advisory_ignores.sh`)
