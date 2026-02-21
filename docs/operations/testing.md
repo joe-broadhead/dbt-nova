@@ -29,9 +29,9 @@ Manual cleanup:
 rm -rf target/dbt-nova-tests
 ```
 
-## Fuzzing (Nightly)
+## Fuzzing (Monthly Schedule)
 
-Short fuzz runs are scheduled in CI. To run locally:
+Short fuzz runs are scheduled in CI on the first day of each month. To run locally:
 
 ```bash
 cargo install cargo-fuzz
