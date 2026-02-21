@@ -60,10 +60,10 @@ Additional secret required:
 
 - `RELEASE_TAG_TOKEN` for `.github/workflows/release-tag.yml`
 
-## Nightly Jobs
+## Monthly Jobs
 
 - **File:** `.github/workflows/nightly.yml`
-- **Trigger:** scheduled + manual
+- **Trigger:** monthly schedule (first day of month) + manual
 - **Action:** short fuzz run (`cargo fuzz`) and `cargo deny` checks
 - **Security guard:** advisory ignore metadata/expiry check (`scripts/check_advisory_ignores.sh`)
 
