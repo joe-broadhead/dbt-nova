@@ -35,6 +35,7 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 jsonwebtoken = "9"
 base64 = "0.22"
 zstd = "0.13"
+duckdb = { version = "1", features = ["bundled"] }
 aws-config = { version = "1.1", optional = true, features = ["behavior-version-latest"] }
 aws-sdk-s3 = { version = "1.1", optional = true }
 google-cloud-storage = { version = "0.17", optional = true }

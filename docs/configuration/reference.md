@@ -24,7 +24,7 @@ that file and ensure this page stays in sync.
 - `DBT_NOVA_RECIPES_DIR` – manifest `original_file_path` prefix used to discover recipe `analysis` nodes (default: `analyses/recipes`). Recipe SQL is resolved from manifest `compiled_code` (or `raw_code` fallback). Recipes are documented in [Analysis Recipes](../features/recipes.md).
 - `DBT_NOVA_LOG` / `RUST_LOG` – enable structured logs to stderr (e.g., `info`, `debug`, `trace`)
 - `DBT_NOVA_DISABLE_TOOL_SCHEMAS` – strip JSON schema hints from MCP tools (useful for strict clients like Gemini; see [MCP Clients](../getting-started/mcp-clients.md))
-- `DBT_NOVA_SQL_PROVIDER` – SQL backend for `execute_sql` (`databricks` or `bigquery`, default: `databricks`)
+- `DBT_NOVA_SQL_PROVIDER` – SQL backend for `execute_sql` (`databricks`, `bigquery`, or `duckdb`, default: `databricks`)
 - `DBT_NOVA_GCP_PROJECT_ID` – shared Google project id alias (used by BigQuery fallback resolution)
 - `DBT_NOVA_GCP_ACCESS_TOKEN` – shared Google OAuth access token alias (used by BigQuery fallback resolution)
 - `DBT_NOVA_BIGQUERY_PROJECT_ID` – BigQuery project id when `DBT_NOVA_SQL_PROVIDER=bigquery` (falls back to `DBT_NOVA_GCP_PROJECT_ID`, `GOOGLE_CLOUD_PROJECT`, `GCP_PROJECT_ID`)
@@ -32,6 +32,9 @@ that file and ensure this page stays in sync.
 - `DBT_NOVA_BIGQUERY_LOCATION` – optional BigQuery location for `execute_sql` and provider preflight
 - `DBT_NOVA_BIGQUERY_TIMEOUT_MS` – HTTP timeout for BigQuery API requests (default: `30000`)
 - `DBT_NOVA_BIGQUERY_TOKEN_CACHE_TTL_SECS` – cache TTL for BigQuery auth token + HTTP client reuse (default: `3000`, minimum: `60`)
+- `DBT_NOVA_DUCKDB_PATH` – required DuckDB database file when `DBT_NOVA_SQL_PROVIDER=duckdb`
+- `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH` – optional DuckDB `file_search_path` used for external file-backed objects when `DBT_NOVA_SQL_PROVIDER=duckdb`
+- `DBT_NOVA_DUCKDB_POOL_MAX_SIZE` – optional max pooled DuckDB connections per `(duckdb_path,file_search_path)` key (default: falls back to `DBT_NOVA_SQL_MAX_CONCURRENT`, then `10`)
 - `DATABRICKS_HOST` – Databricks workspace URL for `dbfs://` manifests and `execute_sql`
 - `DATABRICKS_ACCESS_TOKEN` – Databricks access token for `dbfs://` and `execute_sql`
 
@@ -253,6 +256,7 @@ Supported providers:
   - OAuth token env: `DBT_NOVA_BIGQUERY_ACCESS_TOKEN`, `DBT_NOVA_GCP_ACCESS_TOKEN`, `GCP_ACCESS_TOKEN`, `GOOGLE_OAUTH_ACCESS_TOKEN`
   - Service-account key path: `GOOGLE_APPLICATION_CREDENTIALS`
   - gcloud ADC (`gcloud auth application-default login`)
+- `duckdb`: requires `DBT_NOVA_DUCKDB_PATH` and executes queries against that file in read-only mode. Optional `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH` configures DuckDB `file_search_path` for external file-backed objects.
 
 Databricks runtime tuning env vars:
 - `DATABRICKS_WAIT_TIMEOUT_S` (default: `10`)
@@ -263,6 +267,12 @@ Databricks runtime tuning env vars:
 
 Provider diagnostics are available through `execute_sql` with `preflight_only=true`
 plus optional `preflight_catalog`, `preflight_schema`, and `preflight_relation`.
+
+DuckDB notes:
+- Named parameters are supported and rewritten to positional binds.
+- `parameter_types` is not supported for DuckDB v1 (pass scalar values via `parameters` only).
+- Connections are pooled per process and per `(duckdb_path,file_search_path)` key.
+- Preflight object checks (`preflight_catalog`, `preflight_schema`, `preflight_relation`) are treated as available only when the probe query returns at least one row.
 
 When provided by callers, `row_limit`, `byte_limit`, `max_chunks`, and
 `max_poll_seconds` are clamped to the configured `DBT_NOVA_SQL_MAX_*` values.
