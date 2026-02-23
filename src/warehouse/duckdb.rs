@@ -571,7 +571,7 @@ fn execute_duckdb_sync_with_connection(
         .map_err(|err| duckdb_runtime_error(format!("failed to execute SQL statement: {err}")))?;
     let columns = row_iter
         .as_ref()
-        .map_or_else(Vec::new, |statement| statement.column_names());
+        .map_or_else(Vec::new, duckdb::Statement::column_names);
     let mut column_types = vec!["UNKNOWN".to_string(); columns.len()];
 
     let mut rows = Vec::<Value>::new();
