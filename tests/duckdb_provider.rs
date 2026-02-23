@@ -298,12 +298,22 @@ fn duckdb_preflight_reports_configuration_connectivity_and_relation_access() {
     let (_temp_dir, db_path) = create_fixture_database();
     let _env_guard = configure_duckdb_env(Some(&db_path), None);
 
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let catalog_probe_payload = runtime
+        .block_on(DUCKDB_PROVIDER.execute(&base_params(
+            "SELECT catalog_name FROM information_schema.schemata LIMIT 1",
+        )))
+        .expect("catalog probe should succeed");
+    let preflight_catalog = catalog_probe_payload["data"]["rows"][0][0]
+        .as_str()
+        .expect("catalog name should be a string")
+        .to_string();
+
     let mut params = base_params("");
-    params.preflight_catalog = Some("main".to_string());
+    params.preflight_catalog = Some(preflight_catalog);
     params.preflight_schema = Some("analytics".to_string());
     params.preflight_relation = Some("analytics.orders".to_string());
 
-    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
     let payload = runtime
         .block_on(DUCKDB_PROVIDER.preflight(&params))
         .expect("preflight should succeed");
@@ -329,6 +339,34 @@ fn duckdb_preflight_reports_configuration_connectivity_and_relation_access() {
         checks
             .iter()
             .any(|check| check["name"] == "relation_access" && check["ok"] == true)
+    );
+}
+
+#[test]
+fn duckdb_preflight_marks_missing_catalog_as_not_ready() {
+    let _env_lock = lock_env();
+    let (_temp_dir, db_path) = create_fixture_database();
+    let _env_guard = configure_duckdb_env(Some(&db_path), None);
+
+    let mut params = base_params("");
+    params.preflight_catalog = Some("missing_catalog".to_string());
+
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let payload = runtime
+        .block_on(DUCKDB_PROVIDER.preflight(&params))
+        .expect("preflight should return a structured response");
+
+    assert_eq!(payload["success"], json!(true));
+    assert_eq!(payload["data"]["provider"], json!("duckdb"));
+    assert_eq!(payload["data"]["ready"], json!(false));
+
+    let checks = payload["data"]["checks"]
+        .as_array()
+        .expect("checks should be an array");
+    assert!(
+        checks
+            .iter()
+            .any(|check| check["name"] == "catalog_access" && check["ok"] == false)
     );
 }
 

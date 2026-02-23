@@ -562,37 +562,22 @@ fn execute_duckdb_sync_with_connection(
     let rewritten = rewrite_named_parameters(statement_text, &parameters)?;
     let bind_values = build_bind_values(&rewritten.ordered_parameters, &parameters)?;
 
-    let mut metadata_statement = connection
+    let mut prepared = connection
         .prepare(&rewritten.sql)
         .map_err(|err| duckdb_runtime_error(format!("failed to prepare SQL statement: {err}")))?;
 
-    {
-        let probe_rows = metadata_statement
-            .query(params_from_iter(bind_values.iter()))
-            .map_err(|err| {
-                duckdb_runtime_error(format!("failed to execute SQL statement: {err}"))
-            })?;
-        drop(probe_rows);
-    }
-
-    let columns = metadata_statement
-        .column_names()
-        .iter()
-        .map(|name| (*name).clone())
-        .collect::<Vec<_>>();
+    let mut row_iter = prepared
+        .query(params_from_iter(bind_values.iter()))
+        .map_err(|err| duckdb_runtime_error(format!("failed to execute SQL statement: {err}")))?;
+    let columns = row_iter
+        .as_ref()
+        .map_or_else(Vec::new, |statement| statement.column_names());
     let mut column_types = vec!["UNKNOWN".to_string(); columns.len()];
 
     let mut rows = Vec::<Value>::new();
     let mut total_row_count = 0u64;
     let mut accumulated_bytes = 0u64;
     let mut truncated = false;
-
-    let mut prepared = connection
-        .prepare(&rewritten.sql)
-        .map_err(|err| duckdb_runtime_error(format!("failed to prepare SQL statement: {err}")))?;
-    let mut row_iter = prepared
-        .query(params_from_iter(bind_values.iter()))
-        .map_err(|err| duckdb_runtime_error(format!("failed to execute SQL statement: {err}")))?;
 
     while let Some(row) = row_iter
         .next()
@@ -747,10 +732,16 @@ fn run_preflight_statement(connection: &Connection, statement: &str) -> Result<(
     let mut rows = prepared.query([]).map_err(|err| {
         duckdb_runtime_error(format!("failed to execute preflight statement: {err}"))
     })?;
-    let _ = rows
+    let probe = rows
         .next()
         .map_err(|err| duckdb_runtime_error(format!("failed to read preflight rows: {err}")))?;
-    Ok(())
+    if probe.is_some() {
+        Ok(())
+    } else {
+        Err(duckdb_runtime_error(
+            "preflight probe returned no rows for requested target",
+        ))
+    }
 }
 
 #[allow(clippy::too_many_lines)]
