@@ -4,6 +4,7 @@ All MCP clients should set either `DBT_MANIFEST_PATH` or `DBT_NOVA_MANIFEST_URI`
 Databricks variables are required only if you use the `execute_sql` tool with
 `DBT_NOVA_SQL_PROVIDER=databricks` (default).
 BigQuery variables are required only if you use `DBT_NOVA_SQL_PROVIDER=bigquery`.
+DuckDB variables are required only if you use `DBT_NOVA_SQL_PROVIDER=duckdb`.
 
 For slim installs, set a stable `DBT_NOVA_EMBEDDINGS_CACHE_DIR` (recommended:
 `~/.dbt-nova/models`) so model downloads are reused across sessions/clients.
@@ -124,6 +125,24 @@ Required:
 Optional:
 - `DBT_NOVA_BIGQUERY_LOCATION` (e.g., `US`, `EU`)
 - `DBT_NOVA_BIGQUERY_TIMEOUT_MS` (default: `30000`)
+- `DBT_NOVA_SQL_MAX_ROW_LIMIT` (default: `10000`)
+- `DBT_NOVA_SQL_MAX_BYTE_LIMIT` (default: `25000000`)
+- `DBT_NOVA_SQL_MAX_CHUNKS` (default: `100`)
+- `DBT_NOVA_SQL_MAX_POLL_SECONDS` (default: `900`)
+- `DBT_NOVA_SQL_MIN_POLL_INTERVAL_MS` (default: `200`)
+- `DBT_NOVA_SQL_MAX_CONCURRENT` (default: `10`)
+- `DBT_NOVA_SQL_MAX_QUEUE` (default: `20`)
+- `DBT_NOVA_SQL_QUEUE_TIMEOUT_MS` (default: `30000`)
+
+## DuckDB SQL Variables
+
+Required:
+- `DBT_NOVA_SQL_PROVIDER=duckdb`
+- `DBT_NOVA_DUCKDB_PATH` (absolute path to a readable DuckDB file)
+
+Optional:
+- `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH` (DuckDB `file_search_path` for external file-backed objects/views)
+- `DBT_NOVA_DUCKDB_POOL_MAX_SIZE` (max pooled DuckDB connections per `(duckdb_path,file_search_path)` key; defaults to `DBT_NOVA_SQL_MAX_CONCURRENT`, then `10`)
 - `DBT_NOVA_SQL_MAX_ROW_LIMIT` (default: `10000`)
 - `DBT_NOVA_SQL_MAX_BYTE_LIMIT` (default: `25000000`)
 - `DBT_NOVA_SQL_MAX_CHUNKS` (default: `100`)

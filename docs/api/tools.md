@@ -481,6 +481,8 @@ Notes:
 - `poll_interval_ms` is raised to a configured minimum when too low.
 - Databricks supports named parameters and preflight checks.
 - BigQuery provider is available via `DBT_NOVA_SQL_PROVIDER=bigquery` and supports named scalar parameters with optional `parameter_types`.
+- DuckDB provider is available via `DBT_NOVA_SQL_PROVIDER=duckdb`; named parameters are supported, but `parameter_types` is not.
+- DuckDB reuses pooled read-only connections per `(duckdb_path,file_search_path)` key (`DBT_NOVA_DUCKDB_POOL_MAX_SIZE`).
 - BigQuery credentials can come from OAuth token env vars, `GOOGLE_APPLICATION_CREDENTIALS`, or gcloud ADC (same auth family used by GCS SDK mode).
 
 ```json

@@ -9,6 +9,7 @@ use crate::params::ExecuteSqlParams;
 
 pub mod bigquery;
 pub mod databricks;
+pub mod duckdb;
 
 pub trait SqlProvider: Send + Sync {
     fn name(&self) -> &'static str;
@@ -39,6 +40,7 @@ impl SqlProviderRegistry {
             providers: vec![
                 &databricks::DATABRICKS_PROVIDER,
                 &bigquery::BIGQUERY_PROVIDER,
+                &duckdb::DUCKDB_PROVIDER,
             ],
         }
     }
@@ -113,5 +115,18 @@ mod tests {
             Err(err) => panic!("provider resolved: {err}"),
         };
         assert_eq!(provider.name(), "bigquery");
+    }
+
+    #[test]
+    fn duckdb_sql_provider_resolves() {
+        let cfg = DbtNovaConfig {
+            sql_provider: "duckdb".to_string(),
+            ..Default::default()
+        };
+        let provider = match resolve_sql_provider(&cfg) {
+            Ok(provider) => provider,
+            Err(err) => panic!("provider resolved: {err}"),
+        };
+        assert_eq!(provider.name(), "duckdb");
     }
 }
