@@ -566,6 +566,8 @@ fn execute_duckdb_sync_with_connection(
         .prepare(&rewritten.sql)
         .map_err(|err| duckdb_runtime_error(format!("failed to prepare SQL statement: {err}")))?;
 
+    // Execute once, then read metadata from the executed statement handle to
+    // avoid running the same query twice.
     let mut row_iter = prepared
         .query(params_from_iter(bind_values.iter()))
         .map_err(|err| duckdb_runtime_error(format!("failed to execute SQL statement: {err}")))?;
@@ -735,6 +737,8 @@ fn run_preflight_statement(connection: &Connection, statement: &str) -> Result<(
     let probe = rows
         .next()
         .map_err(|err| duckdb_runtime_error(format!("failed to read preflight rows: {err}")))?;
+    // Existence checks (catalog/schema/relation) must return at least one row.
+    // An empty result means the target is not accessible and should fail preflight.
     if probe.is_some() {
         Ok(())
     } else {

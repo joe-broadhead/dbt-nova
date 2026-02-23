@@ -151,3 +151,23 @@ Optional:
 - `DBT_NOVA_SQL_MAX_CONCURRENT` (default: `10`)
 - `DBT_NOVA_SQL_MAX_QUEUE` (default: `20`)
 - `DBT_NOVA_SQL_QUEUE_TIMEOUT_MS` (default: `30000`)
+
+DuckDB behavior notes:
+- `parameter_types` is not supported; pass scalar values via `parameters`.
+- Preflight checks for catalog/schema/relation report success only when the probe returns at least one row.
+
+### DuckDB Example (Codex CLI)
+
+```toml
+[mcp_servers.dbt-nova]
+command = "/path/to/dbt-nova"
+startup_timeout_sec = 60
+
+[mcp_servers.dbt-nova.env]
+DBT_MANIFEST_PATH = "/path/to/manifest.json"
+DBT_NOVA_SQL_PROVIDER = "duckdb"
+DBT_NOVA_DUCKDB_PATH = "/absolute/path/to/analytics.duckdb"
+DBT_NOVA_DUCKDB_FILE_SEARCH_PATH = "/absolute/path/to/external/files"
+DBT_NOVA_DUCKDB_POOL_MAX_SIZE = "10"
+DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/models"
+```
