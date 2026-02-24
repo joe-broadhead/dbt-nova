@@ -267,12 +267,14 @@ Databricks runtime tuning env vars:
 
 Provider diagnostics are available through `execute_sql` with `preflight_only=true`
 plus optional `preflight_catalog`, `preflight_schema`, and `preflight_relation`.
+Object-level preflight checks (`preflight_catalog`, `preflight_schema`,
+`preflight_relation`) are treated as available only when the probe query returns
+at least one row.
 
 DuckDB notes:
 - Named parameters are supported and rewritten to positional binds.
 - `parameter_types` is not supported for DuckDB v1 (pass scalar values via `parameters` only).
 - Connections are pooled per process and per `(duckdb_path,file_search_path)` key.
-- Preflight object checks (`preflight_catalog`, `preflight_schema`, `preflight_relation`) are treated as available only when the probe query returns at least one row.
 
 When provided by callers, `row_limit`, `byte_limit`, `max_chunks`, and
 `max_poll_seconds` are clamped to the configured `DBT_NOVA_SQL_MAX_*` values.

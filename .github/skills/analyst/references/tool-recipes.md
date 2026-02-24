@@ -129,6 +129,18 @@ Key fields: grain_summary, nova_summary, tests.summary, upstream.entities.
 
 ## Execution
 
+### SQL preflight (provider + object access)
+**When:** Starting in a new environment or after connection/config changes.
+**Why:** Fail fast on provider/auth/schema issues before running expensive queries.
+
+```json
+{"name":"execute_sql","arguments":{"preflight_only":true,"preflight_relation":"analytics.orders"}}
+```
+
+Key fields: `provider`, `ready`, and `checks[*].ok`.
+Provider detection: use `data.provider` to branch SQL syntax/rules (Databricks vs BigQuery vs DuckDB).
+Interpretation: object checks only pass when the probe returns at least one row.
+
 ### Validate filter values
 **When:** The question includes geography/segment filters.
 **Why:** Prevent wrong mappings (for example UK/GB/United Kingdom confusion).
@@ -148,6 +160,17 @@ Key fields: candidate value strings for exact SQL filter.
 ```
 
 Key fields: result rows and column names.
+
+### Execute parameterized SQL (when injecting user values)
+**When:** The query contains dynamic filters (dates, country, channel).
+**Why:** Keep statements deterministic and avoid string interpolation errors.
+
+```json
+{"name":"execute_sql","arguments":{"statement":"select * from analytics.orders where order_date between :start_date and :end_date and country_code = :country_code","parameters":{"start_date":"2026-02-01","end_date":"2026-02-07","country_code":"GB"},"row_limit":5000}}
+```
+
+Key fields: `parameters` values used at execution time.
+Note: `parameter_types` is optional for Databricks/BigQuery and not supported by DuckDB.
 
 ### Execute final SQL (sessions + CR pattern)
 **When:** User asks for a volume metric and conversion rate together.

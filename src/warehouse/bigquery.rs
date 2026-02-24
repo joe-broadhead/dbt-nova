@@ -15,7 +15,7 @@ use crate::error::{DbtNovaError, Result};
 use crate::params::ExecuteSqlParams;
 use crate::responses::SuccessResponse;
 use crate::utils::{resolve_gcp_access_token_async, resolve_gcp_project_id};
-use crate::warehouse::SqlProvider;
+use crate::warehouse::{SqlProvider, empty_preflight_probe_message, preflight_probe_has_rows};
 
 const DEFAULT_ROW_LIMIT: u64 = 1_000;
 const DEFAULT_BYTE_LIMIT: u64 = 10_000_000;
@@ -377,6 +377,11 @@ fn query_error(response: &QueryResponse) -> Option<String> {
 
 fn parse_u64(value: Option<&String>) -> Option<u64> {
     value.and_then(|v| v.parse::<u64>().ok())
+}
+
+fn preflight_query_has_rows(response: &QueryResponse) -> bool {
+    let rows_len = response.rows.as_ref().map_or(0usize, Vec::len);
+    preflight_probe_has_rows(rows_len, parse_u64(response.total_rows.as_ref()))
 }
 
 fn query_url(project_id: &str) -> String {
@@ -903,11 +908,23 @@ async fn preflight_bigquery(params: &ExecuteSqlParams) -> Result<Value> {
             Ok(project) => {
                 let statement = catalog_preflight_statement(&project);
                 match run_query(&client, &config, &statement, &check_settings).await {
-                    Ok(_) => checks.push(serde_json::json!({
-                        "name": "catalog_access",
-                        "ok": true,
-                        "catalog": project,
-                    })),
+                    Ok((response, _, _)) if preflight_query_has_rows(&response) => {
+                        checks.push(serde_json::json!({
+                            "name": "catalog_access",
+                            "ok": true,
+                            "catalog": project,
+                        }));
+                    }
+                    Ok(_) => {
+                        ready = false;
+                        checks.push(serde_json::json!({
+                            "name": "catalog_access",
+                            "ok": false,
+                            "catalog": project,
+                            "message": empty_preflight_probe_message("catalog_access"),
+                            "action": "Verify project exists and token has BigQuery metadata permissions"
+                        }));
+                    }
                     Err(err) => {
                         ready = false;
                         checks.push(serde_json::json!({
@@ -948,12 +965,25 @@ async fn preflight_bigquery(params: &ExecuteSqlParams) -> Result<Value> {
             (Ok(project), Ok(dataset)) => {
                 let statement = schema_preflight_statement(&project, &dataset);
                 match run_query(&client, &config, &statement, &check_settings).await {
-                    Ok(_) => checks.push(serde_json::json!({
-                        "name": "schema_access",
-                        "ok": true,
-                        "schema": dataset,
-                        "catalog": project,
-                    })),
+                    Ok((response, _, _)) if preflight_query_has_rows(&response) => {
+                        checks.push(serde_json::json!({
+                            "name": "schema_access",
+                            "ok": true,
+                            "schema": dataset,
+                            "catalog": project,
+                        }));
+                    }
+                    Ok(_) => {
+                        ready = false;
+                        checks.push(serde_json::json!({
+                            "name": "schema_access",
+                            "ok": false,
+                            "schema": dataset,
+                            "catalog": project,
+                            "message": empty_preflight_probe_message("schema_access"),
+                            "action": "Verify dataset exists and token has BigQuery dataset metadata permissions"
+                        }));
+                    }
                     Err(err) => {
                         ready = false;
                         checks.push(serde_json::json!({
@@ -985,11 +1015,23 @@ async fn preflight_bigquery(params: &ExecuteSqlParams) -> Result<Value> {
             Ok(normalized_relation) => {
                 let statement = relation_preflight_statement(&normalized_relation);
                 match run_query(&client, &config, &statement, &check_settings).await {
-                    Ok(_) => checks.push(serde_json::json!({
-                        "name": "relation_access",
-                        "ok": true,
-                        "relation": normalized_relation,
-                    })),
+                    Ok((response, _, _)) if preflight_query_has_rows(&response) => {
+                        checks.push(serde_json::json!({
+                            "name": "relation_access",
+                            "ok": true,
+                            "relation": normalized_relation,
+                        }));
+                    }
+                    Ok(_) => {
+                        ready = false;
+                        checks.push(serde_json::json!({
+                            "name": "relation_access",
+                            "ok": false,
+                            "relation": normalized_relation,
+                            "message": empty_preflight_probe_message("relation_access"),
+                            "action": "Verify table exists and token has BigQuery data viewer permissions"
+                        }));
+                    }
                     Err(err) => {
                         ready = false;
                         checks.push(serde_json::json!({
@@ -1052,8 +1094,9 @@ impl SqlProvider for BigQueryProvider {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_query_parameters, catalog_preflight_statement, normalize_project_id,
-        normalize_relation_name, relation_preflight_statement, schema_preflight_statement,
+        QueryResponse, build_query_parameters, catalog_preflight_statement, normalize_project_id,
+        normalize_relation_name, preflight_query_has_rows, relation_preflight_statement,
+        schema_preflight_statement,
     };
     use serde_json::json;
     use std::collections::HashMap;
@@ -1130,5 +1173,36 @@ mod tests {
         let err = build_query_parameters(Some(params), None)
             .expect_err("complex parameters should be rejected");
         assert!(err.to_string().contains("scalar JSON values"));
+    }
+
+    #[test]
+    fn preflight_query_has_rows_accepts_materialized_rows() {
+        let response: QueryResponse = serde_json::from_value(json!({
+            "rows": [{"f": [{"v": "1"}]}]
+        }))
+        .expect("query response should deserialize");
+
+        assert!(preflight_query_has_rows(&response));
+    }
+
+    #[test]
+    fn preflight_query_has_rows_accepts_total_rows_without_rows_payload() {
+        let response: QueryResponse = serde_json::from_value(json!({
+            "totalRows": "1"
+        }))
+        .expect("query response should deserialize");
+
+        assert!(preflight_query_has_rows(&response));
+    }
+
+    #[test]
+    fn preflight_query_has_rows_rejects_empty_probe() {
+        let response: QueryResponse = serde_json::from_value(json!({
+            "rows": [],
+            "totalRows": "0"
+        }))
+        .expect("query response should deserialize");
+
+        assert!(!preflight_query_has_rows(&response));
     }
 }

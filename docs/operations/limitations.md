@@ -21,6 +21,7 @@ This page documents practical limits and edge cases to consider in production.
 - Parameterized queries are supported, but only for providers that implement them.
 - DuckDB provider is read-only and requires `DBT_NOVA_DUCKDB_PATH`; DuckDB `parameter_types` hints are not supported.
 - DuckDB uses a bounded per-process connection pool keyed by `(duckdb_path,file_search_path)`; tune with `DBT_NOVA_DUCKDB_POOL_MAX_SIZE` if needed.
+- Object-level preflight checks (`preflight_catalog`, `preflight_schema`, `preflight_relation`) require non-empty probe results across providers.
 - Request limits are server-guarded: row/byte/chunk/poll values may be clamped by
   `DBT_NOVA_SQL_MAX_*` settings.
 - SQL execution concurrency is bounded by `DBT_NOVA_SQL_MAX_CONCURRENT` and
