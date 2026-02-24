@@ -6,7 +6,7 @@ allowed-tools: "mcp__nova__search mcp__nova__search_recipes mcp__nova__get_recip
 metadata:
   owner: "dbt-nova"
   persona: "analyst"
-  version: "1.2.0"
+  version: "0.0.1"
 ---
 
 # Analyst Skill (dbt-nova)
@@ -91,6 +91,16 @@ Turn business questions into correct, reproducible SQL answers with explicit evi
 - `execute_sql`: run queries when needed
 - `health`: confirm readiness after manifest reloads
 
+## SQL execution guardrails (required)
+
+- Assume provider defaults to `databricks` unless `DBT_NOVA_SQL_PROVIDER` is set to `bigquery` or `duckdb`.
+- For unfamiliar environments, run `execute_sql` preflight first (`preflight_only: true` plus `preflight_catalog`/`preflight_schema`/`preflight_relation` when relevant).
+- Read `data.provider` from the preflight response to identify the active SQL provider before writing provider-specific SQL.
+- Treat object checks as pass only when `ok: true`; object preflight checks require non-empty probe results.
+- Set bounded query controls on exploratory queries (`row_limit`, `byte_limit`, `max_chunks`); server-side config may clamp these values.
+- Use `parameters` for injected user values. Use `parameter_types` only when needed, and never with DuckDB.
+- `run_recipe` executes through the same SQL provider and limit guards as `execute_sql`.
+
 ## Output standard (required)
 
 - Include current, prior (YoY), delta (abs), delta (%) for counts.
@@ -105,6 +115,7 @@ Turn business questions into correct, reproducible SQL answers with explicit evi
 [ ] Time column selected
 [ ] Geo column selected
 [ ] Geo filter values validated with SQL
+[ ] SQL preflight run when environment/provider access was uncertain
 [ ] Time window specified
 [ ] Measure expressions verified
 [ ] YoY alignment correct (364 days)

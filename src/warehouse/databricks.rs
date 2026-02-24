@@ -31,7 +31,7 @@ use tracing::{debug, warn};
 use crate::error::{DbtNovaError, Result};
 use crate::params::ExecuteSqlParams;
 use crate::responses::SuccessResponse;
-use crate::warehouse::SqlProvider;
+use crate::warehouse::{SqlProvider, empty_preflight_probe_message, preflight_probe_has_rows};
 
 fn dbx_err(message: impl Into<String>) -> DbtNovaError {
     DbtNovaError::DatabricksError {
@@ -1004,7 +1004,7 @@ async fn run_preflight_statement(
     client: &DatabricksSqlClient,
     statement: &str,
     warehouse_id: Option<String>,
-) -> Result<()> {
+) -> Result<QueryResult> {
     let opts = ExecuteOptions {
         warehouse_id,
         row_limit: Some(1),
@@ -1015,7 +1015,11 @@ async fn run_preflight_statement(
         max_chunks: Some(1),
         ..ExecuteOptions::default()
     };
-    client.execute(statement, opts).await.map(|_| ())
+    client.execute(statement, opts).await
+}
+
+fn preflight_result_has_rows(result: &QueryResult) -> bool {
+    preflight_probe_has_rows(result.rows.len(), result.stats.total_row_count)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -1055,7 +1059,7 @@ async fn preflight_databricks(params: &ExecuteSqlParams) -> Result<Value> {
     )
     .await
     {
-        Ok(()) => checks.push(serde_json::json!({
+        Ok(_) => checks.push(serde_json::json!({
             "name": "connectivity",
             "ok": true,
         })),
@@ -1075,11 +1079,23 @@ async fn preflight_databricks(params: &ExecuteSqlParams) -> Result<Value> {
             Ok(catalog) => {
                 let statement = catalog_preflight_statement(&catalog);
                 match run_preflight_statement(client, &statement, check_warehouse.clone()).await {
-                    Ok(()) => checks.push(serde_json::json!({
-                        "name": "catalog_access",
-                        "ok": true,
-                        "catalog": catalog
-                    })),
+                    Ok(result) if preflight_result_has_rows(&result) => {
+                        checks.push(serde_json::json!({
+                            "name": "catalog_access",
+                            "ok": true,
+                            "catalog": catalog
+                        }));
+                    }
+                    Ok(_) => {
+                        ready = false;
+                        checks.push(serde_json::json!({
+                            "name": "catalog_access",
+                            "ok": false,
+                            "catalog": catalog,
+                            "message": empty_preflight_probe_message("catalog_access"),
+                            "action": "Verify catalog exists and token has USE CATALOG permissions"
+                        }));
+                    }
                     Err(err) => {
                         ready = false;
                         checks.push(serde_json::json!({
@@ -1110,11 +1126,23 @@ async fn preflight_databricks(params: &ExecuteSqlParams) -> Result<Value> {
             Ok(schema) => {
                 let statement = schema_preflight_statement(&schema);
                 match run_preflight_statement(client, &statement, check_warehouse.clone()).await {
-                    Ok(()) => checks.push(serde_json::json!({
-                        "name": "schema_access",
-                        "ok": true,
-                        "schema": schema
-                    })),
+                    Ok(result) if preflight_result_has_rows(&result) => {
+                        checks.push(serde_json::json!({
+                            "name": "schema_access",
+                            "ok": true,
+                            "schema": schema
+                        }));
+                    }
+                    Ok(_) => {
+                        ready = false;
+                        checks.push(serde_json::json!({
+                            "name": "schema_access",
+                            "ok": false,
+                            "schema": schema,
+                            "message": empty_preflight_probe_message("schema_access"),
+                            "action": "Verify schema exists and token has USE SCHEMA permissions"
+                        }));
+                    }
                     Err(err) => {
                         ready = false;
                         checks.push(serde_json::json!({
@@ -1145,11 +1173,23 @@ async fn preflight_databricks(params: &ExecuteSqlParams) -> Result<Value> {
             Ok(relation) => {
                 let statement = relation_preflight_statement(&relation);
                 match run_preflight_statement(client, &statement, check_warehouse.clone()).await {
-                    Ok(()) => checks.push(serde_json::json!({
-                        "name": "relation_access",
-                        "ok": true,
-                        "relation": relation
-                    })),
+                    Ok(result) if preflight_result_has_rows(&result) => {
+                        checks.push(serde_json::json!({
+                            "name": "relation_access",
+                            "ok": true,
+                            "relation": relation
+                        }));
+                    }
+                    Ok(_) => {
+                        ready = false;
+                        checks.push(serde_json::json!({
+                            "name": "relation_access",
+                            "ok": false,
+                            "relation": relation,
+                            "message": empty_preflight_probe_message("relation_access"),
+                            "action": "Verify relation exists and has SELECT permissions for this warehouse"
+                        }));
+                    }
                     Err(err) => {
                         ready = false;
                         checks.push(serde_json::json!({
@@ -1187,9 +1227,29 @@ async fn preflight_databricks(params: &ExecuteSqlParams) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::{
-        catalog_preflight_statement, normalize_preflight_relation, normalize_warehouse_id,
-        relation_preflight_statement, schema_preflight_statement,
+        QueryResult, QueryStats, catalog_preflight_statement, normalize_preflight_relation,
+        normalize_warehouse_id, preflight_result_has_rows, relation_preflight_statement,
+        schema_preflight_statement,
     };
+    use serde_json::Value;
+
+    fn sample_preflight_result(rows: Vec<Vec<Value>>, total_row_count: Option<u64>) -> QueryResult {
+        QueryResult {
+            statement_id: "statement-id".to_string(),
+            state: "SUCCEEDED".to_string(),
+            truncated: false,
+            columns: Vec::new(),
+            column_types: Vec::new(),
+            rows,
+            stats: QueryStats {
+                total_row_count,
+                total_byte_count: None,
+                total_chunk_count: None,
+            },
+            fetched_chunks: 0,
+            elapsed_ms: 0,
+        }
+    }
 
     #[test]
     fn normalize_warehouse_id_accepts_raw_id() {
@@ -1257,5 +1317,23 @@ mod tests {
             statement,
             "SELECT 1 AS relation_access_check FROM hive_metastore.schema.orders LIMIT 1"
         );
+    }
+
+    #[test]
+    fn preflight_result_has_rows_accepts_materialized_rows() {
+        let result = sample_preflight_result(vec![vec![Value::from(1)]], None);
+        assert!(preflight_result_has_rows(&result));
+    }
+
+    #[test]
+    fn preflight_result_has_rows_accepts_total_row_count_without_rows() {
+        let result = sample_preflight_result(Vec::new(), Some(1));
+        assert!(preflight_result_has_rows(&result));
+    }
+
+    #[test]
+    fn preflight_result_has_rows_rejects_empty_probe() {
+        let result = sample_preflight_result(Vec::new(), Some(0));
+        assert!(!preflight_result_has_rows(&result));
     }
 }

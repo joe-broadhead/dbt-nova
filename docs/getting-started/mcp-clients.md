@@ -5,6 +5,9 @@ Databricks variables are required only if you use the `execute_sql` tool with
 `DBT_NOVA_SQL_PROVIDER=databricks` (default).
 BigQuery variables are required only if you use `DBT_NOVA_SQL_PROVIDER=bigquery`.
 DuckDB variables are required only if you use `DBT_NOVA_SQL_PROVIDER=duckdb`.
+For all SQL providers, object-level preflight checks (`preflight_catalog`,
+`preflight_schema`, `preflight_relation`) pass only when the probe returns at
+least one row.
 
 For slim installs, set a stable `DBT_NOVA_EMBEDDINGS_CACHE_DIR` (recommended:
 `~/.dbt-nova/models`) so model downloads are reused across sessions/clients.
@@ -154,7 +157,6 @@ Optional:
 
 DuckDB behavior notes:
 - `parameter_types` is not supported; pass scalar values via `parameters`.
-- Preflight checks for catalog/schema/relation report success only when the probe returns at least one row.
 
 ### DuckDB Example (Codex CLI)
 

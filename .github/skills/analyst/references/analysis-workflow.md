@@ -46,14 +46,27 @@ Interpretation:
 - Week: Sunday-Saturday
 - YoY: 364-day shift (day-of-week aligned)
 - Use same-date YoY only when explicitly requested
+- Prefer explicit `<start_date>` / `<end_date>` literals or parameters to keep SQL portable across providers.
 
-Databricks SQL window template:
+Databricks SQL week-bounds template:
 
 ```sql
 with bounds as (
   select
     date_sub(next_day(current_date(), 'Sun'), 14) as wk_start,
     date_sub(next_day(current_date(), 'Sun'), 8)  as wk_end
+)
+select *
+from bounds;
+```
+
+BigQuery SQL week-bounds template:
+
+```sql
+with bounds as (
+  select
+    date_sub(date_trunc(current_date(), week(sunday)), interval 7 day) as wk_start,
+    date_sub(date_trunc(current_date(), week(sunday)), interval 1 day) as wk_end
 )
 select *
 from bounds;
