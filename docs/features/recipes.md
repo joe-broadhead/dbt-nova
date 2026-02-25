@@ -46,8 +46,16 @@ You can fetch by full path (`marketing/retention`) or basename (`retention`).
 ## SQL Source
 
 Recipes are manifest-only. For each discovered recipe query, Nova loads SQL from
-the corresponding dbt `analysis` node in the manifest, using `compiled_code`
-when available and falling back to `raw_code`.
+the corresponding dbt `analysis` node in the manifest:
+
+- prefer non-empty `compiled_code`
+- fallback to non-empty `raw_code` when compiled SQL is unavailable
+
+Execution and SQL rendering guardrail:
+
+- if fallback `raw_code` contains dbt/Jinja markers (`{{` or `{%`), Nova rejects
+  `run_recipe` and `get_recipe(include_sql: true)` with `INVALID_PARAMS`
+  details so failures are actionable before warehouse SQL parsing.
 
 ## Runtime parameter replacement
 

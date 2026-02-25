@@ -444,3 +444,154 @@ async fn test_run_recipe_preflight_returns_type_mismatch_details() {
         "Expected TOP_N type mismatch"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_get_recipe_include_sql_rejects_templated_raw_fallback() {
+    let searcher = get_searcher_with_fixture("recipes_raw_fallback.json");
+    let params = GetRecipeParams {
+        recipe_id: "templated_report".to_string(),
+        include_sql: true,
+        include_queries: true,
+        parameters: None,
+        placeholder_types: None,
+        parameter_types: None,
+    };
+
+    let result = searcher.get_recipe(&params).await.json();
+    let success = result
+        .get("success")
+        .and_then(serde_json::Value::as_bool)
+        .expect("response missing success flag");
+    assert!(!success, "Expected templated raw fallback to fail");
+    assert_eq!(
+        result.get("error_code").and_then(serde_json::Value::as_str),
+        Some("INVALID_PARAMS")
+    );
+    assert!(
+        result
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .contains("compiled_code is unavailable and raw_code contains dbt/Jinja templating"),
+        "Expected explicit jinja fallback error"
+    );
+    let details = result
+        .get("details")
+        .and_then(serde_json::Value::as_object)
+        .expect("Expected structured details");
+    assert_eq!(
+        details.get("recipe_id").and_then(serde_json::Value::as_str),
+        Some("marketplace/templated_report")
+    );
+    assert_eq!(
+        details
+            .get("sql_source")
+            .and_then(serde_json::Value::as_str),
+        Some("raw_code")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_get_recipe_include_sql_allows_plain_raw_fallback() {
+    let searcher = get_searcher_with_fixture("recipes_raw_fallback.json");
+    let params = GetRecipeParams {
+        recipe_id: "plain_raw_report".to_string(),
+        include_sql: true,
+        include_queries: true,
+        parameters: None,
+        placeholder_types: None,
+        parameter_types: None,
+    };
+
+    let result = searcher.get_recipe(&params).await.json();
+    let success = result
+        .get("success")
+        .and_then(serde_json::Value::as_bool)
+        .expect("response missing success flag");
+    assert!(success, "Expected plain raw fallback to succeed");
+    let queries = result
+        .get("data")
+        .and_then(|value| value.get("queries"))
+        .and_then(serde_json::Value::as_array)
+        .expect("queries should be present");
+    let sql = queries[0]
+        .get("sql")
+        .and_then(serde_json::Value::as_str)
+        .expect("sql should be rendered");
+    assert_eq!(sql, "select 2 as plain_raw_value");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_get_recipe_include_sql_prefers_compiled_code_when_present() {
+    let searcher = get_searcher_with_fixture("recipes_raw_fallback.json");
+    let params = GetRecipeParams {
+        recipe_id: "compiled_report".to_string(),
+        include_sql: true,
+        include_queries: true,
+        parameters: None,
+        placeholder_types: None,
+        parameter_types: None,
+    };
+
+    let result = searcher.get_recipe(&params).await.json();
+    let success = result
+        .get("success")
+        .and_then(serde_json::Value::as_bool)
+        .expect("response missing success flag");
+    assert!(success, "Expected compiled SQL to be preferred");
+    let queries = result
+        .get("data")
+        .and_then(|value| value.get("queries"))
+        .and_then(serde_json::Value::as_array)
+        .expect("queries should be present");
+    let sql = queries[0]
+        .get("sql")
+        .and_then(serde_json::Value::as_str)
+        .expect("sql should be rendered");
+    assert_eq!(sql, "select 3 as compiled_value");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_run_recipe_rejects_templated_raw_fallback_before_sql_execution() {
+    let searcher = get_searcher_with_fixture("recipes_raw_fallback.json");
+    let params = RunRecipeParams {
+        recipe_id: "templated_report".to_string(),
+        query_names: vec![],
+        query_indexes: vec![],
+        stop_on_failure: true,
+        include_sql: false,
+        row_limit: Some(10),
+        byte_limit: None,
+        max_poll_seconds: None,
+        poll_interval_ms: None,
+        wait_timeout_s: None,
+        parameters: None,
+        placeholder_types: None,
+        sql_parameter_types: None,
+        parameter_types: None,
+        fetch_all_chunks: None,
+        max_chunks: None,
+    };
+
+    let result = searcher.run_recipe(&params).await.json();
+    let success = result
+        .get("success")
+        .and_then(serde_json::Value::as_bool)
+        .expect("response missing success flag");
+    assert!(
+        !success,
+        "Expected templated raw fallback to fail before warehouse execution"
+    );
+    assert_eq!(
+        result.get("error_code").and_then(serde_json::Value::as_str),
+        Some("INVALID_PARAMS")
+    );
+    assert!(
+        result
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .contains("compiled_code is unavailable and raw_code contains dbt/Jinja templating"),
+        "Expected explicit jinja fallback error"
+    );
+}

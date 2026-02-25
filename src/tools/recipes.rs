@@ -31,6 +31,21 @@ struct RecipeQuery {
     source: RecipeQuerySource,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecipeSqlSource {
+    CompiledCode,
+    RawCode,
+}
+
+impl RecipeSqlSource {
+    fn label(self) -> &'static str {
+        match self {
+            Self::CompiledCode => "compiled_code",
+            Self::RawCode => "raw_code",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct RecipeRecord {
     id: String,
@@ -89,6 +104,16 @@ struct PreparedRecipeQuery {
     query: RecipeQuery,
     base_sql: String,
     parameter_specs: Vec<RecipeParameterSpec>,
+    analysis_unique_id: String,
+    sql_source: RecipeSqlSource,
+}
+
+#[derive(Debug)]
+struct ResolvedRecipeSql {
+    base_sql: String,
+    payload: JsonValue,
+    analysis_unique_id: String,
+    source: RecipeSqlSource,
 }
 
 #[derive(Debug, Clone)]
@@ -206,7 +231,7 @@ impl ManifestSearch {
         let query_payloads = if params.include_queries {
             let prepared_queries = self.prepare_recipe_queries(&recipe.queries)?;
             Some(build_recipe_query_payloads(
-                self,
+                &recipe.id,
                 &prepared_queries,
                 &schema,
                 params.include_sql,
@@ -296,14 +321,22 @@ impl ManifestSearch {
             .iter()
             .map(|prepared| prepared.query.name.clone())
             .collect();
-
+        let mut rendered_statements: Vec<(&PreparedRecipeQuery, String)> =
+            Vec::with_capacity(prepared_queries.len());
         for prepared in &prepared_queries {
+            rendered_statements.push((
+                prepared,
+                render_recipe_query_sql(
+                    &recipe.id,
+                    prepared,
+                    &schema.effective_parameters,
+                    placeholder_types.as_ref(),
+                )?,
+            ));
+        }
+
+        for (prepared, statement) in rendered_statements {
             let query = &prepared.query;
-            let statement = apply_runtime_parameter_substitution(
-                &prepared.base_sql,
-                &schema.effective_parameters,
-                placeholder_types.as_ref(),
-            )?;
             let exec_params = crate::params::ExecuteSqlParams {
                 statement: statement.clone(),
                 warehouse_id: None,
@@ -503,12 +536,15 @@ impl ManifestSearch {
     fn prepare_recipe_queries(&self, queries: &[RecipeQuery]) -> Result<Vec<PreparedRecipeQuery>> {
         let mut prepared_queries = Vec::with_capacity(queries.len());
         for query in queries {
-            let (base_sql, payload) = self.load_query_base_sql_and_payload(query)?;
-            let parameter_specs = build_query_parameter_specs(&base_sql, &payload);
+            let resolved = self.load_query_base_sql_and_payload(query)?;
+            let parameter_specs =
+                build_query_parameter_specs(&resolved.base_sql, &resolved.payload);
             prepared_queries.push(PreparedRecipeQuery {
                 query: query.clone(),
-                base_sql,
+                base_sql: resolved.base_sql,
                 parameter_specs,
+                analysis_unique_id: resolved.analysis_unique_id,
+                sql_source: resolved.source,
             });
         }
         Ok(prepared_queries)
@@ -592,7 +628,7 @@ impl ManifestSearch {
         })
     }
 
-    fn load_query_base_sql_and_payload(&self, query: &RecipeQuery) -> Result<(String, JsonValue)> {
+    fn load_query_base_sql_and_payload(&self, query: &RecipeQuery) -> Result<ResolvedRecipeSql> {
         let RecipeQuerySource::ManifestAnalysis { analysis_id } = &query.source;
         let analysis_unique_id = self
             .resolve_single_id(analysis_id, Some("analysis"))
@@ -606,17 +642,33 @@ impl ManifestSearch {
             .get_entity_archived(&analysis_unique_id)?
             .ok_or_else(|| self.entity_not_found(&analysis_unique_id, Some("analysis")))?;
         let payload = entity.to_json_value();
-        let base_sql = payload
+        let compiled_code = payload
             .get("compiled_code")
             .and_then(|value| value.as_str())
-            .or_else(|| payload.get("raw_code").and_then(|value| value.as_str()))
-            .map(str::to_string)
-            .ok_or_else(|| {
-                DbtNovaError::InvalidParams(format!(
-                    "Analysis '{analysis_unique_id}' does not expose compiled_code or raw_code"
-                ))
-            })?;
-        Ok((base_sql, payload))
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let raw_code = payload
+            .get("raw_code")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+
+        let (base_sql, source) = if let Some(compiled) = compiled_code {
+            (compiled.to_string(), RecipeSqlSource::CompiledCode)
+        } else if let Some(raw) = raw_code {
+            (raw.to_string(), RecipeSqlSource::RawCode)
+        } else {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "Analysis '{analysis_unique_id}' does not expose compiled_code or raw_code"
+            )));
+        };
+
+        Ok(ResolvedRecipeSql {
+            base_sql,
+            payload,
+            analysis_unique_id,
+            source,
+        })
     }
 }
 
@@ -651,7 +703,7 @@ fn validate_recipe_renderable_for_get(
 }
 
 fn build_recipe_query_payloads(
-    searcher: &ManifestSearch,
+    recipe_id: &str,
     prepared_queries: &[PreparedRecipeQuery],
     schema: &RecipeParameterSchema,
     include_sql: bool,
@@ -671,12 +723,9 @@ fn build_recipe_query_payloads(
             "source".to_string(),
             JsonValue::String(query.source.label().to_string()),
         );
-        let analysis_id = match &query.source {
-            RecipeQuerySource::ManifestAnalysis { analysis_id } => analysis_id,
-        };
         obj.insert(
             "analysis_id".to_string(),
-            JsonValue::String(analysis_id.clone()),
+            JsonValue::String(prepared.analysis_unique_id.clone()),
         );
         obj.insert(
             "parameters".to_string(),
@@ -726,9 +775,10 @@ fn build_recipe_query_payloads(
         if include_sql {
             obj.insert(
                 "sql".to_string(),
-                JsonValue::String(searcher.resolve_query_sql(
-                    query,
-                    Some(&schema.effective_parameters),
+                JsonValue::String(render_recipe_query_sql(
+                    recipe_id,
+                    prepared,
+                    &schema.effective_parameters,
                     placeholder_types,
                 )?),
             );
@@ -1560,29 +1610,77 @@ fn query_selector_key(name: &str) -> String {
         .to_lowercase()
 }
 
-impl ManifestSearch {
-    fn resolve_query_sql(
-        &self,
-        query: &RecipeQuery,
-        parameters: Option<&HashMap<String, JsonValue>>,
-        parameter_types: Option<&HashMap<String, String>>,
-    ) -> Result<String> {
-        let (base_sql, _) = self.load_query_base_sql_and_payload(query)?;
+fn recipe_query_jinja_markers(sql: &str) -> Vec<&'static str> {
+    let mut markers = Vec::new();
+    if sql.contains("{{") {
+        markers.push("{{");
+    }
+    if sql.contains("{%") {
+        markers.push("{%");
+    }
+    markers
+}
 
-        if let Some(parameters) = parameters {
-            if parameter_types.is_some() || !parameters.is_empty() {
-                apply_runtime_parameter_substitution(&base_sql, parameters, parameter_types)
-            } else {
-                Ok(base_sql)
-            }
-        } else if contains_query_placeholders(&base_sql) {
-            Err(DbtNovaError::InvalidParams(format!(
-                "Recipe query '{}' requires runtime parameters",
-                query.name
-            )))
-        } else {
-            Ok(base_sql)
-        }
+fn recipe_query_snippet(sql: &str, max_chars: usize) -> String {
+    let collapsed = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut iter = collapsed.chars();
+    let snippet: String = iter.by_ref().take(max_chars).collect();
+    if iter.next().is_some() {
+        format!("{snippet}...")
+    } else {
+        snippet
+    }
+}
+
+fn non_executable_recipe_query_error(
+    recipe_id: &str,
+    prepared: &PreparedRecipeQuery,
+) -> DbtNovaError {
+    let message = format!(
+        "Recipe query '{}' cannot execute: compiled_code is unavailable and raw_code contains dbt/Jinja templating (`{{{{` / `{{%`). Rebuild manifest with compiled analysis SQL.",
+        prepared.query.name
+    );
+    let details = serde_json::json!({
+        "recipe_id": recipe_id,
+        "query_name": prepared.query.name,
+        "analysis_id": prepared.analysis_unique_id,
+        "path": display_path(&prepared.query.path),
+        "sql_source": prepared.sql_source.label(),
+        "jinja_markers": recipe_query_jinja_markers(&prepared.base_sql),
+        "raw_snippet": recipe_query_snippet(&prepared.base_sql, 220),
+        "action": "Provide compiled analysis SQL in the manifest, or remove dbt/Jinja templating from raw_code fallback.",
+    });
+    DbtNovaError::InvalidParamsDetailed { message, details }
+}
+
+fn ensure_recipe_query_executable(recipe_id: &str, prepared: &PreparedRecipeQuery) -> Result<()> {
+    if prepared.sql_source == RecipeSqlSource::RawCode
+        && !recipe_query_jinja_markers(&prepared.base_sql).is_empty()
+    {
+        return Err(non_executable_recipe_query_error(recipe_id, prepared));
+    }
+    Ok(())
+}
+
+fn render_recipe_query_sql(
+    recipe_id: &str,
+    prepared: &PreparedRecipeQuery,
+    parameters: &HashMap<String, JsonValue>,
+    parameter_types: Option<&HashMap<String, String>>,
+) -> Result<String> {
+    ensure_recipe_query_executable(recipe_id, prepared)?;
+
+    if parameters.is_empty() && contains_query_placeholders(&prepared.base_sql) {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "Recipe query '{}' requires runtime parameters",
+            prepared.query.name
+        )));
+    }
+
+    if parameter_types.is_some() || !parameters.is_empty() {
+        apply_runtime_parameter_substitution(&prepared.base_sql, parameters, parameter_types)
+    } else {
+        Ok(prepared.base_sql.clone())
     }
 }
 
