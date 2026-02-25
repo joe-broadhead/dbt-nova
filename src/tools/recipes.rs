@@ -1610,41 +1610,40 @@ fn query_selector_key(name: &str) -> String {
         .to_lowercase()
 }
 
+enum RecipeSqlScanState {
+    Normal,
+    SingleQuote,
+    DoubleQuote,
+    LineComment,
+    BlockComment,
+}
+
 fn recipe_query_jinja_markers(sql: &str) -> Vec<&'static str> {
     let mut markers = Vec::new();
     let bytes = sql.as_bytes();
     let mut i = 0usize;
-
-    enum ScanState {
-        Normal,
-        SingleQuote,
-        DoubleQuote,
-        LineComment,
-        BlockComment,
-    }
-
-    let mut state = ScanState::Normal;
+    let mut state = RecipeSqlScanState::Normal;
 
     while i < bytes.len() {
         match state {
-            ScanState::Normal => {
+            RecipeSqlScanState::Normal => {
                 if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'-' {
-                    state = ScanState::LineComment;
+                    state = RecipeSqlScanState::LineComment;
                     i += 2;
                     continue;
                 }
                 if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
-                    state = ScanState::BlockComment;
+                    state = RecipeSqlScanState::BlockComment;
                     i += 2;
                     continue;
                 }
                 if bytes[i] == b'\'' {
-                    state = ScanState::SingleQuote;
+                    state = RecipeSqlScanState::SingleQuote;
                     i += 1;
                     continue;
                 }
                 if bytes[i] == b'"' {
-                    state = ScanState::DoubleQuote;
+                    state = RecipeSqlScanState::DoubleQuote;
                     i += 1;
                     continue;
                 }
@@ -1663,35 +1662,35 @@ fn recipe_query_jinja_markers(sql: &str) -> Vec<&'static str> {
                 }
                 i += 1;
             }
-            ScanState::SingleQuote => {
+            RecipeSqlScanState::SingleQuote => {
                 if i + 1 < bytes.len() && bytes[i] == b'\'' && bytes[i + 1] == b'\'' {
                     i += 2;
                     continue;
                 }
                 if bytes[i] == b'\'' {
-                    state = ScanState::Normal;
+                    state = RecipeSqlScanState::Normal;
                 }
                 i += 1;
             }
-            ScanState::DoubleQuote => {
+            RecipeSqlScanState::DoubleQuote => {
                 if i + 1 < bytes.len() && bytes[i] == b'"' && bytes[i + 1] == b'"' {
                     i += 2;
                     continue;
                 }
                 if bytes[i] == b'"' {
-                    state = ScanState::Normal;
+                    state = RecipeSqlScanState::Normal;
                 }
                 i += 1;
             }
-            ScanState::LineComment => {
+            RecipeSqlScanState::LineComment => {
                 if bytes[i] == b'\n' {
-                    state = ScanState::Normal;
+                    state = RecipeSqlScanState::Normal;
                 }
                 i += 1;
             }
-            ScanState::BlockComment => {
+            RecipeSqlScanState::BlockComment => {
                 if i + 1 < bytes.len() && bytes[i] == b'*' && bytes[i + 1] == b'/' {
-                    state = ScanState::Normal;
+                    state = RecipeSqlScanState::Normal;
                     i += 2;
                     continue;
                 }
