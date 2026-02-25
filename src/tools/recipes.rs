@@ -1610,12 +1610,140 @@ fn query_selector_key(name: &str) -> String {
         .to_lowercase()
 }
 
+#[derive(Clone, Copy)]
 enum RecipeSqlScanState {
     Normal,
     SingleQuote,
     DoubleQuote,
+    DollarQuote,
     LineComment,
     BlockComment,
+}
+
+fn parse_dollar_quote_delimiter(sql: &[u8], start: usize) -> Option<Vec<u8>> {
+    if start >= sql.len() || sql[start] != b'$' {
+        return None;
+    }
+
+    let mut i = start + 1;
+    while i < sql.len() {
+        let ch = sql[i];
+        if ch == b'$' {
+            return Some(sql[start..=i].to_vec());
+        }
+        if ch.is_ascii_alphanumeric() || ch == b'_' {
+            i += 1;
+            continue;
+        }
+        return None;
+    }
+
+    None
+}
+
+fn push_unique_jinja_marker(markers: &mut Vec<&'static str>, marker: &'static str) {
+    if !markers.contains(&marker) {
+        markers.push(marker);
+    }
+}
+
+fn detect_jinja_marker(bytes: &[u8], i: usize, markers: &mut Vec<&'static str>) {
+    if i + 1 >= bytes.len() || bytes[i] != b'{' {
+        return;
+    }
+
+    match bytes[i + 1] {
+        b'{' => push_unique_jinja_marker(markers, "{{"),
+        b'%' => push_unique_jinja_marker(markers, "{%"),
+        b'#' => push_unique_jinja_marker(markers, "{#"),
+        _ => {}
+    }
+}
+
+fn step_normal_state(
+    bytes: &[u8],
+    i: usize,
+    markers: &mut Vec<&'static str>,
+    dollar_quote_delimiter: &mut Option<Vec<u8>>,
+) -> (usize, RecipeSqlScanState) {
+    if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'-' {
+        return (i + 2, RecipeSqlScanState::LineComment);
+    }
+    if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+        return (i + 2, RecipeSqlScanState::BlockComment);
+    }
+    if bytes[i] == b'\'' {
+        return (i + 1, RecipeSqlScanState::SingleQuote);
+    }
+    if bytes[i] == b'"' {
+        return (i + 1, RecipeSqlScanState::DoubleQuote);
+    }
+    if let Some(delimiter) = parse_dollar_quote_delimiter(bytes, i) {
+        *dollar_quote_delimiter = Some(delimiter.clone());
+        return (i + delimiter.len(), RecipeSqlScanState::DollarQuote);
+    }
+
+    detect_jinja_marker(bytes, i, markers);
+    (i + 1, RecipeSqlScanState::Normal)
+}
+
+fn step_single_quote_state(bytes: &[u8], i: usize) -> (usize, RecipeSqlScanState) {
+    if i + 1 < bytes.len() && bytes[i] == b'\'' && bytes[i + 1] == b'\'' {
+        return (i + 2, RecipeSqlScanState::SingleQuote);
+    }
+    // Support dialects that allow backslash-escaped quote content.
+    if bytes[i] == b'\\' {
+        return ((i + 2).min(bytes.len()), RecipeSqlScanState::SingleQuote);
+    }
+    if bytes[i] == b'\'' {
+        return (i + 1, RecipeSqlScanState::Normal);
+    }
+    (i + 1, RecipeSqlScanState::SingleQuote)
+}
+
+fn step_double_quote_state(bytes: &[u8], i: usize) -> (usize, RecipeSqlScanState) {
+    if i + 1 < bytes.len() && bytes[i] == b'"' && bytes[i + 1] == b'"' {
+        return (i + 2, RecipeSqlScanState::DoubleQuote);
+    }
+    if bytes[i] == b'\\' {
+        return ((i + 2).min(bytes.len()), RecipeSqlScanState::DoubleQuote);
+    }
+    if bytes[i] == b'"' {
+        return (i + 1, RecipeSqlScanState::Normal);
+    }
+    (i + 1, RecipeSqlScanState::DoubleQuote)
+}
+
+fn step_line_comment_state(bytes: &[u8], i: usize) -> (usize, RecipeSqlScanState) {
+    if bytes[i] == b'\n' {
+        return (i + 1, RecipeSqlScanState::Normal);
+    }
+    (i + 1, RecipeSqlScanState::LineComment)
+}
+
+fn step_block_comment_state(bytes: &[u8], i: usize) -> (usize, RecipeSqlScanState) {
+    if i + 1 < bytes.len() && bytes[i] == b'*' && bytes[i + 1] == b'/' {
+        return (i + 2, RecipeSqlScanState::Normal);
+    }
+    (i + 1, RecipeSqlScanState::BlockComment)
+}
+
+fn step_dollar_quote_state(
+    bytes: &[u8],
+    i: usize,
+    dollar_quote_delimiter: &mut Option<Vec<u8>>,
+) -> (usize, RecipeSqlScanState) {
+    if let Some((delimiter_len, is_end)) = dollar_quote_delimiter.as_ref().map(|delimiter| {
+        let delimiter_len = delimiter.len();
+        let is_end =
+            i + delimiter_len <= bytes.len() && bytes[i..i + delimiter_len] == delimiter[..];
+        (delimiter_len, is_end)
+    }) && is_end
+    {
+        *dollar_quote_delimiter = None;
+        return (i + delimiter_len, RecipeSqlScanState::Normal);
+    }
+    (i + 1, RecipeSqlScanState::DollarQuote)
 }
 
 fn recipe_query_jinja_markers(sql: &str) -> Vec<&'static str> {
@@ -1623,89 +1751,23 @@ fn recipe_query_jinja_markers(sql: &str) -> Vec<&'static str> {
     let bytes = sql.as_bytes();
     let mut i = 0usize;
     let mut state = RecipeSqlScanState::Normal;
+    let mut dollar_quote_delimiter: Option<Vec<u8>> = None;
 
     while i < bytes.len() {
-        match state {
+        let (next_i, next_state) = match state {
             RecipeSqlScanState::Normal => {
-                if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'-' {
-                    state = RecipeSqlScanState::LineComment;
-                    i += 2;
-                    continue;
-                }
-                if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
-                    state = RecipeSqlScanState::BlockComment;
-                    i += 2;
-                    continue;
-                }
-                if bytes[i] == b'\'' {
-                    state = RecipeSqlScanState::SingleQuote;
-                    i += 1;
-                    continue;
-                }
-                if bytes[i] == b'"' {
-                    state = RecipeSqlScanState::DoubleQuote;
-                    i += 1;
-                    continue;
-                }
-                if i + 1 < bytes.len() && bytes[i] == b'{' {
-                    let marker = match bytes[i + 1] {
-                        b'{' => Some("{{"),
-                        b'%' => Some("{%"),
-                        b'#' => Some("{#"),
-                        _ => None,
-                    };
-                    if let Some(marker) = marker
-                        && !markers.contains(&marker)
-                    {
-                        markers.push(marker);
-                    }
-                }
-                i += 1;
+                step_normal_state(bytes, i, &mut markers, &mut dollar_quote_delimiter)
             }
-            RecipeSqlScanState::SingleQuote => {
-                if i + 1 < bytes.len() && bytes[i] == b'\'' && bytes[i + 1] == b'\'' {
-                    i += 2;
-                    continue;
-                }
-                // Support dialects that allow backslash-escaped quote content.
-                if bytes[i] == b'\\' {
-                    i = (i + 2).min(bytes.len());
-                    continue;
-                }
-                if bytes[i] == b'\'' {
-                    state = RecipeSqlScanState::Normal;
-                }
-                i += 1;
+            RecipeSqlScanState::SingleQuote => step_single_quote_state(bytes, i),
+            RecipeSqlScanState::DoubleQuote => step_double_quote_state(bytes, i),
+            RecipeSqlScanState::LineComment => step_line_comment_state(bytes, i),
+            RecipeSqlScanState::BlockComment => step_block_comment_state(bytes, i),
+            RecipeSqlScanState::DollarQuote => {
+                step_dollar_quote_state(bytes, i, &mut dollar_quote_delimiter)
             }
-            RecipeSqlScanState::DoubleQuote => {
-                if i + 1 < bytes.len() && bytes[i] == b'"' && bytes[i + 1] == b'"' {
-                    i += 2;
-                    continue;
-                }
-                if bytes[i] == b'\\' {
-                    i = (i + 2).min(bytes.len());
-                    continue;
-                }
-                if bytes[i] == b'"' {
-                    state = RecipeSqlScanState::Normal;
-                }
-                i += 1;
-            }
-            RecipeSqlScanState::LineComment => {
-                if bytes[i] == b'\n' {
-                    state = RecipeSqlScanState::Normal;
-                }
-                i += 1;
-            }
-            RecipeSqlScanState::BlockComment => {
-                if i + 1 < bytes.len() && bytes[i] == b'*' && bytes[i + 1] == b'/' {
-                    state = RecipeSqlScanState::Normal;
-                    i += 2;
-                    continue;
-                }
-                i += 1;
-            }
-        }
+        };
+        i = next_i;
+        state = next_state;
     }
 
     markers
@@ -2054,6 +2116,20 @@ mod tests {
         let markers = recipe_query_jinja_markers(
             "select 'It\\'s {{ok}} and {% raw %} and {# note #}' as msg",
         );
+        assert!(markers.is_empty());
+    }
+
+    #[test]
+    fn test_recipe_query_jinja_markers_ignores_dollar_quoted_literals() {
+        let markers =
+            recipe_query_jinja_markers("select $$ {{ok}} {% block %} {# note #} $$ as body");
+        assert!(markers.is_empty());
+    }
+
+    #[test]
+    fn test_recipe_query_jinja_markers_ignores_tagged_dollar_quoted_literals() {
+        let markers =
+            recipe_query_jinja_markers("select $tag$ {{ok}} {% block %} {# note #} $tag$ as body");
         assert!(markers.is_empty());
     }
 }
