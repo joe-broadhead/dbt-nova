@@ -1612,15 +1612,94 @@ fn query_selector_key(name: &str) -> String {
 
 fn recipe_query_jinja_markers(sql: &str) -> Vec<&'static str> {
     let mut markers = Vec::new();
-    if sql.contains("{{") {
-        markers.push("{{");
+    let bytes = sql.as_bytes();
+    let mut i = 0usize;
+
+    enum ScanState {
+        Normal,
+        SingleQuote,
+        DoubleQuote,
+        LineComment,
+        BlockComment,
     }
-    if sql.contains("{%") {
-        markers.push("{%");
+
+    let mut state = ScanState::Normal;
+
+    while i < bytes.len() {
+        match state {
+            ScanState::Normal => {
+                if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'-' {
+                    state = ScanState::LineComment;
+                    i += 2;
+                    continue;
+                }
+                if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+                    state = ScanState::BlockComment;
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] == b'\'' {
+                    state = ScanState::SingleQuote;
+                    i += 1;
+                    continue;
+                }
+                if bytes[i] == b'"' {
+                    state = ScanState::DoubleQuote;
+                    i += 1;
+                    continue;
+                }
+                if i + 1 < bytes.len() && bytes[i] == b'{' {
+                    let marker = match bytes[i + 1] {
+                        b'{' => Some("{{"),
+                        b'%' => Some("{%"),
+                        b'#' => Some("{#"),
+                        _ => None,
+                    };
+                    if let Some(marker) = marker
+                        && !markers.contains(&marker)
+                    {
+                        markers.push(marker);
+                    }
+                }
+                i += 1;
+            }
+            ScanState::SingleQuote => {
+                if i + 1 < bytes.len() && bytes[i] == b'\'' && bytes[i + 1] == b'\'' {
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] == b'\'' {
+                    state = ScanState::Normal;
+                }
+                i += 1;
+            }
+            ScanState::DoubleQuote => {
+                if i + 1 < bytes.len() && bytes[i] == b'"' && bytes[i + 1] == b'"' {
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] == b'"' {
+                    state = ScanState::Normal;
+                }
+                i += 1;
+            }
+            ScanState::LineComment => {
+                if bytes[i] == b'\n' {
+                    state = ScanState::Normal;
+                }
+                i += 1;
+            }
+            ScanState::BlockComment => {
+                if i + 1 < bytes.len() && bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                    state = ScanState::Normal;
+                    i += 2;
+                    continue;
+                }
+                i += 1;
+            }
+        }
     }
-    if sql.contains("{#") {
-        markers.push("{#");
-    }
+
     markers
 }
 
@@ -1944,5 +2023,21 @@ mod tests {
     fn test_recipe_query_jinja_markers_detects_comment_blocks() {
         let markers = recipe_query_jinja_markers("{# comment #}\nselect 1");
         assert_eq!(markers, vec!["{#"]);
+    }
+
+    #[test]
+    fn test_recipe_query_jinja_markers_ignores_sql_literals() {
+        let markers = recipe_query_jinja_markers(
+            "select '{{' as open_token, '{%' as block_token, '{#' as comment_token",
+        );
+        assert!(markers.is_empty());
+    }
+
+    #[test]
+    fn test_recipe_query_jinja_markers_ignores_sql_comments() {
+        let markers = recipe_query_jinja_markers(
+            "-- {{ in line comment }}\nselect 1 /* {% in block comment %} */",
+        );
+        assert!(markers.is_empty());
     }
 }
