@@ -1667,6 +1667,11 @@ fn recipe_query_jinja_markers(sql: &str) -> Vec<&'static str> {
                     i += 2;
                     continue;
                 }
+                // Support dialects that allow backslash-escaped quote content.
+                if bytes[i] == b'\\' {
+                    i = (i + 2).min(bytes.len());
+                    continue;
+                }
                 if bytes[i] == b'\'' {
                     state = RecipeSqlScanState::Normal;
                 }
@@ -1675,6 +1680,10 @@ fn recipe_query_jinja_markers(sql: &str) -> Vec<&'static str> {
             RecipeSqlScanState::DoubleQuote => {
                 if i + 1 < bytes.len() && bytes[i] == b'"' && bytes[i + 1] == b'"' {
                     i += 2;
+                    continue;
+                }
+                if bytes[i] == b'\\' {
+                    i = (i + 2).min(bytes.len());
                     continue;
                 }
                 if bytes[i] == b'"' {
@@ -2036,6 +2045,14 @@ mod tests {
     fn test_recipe_query_jinja_markers_ignores_sql_comments() {
         let markers = recipe_query_jinja_markers(
             "-- {{ in line comment }}\nselect 1 /* {% in block comment %} */",
+        );
+        assert!(markers.is_empty());
+    }
+
+    #[test]
+    fn test_recipe_query_jinja_markers_ignores_backslash_escaped_quote_literals() {
+        let markers = recipe_query_jinja_markers(
+            "select 'It\\'s {{ok}} and {% raw %} and {# note #}' as msg",
         );
         assert!(markers.is_empty());
     }
