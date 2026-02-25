@@ -53,7 +53,7 @@ the corresponding dbt `analysis` node in the manifest:
 
 Execution and SQL rendering guardrail:
 
-- if fallback `raw_code` contains dbt/Jinja markers (`{{` or `{%`), Nova rejects
+- if fallback `raw_code` contains dbt/Jinja markers (`{{`, `{%`, or `{#`), Nova rejects
   `run_recipe` and `get_recipe(include_sql: true)` with `INVALID_PARAMS`
   details so failures are actionable before warehouse SQL parsing.
 
