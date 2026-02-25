@@ -1618,6 +1618,9 @@ fn recipe_query_jinja_markers(sql: &str) -> Vec<&'static str> {
     if sql.contains("{%") {
         markers.push("{%");
     }
+    if sql.contains("{#") {
+        markers.push("{#");
+    }
     markers
 }
 
@@ -1637,7 +1640,7 @@ fn non_executable_recipe_query_error(
     prepared: &PreparedRecipeQuery,
 ) -> DbtNovaError {
     let message = format!(
-        "Recipe query '{}' cannot execute: compiled_code is unavailable and raw_code contains dbt/Jinja templating (`{{{{` / `{{%`). Rebuild manifest with compiled analysis SQL.",
+        "Recipe query '{}' cannot execute: compiled_code is unavailable and raw_code contains dbt/Jinja templating (`{{{{` / `{{%` / `{{#`). Rebuild manifest with compiled analysis SQL.",
         prepared.query.name
     );
     let details = serde_json::json!({
@@ -1935,5 +1938,11 @@ mod tests {
             err.to_string()
                 .contains("Missing runtime parameter for placeholder '__TARGET_TABLE__'")
         );
+    }
+
+    #[test]
+    fn test_recipe_query_jinja_markers_detects_comment_blocks() {
+        let markers = recipe_query_jinja_markers("{# comment #}\nselect 1");
+        assert_eq!(markers, vec!["{#"]);
     }
 }
