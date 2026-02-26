@@ -31,6 +31,21 @@ struct RecipeQuery {
     source: RecipeQuerySource,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecipeSqlSource {
+    CompiledCode,
+    RawCode,
+}
+
+impl RecipeSqlSource {
+    fn label(self) -> &'static str {
+        match self {
+            Self::CompiledCode => "compiled_code",
+            Self::RawCode => "raw_code",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct RecipeRecord {
     id: String,
@@ -89,6 +104,16 @@ struct PreparedRecipeQuery {
     query: RecipeQuery,
     base_sql: String,
     parameter_specs: Vec<RecipeParameterSpec>,
+    analysis_unique_id: String,
+    sql_source: RecipeSqlSource,
+}
+
+#[derive(Debug)]
+struct ResolvedRecipeSql {
+    base_sql: String,
+    payload: JsonValue,
+    analysis_unique_id: String,
+    source: RecipeSqlSource,
 }
 
 #[derive(Debug, Clone)]
@@ -206,7 +231,7 @@ impl ManifestSearch {
         let query_payloads = if params.include_queries {
             let prepared_queries = self.prepare_recipe_queries(&recipe.queries)?;
             Some(build_recipe_query_payloads(
-                self,
+                &recipe.id,
                 &prepared_queries,
                 &schema,
                 params.include_sql,
@@ -296,14 +321,22 @@ impl ManifestSearch {
             .iter()
             .map(|prepared| prepared.query.name.clone())
             .collect();
-
+        let mut rendered_statements: Vec<(&PreparedRecipeQuery, String)> =
+            Vec::with_capacity(prepared_queries.len());
         for prepared in &prepared_queries {
+            rendered_statements.push((
+                prepared,
+                render_recipe_query_sql(
+                    &recipe.id,
+                    prepared,
+                    &schema.effective_parameters,
+                    placeholder_types.as_ref(),
+                )?,
+            ));
+        }
+
+        for (prepared, statement) in rendered_statements {
             let query = &prepared.query;
-            let statement = apply_runtime_parameter_substitution(
-                &prepared.base_sql,
-                &schema.effective_parameters,
-                placeholder_types.as_ref(),
-            )?;
             let exec_params = crate::params::ExecuteSqlParams {
                 statement: statement.clone(),
                 warehouse_id: None,
@@ -503,12 +536,15 @@ impl ManifestSearch {
     fn prepare_recipe_queries(&self, queries: &[RecipeQuery]) -> Result<Vec<PreparedRecipeQuery>> {
         let mut prepared_queries = Vec::with_capacity(queries.len());
         for query in queries {
-            let (base_sql, payload) = self.load_query_base_sql_and_payload(query)?;
-            let parameter_specs = build_query_parameter_specs(&base_sql, &payload);
+            let resolved = self.load_query_base_sql_and_payload(query)?;
+            let parameter_specs =
+                build_query_parameter_specs(&resolved.base_sql, &resolved.payload);
             prepared_queries.push(PreparedRecipeQuery {
                 query: query.clone(),
-                base_sql,
+                base_sql: resolved.base_sql,
                 parameter_specs,
+                analysis_unique_id: resolved.analysis_unique_id,
+                sql_source: resolved.source,
             });
         }
         Ok(prepared_queries)
@@ -592,7 +628,7 @@ impl ManifestSearch {
         })
     }
 
-    fn load_query_base_sql_and_payload(&self, query: &RecipeQuery) -> Result<(String, JsonValue)> {
+    fn load_query_base_sql_and_payload(&self, query: &RecipeQuery) -> Result<ResolvedRecipeSql> {
         let RecipeQuerySource::ManifestAnalysis { analysis_id } = &query.source;
         let analysis_unique_id = self
             .resolve_single_id(analysis_id, Some("analysis"))
@@ -606,17 +642,33 @@ impl ManifestSearch {
             .get_entity_archived(&analysis_unique_id)?
             .ok_or_else(|| self.entity_not_found(&analysis_unique_id, Some("analysis")))?;
         let payload = entity.to_json_value();
-        let base_sql = payload
+        let compiled_code = payload
             .get("compiled_code")
             .and_then(|value| value.as_str())
-            .or_else(|| payload.get("raw_code").and_then(|value| value.as_str()))
-            .map(str::to_string)
-            .ok_or_else(|| {
-                DbtNovaError::InvalidParams(format!(
-                    "Analysis '{analysis_unique_id}' does not expose compiled_code or raw_code"
-                ))
-            })?;
-        Ok((base_sql, payload))
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let raw_code = payload
+            .get("raw_code")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+
+        let (base_sql, source) = if let Some(compiled) = compiled_code {
+            (compiled.to_string(), RecipeSqlSource::CompiledCode)
+        } else if let Some(raw) = raw_code {
+            (raw.to_string(), RecipeSqlSource::RawCode)
+        } else {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "Analysis '{analysis_unique_id}' does not expose compiled_code or raw_code"
+            )));
+        };
+
+        Ok(ResolvedRecipeSql {
+            base_sql,
+            payload,
+            analysis_unique_id,
+            source,
+        })
     }
 }
 
@@ -651,7 +703,7 @@ fn validate_recipe_renderable_for_get(
 }
 
 fn build_recipe_query_payloads(
-    searcher: &ManifestSearch,
+    recipe_id: &str,
     prepared_queries: &[PreparedRecipeQuery],
     schema: &RecipeParameterSchema,
     include_sql: bool,
@@ -671,12 +723,9 @@ fn build_recipe_query_payloads(
             "source".to_string(),
             JsonValue::String(query.source.label().to_string()),
         );
-        let analysis_id = match &query.source {
-            RecipeQuerySource::ManifestAnalysis { analysis_id } => analysis_id,
-        };
         obj.insert(
             "analysis_id".to_string(),
-            JsonValue::String(analysis_id.clone()),
+            JsonValue::String(prepared.analysis_unique_id.clone()),
         );
         obj.insert(
             "parameters".to_string(),
@@ -726,9 +775,10 @@ fn build_recipe_query_payloads(
         if include_sql {
             obj.insert(
                 "sql".to_string(),
-                JsonValue::String(searcher.resolve_query_sql(
-                    query,
-                    Some(&schema.effective_parameters),
+                JsonValue::String(render_recipe_query_sql(
+                    recipe_id,
+                    prepared,
+                    &schema.effective_parameters,
                     placeholder_types,
                 )?),
             );
@@ -1560,29 +1610,266 @@ fn query_selector_key(name: &str) -> String {
         .to_lowercase()
 }
 
-impl ManifestSearch {
-    fn resolve_query_sql(
-        &self,
-        query: &RecipeQuery,
-        parameters: Option<&HashMap<String, JsonValue>>,
-        parameter_types: Option<&HashMap<String, String>>,
-    ) -> Result<String> {
-        let (base_sql, _) = self.load_query_base_sql_and_payload(query)?;
+#[derive(Clone, Copy)]
+enum RecipeSqlScanState {
+    Normal,
+    SingleQuote,
+    DoubleQuote,
+    DollarQuote,
+    LineComment,
+    BlockComment,
+}
 
-        if let Some(parameters) = parameters {
-            if parameter_types.is_some() || !parameters.is_empty() {
-                apply_runtime_parameter_substitution(&base_sql, parameters, parameter_types)
-            } else {
-                Ok(base_sql)
-            }
-        } else if contains_query_placeholders(&base_sql) {
-            Err(DbtNovaError::InvalidParams(format!(
-                "Recipe query '{}' requires runtime parameters",
-                query.name
-            )))
-        } else {
-            Ok(base_sql)
+fn parse_dollar_quote_delimiter(sql: &[u8], start: usize) -> Option<Vec<u8>> {
+    if start >= sql.len() || sql[start] != b'$' {
+        return None;
+    }
+
+    let mut i = start + 1;
+    while i < sql.len() {
+        let ch = sql[i];
+        if ch == b'$' {
+            return Some(sql[start..=i].to_vec());
         }
+        if ch.is_ascii_alphanumeric() || ch == b'_' {
+            i += 1;
+            continue;
+        }
+        return None;
+    }
+
+    None
+}
+
+fn push_unique_jinja_marker(markers: &mut Vec<&'static str>, marker: &'static str) {
+    if !markers.contains(&marker) {
+        markers.push(marker);
+    }
+}
+
+fn detect_jinja_marker(bytes: &[u8], i: usize, markers: &mut Vec<&'static str>) {
+    if i + 1 >= bytes.len() || bytes[i] != b'{' {
+        return;
+    }
+
+    match bytes[i + 1] {
+        b'{' => push_unique_jinja_marker(markers, "{{"),
+        b'%' => push_unique_jinja_marker(markers, "{%"),
+        b'#' => push_unique_jinja_marker(markers, "{#"),
+        _ => {}
+    }
+}
+
+fn step_normal_state(
+    bytes: &[u8],
+    i: usize,
+    markers: &mut Vec<&'static str>,
+    dollar_quote_delimiter: &mut Option<Vec<u8>>,
+    single_quote_backslash_escape: &mut bool,
+) -> (usize, RecipeSqlScanState) {
+    if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'-' {
+        return (i + 2, RecipeSqlScanState::LineComment);
+    }
+    if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+        return (i + 2, RecipeSqlScanState::BlockComment);
+    }
+    if bytes[i] == b'\'' {
+        *single_quote_backslash_escape = allows_backslash_escaped_quote(bytes, i);
+        return (i + 1, RecipeSqlScanState::SingleQuote);
+    }
+    if bytes[i] == b'"' {
+        return (i + 1, RecipeSqlScanState::DoubleQuote);
+    }
+    if let Some(delimiter) = parse_dollar_quote_delimiter(bytes, i) {
+        *dollar_quote_delimiter = Some(delimiter.clone());
+        return (i + delimiter.len(), RecipeSqlScanState::DollarQuote);
+    }
+
+    detect_jinja_marker(bytes, i, markers);
+    (i + 1, RecipeSqlScanState::Normal)
+}
+
+fn is_identifier_char(ch: u8) -> bool {
+    ch.is_ascii_alphanumeric() || ch == b'_'
+}
+
+fn allows_backslash_escaped_quote(bytes: &[u8], quote_index: usize) -> bool {
+    if quote_index == 0 {
+        return false;
+    }
+
+    let prefix_index = quote_index - 1;
+    if !matches!(bytes[prefix_index], b'e' | b'E') {
+        return false;
+    }
+
+    if prefix_index == 0 {
+        return true;
+    }
+
+    !is_identifier_char(bytes[prefix_index - 1])
+}
+
+fn step_single_quote_state(
+    bytes: &[u8],
+    i: usize,
+    backslash_escape_enabled: bool,
+) -> (usize, RecipeSqlScanState) {
+    if i + 1 < bytes.len() && bytes[i] == b'\'' && bytes[i + 1] == b'\'' {
+        return (i + 2, RecipeSqlScanState::SingleQuote);
+    }
+    // Only treat backslash as an escape when the literal explicitly opts in
+    // (for example PostgreSQL E'...').
+    if backslash_escape_enabled && bytes[i] == b'\\' {
+        return ((i + 2).min(bytes.len()), RecipeSqlScanState::SingleQuote);
+    }
+    if bytes[i] == b'\'' {
+        return (i + 1, RecipeSqlScanState::Normal);
+    }
+    (i + 1, RecipeSqlScanState::SingleQuote)
+}
+
+fn step_double_quote_state(bytes: &[u8], i: usize) -> (usize, RecipeSqlScanState) {
+    if i + 1 < bytes.len() && bytes[i] == b'"' && bytes[i + 1] == b'"' {
+        return (i + 2, RecipeSqlScanState::DoubleQuote);
+    }
+    if bytes[i] == b'"' {
+        return (i + 1, RecipeSqlScanState::Normal);
+    }
+    (i + 1, RecipeSqlScanState::DoubleQuote)
+}
+
+fn step_line_comment_state(bytes: &[u8], i: usize) -> (usize, RecipeSqlScanState) {
+    if bytes[i] == b'\n' {
+        return (i + 1, RecipeSqlScanState::Normal);
+    }
+    (i + 1, RecipeSqlScanState::LineComment)
+}
+
+fn step_block_comment_state(bytes: &[u8], i: usize) -> (usize, RecipeSqlScanState) {
+    if i + 1 < bytes.len() && bytes[i] == b'*' && bytes[i + 1] == b'/' {
+        return (i + 2, RecipeSqlScanState::Normal);
+    }
+    (i + 1, RecipeSqlScanState::BlockComment)
+}
+
+fn step_dollar_quote_state(
+    bytes: &[u8],
+    i: usize,
+    dollar_quote_delimiter: &mut Option<Vec<u8>>,
+) -> (usize, RecipeSqlScanState) {
+    if let Some((delimiter_len, is_end)) = dollar_quote_delimiter.as_ref().map(|delimiter| {
+        let delimiter_len = delimiter.len();
+        let is_end =
+            i + delimiter_len <= bytes.len() && bytes[i..i + delimiter_len] == delimiter[..];
+        (delimiter_len, is_end)
+    }) && is_end
+    {
+        *dollar_quote_delimiter = None;
+        return (i + delimiter_len, RecipeSqlScanState::Normal);
+    }
+    (i + 1, RecipeSqlScanState::DollarQuote)
+}
+
+fn recipe_query_jinja_markers(sql: &str) -> Vec<&'static str> {
+    let mut markers = Vec::new();
+    let bytes = sql.as_bytes();
+    let mut i = 0usize;
+    let mut state = RecipeSqlScanState::Normal;
+    let mut dollar_quote_delimiter: Option<Vec<u8>> = None;
+    let mut single_quote_backslash_escape = false;
+
+    while i < bytes.len() {
+        let (next_i, next_state) = match state {
+            RecipeSqlScanState::Normal => step_normal_state(
+                bytes,
+                i,
+                &mut markers,
+                &mut dollar_quote_delimiter,
+                &mut single_quote_backslash_escape,
+            ),
+            RecipeSqlScanState::SingleQuote => {
+                step_single_quote_state(bytes, i, single_quote_backslash_escape)
+            }
+            RecipeSqlScanState::DoubleQuote => step_double_quote_state(bytes, i),
+            RecipeSqlScanState::LineComment => step_line_comment_state(bytes, i),
+            RecipeSqlScanState::BlockComment => step_block_comment_state(bytes, i),
+            RecipeSqlScanState::DollarQuote => {
+                step_dollar_quote_state(bytes, i, &mut dollar_quote_delimiter)
+            }
+        };
+        i = next_i;
+        if matches!(state, RecipeSqlScanState::SingleQuote)
+            && !matches!(next_state, RecipeSqlScanState::SingleQuote)
+        {
+            single_quote_backslash_escape = false;
+        }
+        state = next_state;
+    }
+
+    markers
+}
+
+fn recipe_query_snippet(sql: &str, max_chars: usize) -> String {
+    let collapsed = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut iter = collapsed.chars();
+    let snippet: String = iter.by_ref().take(max_chars).collect();
+    if iter.next().is_some() {
+        format!("{snippet}...")
+    } else {
+        snippet
+    }
+}
+
+fn non_executable_recipe_query_error(
+    recipe_id: &str,
+    prepared: &PreparedRecipeQuery,
+) -> DbtNovaError {
+    let message = format!(
+        "Recipe query '{}' cannot execute: compiled_code is unavailable and raw_code contains dbt/Jinja templating (`{{{{` / `{{%` / `{{#`). Rebuild manifest with compiled analysis SQL.",
+        prepared.query.name
+    );
+    let details = serde_json::json!({
+        "recipe_id": recipe_id,
+        "query_name": prepared.query.name,
+        "analysis_id": prepared.analysis_unique_id,
+        "path": display_path(&prepared.query.path),
+        "sql_source": prepared.sql_source.label(),
+        "jinja_markers": recipe_query_jinja_markers(&prepared.base_sql),
+        "raw_snippet": recipe_query_snippet(&prepared.base_sql, 220),
+        "action": "Provide compiled analysis SQL in the manifest, or remove dbt/Jinja templating from raw_code fallback.",
+    });
+    DbtNovaError::InvalidParamsDetailed { message, details }
+}
+
+fn ensure_recipe_query_executable(recipe_id: &str, prepared: &PreparedRecipeQuery) -> Result<()> {
+    if prepared.sql_source == RecipeSqlSource::RawCode
+        && !recipe_query_jinja_markers(&prepared.base_sql).is_empty()
+    {
+        return Err(non_executable_recipe_query_error(recipe_id, prepared));
+    }
+    Ok(())
+}
+
+fn render_recipe_query_sql(
+    recipe_id: &str,
+    prepared: &PreparedRecipeQuery,
+    parameters: &HashMap<String, JsonValue>,
+    parameter_types: Option<&HashMap<String, String>>,
+) -> Result<String> {
+    ensure_recipe_query_executable(recipe_id, prepared)?;
+
+    if parameters.is_empty() && contains_query_placeholders(&prepared.base_sql) {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "Recipe query '{}' requires runtime parameters",
+            prepared.query.name
+        )));
+    }
+
+    if parameter_types.is_some() || !parameters.is_empty() {
+        apply_runtime_parameter_substitution(&prepared.base_sql, parameters, parameter_types)
+    } else {
+        Ok(prepared.base_sql.clone())
     }
 }
 
@@ -1837,5 +2124,55 @@ mod tests {
             err.to_string()
                 .contains("Missing runtime parameter for placeholder '__TARGET_TABLE__'")
         );
+    }
+
+    #[test]
+    fn test_recipe_query_jinja_markers_detects_comment_blocks() {
+        let markers = recipe_query_jinja_markers("{# comment #}\nselect 1");
+        assert_eq!(markers, vec!["{#"]);
+    }
+
+    #[test]
+    fn test_recipe_query_jinja_markers_ignores_sql_literals() {
+        let markers = recipe_query_jinja_markers(
+            "select '{{' as open_token, '{%' as block_token, '{#' as comment_token",
+        );
+        assert!(markers.is_empty());
+    }
+
+    #[test]
+    fn test_recipe_query_jinja_markers_ignores_sql_comments() {
+        let markers = recipe_query_jinja_markers(
+            "-- {{ in line comment }}\nselect 1 /* {% in block comment %} */",
+        );
+        assert!(markers.is_empty());
+    }
+
+    #[test]
+    fn test_recipe_query_jinja_markers_ignores_backslash_escaped_quote_literals() {
+        let markers = recipe_query_jinja_markers(
+            "select E'It\\'s {{ok}} and {% raw %} and {# note #}' as msg",
+        );
+        assert!(markers.is_empty());
+    }
+
+    #[test]
+    fn test_recipe_query_jinja_markers_detects_after_standard_sql_backslash_literal() {
+        let markers = recipe_query_jinja_markers("select 'C:\\' as path; {{ ref('model') }}");
+        assert_eq!(markers, vec!["{{"]);
+    }
+
+    #[test]
+    fn test_recipe_query_jinja_markers_ignores_dollar_quoted_literals() {
+        let markers =
+            recipe_query_jinja_markers("select $$ {{ok}} {% block %} {# note #} $$ as body");
+        assert!(markers.is_empty());
+    }
+
+    #[test]
+    fn test_recipe_query_jinja_markers_ignores_tagged_dollar_quoted_literals() {
+        let markers =
+            recipe_query_jinja_markers("select $tag$ {{ok}} {% block %} {# note #} $tag$ as body");
+        assert!(markers.is_empty());
     }
 }

@@ -1,0 +1,47 @@
+{
+  "metadata": {
+    "dbt_version": "1.10.2",
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json"
+  },
+  "nodes": {
+    "analysis.test.analysis__templated__01": {
+      "name": "analysis__templated__01",
+      "resource_type": "analysis",
+      "package_name": "test_pkg",
+      "original_file_path": "analyses/recipes/marketplace/templated_report/analysis__templated__01.sql",
+      "raw_code": "{{ config(materialized='view') }}\nselect 1 as templated_value",
+      "compiled_code": null
+    },
+    "analysis.test.analysis__plain_raw__01": {
+      "name": "analysis__plain_raw__01",
+      "resource_type": "analysis",
+      "package_name": "test_pkg",
+      "original_file_path": "analyses/recipes/marketplace/plain_raw_report/analysis__plain_raw__01.sql",
+      "raw_code": "select 2 as plain_raw_value",
+      "compiled_code": null
+    },
+    "analysis.test.analysis__compiled_wins__01": {
+      "name": "analysis__compiled_wins__01",
+      "resource_type": "analysis",
+      "package_name": "test_pkg",
+      "original_file_path": "analyses/recipes/marketplace/compiled_report/analysis__compiled_wins__01.sql",
+      "raw_code": "{{ config(materialized='table') }}\nselect 99 as should_not_be_used",
+      "compiled_code": "select 3 as compiled_value"
+    }
+  },
+  "sources": {},
+  "macros": {},
+  "docs": {},
+  "groups": {},
+  "exposures": {},
+  "metrics": {},
+  "saved_queries": {},
+  "tests": {},
+  "semantic_models": {},
+  "parent_map": {
+    "analysis.test.analysis__templated__01": [],
+    "analysis.test.analysis__plain_raw__01": [],
+    "analysis.test.analysis__compiled_wins__01": []
+  },
+  "child_map": {}
+}
