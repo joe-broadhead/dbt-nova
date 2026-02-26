@@ -13,7 +13,6 @@ use tracing::{instrument, warn};
 const PROVIDER_DEFAULT_ROW_LIMIT: u64 = 1_000;
 const PROVIDER_DEFAULT_BYTE_LIMIT: u64 = 25_000_000;
 const PROVIDER_DEFAULT_MAX_CHUNKS: usize = 50;
-const PROVIDER_DEFAULT_MAX_POLL_SECONDS: u64 = 600;
 
 /// Validate SQL statements to only allow safe, read-only queries.
 ///
@@ -112,11 +111,6 @@ fn apply_sql_limits_with_config(
 
     if bounded.max_chunks.is_none() && config.sql_max_chunks > 0 {
         bounded.max_chunks = Some(PROVIDER_DEFAULT_MAX_CHUNKS.min(config.sql_max_chunks));
-    }
-
-    if bounded.max_poll_seconds.is_none() && config.sql_max_poll_seconds > 0 {
-        bounded.max_poll_seconds =
-            Some(PROVIDER_DEFAULT_MAX_POLL_SECONDS.min(config.sql_max_poll_seconds));
     }
 
     if let Some(row_limit) = bounded.row_limit
@@ -222,7 +216,7 @@ mod tests {
         assert_eq!(bounded.row_limit, Some(500));
         assert_eq!(bounded.byte_limit, Some(20_000_000));
         assert_eq!(bounded.max_chunks, Some(10));
-        assert_eq!(bounded.max_poll_seconds, Some(45));
+        assert_eq!(bounded.max_poll_seconds, None);
     }
 
     #[test]
