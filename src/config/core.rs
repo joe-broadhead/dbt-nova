@@ -192,7 +192,7 @@ impl Default for DbtNovaConfig {
             tool_rate_limit_window_secs: 60,
             sql_provider: DEFAULT_SQL_PROVIDER.to_string(),
             sql_max_row_limit: 10_000,
-            sql_max_byte_limit: 25_000_000,
+            sql_max_byte_limit: 100_000_000,
             sql_max_chunks: 100,
             sql_max_poll_seconds: 900,
             sql_min_poll_interval_ms: 200,

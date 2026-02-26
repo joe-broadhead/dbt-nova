@@ -82,7 +82,7 @@ Instance directories live under `<storage_root>/instances/<instance_id>`.
 - `DBT_NOVA_TOOL_RATE_LIMITS` – per-tool rate limits (default: `search=60,execute_sql=20,default=120`)
 - `DBT_NOVA_TOOL_RATE_LIMIT_WINDOW_SECS` – rate limit window seconds (default: `60`)
 - `DBT_NOVA_SQL_MAX_ROW_LIMIT` – max rows accepted by `execute_sql` (`0` = unlimited, default: `10000`)
-- `DBT_NOVA_SQL_MAX_BYTE_LIMIT` – max bytes accepted by `execute_sql` (`0` = unlimited, default: `25000000`)
+- `DBT_NOVA_SQL_MAX_BYTE_LIMIT` – max bytes accepted by `execute_sql` (`0` = unlimited, default: `100000000`)
 - `DBT_NOVA_SQL_MAX_CHUNKS` – max result chunks accepted by `execute_sql` (`0` = unlimited, default: `100`)
 - `DBT_NOVA_SQL_MAX_POLL_SECONDS` – max polling duration accepted by `execute_sql` (`0` = unlimited, default: `900`)
 - `DBT_NOVA_SQL_MIN_POLL_INTERVAL_MS` – minimum poll interval accepted by `execute_sql` (`0` disables floor, default: `200`)

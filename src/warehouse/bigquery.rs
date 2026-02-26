@@ -18,7 +18,7 @@ use crate::utils::{resolve_gcp_access_token_async, resolve_gcp_project_id};
 use crate::warehouse::{SqlProvider, empty_preflight_probe_message, preflight_probe_has_rows};
 
 const DEFAULT_ROW_LIMIT: u64 = 1_000;
-const DEFAULT_BYTE_LIMIT: u64 = 10_000_000;
+const DEFAULT_BYTE_LIMIT: u64 = 25_000_000;
 const DEFAULT_POLL_INTERVAL_MS: u64 = 1_000;
 const DEFAULT_MAX_POLL_SECONDS: u64 = 600;
 const DEFAULT_MAX_CHUNKS: usize = 50;

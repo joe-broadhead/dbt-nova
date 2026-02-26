@@ -9,7 +9,7 @@ Safety limits are enforced and configurable via environment variables:
 - Column lineage depth cap: `DBT_NOVA_COLUMN_LINEAGE_MAX_DEPTH` (default: `100`)
 - Max lineage results: `DBT_NOVA_MAX_LINEAGE_RESULTS` / `DBT_NOVA_MAX_ENTITY_LINEAGE_RESULTS`
 - SQL row cap: `DBT_NOVA_SQL_MAX_ROW_LIMIT` (default: `10000`)
-- SQL byte cap: `DBT_NOVA_SQL_MAX_BYTE_LIMIT` (default: `25000000`)
+- SQL byte cap: `DBT_NOVA_SQL_MAX_BYTE_LIMIT` (default: `100000000`)
 - SQL chunk cap: `DBT_NOVA_SQL_MAX_CHUNKS` (default: `100`)
 - SQL poll cap: `DBT_NOVA_SQL_MAX_POLL_SECONDS` (default: `900`)
 - SQL poll interval floor: `DBT_NOVA_SQL_MIN_POLL_INTERVAL_MS` (default: `200`)

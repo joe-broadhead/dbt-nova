@@ -21,7 +21,7 @@
   "tool_rate_limit_window_secs": 60,
   "sql_provider": "databricks",
   "sql_max_row_limit": 10000,
-  "sql_max_byte_limit": 25000000,
+  "sql_max_byte_limit": 100000000,
   "sql_max_chunks": 100,
   "sql_max_poll_seconds": 900,
   "sql_min_poll_interval_ms": 200,
