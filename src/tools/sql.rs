@@ -1,5 +1,6 @@
 use serde_json::Value as JsonValue;
 
+use crate::config::DbtNovaConfig;
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::search::ManifestSearch;
 use crate::params::ExecuteSqlParams;
@@ -8,6 +9,10 @@ use sqlparser::ast::Statement;
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 use tracing::{instrument, warn};
+
+const PROVIDER_DEFAULT_ROW_LIMIT: u64 = 1_000;
+const PROVIDER_DEFAULT_BYTE_LIMIT: u64 = 25_000_000;
+const PROVIDER_DEFAULT_MAX_CHUNKS: usize = 50;
 
 /// Validate SQL statements to only allow safe, read-only queries.
 ///
@@ -70,70 +75,7 @@ pub(crate) fn validate_sql_statement(statement: &str) -> Result<()> {
 
 impl ManifestSearch {
     fn apply_sql_limits(&self, params: &ExecuteSqlParams) -> ExecuteSqlParams {
-        let mut bounded = params.clone();
-        let config = self.config();
-
-        if let Some(row_limit) = bounded.row_limit
-            && config.sql_max_row_limit > 0
-            && row_limit > config.sql_max_row_limit
-        {
-            warn!(
-                requested = row_limit,
-                max = config.sql_max_row_limit,
-                "clamping execute_sql row_limit"
-            );
-            bounded.row_limit = Some(config.sql_max_row_limit);
-        }
-
-        if let Some(byte_limit) = bounded.byte_limit
-            && config.sql_max_byte_limit > 0
-            && byte_limit > config.sql_max_byte_limit
-        {
-            warn!(
-                requested = byte_limit,
-                max = config.sql_max_byte_limit,
-                "clamping execute_sql byte_limit"
-            );
-            bounded.byte_limit = Some(config.sql_max_byte_limit);
-        }
-
-        if let Some(max_chunks) = bounded.max_chunks
-            && config.sql_max_chunks > 0
-            && max_chunks > config.sql_max_chunks
-        {
-            warn!(
-                requested = max_chunks,
-                max = config.sql_max_chunks,
-                "clamping execute_sql max_chunks"
-            );
-            bounded.max_chunks = Some(config.sql_max_chunks);
-        }
-
-        if let Some(max_poll_seconds) = bounded.max_poll_seconds
-            && config.sql_max_poll_seconds > 0
-            && max_poll_seconds > config.sql_max_poll_seconds
-        {
-            warn!(
-                requested = max_poll_seconds,
-                max = config.sql_max_poll_seconds,
-                "clamping execute_sql max_poll_seconds"
-            );
-            bounded.max_poll_seconds = Some(config.sql_max_poll_seconds);
-        }
-
-        if let Some(poll_interval_ms) = bounded.poll_interval_ms
-            && config.sql_min_poll_interval_ms > 0
-            && poll_interval_ms < config.sql_min_poll_interval_ms
-        {
-            warn!(
-                requested = poll_interval_ms,
-                min = config.sql_min_poll_interval_ms,
-                "raising execute_sql poll_interval_ms to configured minimum"
-            );
-            bounded.poll_interval_ms = Some(config.sql_min_poll_interval_ms);
-        }
-
-        bounded
+        apply_sql_limits_with_config(params, self.config())
     }
 
     /// Execute SQL against a configured Databricks SQL warehouse.
@@ -150,5 +92,157 @@ impl ManifestSearch {
         let statement = bounded.statement.trim();
         validate_sql_statement(statement)?;
         provider.execute(&bounded).await
+    }
+}
+
+fn apply_sql_limits_with_config(
+    params: &ExecuteSqlParams,
+    config: &DbtNovaConfig,
+) -> ExecuteSqlParams {
+    let mut bounded = params.clone();
+
+    if bounded.row_limit.is_none() && config.sql_max_row_limit > 0 {
+        bounded.row_limit = Some(PROVIDER_DEFAULT_ROW_LIMIT.min(config.sql_max_row_limit));
+    }
+
+    if bounded.byte_limit.is_none() && config.sql_max_byte_limit > 0 {
+        bounded.byte_limit = Some(PROVIDER_DEFAULT_BYTE_LIMIT.min(config.sql_max_byte_limit));
+    }
+
+    if bounded.max_chunks.is_none() && config.sql_max_chunks > 0 {
+        bounded.max_chunks = Some(PROVIDER_DEFAULT_MAX_CHUNKS.min(config.sql_max_chunks));
+    }
+
+    if let Some(row_limit) = bounded.row_limit
+        && config.sql_max_row_limit > 0
+        && row_limit > config.sql_max_row_limit
+    {
+        warn!(
+            requested = row_limit,
+            max = config.sql_max_row_limit,
+            "clamping execute_sql row_limit"
+        );
+        bounded.row_limit = Some(config.sql_max_row_limit);
+    }
+
+    if let Some(byte_limit) = bounded.byte_limit
+        && config.sql_max_byte_limit > 0
+        && byte_limit > config.sql_max_byte_limit
+    {
+        warn!(
+            requested = byte_limit,
+            max = config.sql_max_byte_limit,
+            "clamping execute_sql byte_limit"
+        );
+        bounded.byte_limit = Some(config.sql_max_byte_limit);
+    }
+
+    if let Some(max_chunks) = bounded.max_chunks
+        && config.sql_max_chunks > 0
+        && max_chunks > config.sql_max_chunks
+    {
+        warn!(
+            requested = max_chunks,
+            max = config.sql_max_chunks,
+            "clamping execute_sql max_chunks"
+        );
+        bounded.max_chunks = Some(config.sql_max_chunks);
+    }
+
+    if let Some(max_poll_seconds) = bounded.max_poll_seconds
+        && config.sql_max_poll_seconds > 0
+        && max_poll_seconds > config.sql_max_poll_seconds
+    {
+        warn!(
+            requested = max_poll_seconds,
+            max = config.sql_max_poll_seconds,
+            "clamping execute_sql max_poll_seconds"
+        );
+        bounded.max_poll_seconds = Some(config.sql_max_poll_seconds);
+    }
+
+    if let Some(poll_interval_ms) = bounded.poll_interval_ms
+        && config.sql_min_poll_interval_ms > 0
+        && poll_interval_ms < config.sql_min_poll_interval_ms
+    {
+        warn!(
+            requested = poll_interval_ms,
+            min = config.sql_min_poll_interval_ms,
+            "raising execute_sql poll_interval_ms to configured minimum"
+        );
+        bounded.poll_interval_ms = Some(config.sql_min_poll_interval_ms);
+    }
+
+    bounded
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_execute_sql_params() -> ExecuteSqlParams {
+        ExecuteSqlParams {
+            statement: "select 1".to_string(),
+            warehouse_id: None,
+            preflight_only: false,
+            preflight_catalog: None,
+            preflight_schema: None,
+            preflight_relation: None,
+            row_limit: None,
+            byte_limit: None,
+            wait_timeout_s: None,
+            poll_interval_ms: None,
+            max_poll_seconds: None,
+            parameters: None,
+            parameter_types: None,
+            fetch_all_chunks: None,
+            max_chunks: None,
+        }
+    }
+
+    #[test]
+    fn apply_sql_limits_defaults_respect_config_caps() {
+        let config = DbtNovaConfig {
+            sql_max_row_limit: 500,
+            sql_max_byte_limit: 20_000_000,
+            sql_max_chunks: 10,
+            sql_max_poll_seconds: 45,
+            ..DbtNovaConfig::default()
+        };
+
+        let params = sample_execute_sql_params();
+        let bounded = apply_sql_limits_with_config(&params, &config);
+
+        assert_eq!(bounded.row_limit, Some(500));
+        assert_eq!(bounded.byte_limit, Some(20_000_000));
+        assert_eq!(bounded.max_chunks, Some(10));
+        assert_eq!(bounded.max_poll_seconds, None);
+    }
+
+    #[test]
+    fn apply_sql_limits_clamps_explicit_values() {
+        let config = DbtNovaConfig {
+            sql_max_row_limit: 500,
+            sql_max_byte_limit: 20_000_000,
+            sql_max_chunks: 10,
+            sql_max_poll_seconds: 45,
+            sql_min_poll_interval_ms: 250,
+            ..DbtNovaConfig::default()
+        };
+
+        let mut params = sample_execute_sql_params();
+        params.row_limit = Some(2_000);
+        params.byte_limit = Some(50_000_000);
+        params.max_chunks = Some(99);
+        params.max_poll_seconds = Some(120);
+        params.poll_interval_ms = Some(100);
+
+        let bounded = apply_sql_limits_with_config(&params, &config);
+
+        assert_eq!(bounded.row_limit, Some(500));
+        assert_eq!(bounded.byte_limit, Some(20_000_000));
+        assert_eq!(bounded.max_chunks, Some(10));
+        assert_eq!(bounded.max_poll_seconds, Some(45));
+        assert_eq!(bounded.poll_interval_ms, Some(250));
     }
 }

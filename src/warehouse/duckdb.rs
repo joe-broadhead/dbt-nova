@@ -19,7 +19,7 @@ use crate::responses::SuccessResponse;
 use crate::warehouse::SqlProvider;
 
 const DEFAULT_ROW_LIMIT: u64 = 1_000;
-const DEFAULT_BYTE_LIMIT: u64 = 10_000_000;
+const DEFAULT_BYTE_LIMIT: u64 = 25_000_000;
 const DEFAULT_DUCKDB_POOL_MAX_SIZE: usize = 10;
 
 static DUCKDB_POOL_REGISTRY: OnceLock<RwLock<HashMap<DuckDbPoolKey, Arc<DuckDbConnectionPool>>>> =

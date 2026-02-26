@@ -162,7 +162,7 @@ impl DatabricksSqlClient {
         Self::new(DatabricksSqlConfig::from_env()?)
     }
 
-    /// Execute with safe defaults (`row_limit=1000`, `byte_limit=10MB`, `fetch_all_chunks=true`).
+    /// Execute with safe defaults (`row_limit=1000`, `byte_limit=25MB`, `fetch_all_chunks=true`).
     ///
     /// # Errors
     /// Returns an error if statement execution fails or times out.
@@ -551,7 +551,7 @@ impl Default for ExecuteOptions {
 
             // Safe defaults for agents: avoid huge payloads.
             row_limit: Some(1000),
-            byte_limit: Some(10_000_000),
+            byte_limit: Some(25_000_000),
 
             parameters: vec![],
 
