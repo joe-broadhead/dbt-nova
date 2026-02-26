@@ -1665,6 +1665,7 @@ fn step_normal_state(
     i: usize,
     markers: &mut Vec<&'static str>,
     dollar_quote_delimiter: &mut Option<Vec<u8>>,
+    single_quote_backslash_escape: &mut bool,
 ) -> (usize, RecipeSqlScanState) {
     if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'-' {
         return (i + 2, RecipeSqlScanState::LineComment);
@@ -1673,6 +1674,7 @@ fn step_normal_state(
         return (i + 2, RecipeSqlScanState::BlockComment);
     }
     if bytes[i] == b'\'' {
+        *single_quote_backslash_escape = allows_backslash_escaped_quote(bytes, i);
         return (i + 1, RecipeSqlScanState::SingleQuote);
     }
     if bytes[i] == b'"' {
@@ -1687,12 +1689,38 @@ fn step_normal_state(
     (i + 1, RecipeSqlScanState::Normal)
 }
 
-fn step_single_quote_state(bytes: &[u8], i: usize) -> (usize, RecipeSqlScanState) {
+fn is_identifier_char(ch: u8) -> bool {
+    ch.is_ascii_alphanumeric() || ch == b'_'
+}
+
+fn allows_backslash_escaped_quote(bytes: &[u8], quote_index: usize) -> bool {
+    if quote_index == 0 {
+        return false;
+    }
+
+    let prefix_index = quote_index - 1;
+    if !matches!(bytes[prefix_index], b'e' | b'E') {
+        return false;
+    }
+
+    if prefix_index == 0 {
+        return true;
+    }
+
+    !is_identifier_char(bytes[prefix_index - 1])
+}
+
+fn step_single_quote_state(
+    bytes: &[u8],
+    i: usize,
+    backslash_escape_enabled: bool,
+) -> (usize, RecipeSqlScanState) {
     if i + 1 < bytes.len() && bytes[i] == b'\'' && bytes[i + 1] == b'\'' {
         return (i + 2, RecipeSqlScanState::SingleQuote);
     }
-    // Support dialects that allow backslash-escaped quote content.
-    if bytes[i] == b'\\' {
+    // Only treat backslash as an escape when the literal explicitly opts in
+    // (for example PostgreSQL E'...').
+    if backslash_escape_enabled && bytes[i] == b'\\' {
         return ((i + 2).min(bytes.len()), RecipeSqlScanState::SingleQuote);
     }
     if bytes[i] == b'\'' {
@@ -1704,9 +1732,6 @@ fn step_single_quote_state(bytes: &[u8], i: usize) -> (usize, RecipeSqlScanState
 fn step_double_quote_state(bytes: &[u8], i: usize) -> (usize, RecipeSqlScanState) {
     if i + 1 < bytes.len() && bytes[i] == b'"' && bytes[i + 1] == b'"' {
         return (i + 2, RecipeSqlScanState::DoubleQuote);
-    }
-    if bytes[i] == b'\\' {
-        return ((i + 2).min(bytes.len()), RecipeSqlScanState::DoubleQuote);
     }
     if bytes[i] == b'"' {
         return (i + 1, RecipeSqlScanState::Normal);
@@ -1752,13 +1777,20 @@ fn recipe_query_jinja_markers(sql: &str) -> Vec<&'static str> {
     let mut i = 0usize;
     let mut state = RecipeSqlScanState::Normal;
     let mut dollar_quote_delimiter: Option<Vec<u8>> = None;
+    let mut single_quote_backslash_escape = false;
 
     while i < bytes.len() {
         let (next_i, next_state) = match state {
-            RecipeSqlScanState::Normal => {
-                step_normal_state(bytes, i, &mut markers, &mut dollar_quote_delimiter)
+            RecipeSqlScanState::Normal => step_normal_state(
+                bytes,
+                i,
+                &mut markers,
+                &mut dollar_quote_delimiter,
+                &mut single_quote_backslash_escape,
+            ),
+            RecipeSqlScanState::SingleQuote => {
+                step_single_quote_state(bytes, i, single_quote_backslash_escape)
             }
-            RecipeSqlScanState::SingleQuote => step_single_quote_state(bytes, i),
             RecipeSqlScanState::DoubleQuote => step_double_quote_state(bytes, i),
             RecipeSqlScanState::LineComment => step_line_comment_state(bytes, i),
             RecipeSqlScanState::BlockComment => step_block_comment_state(bytes, i),
@@ -1767,6 +1799,11 @@ fn recipe_query_jinja_markers(sql: &str) -> Vec<&'static str> {
             }
         };
         i = next_i;
+        if matches!(state, RecipeSqlScanState::SingleQuote)
+            && !matches!(next_state, RecipeSqlScanState::SingleQuote)
+        {
+            single_quote_backslash_escape = false;
+        }
         state = next_state;
     }
 
@@ -2114,9 +2151,15 @@ mod tests {
     #[test]
     fn test_recipe_query_jinja_markers_ignores_backslash_escaped_quote_literals() {
         let markers = recipe_query_jinja_markers(
-            "select 'It\\'s {{ok}} and {% raw %} and {# note #}' as msg",
+            "select E'It\\'s {{ok}} and {% raw %} and {# note #}' as msg",
         );
         assert!(markers.is_empty());
+    }
+
+    #[test]
+    fn test_recipe_query_jinja_markers_detects_after_standard_sql_backslash_literal() {
+        let markers = recipe_query_jinja_markers("select 'C:\\' as path; {{ ref('model') }}");
+        assert_eq!(markers, vec!["{{"]);
     }
 
     #[test]
