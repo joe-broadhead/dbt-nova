@@ -8,14 +8,19 @@ use std::time::{Duration, Instant};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map as JsonMap, Value};
 use tokio::sync::RwLock;
 
 use crate::error::{DbtNovaError, Result};
 use crate::params::ExecuteSqlParams;
 use crate::responses::SuccessResponse;
 use crate::utils::{resolve_gcp_access_token_async, resolve_gcp_project_id};
-use crate::warehouse::{SqlProvider, empty_preflight_probe_message, preflight_probe_has_rows};
+use crate::warehouse::SqlProvider;
+use crate::warehouse::preflight::{
+    PreflightReport, ProbePresence, build_configuration_failure_response, build_preflight_response,
+    empty_preflight_probe_message, preflight_probe_has_rows, run_connectivity_check,
+    run_optional_object_check,
+};
 
 const DEFAULT_ROW_LIMIT: u64 = 1_000;
 const DEFAULT_BYTE_LIMIT: u64 = 25_000_000;
@@ -382,6 +387,18 @@ fn parse_u64(value: Option<&String>) -> Option<u64> {
 fn preflight_query_has_rows(response: &QueryResponse) -> bool {
     let rows_len = response.rows.as_ref().map_or(0usize, Vec::len);
     preflight_probe_has_rows(rows_len, parse_u64(response.total_rows.as_ref()))
+}
+
+fn detail_field(key: &str, value: impl AsRef<str>) -> JsonMap<String, Value> {
+    let mut details = JsonMap::new();
+    details.insert(key.to_string(), Value::String(value.as_ref().to_string()));
+    details
+}
+
+fn schema_catalog_details(project: &str, dataset: &str) -> JsonMap<String, Value> {
+    let mut details = detail_field("schema", dataset);
+    details.insert("catalog".to_string(), Value::String(project.to_string()));
+    details
 }
 
 fn query_url(project_id: &str) -> String {
@@ -844,30 +861,29 @@ async fn execute_bigquery(params: &ExecuteSqlParams) -> Result<Value> {
 
 #[allow(clippy::too_many_lines)]
 async fn preflight_bigquery(params: &ExecuteSqlParams) -> Result<Value> {
-    let mut checks = Vec::<Value>::new();
-    let mut ready = true;
-
     let runtime = match cached_bigquery_runtime().await {
         Ok(runtime) => runtime,
         Err(err) => {
-            checks.push(serde_json::json!({
-                "name": "configuration",
-                "ok": false,
-                "message": err.to_string(),
-                "action": "Set DBT_NOVA_BIGQUERY_PROJECT_ID/DBT_NOVA_GCP_PROJECT_ID and provide credentials via DBT_NOVA_BIGQUERY_ACCESS_TOKEN, DBT_NOVA_GCP_ACCESS_TOKEN, GOOGLE_APPLICATION_CREDENTIALS, or gcloud ADC"
-            }));
-            ready = false;
-            let payload = serde_json::json!({
-                "provider": "bigquery",
-                "ready": ready,
-                "checks": checks,
-            });
-            return serde_json::to_value(SuccessResponse::new(payload, 1)).map_err(Into::into);
+            return build_configuration_failure_response(
+                "bigquery",
+                JsonMap::new(),
+                err.to_string(),
+                "Set DBT_NOVA_BIGQUERY_PROJECT_ID/DBT_NOVA_GCP_PROJECT_ID and provide credentials via DBT_NOVA_BIGQUERY_ACCESS_TOKEN, DBT_NOVA_GCP_ACCESS_TOKEN, GOOGLE_APPLICATION_CREDENTIALS, or gcloud ADC",
+            );
         }
     };
 
     let config = runtime.config;
     let client = runtime.client;
+    let mut metadata = JsonMap::new();
+    metadata.insert(
+        "project_id".to_string(),
+        Value::String(config.project_id.clone()),
+    );
+    metadata.insert(
+        "location".to_string(),
+        config.location.clone().map_or(Value::Null, Value::String),
+    );
 
     let check_settings = ExecuteSettings {
         row_limit: 1,
@@ -879,192 +895,116 @@ async fn preflight_bigquery(params: &ExecuteSqlParams) -> Result<Value> {
         max_chunks: 1,
         parameters: Vec::new(),
     };
+    let client_ref = &client;
+    let config_ref = &config;
+    let check_settings_ref = &check_settings;
+    let mut report = PreflightReport::new();
 
-    match run_query(
-        &client,
-        &config,
-        "SELECT 1 AS connectivity_check",
-        &check_settings,
+    run_connectivity_check(
+        &mut report,
+        "Verify BigQuery credentials and project access",
+        || async {
+            run_query(
+                client_ref,
+                config_ref,
+                "SELECT 1 AS connectivity_check",
+                check_settings_ref,
+            )
+            .await
+            .map(|_| ())
+        },
     )
-    .await
-    {
-        Ok(_) => checks.push(serde_json::json!({
-            "name": "connectivity",
-            "ok": true,
-        })),
-        Err(err) => {
-            ready = false;
-            checks.push(serde_json::json!({
-                "name": "connectivity",
-                "ok": false,
-                "message": err.to_string(),
-                "action": "Verify BigQuery credentials and project access"
-            }));
-        }
-    }
+    .await;
 
-    if let Some(catalog) = params.preflight_catalog.as_deref() {
-        match normalize_project_id(catalog) {
-            Ok(project) => {
-                let statement = catalog_preflight_statement(&project);
-                match run_query(&client, &config, &statement, &check_settings).await {
-                    Ok((response, _, _)) if preflight_query_has_rows(&response) => {
-                        checks.push(serde_json::json!({
-                            "name": "catalog_access",
-                            "ok": true,
-                            "catalog": project,
-                        }));
-                    }
-                    Ok(_) => {
-                        ready = false;
-                        checks.push(serde_json::json!({
-                            "name": "catalog_access",
-                            "ok": false,
-                            "catalog": project,
-                            "message": empty_preflight_probe_message("catalog_access"),
-                            "action": "Verify project exists and token has BigQuery metadata permissions"
-                        }));
-                    }
-                    Err(err) => {
-                        ready = false;
-                        checks.push(serde_json::json!({
-                            "name": "catalog_access",
-                            "ok": false,
-                            "catalog": project,
-                            "message": err.to_string(),
-                            "action": "Verify project exists and token has BigQuery metadata permissions"
-                        }));
-                    }
-                }
+    run_optional_object_check(
+        &mut report,
+        params.preflight_catalog.as_deref(),
+        "catalog_access",
+        normalize_project_id,
+        |project| {
+            let statement = catalog_preflight_statement(project);
+            async move {
+                let (response, _, _) =
+                    run_query(client_ref, config_ref, &statement, check_settings_ref).await?;
+                Ok(if preflight_query_has_rows(&response) {
+                    ProbePresence::Present
+                } else {
+                    ProbePresence::Empty
+                })
             }
-            Err(err) => {
-                ready = false;
-                checks.push(serde_json::json!({
-                    "name": "catalog_access",
-                    "ok": false,
-                    "catalog": catalog,
-                    "message": err.to_string(),
-                    "action": "Use a valid BigQuery project id"
-                }));
-            }
-        }
-    }
+        },
+        |catalog| detail_field("catalog", catalog),
+        |project| detail_field("catalog", project),
+        "Use a valid BigQuery project id",
+        "Verify project exists and token has BigQuery metadata permissions",
+        &empty_preflight_probe_message("catalog_access"),
+    )
+    .await;
 
-    if let Some(schema) = params.preflight_schema.as_deref() {
-        let project_for_schema = params
-            .preflight_catalog
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or(config.project_id.as_str());
+    let project_for_schema = params
+        .preflight_catalog
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(config.project_id.as_str())
+        .to_string();
 
-        match (
-            normalize_project_id(project_for_schema),
-            normalize_dataset_identifier(schema, "dataset"),
-        ) {
-            (Ok(project), Ok(dataset)) => {
-                let statement = schema_preflight_statement(&project, &dataset);
-                match run_query(&client, &config, &statement, &check_settings).await {
-                    Ok((response, _, _)) if preflight_query_has_rows(&response) => {
-                        checks.push(serde_json::json!({
-                            "name": "schema_access",
-                            "ok": true,
-                            "schema": dataset,
-                            "catalog": project,
-                        }));
-                    }
-                    Ok(_) => {
-                        ready = false;
-                        checks.push(serde_json::json!({
-                            "name": "schema_access",
-                            "ok": false,
-                            "schema": dataset,
-                            "catalog": project,
-                            "message": empty_preflight_probe_message("schema_access"),
-                            "action": "Verify dataset exists and token has BigQuery dataset metadata permissions"
-                        }));
-                    }
-                    Err(err) => {
-                        ready = false;
-                        checks.push(serde_json::json!({
-                            "name": "schema_access",
-                            "ok": false,
-                            "schema": dataset,
-                            "catalog": project,
-                            "message": err.to_string(),
-                            "action": "Verify dataset exists and token has BigQuery dataset metadata permissions"
-                        }));
-                    }
-                }
+    run_optional_object_check(
+        &mut report,
+        params.preflight_schema.as_deref(),
+        "schema_access",
+        |schema| {
+            let project = normalize_project_id(&project_for_schema)?;
+            let dataset = normalize_dataset_identifier(schema, "dataset")?;
+            Ok((project, dataset))
+        },
+        |(project, dataset)| {
+            let statement = schema_preflight_statement(project, dataset);
+            async move {
+                let (response, _, _) =
+                    run_query(client_ref, config_ref, &statement, check_settings_ref).await?;
+                Ok(if preflight_query_has_rows(&response) {
+                    ProbePresence::Present
+                } else {
+                    ProbePresence::Empty
+                })
             }
-            (Err(err), _) | (_, Err(err)) => {
-                ready = false;
-                checks.push(serde_json::json!({
-                    "name": "schema_access",
-                    "ok": false,
-                    "schema": schema,
-                    "message": err.to_string(),
-                    "action": "Use valid project and dataset identifiers"
-                }));
-            }
-        }
-    }
+        },
+        |schema| detail_field("schema", schema),
+        |(project, dataset)| schema_catalog_details(project, dataset),
+        "Use valid project and dataset identifiers",
+        "Verify dataset exists and token has BigQuery dataset metadata permissions",
+        &empty_preflight_probe_message("schema_access"),
+    )
+    .await;
 
-    if let Some(relation) = params.preflight_relation.as_deref() {
-        match normalize_relation_name(relation, &config.project_id) {
-            Ok(normalized_relation) => {
-                let statement = relation_preflight_statement(&normalized_relation);
-                match run_query(&client, &config, &statement, &check_settings).await {
-                    Ok((response, _, _)) if preflight_query_has_rows(&response) => {
-                        checks.push(serde_json::json!({
-                            "name": "relation_access",
-                            "ok": true,
-                            "relation": normalized_relation,
-                        }));
-                    }
-                    Ok(_) => {
-                        ready = false;
-                        checks.push(serde_json::json!({
-                            "name": "relation_access",
-                            "ok": false,
-                            "relation": normalized_relation,
-                            "message": empty_preflight_probe_message("relation_access"),
-                            "action": "Verify table exists and token has BigQuery data viewer permissions"
-                        }));
-                    }
-                    Err(err) => {
-                        ready = false;
-                        checks.push(serde_json::json!({
-                            "name": "relation_access",
-                            "ok": false,
-                            "relation": normalized_relation,
-                            "message": err.to_string(),
-                            "action": "Verify table exists and token has BigQuery data viewer permissions"
-                        }));
-                    }
-                }
+    let default_project = config.project_id.clone();
+    run_optional_object_check(
+        &mut report,
+        params.preflight_relation.as_deref(),
+        "relation_access",
+        |relation| normalize_relation_name(relation, &default_project),
+        |relation| {
+            let statement = relation_preflight_statement(relation);
+            async move {
+                let (response, _, _) =
+                    run_query(client_ref, config_ref, &statement, check_settings_ref).await?;
+                Ok(if preflight_query_has_rows(&response) {
+                    ProbePresence::Present
+                } else {
+                    ProbePresence::Empty
+                })
             }
-            Err(err) => {
-                ready = false;
-                checks.push(serde_json::json!({
-                    "name": "relation_access",
-                    "ok": false,
-                    "relation": relation,
-                    "message": err.to_string(),
-                    "action": "Use dataset.table or project.dataset.table"
-                }));
-            }
-        }
-    }
+        },
+        |relation| detail_field("relation", relation),
+        |relation| detail_field("relation", relation),
+        "Use dataset.table or project.dataset.table",
+        "Verify table exists and token has BigQuery data viewer permissions",
+        &empty_preflight_probe_message("relation_access"),
+    )
+    .await;
 
-    let payload = serde_json::json!({
-        "provider": "bigquery",
-        "project_id": config.project_id,
-        "location": config.location,
-        "ready": ready,
-        "checks": checks,
-    });
-    serde_json::to_value(SuccessResponse::new(payload, 1)).map_err(Into::into)
+    build_preflight_response("bigquery", metadata, report)
 }
 
 pub struct BigQueryProvider;

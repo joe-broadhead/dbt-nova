@@ -10,20 +10,7 @@ use crate::params::ExecuteSqlParams;
 pub mod bigquery;
 pub mod databricks;
 pub mod duckdb;
-
-/// Return true when a preflight probe can be considered "present".
-///
-/// Providers may surface row presence either as concrete rows or as an aggregate
-/// `total_row_count` without materialized rows. This helper keeps non-empty
-/// probe semantics consistent across providers.
-pub(crate) fn preflight_probe_has_rows(rows_len: usize, total_row_count: Option<u64>) -> bool {
-    rows_len > 0 || total_row_count.is_some_and(|count| count > 0)
-}
-
-/// Standard message used when an object-level preflight probe is empty.
-pub(crate) fn empty_preflight_probe_message(check: &str) -> String {
-    format!("Preflight {check} probe returned no rows; target may not exist or may be inaccessible")
-}
+pub(crate) mod preflight;
 
 pub trait SqlProvider: Send + Sync {
     fn name(&self) -> &'static str;
@@ -146,9 +133,9 @@ mod tests {
 
     #[test]
     fn preflight_probe_has_rows_checks_rows_and_totals() {
-        assert!(preflight_probe_has_rows(1, None));
-        assert!(preflight_probe_has_rows(0, Some(1)));
-        assert!(!preflight_probe_has_rows(0, None));
-        assert!(!preflight_probe_has_rows(0, Some(0)));
+        assert!(preflight::preflight_probe_has_rows(1, None));
+        assert!(preflight::preflight_probe_has_rows(0, Some(1)));
+        assert!(!preflight::preflight_probe_has_rows(0, None));
+        assert!(!preflight::preflight_probe_has_rows(0, Some(0)));
     }
 }

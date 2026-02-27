@@ -21,7 +21,7 @@
 use reqwest::{Client, Method, StatusCode};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map as JsonMap, Value};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::sync::OnceLock;
@@ -31,7 +31,12 @@ use tracing::{debug, warn};
 use crate::error::{DbtNovaError, Result};
 use crate::params::ExecuteSqlParams;
 use crate::responses::SuccessResponse;
-use crate::warehouse::{SqlProvider, empty_preflight_probe_message, preflight_probe_has_rows};
+use crate::warehouse::SqlProvider;
+use crate::warehouse::preflight::{
+    PreflightReport, ProbePresence, build_configuration_failure_response, build_preflight_response,
+    empty_preflight_probe_message, preflight_probe_has_rows, run_connectivity_check,
+    run_optional_object_check,
+};
 
 fn dbx_err(message: impl Into<String>) -> DbtNovaError {
     DbtNovaError::DatabricksError {
@@ -1022,206 +1027,136 @@ fn preflight_result_has_rows(result: &QueryResult) -> bool {
     preflight_probe_has_rows(result.rows.len(), result.stats.total_row_count)
 }
 
+fn detail_field(key: &str, value: impl AsRef<str>) -> JsonMap<String, Value> {
+    let mut details = JsonMap::new();
+    details.insert(key.to_string(), Value::String(value.as_ref().to_string()));
+    details
+}
+
 #[allow(clippy::too_many_lines)]
 async fn preflight_databricks(params: &ExecuteSqlParams) -> Result<Value> {
-    let mut checks = Vec::<Value>::new();
-    let mut ready = true;
     let warehouse_id = params.warehouse_id.clone();
+    let mut metadata = JsonMap::new();
+    metadata.insert(
+        "warehouse_id".to_string(),
+        warehouse_id.clone().map_or(Value::Null, Value::String),
+    );
 
     let client = match databricks_client() {
         Ok(client) => client,
         Err(err) => {
-            checks.push(serde_json::json!({
-                "name": "configuration",
-                "ok": false,
-                "message": err.to_string(),
-                "action": "Set DATABRICKS_HOST, DATABRICKS_ACCESS_TOKEN, and DATABRICKS_HTTP_PATH or DATABRICKS_SQL_WAREHOUSE_ID"
-            }));
-            ready = false;
-            let payload = serde_json::json!({
-                "provider": "databricks",
-                "warehouse_id": warehouse_id,
-                "ready": ready,
-                "checks": checks,
-            });
-            return serde_json::to_value(SuccessResponse::new(payload, 1)).map_err(Into::into);
+            return build_configuration_failure_response(
+                "databricks",
+                metadata,
+                err.to_string(),
+                "Set DATABRICKS_HOST, DATABRICKS_ACCESS_TOKEN, and DATABRICKS_HTTP_PATH or DATABRICKS_SQL_WAREHOUSE_ID",
+            );
         }
     };
 
     let check_warehouse = warehouse_id
         .clone()
         .or_else(|| Some(client.cfg.warehouse_id.clone()));
+    metadata.insert(
+        "warehouse_id".to_string(),
+        check_warehouse.clone().map_or(Value::Null, Value::String),
+    );
+    let mut report = PreflightReport::new();
 
-    match run_preflight_statement(
-        client,
-        "SELECT 1 AS connectivity_check",
-        check_warehouse.clone(),
+    run_connectivity_check(
+        &mut report,
+        "Verify warehouse is running and credentials allow SQL execution",
+        || async {
+            run_preflight_statement(
+                client,
+                "SELECT 1 AS connectivity_check",
+                check_warehouse.clone(),
+            )
+            .await
+            .map(|_| ())
+        },
     )
-    .await
-    {
-        Ok(_) => checks.push(serde_json::json!({
-            "name": "connectivity",
-            "ok": true,
-        })),
-        Err(err) => {
-            ready = false;
-            checks.push(serde_json::json!({
-                "name": "connectivity",
-                "ok": false,
-                "message": err.to_string(),
-                "action": "Verify warehouse is running and credentials allow SQL execution"
-            }));
-        }
-    }
+    .await;
 
-    if let Some(catalog) = params.preflight_catalog.as_deref() {
-        match normalize_preflight_identifier(catalog, "catalog") {
-            Ok(catalog) => {
+    run_optional_object_check(
+        &mut report,
+        params.preflight_catalog.as_deref(),
+        "catalog_access",
+        |catalog| normalize_preflight_identifier(catalog, "catalog"),
+        |catalog| {
+            let catalog = catalog.clone();
+            let warehouse = check_warehouse.clone();
+            async move {
                 let statement = catalog_preflight_statement(&catalog);
-                match run_preflight_statement(client, &statement, check_warehouse.clone()).await {
-                    Ok(result) if preflight_result_has_rows(&result) => {
-                        checks.push(serde_json::json!({
-                            "name": "catalog_access",
-                            "ok": true,
-                            "catalog": catalog
-                        }));
-                    }
-                    Ok(_) => {
-                        ready = false;
-                        checks.push(serde_json::json!({
-                            "name": "catalog_access",
-                            "ok": false,
-                            "catalog": catalog,
-                            "message": empty_preflight_probe_message("catalog_access"),
-                            "action": "Verify catalog exists and token has USE CATALOG permissions"
-                        }));
-                    }
-                    Err(err) => {
-                        ready = false;
-                        checks.push(serde_json::json!({
-                            "name": "catalog_access",
-                            "ok": false,
-                            "catalog": catalog,
-                            "message": err.to_string(),
-                            "action": "Verify catalog exists and token has USE CATALOG permissions"
-                        }));
-                    }
-                }
+                let result = run_preflight_statement(client, &statement, warehouse).await?;
+                Ok(if preflight_result_has_rows(&result) {
+                    ProbePresence::Present
+                } else {
+                    ProbePresence::Empty
+                })
             }
-            Err(err) => {
-                ready = false;
-                checks.push(serde_json::json!({
-                    "name": "catalog_access",
-                    "ok": false,
-                    "catalog": catalog,
-                    "message": err.to_string(),
-                    "action": "Use an unquoted catalog identifier (letters, digits, _, $)"
-                }));
-            }
-        }
-    }
+        },
+        |catalog| detail_field("catalog", catalog),
+        |catalog| detail_field("catalog", catalog),
+        "Use an unquoted catalog identifier (letters, digits, _, $)",
+        "Verify catalog exists and token has USE CATALOG permissions",
+        &empty_preflight_probe_message("catalog_access"),
+    )
+    .await;
 
-    if let Some(schema) = params.preflight_schema.as_deref() {
-        match normalize_preflight_identifier(schema, "schema") {
-            Ok(schema) => {
+    run_optional_object_check(
+        &mut report,
+        params.preflight_schema.as_deref(),
+        "schema_access",
+        |schema| normalize_preflight_identifier(schema, "schema"),
+        |schema| {
+            let schema = schema.clone();
+            let warehouse = check_warehouse.clone();
+            async move {
                 let statement = schema_preflight_statement(&schema);
-                match run_preflight_statement(client, &statement, check_warehouse.clone()).await {
-                    Ok(result) if preflight_result_has_rows(&result) => {
-                        checks.push(serde_json::json!({
-                            "name": "schema_access",
-                            "ok": true,
-                            "schema": schema
-                        }));
-                    }
-                    Ok(_) => {
-                        ready = false;
-                        checks.push(serde_json::json!({
-                            "name": "schema_access",
-                            "ok": false,
-                            "schema": schema,
-                            "message": empty_preflight_probe_message("schema_access"),
-                            "action": "Verify schema exists and token has USE SCHEMA permissions"
-                        }));
-                    }
-                    Err(err) => {
-                        ready = false;
-                        checks.push(serde_json::json!({
-                            "name": "schema_access",
-                            "ok": false,
-                            "schema": schema,
-                            "message": err.to_string(),
-                            "action": "Verify schema exists and token has USE SCHEMA permissions"
-                        }));
-                    }
-                }
+                let result = run_preflight_statement(client, &statement, warehouse).await?;
+                Ok(if preflight_result_has_rows(&result) {
+                    ProbePresence::Present
+                } else {
+                    ProbePresence::Empty
+                })
             }
-            Err(err) => {
-                ready = false;
-                checks.push(serde_json::json!({
-                    "name": "schema_access",
-                    "ok": false,
-                    "schema": schema,
-                    "message": err.to_string(),
-                    "action": "Use an unquoted schema identifier (letters, digits, _, $)"
-                }));
-            }
-        }
-    }
+        },
+        |schema| detail_field("schema", schema),
+        |schema| detail_field("schema", schema),
+        "Use an unquoted schema identifier (letters, digits, _, $)",
+        "Verify schema exists and token has USE SCHEMA permissions",
+        &empty_preflight_probe_message("schema_access"),
+    )
+    .await;
 
-    if let Some(relation) = params.preflight_relation.as_deref() {
-        match normalize_preflight_relation(relation) {
-            Ok(relation) => {
+    run_optional_object_check(
+        &mut report,
+        params.preflight_relation.as_deref(),
+        "relation_access",
+        normalize_preflight_relation,
+        |relation| {
+            let relation = relation.clone();
+            let warehouse = check_warehouse.clone();
+            async move {
                 let statement = relation_preflight_statement(&relation);
-                match run_preflight_statement(client, &statement, check_warehouse.clone()).await {
-                    Ok(result) if preflight_result_has_rows(&result) => {
-                        checks.push(serde_json::json!({
-                            "name": "relation_access",
-                            "ok": true,
-                            "relation": relation
-                        }));
-                    }
-                    Ok(_) => {
-                        ready = false;
-                        checks.push(serde_json::json!({
-                            "name": "relation_access",
-                            "ok": false,
-                            "relation": relation,
-                            "message": empty_preflight_probe_message("relation_access"),
-                            "action": "Verify relation exists and has SELECT permissions for this warehouse"
-                        }));
-                    }
-                    Err(err) => {
-                        ready = false;
-                        checks.push(serde_json::json!({
-                            "name": "relation_access",
-                            "ok": false,
-                            "relation": relation,
-                            "message": err.to_string(),
-                            "action": "Verify relation exists and has SELECT permissions for this warehouse"
-                        }));
-                    }
-                }
+                let result = run_preflight_statement(client, &statement, warehouse).await?;
+                Ok(if preflight_result_has_rows(&result) {
+                    ProbePresence::Present
+                } else {
+                    ProbePresence::Empty
+                })
             }
-            Err(err) => {
-                ready = false;
-                checks.push(serde_json::json!({
-                    "name": "relation_access",
-                    "ok": false,
-                    "relation": relation,
-                    "message": err.to_string(),
-                    "action": "Use unquoted identifiers like table, schema.table, or catalog.schema.table"
-                }));
-            }
-        }
-    }
+        },
+        |relation| detail_field("relation", relation),
+        |relation| detail_field("relation", relation),
+        "Use unquoted identifiers like table, schema.table, or catalog.schema.table",
+        "Verify relation exists and has SELECT permissions for this warehouse",
+        &empty_preflight_probe_message("relation_access"),
+    )
+    .await;
 
-    let payload = serde_json::json!({
-        "provider": "databricks",
-        "warehouse_id": check_warehouse,
-        "ready": ready,
-        "checks": checks,
-    });
-    serde_json::to_value(SuccessResponse::new(payload, 1)).map_err(Into::into)
+    build_preflight_response("databricks", metadata, report)
 }
 
 #[cfg(test)]
