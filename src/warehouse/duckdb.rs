@@ -19,7 +19,7 @@ use crate::responses::SuccessResponse;
 use crate::warehouse::SqlProvider;
 use crate::warehouse::preflight::{
     PreflightReport, ProbePresence, build_configuration_failure_response, build_preflight_response,
-    run_connectivity_check_sync, run_optional_object_check_sync,
+    empty_preflight_probe_message, run_connectivity_check_sync, run_optional_object_check_sync,
 };
 
 const DEFAULT_ROW_LIMIT: u64 = 1_000;
@@ -743,8 +743,6 @@ fn schema_catalog_details(catalog: &str, schema: &str) -> JsonMap<String, Value>
     details
 }
 
-const DUCKDB_EMPTY_PROBE_MESSAGE: &str = "preflight probe returned no rows for requested target";
-
 fn run_preflight_statement(connection: &Connection, statement: &str) -> Result<ProbePresence> {
     let mut prepared = connection.prepare(statement).map_err(|err| {
         duckdb_runtime_error(format!("failed to prepare preflight statement: {err}"))
@@ -776,7 +774,9 @@ fn preflight_duckdb_sync_with_connection(
         "Verify the DuckDB file is readable and not locked by another process",
         || match run_preflight_statement(connection, "SELECT 1 AS connectivity_check")? {
             ProbePresence::Present => Ok(()),
-            ProbePresence::Empty => Err(duckdb_runtime_error(DUCKDB_EMPTY_PROBE_MESSAGE)),
+            ProbePresence::Empty => Err(duckdb_runtime_error(empty_preflight_probe_message(
+                "connectivity",
+            ))),
         },
     );
 
@@ -793,7 +793,7 @@ fn preflight_duckdb_sync_with_connection(
         |catalog| detail_field("catalog", catalog),
         "Use an unquoted catalog identifier (letters, digits, underscore)",
         "Verify the catalog exists in information_schema.schemata",
-        DUCKDB_EMPTY_PROBE_MESSAGE,
+        &empty_preflight_probe_message("catalog_access"),
     );
 
     let catalog_for_schema = params
@@ -821,7 +821,7 @@ fn preflight_duckdb_sync_with_connection(
         |(catalog, schema)| schema_catalog_details(catalog, schema),
         "Use unquoted catalog/schema identifiers (letters, digits, underscore)",
         "Verify the schema exists in information_schema.tables for the selected catalog",
-        DUCKDB_EMPTY_PROBE_MESSAGE,
+        &empty_preflight_probe_message("schema_access"),
     );
 
     run_optional_object_check_sync(
@@ -837,7 +837,7 @@ fn preflight_duckdb_sync_with_connection(
         |relation| detail_field("relation", &relation.display),
         "Use table, schema.table, or catalog.schema.table with unquoted identifiers",
         "Verify the relation exists and is readable with the configured DuckDB file and file_search_path",
-        DUCKDB_EMPTY_PROBE_MESSAGE,
+        &empty_preflight_probe_message("relation_access"),
     );
 
     let mut metadata = JsonMap::new();
