@@ -102,11 +102,13 @@ reset_item() {
 }
 
 validate_item() {
-  [[ -n "$item_id" ]] || return 0
+  [[ "${item_started:-0}" -eq 1 ]] || return 0
 
   found=$((found + 1))
   local missing=()
+  local item_label="${item_id:-<missing-id>}"
 
+  [[ -n "$item_id" ]] || missing+=("id")
   [[ -n "$item_owner" ]] || missing+=("owner")
   [[ -n "$item_review_by" ]] || missing+=("review_by")
   [[ -n "$item_summary" ]] || missing+=("summary")
@@ -116,19 +118,19 @@ validate_item() {
   [[ ${#item_state_checks[@]} -gt 0 ]] || missing+=("state_checks")
 
   if [[ ${#missing[@]} -gt 0 ]]; then
-    echo "$item_id: missing required fields: ${missing[*]}" >&2
+    echo "$item_label: missing required fields: ${missing[*]}" >&2
     failed=1
     return 0
   fi
 
   if [[ ! "$item_review_by" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-    echo "$item_id: invalid review_by date: $item_review_by" >&2
+    echo "$item_label: invalid review_by date: $item_review_by" >&2
     failed=1
     return 0
   fi
 
   if [[ "$item_review_by" < "$today" ]]; then
-    echo "$item_id: review_by expired on $item_review_by (today: $today)" >&2
+    echo "$item_label: review_by expired on $item_review_by (today: $today)" >&2
     failed=1
   fi
 
@@ -139,15 +141,16 @@ validate_item() {
     fi
 
     if [[ $? -eq 2 ]]; then
-      echo "$item_id: unknown state check '$check_name'" >&2
+      echo "$item_label: unknown state check '$check_name'" >&2
     else
-      echo "$item_id: state check failed: $check_name. Update dependencies or refresh $(basename "$WATCHLIST_FILE")." >&2
+      echo "$item_label: state check failed: $check_name. Update dependencies or refresh $(basename "$WATCHLIST_FILE")." >&2
     fi
     failed=1
   done
 }
 
 reset_item
+item_started=0
 while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
   line="$(trim "$raw_line")"
   [[ -z "$line" || "$line" == \#* ]] && continue
@@ -155,6 +158,7 @@ while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
   if [[ "$line" == "[[item]]" ]]; then
     validate_item
     reset_item
+    item_started=1
     continue
   fi
 
