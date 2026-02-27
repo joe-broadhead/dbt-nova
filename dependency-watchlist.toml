@@ -1,0 +1,26 @@
+# Dependency watchlist for known pinned/transitive constraints.
+# Each entry must include owner and review_by metadata.
+#
+# CI and monthly workflows run scripts/check_dependency_watchlist.sh to enforce:
+# - review_by is not expired
+# - tracked dependency state still matches reality
+
+[[item]]
+id = "ort-sys-pin"
+owner = "@joe-broadhead"
+review_by = "2026-04-30"
+summary = "Exact ort-sys RC pin is required for current fastembed compatibility."
+current_state = "Cargo.toml pins ort-sys = \"=2.0.0-rc.4\"."
+upgrade_trigger = "fastembed/ort ecosystem supports stable (non-RC) ort-sys without local patching."
+upgrade_plan = "Upgrade fastembed + ort-sys together, run full CI/release checks, then remove the exact RC pin."
+state_checks = ["cargo_toml_has_ort_sys_rc_pin", "cargo_lock_has_ort_sys_rc4"]
+
+[[item]]
+id = "reqwest-transitive-split"
+owner = "@joe-broadhead"
+review_by = "2026-04-30"
+summary = "Dependency graph currently contains both reqwest 0.11 and 0.12."
+current_state = "reqwest 0.11 is pulled transitively by google-cloud-storage while dbt-nova uses reqwest 0.12 directly."
+upgrade_trigger = "google-cloud-storage stack upgrades to reqwest 0.12+."
+upgrade_plan = "Upgrade GCS dependencies, confirm cargo-deny and provider integration tests pass, then collapse to a single reqwest line."
+state_checks = ["cargo_lock_has_reqwest_011", "cargo_lock_has_reqwest_012"]

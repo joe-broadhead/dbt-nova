@@ -118,5 +118,8 @@ jobs:
       - name: Validate advisory ignore expiry metadata
         run: scripts/check_advisory_ignores.sh
 
+      - name: Validate dependency watchlist metadata/state
+        run: scripts/check_dependency_watchlist.sh
+
       - name: Cargo Deny
         run: cargo deny check advisories licenses sources
