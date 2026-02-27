@@ -25,7 +25,7 @@ use crate::manifest::store::{EntityStore, EntityStoreBuilder};
 use crate::manifest::tantivy_search::TantivySearcher;
 use crate::manifest::vector_search::{Reranker, SparseSearcher, VectorSearcher};
 use crate::utils::{CircuitBreaker, IN_USE_LOCK_FILENAME, prune_dirs, unique_suffix};
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 struct ManifestAccumulator {
     store_builder: Option<EntityStoreBuilder>,
@@ -915,8 +915,17 @@ fn build_column_lineage_aliases(
         let Some(entity) = entities.get_blocking(&unique_id)? else {
             continue;
         };
-        let payload: JsonValue =
-            serde_json::from_str(&entity.payload_json).unwrap_or(JsonValue::Null);
+        let payload: JsonValue = match serde_json::from_str(&entity.payload_json) {
+            Ok(payload) => payload,
+            Err(err) => {
+                warn!(
+                    unique_id = %unique_id,
+                    error = %err,
+                    "failed to parse entity payload_json during column lineage alias precompute; skipping entity"
+                );
+                continue;
+            }
+        };
         if let Some(sql) = sql_for_matching(&payload) {
             let map = find_sql_aliases(sql);
             if !map.is_empty() {
@@ -1259,5 +1268,52 @@ mod tests {
             .unwrap_or_default();
         assert_eq!(sample.len(), 1);
         assert_eq!(sample[0].as_str(), Some("model.pkg.metric__bad"));
+    }
+
+    #[test]
+    fn build_column_lineage_aliases_skips_invalid_payload_json() {
+        let temp = tempdir().unwrap_or_else(|err| panic!("tempdir failed: {err}"));
+        let mut builder = EntityStoreBuilder::new(temp.path())
+            .unwrap_or_else(|err| panic!("builder init failed: {err}"));
+
+        let valid_payload = serde_json::json!({
+            "name": "metric__valid",
+            "resource_type": "model",
+            "raw_code": "select revenue as revenue_alias from {{ ref('orders') }}"
+        });
+        let valid = Entity::from_json("model.pkg.metric__valid", &valid_payload);
+        builder
+            .add("model.pkg.metric__valid", &valid)
+            .unwrap_or_else(|err| panic!("failed to add valid entity: {err}"));
+
+        let mut invalid = Entity::from_json(
+            "model.pkg.metric__invalid",
+            &serde_json::json!({
+                "name": "metric__invalid",
+                "resource_type": "model",
+                "raw_code": "select 1"
+            }),
+        );
+        invalid.payload_json = "{not-json".to_string();
+        builder
+            .add("model.pkg.metric__invalid", &invalid)
+            .unwrap_or_else(|err| panic!("failed to add invalid entity: {err}"));
+
+        let store = builder
+            .finish()
+            .unwrap_or_else(|err| panic!("failed to finalize store: {err}"));
+        let config = DbtNovaConfig::default();
+
+        let aliases = build_column_lineage_aliases(&store, &config)
+            .unwrap_or_else(|err| panic!("failed to build aliases: {err}"));
+
+        assert!(
+            aliases.contains_key("model.pkg.metric__valid"),
+            "expected valid entity to produce aliases"
+        );
+        assert!(
+            !aliases.contains_key("model.pkg.metric__invalid"),
+            "invalid payload_json should be skipped"
+        );
     }
 }
