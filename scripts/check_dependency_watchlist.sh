@@ -146,12 +146,16 @@ validate_item() {
   fi
 
   local check_name
+  local check_status
   for check_name in "${item_state_checks[@]}"; do
+    check_status=0
     if run_state_check "$check_name"; then
       continue
+    else
+      check_status=$?
     fi
 
-    if [[ $? -eq 2 ]]; then
+    if [[ $check_status -eq 2 ]]; then
       echo "$item_label: unknown state check '$check_name'" >&2
     else
       echo "$item_label: state check failed: $check_name. Update dependencies or refresh $(basename "$WATCHLIST_FILE")." >&2
