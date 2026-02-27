@@ -26,11 +26,22 @@ found=0
 failed=0
 
 check_cargo_toml_has_ort_sys_rc_pin() {
-  grep -Fq 'ort-sys = "=2.0.0-rc.4"' "$cargo_toml"
+  awk '
+    /^\[dependencies\][[:space:]]*$/ { in_deps = 1; next }
+    /^\[[^]]+\][[:space:]]*$/ { in_deps = 0 }
+    in_deps && /^ort-sys[[:space:]]*=[[:space:]]*"=2\.0\.0-rc\.4"[[:space:]]*$/ { found = 1; exit }
+    END { exit found ? 0 : 1 }
+  ' "$cargo_toml"
 }
 
 check_cargo_toml_has_reqwest_012_direct() {
-  grep -Eq '^reqwest[[:space:]]*=[[:space:]]*\{[^}]*version[[:space:]]*=[[:space:]]*"0\.12"' "$cargo_toml"
+  awk '
+    /^\[dependencies\][[:space:]]*$/ { in_deps = 1; next }
+    /^\[[^]]+\][[:space:]]*$/ { in_deps = 0 }
+    in_deps && /^reqwest[[:space:]]*=[[:space:]]*\{/ && /version[[:space:]]*=[[:space:]]*"0\.12/ { found = 1; exit }
+    in_deps && /^reqwest[[:space:]]*=[[:space:]]*"0\.12/ { found = 1; exit }
+    END { exit found ? 0 : 1 }
+  ' "$cargo_toml"
 }
 
 check_cargo_lock_has_ort_sys_rc4() {
