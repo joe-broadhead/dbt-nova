@@ -436,6 +436,7 @@ fn execute_sql_tool_path_blocks_dangerous_statements_before_provider_access() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn run_recipe_executes_with_duckdb_provider_without_special_handling() {
     let _env_lock = lock_env();
     let (_temp_dir, db_path) = create_fixture_database();
