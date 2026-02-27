@@ -29,6 +29,10 @@ check_cargo_toml_has_ort_sys_rc_pin() {
   grep -Fq 'ort-sys = "=2.0.0-rc.4"' "$cargo_toml"
 }
 
+check_cargo_toml_has_reqwest_012_direct() {
+  grep -Eq '^reqwest[[:space:]]*=[[:space:]]*\{[^}]*version[[:space:]]*=[[:space:]]*"0\.12"' "$cargo_toml"
+}
+
 check_cargo_lock_has_ort_sys_rc4() {
   awk '
     $0 == "name = \"ort-sys\"" { in_pkg = 1; next }
@@ -60,6 +64,9 @@ run_state_check() {
   case "$1" in
     cargo_toml_has_ort_sys_rc_pin)
       check_cargo_toml_has_ort_sys_rc_pin
+      ;;
+    cargo_toml_has_reqwest_012_direct)
+      check_cargo_toml_has_reqwest_012_direct
       ;;
     cargo_lock_has_ort_sys_rc4)
       check_cargo_lock_has_ort_sys_rc4
