@@ -13,6 +13,7 @@ This repository uses GitHub Actions for CI, releases, and documentation.
   `DBT_NOVA_EVAL_ENABLE_HYBRID=0 DBT_NOVA_EVAL_ENABLE_LIFECYCLE=0 DBT_NOVA_EVAL_ALLOW_EMBEDDING_DOWNLOAD=0 cargo test --locked --test search_eval compare_lexical_vs_hybrid_search_quality -- --ignored`,
   `cargo llvm-cov --locked --all-features --workspace --summary-only`,
   `mkdocs build --strict` (with `docs/requirements.txt`), `scripts/check_advisory_ignores.sh`,
+  `scripts/check_dependency_watchlist.sh`,
   `scripts/check_config_reference.sh`, and `cargo deny check advisories licenses sources`
 - **Note:** sets `DBT_NOVA_STRICT_SCHEMA=1` so schema parsing failures break the build
 
@@ -66,6 +67,7 @@ Additional secret required:
 - **Trigger:** monthly schedule (first day of month) + manual
 - **Action:** short fuzz run (`cargo fuzz`) and `cargo deny` checks
 - **Security guard:** advisory ignore metadata/expiry check (`scripts/check_advisory_ignores.sh`)
+- **Dependency guard:** watchlist metadata/state check (`scripts/check_dependency_watchlist.sh`)
 
 ## Branch Expectations
 
@@ -83,6 +85,7 @@ cargo check --locked --no-default-features --all-targets
 cargo clippy --locked --all-targets -- -W clippy::all -W clippy::pedantic
 cargo fmt --check
 scripts/check_config_reference.sh
+scripts/check_dependency_watchlist.sh
 pip install -r docs/requirements.txt
 mkdocs build --strict
 cargo deny check

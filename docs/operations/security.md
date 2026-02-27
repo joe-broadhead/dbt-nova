@@ -38,3 +38,14 @@ metadata in the `reason` field. CI enforces that review dates are not expired vi
 - `RUSTSEC-2025-0119`: `number_prefix` via `fastembed` -> `hf-hub` -> `indicatif`
 - `RUSTSEC-2025-0134`: `rustls-pemfile` via `google-cloud-storage` -> `reqwest 0.11`
 - `RUSTSEC-2026-0002`: `lru 0.12` via `tantivy`
+
+## Dependency Watchlist
+
+Beyond RustSec advisories, Nova tracks known dependency constraints (for example,
+the `ort-sys` RC pin and `reqwest` transitive version split) in a machine-readable
+watchlist with owners, review dates, and upgrade triggers.
+
+- Watchlist file: `dependency-watchlist.toml`
+- Validation script: `scripts/check_dependency_watchlist.sh`
+
+See [Dependency Watchlist](dependency-watchlist.md) for current entries and upgrade criteria.

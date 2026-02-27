@@ -134,6 +134,7 @@ nav:
     - Limitations: operations/limitations.md
     - Troubleshooting: operations/troubleshooting.md
     - Security: operations/security.md
+    - Dependency Watchlist: operations/dependency-watchlist.md
     - Testing: operations/testing.md
   - Development:
     - Architecture: development/architecture.md
