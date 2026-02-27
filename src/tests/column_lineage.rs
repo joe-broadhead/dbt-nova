@@ -75,8 +75,10 @@ async fn test_get_column_lineage_invalid_direction() {
 }
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_column_lineage_upstream_high_confidence() {
-    let searcher = get_searcher();
-    let test_model = "model.nova_test.int__campaign_features".to_string();
+    // Use a fixture where upstream and downstream share an exact column name ("id")
+    // so high-confidence matching must return concrete lineage rows.
+    let searcher = get_searcher_with_fixture("ambiguous_name.json");
+    let test_model = "model.pkg.downstream".to_string();
     assert!(
         searcher
             .parent_map
@@ -87,7 +89,7 @@ async fn test_get_column_lineage_upstream_high_confidence() {
     let params = GetColumnLineageParams {
         id_or_name: test_model,
         resource_type: None,
-        column_name: "campaign_name".to_string(),
+        column_name: "id".to_string(),
         direction: "upstream".to_string(),
         depth: Some(1),
         confidence: Some("high".to_string()),
@@ -105,16 +107,22 @@ async fn test_get_column_lineage_upstream_high_confidence() {
     assert!(data.get("start_column").is_some());
     assert!(data.get("direction").is_some());
     assert!(data.get("lineage").is_some());
+    let lineage = data
+        .get("lineage")
+        .and_then(|lineage| lineage.as_array())
+        .expect("lineage should be an array");
+    assert!(
+        !lineage.is_empty(),
+        "high confidence lineage should produce at least one match"
+    );
     // With high confidence, we should only get exact name matches
-    if let Some(lineage) = data.get("lineage").and_then(|l| l.as_array()) {
-        for item in lineage {
-            let confidence = item.get("confidence").and_then(|c| c.as_str());
-            assert_eq!(
-                confidence,
-                Some("high"),
-                "High confidence mode should only return high confidence matches"
-            );
-        }
+    for item in lineage {
+        let confidence = item.get("confidence").and_then(|c| c.as_str());
+        assert_eq!(
+            confidence,
+            Some("high"),
+            "High confidence mode should only return high confidence matches"
+        );
     }
 }
 #[tokio::test(flavor = "multi_thread")]
