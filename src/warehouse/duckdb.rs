@@ -10,13 +10,17 @@ use base64::Engine as _;
 use duckdb::params_from_iter;
 use duckdb::types::Value as DuckValue;
 use duckdb::{AccessMode, Config, Connection};
-use serde_json::{Value, json};
+use serde_json::{Map as JsonMap, Value, json};
 use tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore};
 
 use crate::error::{DbtNovaError, Result};
 use crate::params::ExecuteSqlParams;
 use crate::responses::SuccessResponse;
 use crate::warehouse::SqlProvider;
+use crate::warehouse::preflight::{
+    PreflightReport, ProbePresence, build_configuration_failure_response, build_preflight_response,
+    empty_preflight_probe_message, run_connectivity_check_sync, run_optional_object_check_sync,
+};
 
 const DEFAULT_ROW_LIMIT: u64 = 1_000;
 const DEFAULT_BYTE_LIMIT: u64 = 25_000_000;
@@ -727,7 +731,19 @@ fn relation_preflight_statement(relation: &NormalizedRelation) -> String {
     )
 }
 
-fn run_preflight_statement(connection: &Connection, statement: &str) -> Result<()> {
+fn detail_field(key: &str, value: impl AsRef<str>) -> JsonMap<String, Value> {
+    let mut details = JsonMap::new();
+    details.insert(key.to_string(), Value::String(value.as_ref().to_string()));
+    details
+}
+
+fn schema_catalog_details(catalog: &str, schema: &str) -> JsonMap<String, Value> {
+    let mut details = detail_field("catalog", catalog);
+    details.insert("schema".to_string(), Value::String(schema.to_string()));
+    details
+}
+
+fn run_preflight_statement(connection: &Connection, statement: &str) -> Result<ProbePresence> {
     let mut prepared = connection.prepare(statement).map_err(|err| {
         duckdb_runtime_error(format!("failed to prepare preflight statement: {err}"))
     })?;
@@ -737,14 +753,10 @@ fn run_preflight_statement(connection: &Connection, statement: &str) -> Result<(
     let probe = rows
         .next()
         .map_err(|err| duckdb_runtime_error(format!("failed to read preflight rows: {err}")))?;
-    // Existence checks (catalog/schema/relation) must return at least one row.
-    // An empty result means the target is not accessible and should fail preflight.
     if probe.is_some() {
-        Ok(())
+        Ok(ProbePresence::Present)
     } else {
-        Err(duckdb_runtime_error(
-            "preflight probe returned no rows for requested target",
-        ))
+        Ok(ProbePresence::Empty)
     }
 }
 
@@ -754,191 +766,126 @@ fn preflight_duckdb_sync_with_connection(
     config: &DuckDbConfig,
     params: &ExecuteSqlParams,
 ) -> Result<Value> {
-    let mut ready = true;
-    let mut checks = Vec::<Value>::new();
+    let mut report = PreflightReport::new();
+    report.push_ok("configuration", JsonMap::new());
 
-    checks.push(json!({
-        "name": "configuration",
-        "ok": true,
-    }));
+    run_connectivity_check_sync(
+        &mut report,
+        "Verify the DuckDB file is readable and not locked by another process",
+        || match run_preflight_statement(connection, "SELECT 1 AS connectivity_check")? {
+            ProbePresence::Present => Ok(()),
+            ProbePresence::Empty => Err(duckdb_runtime_error(empty_preflight_probe_message(
+                "connectivity",
+            ))),
+        },
+    );
 
-    match run_preflight_statement(connection, "SELECT 1 AS connectivity_check") {
-        Ok(()) => checks.push(json!({
-            "name": "connectivity",
-            "ok": true,
-        })),
-        Err(err) => {
-            ready = false;
-            checks.push(json!({
-                "name": "connectivity",
-                "ok": false,
-                "message": err.to_string(),
-                "action": "Verify the DuckDB file is readable and not locked by another process"
-            }));
-        }
-    }
+    run_optional_object_check_sync(
+        &mut report,
+        params.preflight_catalog.as_deref(),
+        "catalog_access",
+        |catalog| normalize_preflight_identifier(catalog, "catalog"),
+        |catalog| {
+            let statement = catalog_preflight_statement(catalog);
+            run_preflight_statement(connection, &statement)
+        },
+        |catalog| detail_field("catalog", catalog),
+        |catalog| detail_field("catalog", catalog),
+        "Use an unquoted catalog identifier (letters, digits, underscore)",
+        "Verify the catalog exists in information_schema.schemata",
+        &empty_preflight_probe_message("catalog_access"),
+    );
 
-    if let Some(catalog) = params.preflight_catalog.as_deref() {
-        match normalize_preflight_identifier(catalog, "catalog") {
-            Ok(normalized_catalog) => {
-                let statement = catalog_preflight_statement(&normalized_catalog);
-                match run_preflight_statement(connection, &statement) {
-                    Ok(()) => checks.push(json!({
-                        "name": "catalog_access",
-                        "ok": true,
-                        "catalog": normalized_catalog,
-                    })),
-                    Err(err) => {
-                        ready = false;
-                        checks.push(json!({
-                            "name": "catalog_access",
-                            "ok": false,
-                            "catalog": normalized_catalog,
-                            "message": err.to_string(),
-                            "action": "Verify the catalog exists in information_schema.schemata"
-                        }));
-                    }
-                }
-            }
-            Err(err) => {
-                ready = false;
-                checks.push(json!({
-                    "name": "catalog_access",
-                    "ok": false,
-                    "catalog": catalog,
-                    "message": err.to_string(),
-                    "action": "Use an unquoted catalog identifier (letters, digits, underscore)"
-                }));
-            }
-        }
-    }
+    let catalog_for_schema = params
+        .preflight_catalog
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("main")
+        .to_string();
+    run_optional_object_check_sync(
+        &mut report,
+        params.preflight_schema.as_deref(),
+        "schema_access",
+        |schema| {
+            let normalized_catalog =
+                normalize_preflight_identifier(&catalog_for_schema, "catalog")?;
+            let normalized_schema = normalize_preflight_identifier(schema, "schema")?;
+            Ok((normalized_catalog, normalized_schema))
+        },
+        |(catalog, schema)| {
+            let statement = schema_preflight_statement(catalog, schema);
+            run_preflight_statement(connection, &statement)
+        },
+        |schema| detail_field("schema", schema),
+        |(catalog, schema)| schema_catalog_details(catalog, schema),
+        "Use unquoted catalog/schema identifiers (letters, digits, underscore)",
+        "Verify the schema exists in information_schema.tables for the selected catalog",
+        &empty_preflight_probe_message("schema_access"),
+    );
 
-    if let Some(schema) = params.preflight_schema.as_deref() {
-        let catalog_for_schema = params
-            .preflight_catalog
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("main");
+    run_optional_object_check_sync(
+        &mut report,
+        params.preflight_relation.as_deref(),
+        "relation_access",
+        normalize_preflight_relation,
+        |relation| {
+            let statement = relation_preflight_statement(relation);
+            run_preflight_statement(connection, &statement)
+        },
+        |relation| detail_field("relation", relation),
+        |relation| detail_field("relation", &relation.display),
+        "Use table, schema.table, or catalog.schema.table with unquoted identifiers",
+        "Verify the relation exists and is readable with the configured DuckDB file and file_search_path",
+        &empty_preflight_probe_message("relation_access"),
+    );
 
-        match (
-            normalize_preflight_identifier(catalog_for_schema, "catalog"),
-            normalize_preflight_identifier(schema, "schema"),
-        ) {
-            (Ok(normalized_catalog), Ok(normalized_schema)) => {
-                let statement = schema_preflight_statement(&normalized_catalog, &normalized_schema);
-                match run_preflight_statement(connection, &statement) {
-                    Ok(()) => checks.push(json!({
-                        "name": "schema_access",
-                        "ok": true,
-                        "catalog": normalized_catalog,
-                        "schema": normalized_schema,
-                    })),
-                    Err(err) => {
-                        ready = false;
-                        checks.push(json!({
-                            "name": "schema_access",
-                            "ok": false,
-                            "catalog": normalized_catalog,
-                            "schema": normalized_schema,
-                            "message": err.to_string(),
-                            "action": "Verify the schema exists in information_schema.tables for the selected catalog"
-                        }));
-                    }
-                }
-            }
-            (Err(err), _) | (_, Err(err)) => {
-                ready = false;
-                checks.push(json!({
-                    "name": "schema_access",
-                    "ok": false,
-                    "schema": schema,
-                    "message": err.to_string(),
-                    "action": "Use unquoted catalog/schema identifiers (letters, digits, underscore)"
-                }));
-            }
-        }
-    }
-
-    if let Some(relation) = params.preflight_relation.as_deref() {
-        match normalize_preflight_relation(relation) {
-            Ok(normalized_relation) => {
-                let statement = relation_preflight_statement(&normalized_relation);
-                match run_preflight_statement(connection, &statement) {
-                    Ok(()) => checks.push(json!({
-                        "name": "relation_access",
-                        "ok": true,
-                        "relation": normalized_relation.display,
-                    })),
-                    Err(err) => {
-                        ready = false;
-                        checks.push(json!({
-                            "name": "relation_access",
-                            "ok": false,
-                            "relation": normalized_relation.display,
-                            "message": err.to_string(),
-                            "action": "Verify the relation exists and is readable with the configured DuckDB file and file_search_path"
-                        }));
-                    }
-                }
-            }
-            Err(err) => {
-                ready = false;
-                checks.push(json!({
-                    "name": "relation_access",
-                    "ok": false,
-                    "relation": relation,
-                    "message": err.to_string(),
-                    "action": "Use table, schema.table, or catalog.schema.table with unquoted identifiers"
-                }));
-            }
-        }
-    }
-
-    let payload = json!({
-        "provider": "duckdb",
-        "duckdb_path": config.path.display().to_string(),
-        "file_search_path": config.file_search_path,
-        "ready": ready,
-        "checks": checks,
-    });
-    serde_json::to_value(SuccessResponse::new(payload, 1)).map_err(Into::into)
+    let mut metadata = JsonMap::new();
+    metadata.insert(
+        "duckdb_path".to_string(),
+        Value::String(config.path.display().to_string()),
+    );
+    metadata.insert(
+        "file_search_path".to_string(),
+        config
+            .file_search_path
+            .clone()
+            .map_or(Value::Null, Value::String),
+    );
+    build_preflight_response("duckdb", metadata, report)
 }
 
 fn missing_configuration_preflight_payload(message: &str) -> Result<Value> {
-    let payload = json!({
-        "provider": "duckdb",
-        "duckdb_path": Value::Null,
-        "file_search_path": Value::Null,
-        "ready": false,
-        "checks": [
-            {
-                "name": "configuration",
-                "ok": false,
-                "message": message,
-                "action": "Set DBT_NOVA_DUCKDB_PATH to a readable DuckDB file; optionally set DBT_NOVA_DUCKDB_FILE_SEARCH_PATH for external file-backed objects"
-            }
-        ]
-    });
-    serde_json::to_value(SuccessResponse::new(payload, 1)).map_err(Into::into)
+    let mut metadata = JsonMap::new();
+    metadata.insert("duckdb_path".to_string(), Value::Null);
+    metadata.insert("file_search_path".to_string(), Value::Null);
+    build_configuration_failure_response(
+        "duckdb",
+        metadata,
+        message.to_string(),
+        "Set DBT_NOVA_DUCKDB_PATH to a readable DuckDB file; optionally set DBT_NOVA_DUCKDB_FILE_SEARCH_PATH for external file-backed objects",
+    )
 }
 
 fn configuration_failure_preflight_payload(config: &DuckDbConfig, message: &str) -> Result<Value> {
-    let payload = json!({
-        "provider": "duckdb",
-        "duckdb_path": config.path.display().to_string(),
-        "file_search_path": config.file_search_path,
-        "ready": false,
-        "checks": [
-            {
-                "name": "configuration",
-                "ok": false,
-                "message": message,
-                "action": "Set DBT_NOVA_DUCKDB_PATH to a readable DuckDB file and verify DBT_NOVA_DUCKDB_FILE_SEARCH_PATH if configured"
-            }
-        ]
-    });
-    serde_json::to_value(SuccessResponse::new(payload, 1)).map_err(Into::into)
+    let mut metadata = JsonMap::new();
+    metadata.insert(
+        "duckdb_path".to_string(),
+        Value::String(config.path.display().to_string()),
+    );
+    metadata.insert(
+        "file_search_path".to_string(),
+        config
+            .file_search_path
+            .clone()
+            .map_or(Value::Null, Value::String),
+    );
+    build_configuration_failure_response(
+        "duckdb",
+        metadata,
+        message.to_string(),
+        "Set DBT_NOVA_DUCKDB_PATH to a readable DuckDB file and verify DBT_NOVA_DUCKDB_FILE_SEARCH_PATH if configured",
+    )
 }
 
 pub struct DuckDbProvider;
