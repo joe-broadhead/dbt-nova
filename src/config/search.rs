@@ -422,8 +422,7 @@ impl SearchConfig {
     }
 }
 
-#[allow(clippy::too_many_lines)]
-fn apply_search_env(config: &mut SearchConfig) {
+fn apply_search_limits_env(config: &mut SearchConfig) {
     crate::env_config!(
         config,
         max_page_size,
@@ -478,7 +477,9 @@ fn apply_search_env(config: &mut SearchConfig) {
         parse_usize,
         |v: &usize| *v > 0
     );
+}
 
+fn apply_search_index_env(config: &mut SearchConfig) {
     set_string("DBT_NOVA_INDEX_DIR", &mut config.index_dir);
     crate::env_config!(
         config,
@@ -501,7 +502,9 @@ fn apply_search_env(config: &mut SearchConfig) {
         parse_usize,
         |v: &usize| *v > 0
     );
+}
 
+fn apply_text_match_env(config: &mut SearchConfig) {
     crate::env_config!(
         config,
         enable_ngram,
@@ -529,7 +532,6 @@ fn apply_search_env(config: &mut SearchConfig) {
         parse_f32,
         |v: &f32| *v >= 0.0
     );
-
     crate::env_config!(
         config,
         fuzzy_min_length,
@@ -551,7 +553,22 @@ fn apply_search_env(config: &mut SearchConfig) {
         parse_usize,
         |v: &usize| *v > 0
     );
+}
 
+fn apply_highlight_format_env(config: &mut SearchConfig) {
+    if let Some(value) = env_string("DBT_NOVA_SEARCH_HIGHLIGHT_FORMAT") {
+        let normalized = value.trim().to_lowercase();
+        if matches!(normalized.as_str(), "html" | "text" | "plain") {
+            config.highlight_format = if normalized == "plain" {
+                "text".to_string()
+            } else {
+                normalized
+            };
+        }
+    }
+}
+
+fn apply_highlight_and_suggestion_env(config: &mut SearchConfig) {
     crate::env_config!(
         config,
         highlight_max_chars,
@@ -565,17 +582,7 @@ fn apply_search_env(config: &mut SearchConfig) {
         "DBT_NOVA_SEARCH_HIGHLIGHT_MAX_FIELDS",
         parse_usize
     );
-    if let Some(value) = env_string("DBT_NOVA_SEARCH_HIGHLIGHT_FORMAT") {
-        let lc = value.to_lowercase();
-        if matches!(lc.as_str(), "html" | "text" | "plain") {
-            config.highlight_format = if lc == "plain" {
-                "text".to_string()
-            } else {
-                lc
-            };
-        }
-    }
-
+    apply_highlight_format_env(config);
     crate::env_config!(
         config,
         enable_suggestions,
@@ -589,7 +596,9 @@ fn apply_search_env(config: &mut SearchConfig) {
         parse_usize,
         |v: &usize| *v > 0
     );
+}
 
+fn apply_fusion_and_runtime_env(config: &mut SearchConfig) {
     crate::env_config!(config, enable_rrf, "DBT_NOVA_SEARCH_ENABLE_RRF", parse_bool);
     crate::env_config!(
         config,
@@ -605,7 +614,6 @@ fn apply_search_env(config: &mut SearchConfig) {
         parse_usize,
         |v: &usize| *v > 0
     );
-
     crate::env_config!(
         config,
         search_circuit_failure_threshold,
@@ -638,7 +646,9 @@ fn apply_search_env(config: &mut SearchConfig) {
         "DBT_NOVA_SEARCH_MAX_QUEUE",
         parse_usize
     );
+}
 
+fn apply_vector_env(config: &mut SearchConfig) {
     crate::env_config!(
         config,
         enable_vector_search,
@@ -705,7 +715,6 @@ fn apply_search_env(config: &mut SearchConfig) {
         parse_usize,
         |v: &usize| *v > 0
     );
-
     set_string(
         "DBT_NOVA_EMBEDDINGS_CACHE_DIR",
         &mut config.embedding_cache_dir,
@@ -718,7 +727,9 @@ fn apply_search_env(config: &mut SearchConfig) {
         parse_usize,
         |v: &usize| *v > 0
     );
+}
 
+fn apply_sparse_and_reranker_env(config: &mut SearchConfig) {
     crate::env_config!(
         config,
         enable_sparse_search,
@@ -732,7 +743,6 @@ fn apply_search_env(config: &mut SearchConfig) {
         parse_usize,
         |v: &usize| *v > 0
     );
-
     crate::env_config!(
         config,
         enable_reranker,
@@ -747,26 +757,45 @@ fn apply_search_env(config: &mut SearchConfig) {
         parse_usize,
         |v: &usize| *v > 0
     );
+}
 
+fn apply_persona_weights_env(var: &str, target: &mut PersonaWeights) {
+    if let Some(value) = env_string(var) {
+        target.apply_overrides(&value);
+    }
+}
+
+fn apply_persona_env(config: &mut SearchConfig) {
     if let Some(value) = env_string("DBT_NOVA_SEARCH_DEFAULT_PERSONA") {
         let trimmed = value.trim();
         if !trimmed.is_empty() {
             config.default_persona = Some(trimmed.to_string());
         }
     }
-    if let Some(value) = env_string("DBT_NOVA_SEARCH_PERSONA_ANALYST_WEIGHTS") {
-        config.persona_weights.analyst.apply_overrides(&value);
-    }
-    if let Some(value) = env_string("DBT_NOVA_SEARCH_PERSONA_ENGINEER_WEIGHTS") {
-        config.persona_weights.engineer.apply_overrides(&value);
-    }
-    if let Some(value) = env_string("DBT_NOVA_SEARCH_PERSONA_GOVERNANCE_WEIGHTS") {
-        config.persona_weights.governance.apply_overrides(&value);
-    }
-    if let Some(value) = env_string("DBT_NOVA_SEARCH_PERSONA_DEFAULT_WEIGHTS") {
-        config.persona_weights.default.apply_overrides(&value);
-    }
+    apply_persona_weights_env(
+        "DBT_NOVA_SEARCH_PERSONA_ANALYST_WEIGHTS",
+        &mut config.persona_weights.analyst,
+    );
+    apply_persona_weights_env(
+        "DBT_NOVA_SEARCH_PERSONA_ENGINEER_WEIGHTS",
+        &mut config.persona_weights.engineer,
+    );
+    apply_persona_weights_env(
+        "DBT_NOVA_SEARCH_PERSONA_GOVERNANCE_WEIGHTS",
+        &mut config.persona_weights.governance,
+    );
+    apply_persona_weights_env(
+        "DBT_NOVA_SEARCH_PERSONA_DEFAULT_WEIGHTS",
+        &mut config.persona_weights.default,
+    );
+}
 
+fn apply_field_boosts_env(config: &mut SearchConfig) {
+    apply_core_field_boosts_env(config);
+    apply_meta_field_boosts_env(config);
+}
+
+fn apply_core_field_boosts_env(config: &mut SearchConfig) {
     crate::env_config!(
         config,
         field_boosts.alias,
@@ -816,7 +845,9 @@ fn apply_search_env(config: &mut SearchConfig) {
         parse_f32,
         |v: &f32| *v >= 0.0
     );
+}
 
+fn apply_meta_field_boosts_env(config: &mut SearchConfig) {
     crate::env_config!(
         config,
         field_boosts.nova_synonyms,
@@ -873,7 +904,9 @@ fn apply_search_env(config: &mut SearchConfig) {
         parse_f32,
         |v: &f32| *v >= 0.0
     );
+}
 
+fn apply_semantic_scoring_env(config: &mut SearchConfig) {
     crate::env_config!(
         config,
         staging_deboost_factor,
@@ -881,6 +914,11 @@ fn apply_search_env(config: &mut SearchConfig) {
         parse_f32,
         |v: &f32| *v >= 0.0
     );
+    apply_analyst_semantic_env(config);
+    apply_nova_semantic_env(config);
+}
+
+fn apply_analyst_semantic_env(config: &mut SearchConfig) {
     crate::env_config!(
         config,
         analyst_semantic.metric_definition_multiplier,
@@ -958,6 +996,9 @@ fn apply_search_env(config: &mut SearchConfig) {
         parse_f32,
         |v: &f32| *v > 0.0
     );
+}
+
+fn apply_nova_semantic_env(config: &mut SearchConfig) {
     crate::env_config!(
         config,
         nova_measure_match_multiplier,
@@ -1007,4 +1048,17 @@ fn apply_search_env(config: &mut SearchConfig) {
         parse_f32,
         |v: &f32| *v >= 0.0
     );
+}
+
+fn apply_search_env(config: &mut SearchConfig) {
+    apply_search_limits_env(config);
+    apply_search_index_env(config);
+    apply_text_match_env(config);
+    apply_highlight_and_suggestion_env(config);
+    apply_fusion_and_runtime_env(config);
+    apply_vector_env(config);
+    apply_sparse_and_reranker_env(config);
+    apply_persona_env(config);
+    apply_field_boosts_env(config);
+    apply_semantic_scoring_env(config);
 }
