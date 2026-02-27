@@ -34,8 +34,8 @@ pub struct DbtNovaServer {
     tool_router: ToolRouter<Self>,
     metrics: Arc<ToolMetricsStore>,
     rate_limiter: Arc<OnceLock<Option<Arc<ToolRateLimiter>>>>,
-    search_concurrency: Arc<OnceLock<Option<Arc<SearchConcurrency>>>>,
-    sql_concurrency: Arc<OnceLock<Option<Arc<SqlConcurrency>>>>,
+    search_concurrency: Arc<OnceLock<Option<Arc<ConcurrencyLimiter>>>>,
+    sql_concurrency: Arc<OnceLock<Option<Arc<ConcurrencyLimiter>>>>,
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -167,10 +167,10 @@ impl DbtNovaServer {
         &self,
         config: &crate::config::DbtNovaConfig,
         timeout: Option<Duration>,
-    ) -> Result<Option<SearchPermit>, DbtNovaError> {
+    ) -> Result<Option<ConcurrencyPermit>, DbtNovaError> {
         let concurrency = self
             .search_concurrency
-            .get_or_init(|| SearchConcurrency::from_config(config).map(Arc::new));
+            .get_or_init(|| ConcurrencyLimiter::for_search(config).map(Arc::new));
         let Some(concurrency) = concurrency.as_ref() else {
             return Ok(None);
         };
@@ -181,10 +181,10 @@ impl DbtNovaServer {
         &self,
         config: &crate::config::DbtNovaConfig,
         timeout: Option<Duration>,
-    ) -> Result<Option<SqlPermit>, DbtNovaError> {
+    ) -> Result<Option<ConcurrencyPermit>, DbtNovaError> {
         let concurrency = self
             .sql_concurrency
-            .get_or_init(|| SqlConcurrency::from_config(config).map(Arc::new));
+            .get_or_init(|| ConcurrencyLimiter::for_sql(config).map(Arc::new));
         let Some(concurrency) = concurrency.as_ref() else {
             return Ok(None);
         };
@@ -192,23 +192,45 @@ impl DbtNovaServer {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ConcurrencyLabels {
+    timeout_prefix: &'static str,
+    queue_full: &'static str,
+    limit_exceeded: &'static str,
+    semaphore_closed: &'static str,
+}
+
+const SEARCH_CONCURRENCY_LABELS: ConcurrencyLabels = ConcurrencyLabels {
+    timeout_prefix: "Search timed out while waiting for an execution slot after",
+    queue_full: "Search queue is full; retry later",
+    limit_exceeded: "Search concurrency limit exceeded",
+    semaphore_closed: "Search concurrency semaphore closed",
+};
+
+const SQL_CONCURRENCY_LABELS: ConcurrencyLabels = ConcurrencyLabels {
+    timeout_prefix: "SQL execution timed out while waiting for an execution slot after",
+    queue_full: "SQL execution queue is full; retry later",
+    limit_exceeded: "SQL concurrency limit exceeded",
+    semaphore_closed: "SQL concurrency semaphore closed",
+};
+
 #[derive(Debug, Clone)]
-struct SearchConcurrency {
+struct ConcurrencyLimiter {
     slots: Arc<Semaphore>,
     queue: Option<Arc<Semaphore>>,
     max_slots: usize,
     max_queue: usize,
+    labels: ConcurrencyLabels,
 }
 
-impl SearchConcurrency {
-    fn from_config(config: &crate::config::DbtNovaConfig) -> Option<Self> {
-        let max_concurrent = config.search.search_max_concurrent;
+impl ConcurrencyLimiter {
+    fn new(max_concurrent: usize, max_queue: usize, labels: ConcurrencyLabels) -> Option<Self> {
         if max_concurrent == 0 {
             return None;
         }
         let slots = Arc::new(Semaphore::new(max_concurrent));
-        let queue = if config.search.search_max_queue > 0 {
-            Some(Arc::new(Semaphore::new(config.search.search_max_queue)))
+        let queue = if max_queue > 0 {
+            Some(Arc::new(Semaphore::new(max_queue)))
         } else {
             None
         };
@@ -216,16 +238,33 @@ impl SearchConcurrency {
             slots,
             queue,
             max_slots: max_concurrent,
-            max_queue: config.search.search_max_queue,
+            max_queue,
+            labels,
         })
+    }
+
+    fn for_search(config: &crate::config::DbtNovaConfig) -> Option<Self> {
+        Self::new(
+            config.search.search_max_concurrent,
+            config.search.search_max_queue,
+            SEARCH_CONCURRENCY_LABELS,
+        )
+    }
+
+    fn for_sql(config: &crate::config::DbtNovaConfig) -> Option<Self> {
+        Self::new(
+            config.sql_max_concurrent,
+            config.sql_max_queue,
+            SQL_CONCURRENCY_LABELS,
+        )
     }
 
     async fn acquire(
         &self,
         timeout: Option<Duration>,
-    ) -> Result<Option<SearchPermit>, DbtNovaError> {
+    ) -> Result<Option<ConcurrencyPermit>, DbtNovaError> {
         if let Ok(slot) = self.slots.clone().try_acquire_owned() {
-            return Ok(Some(SearchPermit { slot, queue: None }));
+            return Ok(Some(ConcurrencyPermit { slot, queue: None }));
         }
         if let Some(queue) = &self.queue {
             match queue.clone().try_acquire_owned() {
@@ -235,140 +274,35 @@ impl SearchConcurrency {
                             .await
                         {
                             Ok(result) => result.map_err(|_| {
-                                DbtNovaError::ServerError(
-                                    "Search concurrency semaphore closed".into(),
-                                )
+                                DbtNovaError::ServerError(self.labels.semaphore_closed.into())
                             })?,
                             Err(_) => {
                                 return Err(DbtNovaError::ServerError(format!(
-                                    "Search timed out while waiting for an execution slot after {}ms",
+                                    "{} {}ms",
+                                    self.labels.timeout_prefix,
                                     timeout.as_millis()
                                 )));
                             }
                         }
                     } else {
                         self.slots.clone().acquire_owned().await.map_err(|_| {
-                            DbtNovaError::ServerError("Search concurrency semaphore closed".into())
+                            DbtNovaError::ServerError(self.labels.semaphore_closed.into())
                         })?
                     };
-                    return Ok(Some(SearchPermit {
+                    return Ok(Some(ConcurrencyPermit {
                         slot,
                         queue: Some(queue_permit),
                     }));
                 }
                 Err(_) => {
                     return Err(DbtNovaError::ServerError(
-                        "Search queue is full; retry later".to_string(),
+                        self.labels.queue_full.to_string(),
                     ));
                 }
             }
         }
         Err(DbtNovaError::ServerError(
-            "Search concurrency limit exceeded".to_string(),
-        ))
-    }
-
-    fn snapshot(&self) -> serde_json::Value {
-        let available_slots = self.slots.available_permits();
-        let in_flight = self.max_slots.saturating_sub(available_slots);
-        let available_queue = self
-            .queue
-            .as_ref()
-            .map_or(0usize, |queue| queue.available_permits());
-        let queued = self.max_queue.saturating_sub(available_queue);
-        let saturated = available_slots == 0;
-        let queue_saturated = self.max_queue > 0 && saturated && available_queue == 0;
-
-        serde_json::json!({
-            "enabled": true,
-            "max_concurrent": self.max_slots,
-            "available_slots": available_slots,
-            "in_flight": in_flight,
-            "saturated": saturated,
-            "max_queue": self.max_queue,
-            "available_queue": available_queue,
-            "queued": queued,
-            "queue_saturated": queue_saturated,
-        })
-    }
-}
-
-struct SearchPermit {
-    // Fields are intentionally unused: holding the permits enforces concurrency limits (RAII).
-    #[allow(dead_code)]
-    slot: OwnedSemaphorePermit,
-    #[allow(dead_code)]
-    queue: Option<OwnedSemaphorePermit>,
-}
-
-#[derive(Debug, Clone)]
-struct SqlConcurrency {
-    slots: Arc<Semaphore>,
-    queue: Option<Arc<Semaphore>>,
-    max_slots: usize,
-    max_queue: usize,
-}
-
-impl SqlConcurrency {
-    fn from_config(config: &crate::config::DbtNovaConfig) -> Option<Self> {
-        let max_concurrent = config.sql_max_concurrent;
-        if max_concurrent == 0 {
-            return None;
-        }
-        let slots = Arc::new(Semaphore::new(max_concurrent));
-        let queue = if config.sql_max_queue > 0 {
-            Some(Arc::new(Semaphore::new(config.sql_max_queue)))
-        } else {
-            None
-        };
-        Some(Self {
-            slots,
-            queue,
-            max_slots: max_concurrent,
-            max_queue: config.sql_max_queue,
-        })
-    }
-
-    async fn acquire(&self, timeout: Option<Duration>) -> Result<Option<SqlPermit>, DbtNovaError> {
-        if let Ok(slot) = self.slots.clone().try_acquire_owned() {
-            return Ok(Some(SqlPermit { slot, queue: None }));
-        }
-        if let Some(queue) = &self.queue {
-            match queue.clone().try_acquire_owned() {
-                Ok(queue_permit) => {
-                    let slot = if let Some(timeout) = timeout {
-                        match tokio::time::timeout(timeout, self.slots.clone().acquire_owned())
-                            .await
-                        {
-                            Ok(result) => result.map_err(|_| {
-                                DbtNovaError::ServerError("SQL concurrency semaphore closed".into())
-                            })?,
-                            Err(_) => {
-                                return Err(DbtNovaError::ServerError(format!(
-                                    "SQL execution timed out while waiting for an execution slot after {}ms",
-                                    timeout.as_millis()
-                                )));
-                            }
-                        }
-                    } else {
-                        self.slots.clone().acquire_owned().await.map_err(|_| {
-                            DbtNovaError::ServerError("SQL concurrency semaphore closed".into())
-                        })?
-                    };
-                    return Ok(Some(SqlPermit {
-                        slot,
-                        queue: Some(queue_permit),
-                    }));
-                }
-                Err(_) => {
-                    return Err(DbtNovaError::ServerError(
-                        "SQL execution queue is full; retry later".to_string(),
-                    ));
-                }
-            }
-        }
-        Err(DbtNovaError::ServerError(
-            "SQL concurrency limit exceeded".to_string(),
+            self.labels.limit_exceeded.to_string(),
         ))
     }
 
@@ -398,7 +332,7 @@ impl SqlConcurrency {
 }
 
 #[derive(Debug)]
-struct SqlPermit {
+struct ConcurrencyPermit {
     // Fields are intentionally unused: holding the permits enforces concurrency limits (RAII).
     #[allow(dead_code)]
     slot: OwnedSemaphorePermit,
@@ -664,7 +598,7 @@ impl DbtNovaServer {
         if let Some(base) = payload.as_object_mut() {
             if let Ok(searcher) = self.searcher.get().await {
                 let concurrency = self.search_concurrency.get_or_init(|| {
-                    SearchConcurrency::from_config(searcher.config()).map(Arc::new)
+                    ConcurrencyLimiter::for_search(searcher.config()).map(Arc::new)
                 });
                 let snapshot = concurrency.as_ref().map_or_else(
                     || serde_json::json!({"enabled": false}),
@@ -673,7 +607,7 @@ impl DbtNovaServer {
                 base.insert("search_concurrency".to_string(), snapshot);
                 let sql_concurrency = self
                     .sql_concurrency
-                    .get_or_init(|| SqlConcurrency::from_config(searcher.config()).map(Arc::new));
+                    .get_or_init(|| ConcurrencyLimiter::for_sql(searcher.config()).map(Arc::new));
                 let sql_snapshot = sql_concurrency.as_ref().map_or_else(
                     || serde_json::json!({"enabled": false}),
                     |state| state.snapshot(),
