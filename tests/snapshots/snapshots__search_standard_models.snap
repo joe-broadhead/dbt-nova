@@ -1,0 +1,25 @@
+---
+source: tests/snapshots.rs
+expression: result
+---
+{
+  "count": 1,
+  "data": [
+    {
+      "alias": "int__campaign_features",
+      "database": "analytics",
+      "description": "Intermediate campaign features rollup.",
+      "name": "int__campaign_features",
+      "original_file_path": "models/intermediate/marketing/int__campaign_features.sql",
+      "package_name": "nova_test",
+      "resource_type": "model",
+      "schema": "dbt_test",
+      "score": 0.032786883413791656,
+      "unique_id": "model.nova_test.int__campaign_features"
+    }
+  ],
+  "persona": "default",
+  "success": true,
+  "suggestions": [],
+  "total_available": 1
+}

@@ -50,25 +50,15 @@ async fn test_get_column_lineage_column_not_found() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_column_lineage_invalid_direction() {
     let searcher = get_searcher();
-    // Find a model with at least one column to exercise validation on direction only.
-    let models = searcher.by_resource_type.get("model").unwrap();
-    let mut model_with_columns = None;
-    let mut column_name = String::new();
-    for model_id in models {
-        if let Some(entity) = searcher.get_entity(model_id).await.unwrap() {
-            let cols = entity.column_names();
-            if !cols.is_empty() {
-                model_with_columns = Some(model_id.clone());
-                column_name = cols[0].clone();
-                break;
-            }
-        }
-    }
-    let model_id = model_with_columns.expect("Should find a model with columns");
+    let model_id = "model.nova_test.int__campaign_features".to_string();
+    assert!(
+        searcher.has_entity(&model_id),
+        "fixture should contain {model_id}"
+    );
     let params = GetColumnLineageParams {
         id_or_name: model_id,
         resource_type: None,
-        column_name,
+        column_name: "campaign_name".to_string(),
         direction: "invalid".to_string(),
         depth: None,
         confidence: Some("medium".to_string()),
@@ -85,53 +75,21 @@ async fn test_get_column_lineage_invalid_direction() {
 }
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_column_lineage_upstream_high_confidence() {
-    let searcher = get_searcher();
-    // Find a model with upstream dependencies and a shared column name to avoid flaky matches.
-    // Prefer int_* models because they usually depend on upstream staging models.
-    let models = searcher.by_resource_type.get("model").unwrap();
-    let mut test_model = None;
-    let mut test_column = None;
-    for model_id in models {
-        // Skip if no upstream deps
-        let upstream = searcher.parent_map.get(model_id);
-        if upstream.is_none() || upstream.unwrap().is_empty() {
-            continue;
-        }
-        if let Some(entity) = searcher.get_entity(model_id).await.unwrap() {
-            let cols = entity.column_names();
-            // Find a column that might exist upstream
-            for col_name in &cols {
-                // Check if this column exists in any upstream entity
-                for upstream_id in upstream.unwrap() {
-                    if let Some(upstream_entity) = searcher.get_entity(upstream_id).await.unwrap() {
-                        let upstream_cols = upstream_entity.column_names();
-                        if upstream_cols.iter().any(|c| c == col_name) {
-                            test_model = Some(model_id.clone());
-                            test_column = Some(col_name.clone());
-                            break;
-                        }
-                    }
-                }
-                if test_column.is_some() {
-                    break;
-                }
-            }
-        }
-        if test_model.is_some() {
-            break;
-        }
-    }
-    if test_model.is_none() {
-        // Skip test if we can't find a suitable model
-        println!(
-            "Skipping test_get_column_lineage_upstream_high_confidence: Some(no suitable model found"
-        );
-        return;
-    }
+    // Use a fixture where upstream and downstream share an exact column name ("id")
+    // so high-confidence matching must return concrete lineage rows.
+    let searcher = get_searcher_with_fixture("ambiguous_name.json");
+    let test_model = "model.pkg.downstream".to_string();
+    assert!(
+        searcher
+            .parent_map
+            .get(&test_model)
+            .is_some_and(|parents| !parents.is_empty()),
+        "fixture should include upstream dependencies for {test_model}"
+    );
     let params = GetColumnLineageParams {
-        id_or_name: test_model.unwrap(),
+        id_or_name: test_model,
         resource_type: None,
-        column_name: test_column.unwrap(),
+        column_name: "id".to_string(),
         direction: "upstream".to_string(),
         depth: Some(1),
         confidence: Some("high".to_string()),
@@ -149,52 +107,39 @@ async fn test_get_column_lineage_upstream_high_confidence() {
     assert!(data.get("start_column").is_some());
     assert!(data.get("direction").is_some());
     assert!(data.get("lineage").is_some());
+    let lineage = data
+        .get("lineage")
+        .and_then(|lineage| lineage.as_array())
+        .expect("lineage should be an array");
+    assert!(
+        !lineage.is_empty(),
+        "high confidence lineage should produce at least one match"
+    );
     // With high confidence, we should only get exact name matches
-    if let Some(lineage) = data.get("lineage").and_then(|l| l.as_array()) {
-        for item in lineage {
-            let confidence = item.get("confidence").and_then(|c| c.as_str());
-            assert_eq!(
-                confidence,
-                Some("high"),
-                "High confidence mode should only return high confidence matches"
-            );
-        }
+    for item in lineage {
+        let confidence = item.get("confidence").and_then(|c| c.as_str());
+        assert_eq!(
+            confidence,
+            Some("high"),
+            "High confidence mode should only return high confidence matches"
+        );
     }
 }
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_column_lineage_downstream() {
     let searcher = get_searcher();
-    // Find a source with columns and downstream dependencies to validate downstream traversal.
-    let sources = searcher.by_resource_type.get("source");
-    if sources.is_none() {
-        println!("Skipping test_get_column_lineage_downstream: no sources found");
-        return;
-    }
-    let mut test_source = None;
-    let mut test_column = None;
-    for source_id in sources.unwrap() {
-        // Check if source has downstream
-        let downstream = searcher.child_map.get(source_id);
-        if downstream.is_none() || downstream.unwrap().is_empty() {
-            continue;
-        }
-        if let Some(entity) = searcher.get_entity(source_id).await.unwrap() {
-            let cols = entity.column_names();
-            if !cols.is_empty() {
-                test_source = Some(source_id.clone());
-                test_column = Some(cols[0].clone());
-                break;
-            }
-        }
-    }
-    if test_source.is_none() {
-        println!("Skipping test_get_column_lineage_downstream: no suitable source found");
-        return;
-    }
+    let test_model = "model.nova_test.stg__traffic_sessions".to_string();
+    assert!(
+        searcher
+            .child_map
+            .get(&test_model)
+            .is_some_and(|children| !children.is_empty()),
+        "fixture should include downstream dependencies for {test_model}"
+    );
     let params = GetColumnLineageParams {
-        id_or_name: test_source.unwrap(),
+        id_or_name: test_model,
         resource_type: None,
-        column_name: test_column.clone().unwrap(),
+        column_name: "session_id".to_string(),
         direction: "downstream".to_string(),
         depth: Some(2),
         confidence: Some("medium".to_string()),
@@ -215,32 +160,18 @@ async fn test_get_column_lineage_downstream() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_column_lineage_depth_limit() {
     let searcher = get_searcher();
-    // Find any model with columns and upstream deps
-    let models = searcher.by_resource_type.get("model").unwrap();
-    let mut test_model = None;
-    let mut test_column = None;
-    for model_id in models {
-        let upstream = searcher.parent_map.get(model_id);
-        if upstream.is_none() || upstream.unwrap().is_empty() {
-            continue;
-        }
-        if let Some(entity) = searcher.get_entity(model_id).await.unwrap() {
-            let cols = entity.column_names();
-            if !cols.is_empty() {
-                test_model = Some(model_id.clone());
-                test_column = Some(cols[0].clone());
-                break;
-            }
-        }
-    }
-    if test_model.is_none() {
-        println!("Skipping test_get_column_lineage_depth_limit: no suitable model found");
-        return;
-    }
+    let test_model = "model.nova_test.int__campaign_features".to_string();
+    assert!(
+        searcher
+            .parent_map
+            .get(&test_model)
+            .is_some_and(|parents| !parents.is_empty()),
+        "fixture should include upstream dependencies for {test_model}"
+    );
     let params = GetColumnLineageParams {
-        id_or_name: test_model.unwrap(),
+        id_or_name: test_model,
         resource_type: None,
-        column_name: test_column.unwrap(),
+        column_name: "campaign_name".to_string(),
         direction: "upstream".to_string(),
         depth: Some(1),
         confidence: Some("low".to_string()),
@@ -270,30 +201,15 @@ async fn test_get_column_lineage_depth_limit() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_column_lineage_confidence_levels() {
     let searcher = get_searcher();
-    // Test that different confidence levels return different amounts of results
-    let models = searcher.by_resource_type.get("model").unwrap();
-    let mut test_model = None;
-    let mut test_column = None;
-    for model_id in models {
-        let upstream = searcher.parent_map.get(model_id);
-        if upstream.is_none() || upstream.unwrap().len() < 2 {
-            continue;
-        }
-        if let Some(entity) = searcher.get_entity(model_id).await.unwrap() {
-            let cols = entity.column_names();
-            if cols.len() >= 3 {
-                test_model = Some(model_id.clone());
-                test_column = Some(cols[0].clone());
-                break;
-            }
-        }
-    }
-    if test_model.is_none() {
-        println!("Skipping test_get_column_lineage_confidence_levels: no suitable model found");
-        return;
-    }
-    let model_id = test_model.unwrap();
-    let column = test_column.unwrap();
+    let model_id = "model.nova_test.fct__orders".to_string();
+    assert!(
+        searcher
+            .parent_map
+            .get(&model_id)
+            .is_some_and(|parents| parents.len() >= 2),
+        "fixture should include a model with multiple upstream dependencies"
+    );
+    let column = "order_id".to_string();
     // High confidence
     let params_high = GetColumnLineageParams {
         id_or_name: model_id.clone(),
@@ -331,24 +247,15 @@ async fn test_get_column_lineage_confidence_levels() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_column_lineage_response_structure() {
     let searcher = get_searcher();
-    // Find any model with columns
-    let models = searcher.by_resource_type.get("model").unwrap();
-    let mut test_model = None;
-    let mut test_column = None;
-    for model_id in models {
-        if let Some(entity) = searcher.get_entity(model_id).await.unwrap() {
-            let cols = entity.column_names();
-            if !cols.is_empty() {
-                test_model = Some(model_id.clone());
-                test_column = Some(cols[0].clone());
-                break;
-            }
-        }
-    }
+    let test_model = "model.nova_test.int__campaign_features".to_string();
+    assert!(
+        searcher.has_entity(&test_model),
+        "fixture should contain {test_model}"
+    );
     let params = GetColumnLineageParams {
-        id_or_name: test_model.unwrap(),
+        id_or_name: test_model,
         resource_type: None,
-        column_name: test_column.clone().unwrap(),
+        column_name: "campaign_name".to_string(),
         direction: "upstream".to_string(),
         depth: None,
         confidence: Some("low".to_string()),
@@ -402,16 +309,8 @@ async fn test_get_column_lineage_response_structure() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_column_lineage_ambiguous_name_returns_error() {
-    let searcher = get_searcher();
-    let Some(ambiguous_name) = searcher
-        .name_to_keys
-        .iter()
-        .find(|(_, keys)| keys.len() > 1)
-        .map(|(name, _)| name.clone())
-    else {
-        println!("Skipping ambiguity test: no ambiguous names in fixture");
-        return;
-    };
+    let searcher = get_searcher_with_fixture("ambiguous_name.json");
+    let ambiguous_name = "duplicate_entity".to_string();
 
     let params = GetColumnLineageParams {
         id_or_name: ambiguous_name,

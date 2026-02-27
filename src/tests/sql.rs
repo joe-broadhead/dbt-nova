@@ -17,8 +17,30 @@ async fn test_get_sql_raw() {
         .expect("response missing 'success' field")
         .as_bool()
         .expect("'success' field should be boolean");
-    // Just verify it doesn't crash
-    let _ = success;
+    assert!(
+        success,
+        "Expected success=true but got error: {:?}",
+        result.get("error")
+    );
+
+    let data = result.get("data").expect("response missing data");
+    assert_eq!(
+        data.get("unique_id").and_then(|value| value.as_str()),
+        Some("model.nova_test.int__campaign_features")
+    );
+    assert_eq!(
+        data.get("sql_type").and_then(|value| value.as_str()),
+        Some("raw")
+    );
+    let sql = data
+        .get("sql")
+        .and_then(|value| value.as_str())
+        .expect("data.sql should be a string");
+    assert!(!sql.trim().is_empty(), "raw SQL should not be empty");
+    assert!(
+        sql.to_ascii_lowercase().contains("select"),
+        "raw SQL should contain a SELECT statement"
+    );
 }
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_sql_not_found() {

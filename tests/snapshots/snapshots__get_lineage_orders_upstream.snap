@@ -1,0 +1,54 @@
+---
+source: tests/snapshots.rs
+expression: result
+---
+{
+  "count": 2,
+  "data": {
+    "depth": 2,
+    "depth_reached": 1,
+    "direction": "upstream",
+    "edges": [
+      {
+        "from": "model.nova_test.dim__customers",
+        "to": "model.nova_test.fct__orders"
+      },
+      {
+        "from": "model.nova_test.dim__products",
+        "to": "model.nova_test.fct__orders"
+      }
+    ],
+    "entities": [
+      {
+        "alias": "dim__customers",
+        "database": "analytics",
+        "description": "Customer dimension.",
+        "name": "dim__customers",
+        "original_file_path": "models/marts/core/dim__customers.sql",
+        "package_name": "nova_test",
+        "resource_type": "model",
+        "schema": "dbt_test",
+        "unique_id": "model.nova_test.dim__customers"
+      },
+      {
+        "alias": "dim__products",
+        "database": "analytics",
+        "description": "Product dimension.",
+        "name": "dim__products",
+        "original_file_path": "models/marts/core/dim__products.sql",
+        "package_name": "nova_test",
+        "resource_type": "model",
+        "schema": "dbt_test",
+        "unique_id": "model.nova_test.dim__products"
+      }
+    ],
+    "lineage_hints": {
+      "depends_on_nodes": 2,
+      "refs": 0,
+      "sources": 0
+    },
+    "lineage_status": "ok",
+    "root_id": "model.nova_test.fct__orders"
+  },
+  "success": true
+}

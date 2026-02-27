@@ -1,0 +1,26 @@
+---
+source: tests/snapshots.rs
+expression: result
+---
+{
+  "count": 1,
+  "data": {
+    "columns": [
+      {
+        "config": {
+          "meta": {},
+          "tags": []
+        },
+        "constraints": [],
+        "data_type": "string",
+        "description": "Campaign name.",
+        "meta": {},
+        "name": "campaign_name",
+        "tags": []
+      }
+    ],
+    "name": "int__campaign_features",
+    "unique_id": "model.nova_test.int__campaign_features"
+  },
+  "success": true
+}

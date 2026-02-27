@@ -1,0 +1,65 @@
+---
+source: tests/snapshots.rs
+expression: result
+---
+{
+  "count": 2,
+  "data": {
+    "columns_without_tests": [
+      "session_id"
+    ],
+    "columns_without_tests_total": 1,
+    "columns_without_tests_truncated": false,
+    "coverage_gaps": [
+      {
+        "column": "session_id",
+        "message": "Primary key column 'session_id' lacks a unique test",
+        "severity": "high",
+        "type": "missing_unique_test"
+      },
+      {
+        "column": "session_id",
+        "message": "Primary key column 'session_id' lacks a not_null test",
+        "severity": "high",
+        "type": "missing_not_null_test"
+      },
+      {
+        "column": "session_id",
+        "message": "Column 'session_id' has no tests",
+        "severity": "low",
+        "type": "untested_column"
+      }
+    ],
+    "data_tests": [],
+    "name": "stg__traffic_sessions",
+    "resource_type": "model",
+    "schema_tests": [
+      {
+        "column_name": "referring_domain",
+        "name": "not_null_referring_domain",
+        "test_type": "not_null",
+        "unique_id": "test.nova_test.not_null_referring_domain"
+      },
+      {
+        "column_name": "referring_domain",
+        "name": "unique_referring_domain",
+        "test_type": "unique",
+        "unique_id": "test.nova_test.unique_referring_domain"
+      }
+    ],
+    "summary": {
+      "columns_tested": 1,
+      "columns_total": 2,
+      "coverage_percentage": 50,
+      "data_tests": 0,
+      "schema_tests": 2,
+      "test_types": {
+        "not_null": 1,
+        "unique": 1
+      },
+      "total_tests": 2
+    },
+    "unique_id": "model.nova_test.stg__traffic_sessions"
+  },
+  "success": true
+}
