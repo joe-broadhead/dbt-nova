@@ -29,24 +29,11 @@ async fn test_path_prefix_index_structure() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_find_by_path_uses_index() {
     let searcher = get_searcher();
-    // Find a common prefix in the manifest
-    let mut common_prefix = None;
-    for prefix in searcher.by_path_prefix.keys() {
-        if !prefix.contains('/') && !prefix.contains('.') {
-            // Top-level directory
-            if let Some(count) = searcher.by_path_prefix.get(prefix).map(Vec::len)
-                && count > 0
-            {
-                common_prefix = Some(prefix.clone());
-                break;
-            }
-        }
-    }
-    if common_prefix.is_none() {
-        println!("Skipping test: no suitable prefix found");
-        return;
-    }
-    let prefix = common_prefix.unwrap();
+    let prefix = "models".to_string();
+    assert!(
+        searcher.by_path_prefix.contains_key(&prefix),
+        "fixture should contain '{prefix}' path prefix"
+    );
     let params = FindByPathParams {
         path_pattern: format!("{prefix}/**"),
         resource_types: vec![],
@@ -77,18 +64,11 @@ async fn test_find_by_path_uses_index() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_path_candidates_with_static_prefix() {
     let searcher = get_searcher();
-    // Find a prefix that exists
-    let existing_prefix = searcher.by_path_prefix.keys().next().cloned();
-    if let Some(prefix) = existing_prefix {
-        let pattern = format!("{prefix}/*");
-        let candidates = searcher.get_path_candidates(&pattern);
-        // Should return fewer candidates than total entities
-        // (unless the prefix covers everything)
-        assert!(
-            !candidates.is_empty(),
-            "Should return candidates for existing prefix"
-        );
-    }
+    let candidates = searcher.get_path_candidates("models/*");
+    assert!(
+        !candidates.is_empty(),
+        "Should return candidates for static 'models' prefix"
+    );
 }
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_path_candidates_no_prefix() {

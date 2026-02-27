@@ -62,21 +62,13 @@ async fn test_diff_entities_not_found() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_diff_entities_ambiguous_name_returns_error() {
-    let searcher = get_searcher();
-    let Some((ambiguous_name, matches)) = searcher
-        .name_to_keys
-        .iter()
-        .find(|(_, keys)| keys.len() > 1)
-        .map(|(name, keys)| (name.clone(), keys.clone()))
-    else {
-        println!("Skipping ambiguity test: no ambiguous names in fixture");
-        return;
-    };
+    let searcher = get_searcher_with_fixture("ambiguous_name.json");
+    let ambiguous_name = "duplicate_entity".to_string();
 
     let params = DiffEntitiesParams {
         entity1: ambiguous_name,
         entity1_resource_type: None,
-        entity2: matches[0].clone(),
+        entity2: "model.pkg.upstream".to_string(),
         entity2_resource_type: None,
         compare_fields: vec!["columns".to_string()],
     };

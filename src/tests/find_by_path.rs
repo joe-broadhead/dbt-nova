@@ -5,24 +5,9 @@ use super::common::*;
 #[tokio::test(flavor = "multi_thread")]
 async fn test_find_by_path_exact_match() {
     let searcher = get_searcher();
-    // Find an actual path from the manifest
-    let models = searcher.by_resource_type.get("model").unwrap();
-    let mut test_path = None;
-    for model_id in models {
-        if let Some(entity) = searcher.get_entity(model_id).await.unwrap()
-            && let Some(path) = entity.original_file_path.as_deref()
-            && !path.is_empty()
-        {
-            test_path = Some(path.to_string());
-            break;
-        }
-    }
-    if test_path.is_none() {
-        println!("Skipping test: no model with path found");
-        return;
-    }
+    let test_path = "models/staging/traffic/stg__traffic_sessions.sql".to_string();
     let params = FindByPathParams {
-        path_pattern: test_path.unwrap(),
+        path_pattern: test_path,
         resource_types: vec![],
         detail: DetailLevel::Standard,
         pagination: PaginationParams {
@@ -50,28 +35,8 @@ async fn test_find_by_path_exact_match() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_find_by_path_glob_star() {
     let searcher = get_searcher();
-    // Find common path prefix
-    let models = searcher.by_resource_type.get("model").unwrap();
-    let mut common_prefix = None;
-    for model_id in models {
-        if let Some(entity) = searcher.get_entity(model_id).await.unwrap()
-            && let Some(path) = entity.original_file_path.as_deref()
-            && path.contains('/')
-        {
-            let parts: Vec<&str> = path.split('/').collect();
-            if parts.len() >= 2 {
-                let prefix = parts[0];
-                common_prefix = Some(format!("{prefix}/*"));
-                break;
-            }
-        }
-    }
-    if common_prefix.is_none() {
-        println!("Skipping test: no suitable path found");
-        return;
-    }
     let params = FindByPathParams {
-        path_pattern: common_prefix.unwrap(),
+        path_pattern: "models/staging/*".to_string(),
         resource_types: vec![],
         detail: DetailLevel::Standard,
         pagination: PaginationParams {

@@ -251,23 +251,17 @@ async fn test_governance_persona_gate_policy_supports_advisory_mode() {
         block_on_failure: false,
     };
     let (searcher, _guard) = governance_search_env(policy);
-    let Some(model_id) = searcher
+    let model_id = searcher
         .by_resource_type
         .get("model")
         .and_then(|models| models.first())
         .cloned()
-    else {
-        println!("Skipping governance advisory test: no model entities in fixture");
-        return;
-    };
-    let Some(entity) = searcher
+        .expect("fixture should include model entities");
+    let entity = searcher
         .get_entity(&model_id)
         .await
         .expect("model lookup should succeed")
-    else {
-        println!("Skipping governance advisory test: selected model missing from entity store");
-        return;
-    };
+        .expect("selected model should exist in entity store");
     let query = entity
         .name
         .as_ref()

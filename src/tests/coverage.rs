@@ -1,6 +1,31 @@
 //! Tests for `get_test_coverage` tool responses.
 use super::common::*;
 
+fn first_model_with_tests(searcher: &ManifestSearch) -> String {
+    searcher
+        .tests_by_entity
+        .iter()
+        .find_map(|(entity_id, tests)| {
+            (entity_id.starts_with("model.") && !tests.is_empty() && searcher.has_entity(entity_id))
+                .then(|| entity_id.clone())
+        })
+        .expect("fixture should include at least one model with tests")
+}
+
+async fn first_model_name_with_tests(searcher: &ManifestSearch) -> String {
+    for entity_id in searcher.tests_by_entity.keys() {
+        if !entity_id.starts_with("model.") {
+            continue;
+        }
+        if let Some(entity) = searcher.get_entity(entity_id).await.unwrap()
+            && let Some(name) = entity.name.as_deref()
+        {
+            return name.to_string();
+        }
+    }
+    panic!("fixture should include a named model with tests");
+}
+
 // Test Coverage Tests
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_test_coverage_entity_not_found() {
@@ -24,19 +49,7 @@ async fn test_get_test_coverage_entity_not_found() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_test_coverage_response_structure() {
     let searcher = get_searcher();
-    // Find a model that has tests - verify entity exists
-    let mut model_with_tests = None;
-    for entity_id in searcher.tests_by_entity.keys() {
-        if entity_id.starts_with("model.") && searcher.has_entity(entity_id) {
-            model_with_tests = Some(entity_id.clone());
-            break;
-        }
-    }
-    if model_with_tests.is_none() {
-        println!("Skipping test_get_test_coverage_response_structure: no model with tests found");
-        return;
-    }
-    let model_id = model_with_tests.unwrap();
+    let model_id = first_model_with_tests(&searcher);
     let params = GetTestCoverageParams {
         id_or_name: model_id.clone(),
         resource_type: None,
@@ -80,19 +93,7 @@ async fn test_get_test_coverage_response_structure() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_test_coverage_include_full_false() {
     let searcher = get_searcher();
-    // Find a model with tests - verify entity exists
-    let mut model_with_tests = None;
-    for (entity_id, tests) in &searcher.tests_by_entity {
-        if entity_id.starts_with("model.") && !tests.is_empty() && searcher.has_entity(entity_id) {
-            model_with_tests = Some(entity_id.clone());
-            break;
-        }
-    }
-    if model_with_tests.is_none() {
-        println!("Skipping test: no model with tests found");
-        return;
-    }
-    let model_id = model_with_tests.unwrap();
+    let model_id = first_model_with_tests(&searcher);
     let params = GetTestCoverageParams {
         id_or_name: model_id.clone(),
         resource_type: None,
@@ -160,19 +161,7 @@ async fn test_tests_by_column_index_populated() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_test_coverage_test_types() {
     let searcher = get_searcher();
-    // Find a model with multiple test types - verify entity exists
-    let mut model_with_tests = None;
-    for (entity_id, tests) in &searcher.tests_by_entity {
-        if entity_id.starts_with("model.") && tests.len() >= 2 && searcher.has_entity(entity_id) {
-            model_with_tests = Some(entity_id.clone());
-            break;
-        }
-    }
-    if model_with_tests.is_none() {
-        println!("Skipping test: no model with multiple tests found");
-        return;
-    }
-    let model_id = model_with_tests.unwrap();
+    let model_id = first_model_with_tests(&searcher);
     let params = GetTestCoverageParams {
         id_or_name: model_id.clone(),
         resource_type: None,
@@ -242,25 +231,23 @@ async fn test_get_test_coverage_coverage_percentage() {
 async fn test_get_test_coverage_zero_columns_reports_zero_percentage() {
     let searcher = get_searcher();
 
-    let mut zero_column_model = None;
-    if let Some(models) = searcher.by_resource_type.get("model") {
-        for model_id in models {
-            if let Some(entity) = searcher.get_entity(model_id).await.unwrap()
-                && entity.column_names().is_empty()
-            {
-                zero_column_model = Some(model_id.clone());
-                break;
-            }
+    let mut model_id = None;
+    let models = searcher
+        .by_resource_type
+        .get("model")
+        .expect("fixture should expose model entities");
+    for candidate in models {
+        if let Some(entity) = searcher.get_entity(candidate).await.unwrap()
+            && entity.column_names().is_empty()
+        {
+            model_id = Some(candidate.clone());
+            break;
         }
     }
-
-    let Some(model_id) = zero_column_model else {
-        println!("Skipping test: no zero-column model found in fixture");
-        return;
-    };
+    let model_id = model_id.expect("fixture should include at least one zero-column model");
 
     let params = GetTestCoverageParams {
-        id_or_name: model_id.clone(),
+        id_or_name: model_id,
         resource_type: None,
         include_full: false,
         columns_limit: Some(50),
@@ -295,23 +282,9 @@ async fn test_get_test_coverage_zero_columns_reports_zero_percentage() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_test_coverage_by_name() {
     let searcher = get_searcher();
-    // Find a model name that has tests
-    let mut model_name = None;
-    for entity_id in searcher.tests_by_entity.keys() {
-        if entity_id.starts_with("model.")
-            && let Some(entity) = searcher.get_entity(entity_id).await.unwrap()
-            && let Some(name) = entity.name.as_deref()
-        {
-            model_name = Some(name.to_string());
-            break;
-        }
-    }
-    if model_name.is_none() {
-        println!("Skipping test: no model with tests found");
-        return;
-    }
+    let model_name = first_model_name_with_tests(&searcher).await;
     let params = GetTestCoverageParams {
-        id_or_name: model_name.unwrap(),
+        id_or_name: model_name,
         resource_type: None,
         include_full: false,
         columns_limit: Some(50),
@@ -332,16 +305,8 @@ async fn test_get_test_coverage_by_name() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_test_coverage_ambiguous_name_returns_error() {
-    let searcher = get_searcher();
-    let Some(ambiguous_name) = searcher
-        .name_to_keys
-        .iter()
-        .find(|(_, keys)| keys.len() > 1)
-        .map(|(name, _)| name.clone())
-    else {
-        println!("Skipping ambiguity test: no ambiguous names in fixture");
-        return;
-    };
+    let searcher = get_searcher_with_fixture("ambiguous_name.json");
+    let ambiguous_name = "duplicate_entity".to_string();
 
     let params = GetTestCoverageParams {
         id_or_name: ambiguous_name,
