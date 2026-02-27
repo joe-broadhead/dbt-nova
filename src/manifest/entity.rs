@@ -2,6 +2,7 @@ use rkyv::option::ArchivedOption;
 use rkyv::string::ArchivedString;
 use rkyv_derive::{Archive, Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use tracing::warn;
 
 macro_rules! archived_str_accessor {
     ($( $name:ident => $field:ident ),+ $(,)?) => {
@@ -114,7 +115,17 @@ pub struct Entity {
 impl Entity {
     #[must_use]
     pub fn from_json(unique_id: &str, payload: &JsonValue) -> Self {
-        let payload_json = serde_json::to_string(payload).unwrap_or_else(|_| "null".to_string());
+        let payload_json = match serde_json::to_string(payload) {
+            Ok(payload_json) => payload_json,
+            Err(err) => {
+                warn!(
+                    unique_id = unique_id,
+                    error = %err,
+                    "failed to serialize entity payload; falling back to null"
+                );
+                "null".to_string()
+            }
+        };
         let column_names = get_column_names(payload);
         let column_meta = get_column_meta(payload, &column_names);
         Self {
@@ -143,7 +154,17 @@ impl Entity {
 
     #[must_use]
     pub fn to_json_value(&self) -> serde_json::Value {
-        serde_json::from_str(&self.payload_json).unwrap_or(JsonValue::Null)
+        match serde_json::from_str(&self.payload_json) {
+            Ok(payload) => payload,
+            Err(err) => {
+                warn!(
+                    unique_id = %self.unique_id,
+                    error = %err,
+                    "failed to parse entity payload_json; returning null payload"
+                );
+                JsonValue::Null
+            }
+        }
     }
 
     #[must_use]
@@ -164,7 +185,17 @@ impl ArchivedEntity {
 
     #[must_use]
     pub fn to_json_value(&self) -> serde_json::Value {
-        serde_json::from_str(self.payload_json()).unwrap_or(JsonValue::Null)
+        match serde_json::from_str(self.payload_json()) {
+            Ok(payload) => payload,
+            Err(err) => {
+                warn!(
+                    payload_len = self.payload_json().len(),
+                    error = %err,
+                    "failed to parse archived entity payload_json; returning null payload"
+                );
+                JsonValue::Null
+            }
+        }
     }
 
     #[must_use]
@@ -579,4 +610,22 @@ fn parse_metric(value: &JsonValue) -> Option<NovaMetric> {
         grain,
         recommended_filters,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn to_json_value_invalid_payload_returns_null() {
+        let mut entity = Entity::from_json(
+            "model.pkg.invalid",
+            &serde_json::json!({
+                "name": "invalid"
+            }),
+        );
+        entity.payload_json = "{not-json".to_string();
+
+        assert_eq!(entity.to_json_value(), JsonValue::Null);
+    }
 }

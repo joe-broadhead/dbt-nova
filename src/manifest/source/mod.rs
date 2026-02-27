@@ -602,14 +602,11 @@ fn fetch_dbfs_manifest(
         let body: JsonValue = resp
             .json()
             .map_err(|e| DbtNovaError::ServerError(format!("DBFS read parse failed: {e}")))?;
-        let bytes_str = body.get("data").and_then(JsonValue::as_str).unwrap_or("");
+        let bytes_str = dbfs_read_data_field(&body, offset);
         let chunk = BASE64
             .decode(bytes_str.as_bytes())
             .map_err(|e| DbtNovaError::ServerError(format!("DBFS decode failed: {e}")))?;
-        let bytes_read = body
-            .get("bytes_read")
-            .and_then(JsonValue::as_u64)
-            .unwrap_or(0);
+        let bytes_read = dbfs_read_bytes_read_field(&body, offset);
         buffer.extend_from_slice(&chunk);
         if max_bytes > 0 && buffer.len() as u64 > max_bytes {
             if cache_path.exists() {
@@ -645,6 +642,30 @@ fn fetch_dbfs_manifest(
         source_uri: uri.to_string(),
         cached: false,
     })
+}
+
+fn dbfs_read_data_field(body: &JsonValue, offset: u64) -> &str {
+    if let Some(data) = body.get("data").and_then(JsonValue::as_str) {
+        data
+    } else {
+        warn!(
+            offset = offset,
+            "DBFS read response missing string 'data' field; treating chunk as empty"
+        );
+        ""
+    }
+}
+
+fn dbfs_read_bytes_read_field(body: &JsonValue, offset: u64) -> u64 {
+    if let Some(bytes_read) = body.get("bytes_read").and_then(JsonValue::as_u64) {
+        bytes_read
+    } else {
+        warn!(
+            offset = offset,
+            "DBFS read response missing numeric 'bytes_read' field; treating as zero"
+        );
+        0
+    }
 }
 
 fn fetch_s3_manifest(rest: &str, uri: &str, config: &DbtNovaConfig) -> Result<ManifestResolution> {
@@ -1088,4 +1109,26 @@ fn fetch_gcs_manifest_sdk(
         source_uri: uri.to_string(),
         cached: false,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dbfs_read_field_helpers_default_missing_values() {
+        let body = serde_json::json!({});
+        assert_eq!(dbfs_read_data_field(&body, 7), "");
+        assert_eq!(dbfs_read_bytes_read_field(&body, 7), 0);
+    }
+
+    #[test]
+    fn dbfs_read_field_helpers_use_present_values() {
+        let body = serde_json::json!({
+            "data": "YWJj",
+            "bytes_read": 3
+        });
+        assert_eq!(dbfs_read_data_field(&body, 0), "YWJj");
+        assert_eq!(dbfs_read_bytes_read_field(&body, 0), 3);
+    }
 }
