@@ -317,7 +317,7 @@ Optional:
 - `include_queries` (bool)
 - `parameters` (optional placeholder values for SQL rendering and missing checks)
 - `placeholder_types` (optional placeholder coercion hints)
-- `parameter_types` (deprecated alias for `placeholder_types`)
+- `parameter_types` (deprecated alias; use `placeholder_types`)
 
 ```json
 {"name":"get_recipe","arguments":{"recipe_id":"marketing/weekly_country_kpi_report","include_queries":true,"include_sql":true}}
@@ -349,7 +349,7 @@ Optional:
 - `stop_on_failure` (bool, default: `true`)
 - `include_sql` (bool)
 - SQL execution controls: `row_limit`, `byte_limit`, `wait_timeout_s`, `poll_interval_ms`, `max_poll_seconds`, `parameters`, `placeholder_types`, `sql_parameter_types`, `fetch_all_chunks`, `max_chunks`
-- `parameter_types` (deprecated fallback alias for both `placeholder_types` and `sql_parameter_types`)
+- `parameter_types` (deprecated fallback alias; use `placeholder_types` and `sql_parameter_types`)
 
 ```json
 {"name":"run_recipe","arguments":{"recipe_id":"marketing/weekly_country_kpi_report","query_indexes":[1,2],"stop_on_failure":true}}

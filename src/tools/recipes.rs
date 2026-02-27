@@ -195,6 +195,7 @@ impl ManifestSearch {
     ///
     /// # Errors
     /// Returns an error if the recipe is not found or SQL files cannot be read.
+    #[allow(deprecated)]
     #[instrument(skip(self, params), fields(tool = "get_recipe", recipe_id = %params.recipe_id))]
     pub async fn get_recipe(&self, params: &GetRecipeParams) -> Result<JsonValue> {
         if params.recipe_id.trim().is_empty() {
@@ -250,6 +251,7 @@ impl ManifestSearch {
     /// # Errors
     /// Returns an error if the recipe cannot be resolved, query execution fails, or query selection is invalid.
     #[allow(clippy::too_many_lines)]
+    #[allow(deprecated)]
     #[instrument(
         skip(self, params),
         fields(
@@ -1932,6 +1934,7 @@ fn select_recipe_queries<'a>(
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 
