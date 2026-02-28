@@ -13,6 +13,7 @@ async fn main() -> Result<()> {
     if let Some(command) = cli.command {
         if let Err(error) = dbt_nova::cli::dispatch(command).await {
             error!(error = %error, "cli command failed");
+            eprintln!("dbt-nova CLI error: {error}");
             std::process::exit(exit_code(&error));
         }
         return Ok(());
