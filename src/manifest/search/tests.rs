@@ -28,7 +28,9 @@ async fn entity_cache_updates_recency_on_read() {
     cfg.entity_cache_size = 2;
     let cache_limit = cfg.entity_cache_size;
 
-    let searcher = ManifestSearch::new(cfg).expect("fixture manifest must be present");
+    let searcher = ManifestSearch::new(cfg)
+        .expect("fixture manifest must be present")
+        .search;
     let ids: Vec<String> = searcher.entities.ids().take(3).cloned().collect();
     if ids.len() < 3 {
         return;

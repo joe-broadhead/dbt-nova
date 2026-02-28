@@ -382,6 +382,15 @@ impl<'de> Visitor<'de> for ManifestVisitor<'_> {
     }
 }
 
+/// Structured output from manifest loading/index build.
+pub struct ManifestLoadResult {
+    pub search: ManifestSearch,
+    pub entity_store_reused: bool,
+    pub tantivy_reused: bool,
+    pub indexes_reused: bool,
+    pub elapsed_ms: u128,
+}
+
 impl ManifestSearch {
     /// Build in-memory search indexes from a dbt manifest file.
     #[instrument(level = "info", skip(config), fields(manifest_path = %config.manifest_path))]
@@ -390,7 +399,8 @@ impl ManifestSearch {
     /// # Errors
     /// Returns an error if the manifest cannot be loaded, parsed, or indexed.
     #[allow(clippy::too_many_lines)]
-    pub fn new(mut config: DbtNovaConfig) -> Result<Self> {
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new(mut config: DbtNovaConfig) -> Result<ManifestLoadResult> {
         config.ensure_storage_instance_id();
         config.ensure_embedding_cache_dir();
         let load_start = Instant::now();
@@ -509,6 +519,7 @@ impl ManifestSearch {
             ));
         }
         let mut accumulator = ManifestAccumulator::new(&storage_dir, !reuse_store)?;
+        let tantivy_reused = tantivy_opened.is_some();
 
         let mut by_path_prefix: HashMap<String, Vec<String>> = HashMap::new();
         let mut tests_by_entity: HashMap<String, Vec<String>> = HashMap::new();
@@ -807,45 +818,51 @@ impl ManifestSearch {
         }
         build_lock.take();
 
-        Ok(Self {
-            config,
-            entities: Arc::new(entities),
-            parent_map,
-            child_map,
-            by_resource_type: accumulator.by_resource_type,
-            by_package: accumulator.by_package,
-            by_tag: accumulator.by_tag,
-            by_database_schema: accumulator.by_database_schema,
-            name_to_keys: accumulator.name_to_keys,
-            resource_type_by_id,
-            tantivy,
-            vector_search,
-            sparse_search,
-            reranker,
-            compiled_layer_rules,
-            tests_by_entity,
-            tests_by_column,
-            by_path_prefix,
-            column_lineage_aliases,
-            manifest_metadata: accumulator.manifest_metadata,
-            manifest_health,
-            entity_counts: accumulator.entity_counts,
-            entity_cache,
-            lineage_cache,
-            entity_cache_hits: AtomicU64::new(0),
-            entity_cache_misses: AtomicU64::new(0),
-            lineage_cache_hits: AtomicU64::new(0),
-            lineage_cache_misses: AtomicU64::new(0),
-            manifest_source_uri: manifest_resolution.source_uri.clone(),
-            manifest_hash: signature.content_hash.clone(),
-            manifest_len: signature.len,
-            manifest_modified_ms: signature.modified_ms,
-            manifest_version: version_id.clone(),
-            loaded_at_ms: current_time_ms(),
-            vector_breaker,
-            sparse_breaker,
-            reranker_breaker,
-            _in_use_locks: Some(in_use_locks),
+        Ok(ManifestLoadResult {
+            search: Self {
+                config,
+                entities: Arc::new(entities),
+                parent_map,
+                child_map,
+                by_resource_type: accumulator.by_resource_type,
+                by_package: accumulator.by_package,
+                by_tag: accumulator.by_tag,
+                by_database_schema: accumulator.by_database_schema,
+                name_to_keys: accumulator.name_to_keys,
+                resource_type_by_id,
+                tantivy,
+                vector_search,
+                sparse_search,
+                reranker,
+                compiled_layer_rules,
+                tests_by_entity,
+                tests_by_column,
+                by_path_prefix,
+                column_lineage_aliases,
+                manifest_metadata: accumulator.manifest_metadata,
+                manifest_health,
+                entity_counts: accumulator.entity_counts,
+                entity_cache,
+                lineage_cache,
+                entity_cache_hits: AtomicU64::new(0),
+                entity_cache_misses: AtomicU64::new(0),
+                lineage_cache_hits: AtomicU64::new(0),
+                lineage_cache_misses: AtomicU64::new(0),
+                manifest_source_uri: manifest_resolution.source_uri.clone(),
+                manifest_hash: signature.content_hash.clone(),
+                manifest_len: signature.len,
+                manifest_modified_ms: signature.modified_ms,
+                manifest_version: version_id.clone(),
+                loaded_at_ms: current_time_ms(),
+                vector_breaker,
+                sparse_breaker,
+                reranker_breaker,
+                _in_use_locks: Some(in_use_locks),
+            },
+            entity_store_reused: reuse_store,
+            tantivy_reused,
+            indexes_reused: used_cached_indexes,
+            elapsed_ms: load_start.elapsed().as_millis(),
         })
     }
 }

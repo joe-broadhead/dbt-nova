@@ -67,7 +67,9 @@ fn get_searcher_for_manifest(manifest_path: &Path) -> TestSearchEnv {
     cfg.storage_instance_id = "tests".to_string();
     cfg.storage_max_instances = 1;
     cfg.cleanup_storage_on_start = true;
-    let searcher = ManifestSearch::new(cfg).expect("Failed to load fixture manifest");
+    let searcher = ManifestSearch::new(cfg)
+        .expect("Failed to load fixture manifest")
+        .search;
     TestSearchEnv {
         searcher,
         _guard: guard,

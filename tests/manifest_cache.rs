@@ -30,7 +30,9 @@ fn indexes_cache_persists_to_disk() {
     support_config::apply_test_storage(&mut cfg, &guard);
     cfg.storage_read_only = false;
 
-    let _searcher = ManifestSearch::new(cfg.clone()).expect("manifest search");
+    let _searcher = ManifestSearch::new(cfg.clone())
+        .expect("manifest search")
+        .search;
 
     let instance_root = cfg.storage_instance_root_dir().expect("instance root dir");
     let current_path = instance_root.join("manifest.current.json");

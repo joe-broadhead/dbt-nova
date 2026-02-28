@@ -562,8 +562,8 @@ impl ManifestSearchHandle {
             let result = tokio::task::spawn_blocking(move || ManifestSearch::new(config)).await;
             let mut guard = state_clone.write().await;
             match result {
-                Ok(Ok(searcher)) => {
-                    *guard = ManifestSearchState::Ready(Arc::new(searcher));
+                Ok(Ok(loaded)) => {
+                    *guard = ManifestSearchState::Ready(Arc::new(loaded.search));
                 }
                 Ok(Err(err)) => {
                     *guard = ManifestSearchState::Failed(err.to_string());
@@ -772,8 +772,8 @@ impl ManifestSearchHandle {
 
             let mut guard = state_clone.write().await;
             match result {
-                Ok(searcher) => {
-                    *guard = ManifestSearchState::Ready(Arc::new(searcher));
+                Ok(loaded) => {
+                    *guard = ManifestSearchState::Ready(Arc::new(loaded.search));
                     let mut refresh_stats_guard = refresh_stats_clone.write().await;
                     refresh_stats_guard.successes += 1;
                     refresh_stats_guard.last_success_ms = Some(now_ms());
@@ -940,8 +940,8 @@ async fn refresh_loop(
 
             let mut guard = state_clone.write().await;
             match result {
-                Ok(searcher) => {
-                    *guard = ManifestSearchState::Ready(Arc::new(searcher));
+                Ok(loaded) => {
+                    *guard = ManifestSearchState::Ready(Arc::new(loaded.search));
                     let mut refresh_stats_guard = refresh_stats_clone.write().await;
                     refresh_stats_guard.successes += 1;
                     refresh_stats_guard.last_success_ms = Some(now_ms());
