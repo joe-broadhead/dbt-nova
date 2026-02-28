@@ -259,7 +259,10 @@ mod tests {
             manifest_path: Some(fixture_manifest_path()),
             ..ManifestLoadArgs::default()
         };
-        let config = build_manifest_load_config(&args).expect("config");
+        let mut config = build_manifest_load_config(&args).expect("config");
+        config.search.enable_vector_search = false;
+        config.search.enable_sparse_search = false;
+        config.search.enable_reranker = false;
         let loaded = execute_manifest_load(config).await.expect("load result");
 
         assert!(loaded.search.entity_count() > 0);
@@ -273,7 +276,10 @@ mod tests {
             manifest_path: Some("tests/fixtures/missing-manifest.json".to_string()),
             ..ManifestLoadArgs::default()
         };
-        let config = build_manifest_load_config(&args).expect("config");
+        let mut config = build_manifest_load_config(&args).expect("config");
+        config.search.enable_vector_search = false;
+        config.search.enable_sparse_search = false;
+        config.search.enable_reranker = false;
         let Err(err) = execute_manifest_load(config).await else {
             panic!("load should fail");
         };
