@@ -2,6 +2,7 @@
 #![warn(clippy::pedantic)]
 #![allow(clippy::module_name_repetitions)]
 
+pub mod cli;
 pub mod config;
 pub mod dbt_types;
 pub mod error;
