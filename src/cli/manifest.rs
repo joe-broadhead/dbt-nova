@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
 
 use serde::Serialize;
@@ -194,6 +194,11 @@ pub fn build_manifest_load_config(args: &ManifestLoadArgs) -> Result<DbtNovaConf
                 "--storage-instance-id cannot be empty".to_string(),
             ));
         }
+        if !is_safe_storage_instance_id(trimmed) {
+            return Err(DbtNovaError::InvalidParams(
+                "--storage-instance-id must be a single safe path segment".to_string(),
+            ));
+        }
         config.storage_instance_id = trimmed.to_string();
     }
 
@@ -211,6 +216,22 @@ pub fn build_manifest_load_config(args: &ManifestLoadArgs) -> Result<DbtNovaConf
     config.ensure_embedding_cache_dir();
     config.validate()?;
     Ok(config)
+}
+
+fn is_safe_storage_instance_id(instance_id: &str) -> bool {
+    if instance_id.is_empty()
+        || instance_id.contains('/')
+        || instance_id.contains('\\')
+        || matches!(instance_id, "." | "..")
+    {
+        return false;
+    }
+
+    let mut components = Path::new(instance_id).components();
+    matches!(
+        (components.next(), components.next()),
+        (Some(Component::Normal(_)), None)
+    )
 }
 
 async fn execute_manifest_load(
@@ -255,6 +276,22 @@ mod tests {
         assert_eq!(
             config.manifest_refresh_secs,
             DbtNovaConfig::from_env().manifest_refresh_secs
+        );
+    }
+
+    #[test]
+    fn build_manifest_load_config_rejects_unsafe_instance_id() {
+        let args = ManifestLoadArgs {
+            manifest_path: Some(fixture_manifest_path()),
+            storage_instance_id: Some("../unsafe".to_string()),
+            ..ManifestLoadArgs::default()
+        };
+
+        let error = build_manifest_load_config(&args).expect_err("expected unsafe id rejection");
+        assert!(
+            error
+                .to_string()
+                .contains("--storage-instance-id must be a single safe path segment")
         );
     }
 
