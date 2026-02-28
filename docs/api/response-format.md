@@ -132,3 +132,32 @@ structured `details` object on `INVALID_PARAMS` responses:
   }
 }
 ```
+
+## CLI JSON Envelope
+
+CLI subcommands that use `--json` return a command envelope (different from MCP tool envelopes):
+
+```json
+{
+  "command": "manifest load",
+  "status": "success",
+  "data": { "...": "..." },
+  "meta": {
+    "elapsed_ms": 123,
+    "timestamp_ms": 1772304167827,
+    "version": "0.0.2"
+  },
+  "error": null
+}
+```
+
+For errors, `status` is `"error"` and `error` contains the standard Nova error object.
+
+### CLI Exit Codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Success |
+| `1` | Invalid parameters |
+| `2` | Manifest/index lifecycle failures |
+| `3` | Runtime/provider/server failures |

@@ -100,6 +100,7 @@ nav:
   - Getting Started:
     - Installation: getting-started/installation.md
     - Quick Start: getting-started/quickstart.md
+    - CLI Commands: getting-started/cli.md
     - MCP Clients: getting-started/mcp-clients.md
     - Agent Skills: getting-started/skills.md
     - Glossary: getting-started/glossary.md

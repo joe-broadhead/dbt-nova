@@ -171,6 +171,39 @@ For recurring analysis topics, start with:
 - **[Analysis Recipes](docs/features/recipes.md)** to design deterministic workflows.
 - `search_recipes` -> `get_recipe` -> `run_recipe` in your MCP client.
 
+## CLI Command Mode
+
+`dbt-nova` supports one-shot CLI commands in addition to server mode.
+
+- No subcommand: starts MCP server (backward compatible)
+- Subcommand: executes command and exits
+
+Examples:
+
+```bash
+# Start MCP server (default behavior)
+dbt-nova
+
+# Equivalent explicit server command
+dbt-nova server start
+
+# One-shot health diagnostics with JSON envelope output
+dbt-nova health check --manifest-path /path/to/manifest.json --json
+
+# One-shot tool invocation
+dbt-nova tool call search \
+  --params-json '{"query":"orders","limit":5}' \
+  --manifest-path /path/to/manifest.json
+```
+
+`tool call` parameter input modes:
+
+- `--params-json`
+- `--params-file`
+- `--params-stdin`
+
+`reload_manifest` is intentionally unavailable in CLI mode; call it through an MCP client against a running server.
+
 ## Release Size
 
 Default builds include embeddings + S3/GCS SDK support. For a minimal binary, build
@@ -189,6 +222,7 @@ via build locks and in‑use locks; pruning removes only inactive instances.
 - [Docs Index](docs/index.md)
 - [Installation](docs/getting-started/installation.md)
 - [Quick Start](docs/getting-started/quickstart.md)
+- [CLI Commands](docs/getting-started/cli.md)
 - [MCP Client Configs](docs/getting-started/mcp-clients.md)
 - [Configuration Reference](docs/configuration/reference.md)
 - [Manifest Sources](docs/configuration/manifest-sources.md)

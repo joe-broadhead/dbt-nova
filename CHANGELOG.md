@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Dedicated CLI command docs covering command tree, one-shot usage patterns,
+  `tool call` parameter input modes, and server-compatibility behavior when no
+  subcommand is passed.
+
+### Changed
+
+- README and Quick Start now explicitly document CLI command mode alongside MCP
+  server mode, including examples for `health check` and `tool call`.
+- API response format docs now include CLI JSON envelope structure and CLI exit
+  code mapping.
+
 ## [0.0.2] - 2026-02-28
 
 ### Added
