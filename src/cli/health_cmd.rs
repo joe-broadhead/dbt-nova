@@ -1,11 +1,11 @@
 use std::time::Instant;
 
+use crate::manifest::search::ManifestSearch;
 use serde_json::Value as JsonValue;
 
 use crate::cli::args::{HealthCheckArgs, ManifestLoadArgs};
 use crate::cli::manifest::{build_manifest_load_config, execute_manifest_load};
 use crate::cli::output::{CliEnvelope, error_envelope};
-use crate::cli::tool::build_cli_health_payload;
 use crate::config::DbtNovaConfig;
 use crate::error::{DbtNovaError, Result};
 
@@ -37,6 +37,53 @@ pub async fn run_check_command(args: &HealthCheckArgs) -> DispatchResult {
     }
 
     Ok(())
+}
+
+pub(crate) async fn build_cli_health_payload(searcher: &ManifestSearch) -> JsonValue {
+    let mut payload = serde_json::json!({
+        "status": "ready",
+        "entity_count": searcher.entity_count(),
+    });
+    let details = searcher.health_snapshot().await;
+    if let (Some(base), Some(extra)) = (payload.as_object_mut(), details.as_object()) {
+        for (key, value) in extra {
+            base.insert(key.clone(), value.clone());
+        }
+    }
+    if let Some(base) = payload.as_object_mut() {
+        let config = searcher.config();
+        base.insert(
+            "search_concurrency".to_string(),
+            static_concurrency_snapshot(
+                config.search.search_max_concurrent,
+                config.search.search_max_queue,
+            ),
+        );
+        base.insert(
+            "sql_concurrency".to_string(),
+            static_concurrency_snapshot(config.sql_max_concurrent, config.sql_max_queue),
+        );
+        // CLI mode has no long-lived MCP server metrics store.
+        base.insert("tool_metrics".to_string(), serde_json::json!({}));
+    }
+    payload
+}
+
+fn static_concurrency_snapshot(max_concurrent: usize, max_queue: usize) -> JsonValue {
+    if max_concurrent == 0 {
+        return serde_json::json!({"enabled": false});
+    }
+    serde_json::json!({
+        "enabled": true,
+        "max_concurrent": max_concurrent,
+        "available_slots": max_concurrent,
+        "in_flight": 0,
+        "saturated": false,
+        "max_queue": max_queue,
+        "available_queue": max_queue,
+        "queued": 0,
+        "queue_saturated": false,
+    })
 }
 
 fn render_or_propagate_error(
@@ -150,10 +197,9 @@ fn string_field<'a>(value: &'a JsonValue, key: &str, fallback: &'a str) -> &'a s
 mod tests {
     use std::path::Path;
 
-    use super::build_health_check_config;
+    use super::{build_cli_health_payload, build_health_check_config};
     use crate::cli::args::HealthCheckArgs;
     use crate::cli::manifest::execute_manifest_load;
-    use crate::cli::tool::build_cli_health_payload;
 
     fn fixture_manifest_path() -> String {
         Path::new(env!("CARGO_MANIFEST_DIR"))
