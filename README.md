@@ -102,7 +102,7 @@ scoring, and governance. Start here:
 - **100% Field Access**: full JSON preserved on disk
 - **Background Indexing** with readiness via `health`
 - **Column & Entity Lineage**, test coverage, documentation gaps
-- **Warehouse SQL Execution** for Databricks and BigQuery
+- **Warehouse SQL Execution** for Databricks, BigQuery, and DuckDB
 
 ## Who It’s For
 

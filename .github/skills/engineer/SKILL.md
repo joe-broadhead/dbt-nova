@@ -6,7 +6,7 @@ allowed-tools: "mcp__nova__search mcp__nova__get_entity mcp__nova__get_columns m
 metadata:
   owner: "dbt-nova"
   persona: "engineer"
-  version: "0.0.1"
+  version: "0.0.2"
 ---
 
 # Engineer Skill (dbt-nova)

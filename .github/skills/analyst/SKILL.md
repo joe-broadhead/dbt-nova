@@ -6,7 +6,7 @@ allowed-tools: "mcp__nova__search mcp__nova__search_recipes mcp__nova__get_recip
 metadata:
   owner: "dbt-nova"
   persona: "analyst"
-  version: "0.0.1"
+  version: "0.0.2"
 ---
 
 # Analyst Skill (dbt-nova)

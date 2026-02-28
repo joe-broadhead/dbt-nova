@@ -5,6 +5,41 @@ All notable changes to dbt-nova will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.0.2] - 2026-02-28
+
+### Added
+
+- DuckDB SQL provider support (`DBT_NOVA_SQL_PROVIDER=duckdb`) with read-only execution,
+  named parameter binding, provider preflight checks, and pooled connections keyed by
+  `(duckdb_path, file_search_path)`.
+- End-to-end DuckDB integration coverage for `execute_sql` and `run_recipe`.
+- Installer support for optional model warmup during slim installs.
+- Installer support for optional built-in skill installation to `~/.agents/skills`.
+
+### Changed
+
+- SQL preflight behavior is now harmonized across Databricks, BigQuery, and DuckDB:
+  object checks require non-empty probe results and return consistent structured readiness payloads.
+- SQL execution limits were tuned for practical payloads:
+  higher default byte limits, config-cap enforcement when caller limits are omitted,
+  and preserved provider poll defaults when explicit poll limits are not provided.
+- Scheduled security/fuzz maintenance moved to monthly automation.
+- Release workflow and release docs aligned with current slim asset targets and provenance behavior.
+
+### Fixed
+
+- Recipe raw SQL fallback guard now reliably rejects templated/Jinja content across edge cases,
+  including comment markers, dollar-quoted blocks, string literals, and backslash-escaped quotes.
+- CI fuzz workflow reliability issues around target/bin resolution were corrected.
+- Installer and warmup flows were aligned to avoid model-cache path mismatch confusion in slim installs.
+
+### Documentation
+
+- Updated installation, quickstart, MCP client, configuration, tools, recipes, skills, CI, and release docs
+  to reflect DuckDB support, SQL provider behavior, model cache/warmup expectations, and current workflows.
+
 ## [0.0.1] - 2026-02-18
 
 ### Fixed
