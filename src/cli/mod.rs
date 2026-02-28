@@ -105,6 +105,9 @@ pub fn prune_storage_instances(
         exclude.push(instance);
     }
     if max_keep == 0 {
+        if !storage_root.exists() {
+            return Ok(());
+        }
         for entry in fs::read_dir(&storage_root)
             .map_err(|error| DbtNovaError::ServerError(format!("Storage scan failed: {error}")))?
         {
@@ -231,6 +234,15 @@ mod tests {
         assert!(active_dir.exists());
         assert!(!old_orders_dir.exists());
         assert!(!old_users_dir.exists());
+    }
+
+    #[test]
+    fn prune_storage_instances_zero_max_keep_missing_root_is_noop() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path(), "active");
+        config.storage_max_bytes = 0;
+
+        prune_storage_instances(&config, 0, Some("active")).expect("missing root should be noop");
     }
 
     #[tokio::test]
