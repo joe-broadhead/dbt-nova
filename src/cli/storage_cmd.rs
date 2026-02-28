@@ -3,13 +3,14 @@ use std::fs;
 use std::path::Path;
 use std::time::{Instant, UNIX_EPOCH};
 
+use fs4::FileExt;
 use serde::{Deserialize, Serialize};
 
 use crate::cli::args::{StorageCleanupArgs, StorageInspectArgs, StoragePruneArgs};
 use crate::cli::output::{CliEnvelope, error_envelope};
 use crate::config::DbtNovaConfig;
 use crate::error::{DbtNovaError, Result};
-use crate::utils::dir_in_use;
+use crate::utils::{IN_USE_LOCK_FILENAME, dir_in_use};
 
 use super::{DispatchError, DispatchResult, cleanup_storage_dir, prune_storage_instances};
 
@@ -344,7 +345,7 @@ fn list_instance_infos(instances_dir: &Path) -> Result<Vec<StorageInstanceInfo>>
         instances.push(StorageInstanceInfo {
             instance_id: instance_id.to_string(),
             path: path.to_string_lossy().to_string(),
-            in_use: dir_in_use(&path),
+            in_use: dir_in_use_readonly(&path),
             size_bytes: dir_size_bytes(&path),
             modified_ms,
             current_version,
@@ -417,6 +418,30 @@ fn read_current_version(instance_path: &Path) -> Result<Option<String>> {
         return Ok(None);
     }
     Ok(Some(parsed.version))
+}
+
+fn dir_in_use_readonly(path: &Path) -> bool {
+    let lock_path = path.join(IN_USE_LOCK_FILENAME);
+    if !lock_path.exists() {
+        return false;
+    }
+
+    let Ok(lock_file) = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+    else {
+        return false;
+    };
+
+    if lock_file.try_lock_exclusive().is_err() {
+        return true;
+    }
+    if let Err(error) = lock_file.unlock() {
+        tracing::warn!(error = %error, "failed to release storage lock");
+    }
+    false
 }
 
 fn dir_size_bytes(path: &Path) -> u64 {
@@ -521,6 +546,7 @@ mod tests {
 
     use super::{build_storage_config, inspect_storage, resolve_max_keep};
     use crate::config::DbtNovaConfig;
+    use crate::utils::IN_USE_LOCK_FILENAME;
 
     #[test]
     fn build_storage_config_rejects_unsafe_instance_id() {
@@ -564,6 +590,25 @@ mod tests {
         assert_eq!(instance.instance_id, "manifest-abc");
         assert_eq!(instance.current_version.as_deref(), Some("version-a"));
         assert_eq!(instance.version_count, 1);
+    }
+
+    #[test]
+    fn inspect_storage_does_not_create_missing_lock_files() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = DbtNovaConfig {
+            storage_dir: temp_dir.path().join(".nova").to_string_lossy().to_string(),
+            ..DbtNovaConfig::default()
+        };
+        config.ensure_storage_instance_id();
+        let instances_dir = config.storage_instances_dir().expect("instances dir");
+        let instance_path = instances_dir.join("manifest-legacy");
+        fs::create_dir_all(instance_path.join("versions").join("version-a")).expect("versions");
+
+        let lock_path = instance_path.join(IN_USE_LOCK_FILENAME);
+        assert!(!lock_path.exists());
+        let payload = inspect_storage(&config).expect("inspect");
+        assert_eq!(payload.instance_count, 1);
+        assert!(!lock_path.exists());
     }
 
     #[test]
