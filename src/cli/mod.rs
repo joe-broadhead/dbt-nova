@@ -8,6 +8,7 @@ pub mod args;
 pub mod manifest;
 pub mod output;
 pub mod server_cmd;
+pub mod tool;
 
 pub struct DispatchError {
     pub error: DbtNovaError,
@@ -41,13 +42,15 @@ pub async fn dispatch(command: args::Command) -> DispatchResult {
             )
             .into()),
         },
-        args::Command::Tool(_)
-        | args::Command::Config(_)
-        | args::Command::Storage(_)
-        | args::Command::Health(_) => Err(DbtNovaError::InvalidParams(
-            "CLI command group is not implemented yet in current scope".to_string(),
-        )
-        .into()),
+        args::Command::Tool(tool_args) => match tool_args.command {
+            args::ToolCommand::Call(call_args) => tool::run_call_command(&call_args).await,
+        },
+        args::Command::Config(_) | args::Command::Storage(_) | args::Command::Health(_) => {
+            Err(DbtNovaError::InvalidParams(
+                "CLI command group is not implemented yet in current scope".to_string(),
+            )
+            .into())
+        }
     }
 }
 

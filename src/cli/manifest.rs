@@ -239,7 +239,7 @@ fn is_safe_storage_instance_id(instance_id: &str) -> bool {
     )
 }
 
-async fn execute_manifest_load(
+pub(crate) async fn execute_manifest_load(
     config: DbtNovaConfig,
 ) -> Result<crate::manifest::loader::ManifestLoadResult> {
     if !config.storage_read_only {

@@ -64,7 +64,32 @@ pub struct ToolArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum ToolCommand {
-    Call { tool_name: String },
+    Call(ToolCallArgs),
+}
+
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, Args, Default)]
+pub struct ToolCallArgs {
+    #[arg(value_name = "TOOL_NAME")]
+    pub tool_name: String,
+    #[arg(long, value_name = "JSON", conflicts_with_all = ["params_file", "params_stdin"])]
+    pub params_json: Option<String>,
+    #[arg(long, value_name = "PATH", conflicts_with_all = ["params_json", "params_stdin"])]
+    pub params_file: Option<String>,
+    #[arg(long, default_value_t = false, conflicts_with_all = ["params_json", "params_file"])]
+    pub params_stdin: bool,
+    #[arg(long, value_name = "PATH", conflicts_with = "manifest_uri")]
+    pub manifest_path: Option<String>,
+    #[arg(long, value_name = "URI", conflicts_with = "manifest_path")]
+    pub manifest_uri: Option<String>,
+    #[arg(long, value_name = "INSTANCE_ID")]
+    pub storage_instance_id: Option<String>,
+    #[arg(long, default_value_t = false)]
+    pub cleanup_storage_on_start: bool,
+    #[arg(long, default_value_t = false)]
+    pub read_only: bool,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -107,7 +132,7 @@ pub enum HealthCommand {
 mod tests {
     use clap::Parser;
 
-    use super::{Cli, Command, ManifestCommand, ServerCommand};
+    use super::{Cli, Command, ManifestCommand, ServerCommand, ToolCommand};
 
     #[test]
     fn cli_parses_no_subcommand() {
@@ -165,6 +190,33 @@ mod tests {
                 assert!(matches!(manifest.command, ManifestCommand::Load(_)));
             }
             _ => panic!("expected manifest command"),
+        }
+    }
+
+    #[test]
+    fn tool_call_rejects_conflicting_param_sources() {
+        let parsed = Cli::try_parse_from([
+            "dbt-nova",
+            "tool",
+            "call",
+            "search",
+            "--params-json",
+            "{}",
+            "--params-file",
+            "params.json",
+        ]);
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn tool_call_parses_json_flag() {
+        let cli = Cli::parse_from(["dbt-nova", "tool", "call", "search", "--json"]);
+        let command = cli.command.expect("command");
+        match command {
+            Command::Tool(tool) => {
+                assert!(matches!(tool.command, ToolCommand::Call(_)));
+            }
+            _ => panic!("expected tool command"),
         }
     }
 }
