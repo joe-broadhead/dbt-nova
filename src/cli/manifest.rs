@@ -55,12 +55,13 @@ pub async fn run_load_command(args: &ManifestLoadArgs) -> DispatchResult {
         .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
 
     if args.json {
-        let envelope =
-            CliEnvelope::success("manifest load", &payload, started.elapsed().as_millis());
-        let json = serde_json::to_string_pretty(&envelope).map_err(|error| DispatchError {
-            error: DbtNovaError::ServerError(error.to_string()),
-            rendered: false,
-        })?;
+        let json =
+            render_success_json(&payload, started.elapsed().as_millis()).map_err(|error| {
+                DispatchError {
+                    error,
+                    rendered: false,
+                }
+            })?;
         println!("{json}");
     } else {
         print_human_summary(&payload);
@@ -118,6 +119,12 @@ fn print_human_summary(payload: &ManifestLoadData) {
 
 fn ready_label(ready: bool) -> &'static str {
     if ready { "ready" } else { "not_ready" }
+}
+
+fn render_success_json(payload: &ManifestLoadData, elapsed_ms: u128) -> Result<String> {
+    let envelope = CliEnvelope::success("manifest load", payload, elapsed_ms);
+    serde_json::to_string_pretty(&envelope)
+        .map_err(|error| DbtNovaError::ServerError(error.to_string()))
 }
 
 fn payload_from_result(
@@ -254,7 +261,9 @@ pub(crate) async fn execute_manifest_load(
 mod tests {
     use std::fs;
 
-    use super::{build_manifest_load_config, execute_manifest_load};
+    use super::{
+        build_manifest_load_config, execute_manifest_load, payload_from_result, render_success_json,
+    };
     use crate::cli::args::ManifestLoadArgs;
     use crate::config::DbtNovaConfig;
     use tempfile::TempDir;
@@ -390,5 +399,66 @@ mod tests {
             marker.exists(),
             "read-only manifest load should not clean storage"
         );
+    }
+
+    #[tokio::test]
+    async fn execute_manifest_load_read_only_without_reusable_index_fails() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let args = ManifestLoadArgs {
+            manifest_path: Some(fixture_manifest_path()),
+            ..ManifestLoadArgs::default()
+        };
+        let mut config = build_manifest_load_config(&args).expect("config");
+        config.storage_dir = temp_dir
+            .path()
+            .join(".dbt-nova")
+            .to_string_lossy()
+            .to_string();
+        config.storage_instance_id = "read-only-no-cache".to_string();
+        config.storage_read_only = true;
+        config.search.enable_vector_search = false;
+        config.search.enable_sparse_search = false;
+        config.search.enable_reranker = false;
+
+        let Err(err) = execute_manifest_load(config).await else {
+            panic!("read-only without cache should fail");
+        };
+        assert!(
+            err.to_string()
+                .contains("Storage is read-only and no reusable index is available")
+        );
+    }
+
+    #[tokio::test]
+    async fn manifest_load_success_json_has_expected_envelope_shape() {
+        let args = ManifestLoadArgs {
+            manifest_path: Some(fixture_manifest_path()),
+            ..ManifestLoadArgs::default()
+        };
+        let mut config = build_manifest_load_config(&args).expect("config");
+        config.search.enable_vector_search = false;
+        config.search.enable_sparse_search = false;
+        config.search.enable_reranker = false;
+        let loaded = execute_manifest_load(config).await.expect("load result");
+        let payload = payload_from_result(loaded).expect("payload");
+        let json = render_success_json(&payload, 123).expect("json");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse json");
+
+        assert_eq!(parsed["command"], serde_json::json!("manifest load"));
+        assert_eq!(parsed["status"], serde_json::json!("success"));
+        assert!(parsed["data"].is_object());
+        assert_eq!(parsed["error"], serde_json::Value::Null);
+        assert_eq!(parsed["meta"]["elapsed_ms"], serde_json::json!(123));
+        assert!(parsed["meta"]["timestamp_ms"].as_u64().is_some());
+        assert_eq!(
+            parsed["meta"]["version"],
+            serde_json::json!(env!("CARGO_PKG_VERSION"))
+        );
+        assert!(parsed["data"]["entity_count"].as_u64().is_some());
+        assert!(parsed["data"]["manifest_hash"].as_str().is_some());
+        assert!(parsed["data"]["manifest_version"].as_str().is_some());
+        assert!(parsed["data"]["storage_path"].as_str().is_some());
+        assert!(parsed["data"]["reused"].is_object());
+        assert!(parsed["data"]["search_ready"].is_object());
     }
 }

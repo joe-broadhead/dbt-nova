@@ -633,6 +633,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dispatch_health_rejects_unexpected_params() {
+        let searcher = fixture_searcher().await;
+        let err = dispatch_tool(
+            &searcher,
+            "health",
+            serde_json::json!({
+                "unexpected": true
+            }),
+        )
+        .await
+        .expect_err("health should reject params");
+        assert!(
+            err.to_string()
+                .contains("tool 'health' does not accept parameters")
+        );
+    }
+
+    #[tokio::test]
     async fn run_search_with_timeout_enforces_timeout() {
         let err = run_search_with_timeout(1, async {
             tokio::time::sleep(Duration::from_millis(50)).await;
