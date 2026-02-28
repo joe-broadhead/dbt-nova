@@ -5,6 +5,7 @@ use crate::error::{DbtNovaError, Result};
 use crate::utils::{dir_in_use, prune_dirs};
 
 pub mod args;
+pub mod config_cmd;
 pub mod manifest;
 pub mod output;
 pub mod server_cmd;
@@ -45,12 +46,16 @@ pub async fn dispatch(command: args::Command) -> DispatchResult {
         args::Command::Tool(tool_args) => match tool_args.command {
             args::ToolCommand::Call(call_args) => tool::run_call_command(&call_args).await,
         },
-        args::Command::Config(_) | args::Command::Storage(_) | args::Command::Health(_) => {
-            Err(DbtNovaError::InvalidParams(
-                "CLI command group is not implemented yet in current scope".to_string(),
-            )
-            .into())
-        }
+        args::Command::Config(config_args) => match config_args.command {
+            args::ConfigCommand::Show(show_args) => config_cmd::run_show_command(&show_args),
+            args::ConfigCommand::Validate(validate_args) => {
+                config_cmd::run_validate_command(&validate_args)
+            }
+        },
+        args::Command::Storage(_) | args::Command::Health(_) => Err(DbtNovaError::InvalidParams(
+            "CLI command group is not implemented yet in current scope".to_string(),
+        )
+        .into()),
     }
 }
 
@@ -194,6 +199,18 @@ mod tests {
             }
             _ => panic!("expected invalid params error"),
         }
+    }
+
+    #[tokio::test]
+    async fn dispatch_config_show_defaults_succeeds() {
+        let result = dispatch(super::args::Command::Config(super::args::ConfigArgs {
+            command: super::args::ConfigCommand::Show(super::args::ConfigShowArgs {
+                defaults: true,
+                json: true,
+            }),
+        }))
+        .await;
+        assert!(result.is_ok());
     }
 
     #[test]

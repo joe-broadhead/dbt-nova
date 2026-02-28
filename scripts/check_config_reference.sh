@@ -34,7 +34,7 @@ normalized_actual="$(mktemp)"
 diff_file="$(mktemp)"
 trap 'rm -f "$tmp_file" "$normalized_expected" "$normalized_actual" "$diff_file"' EXIT
 
-cargo run --quiet --bin config_defaults > "$tmp_file"
+cargo run --locked --quiet -- config show --defaults --json > "$tmp_file"
 python3 - "$expected_file" "$tmp_file" "$normalized_expected" "$normalized_actual" <<'PY'
 import json
 import sys
@@ -44,7 +44,11 @@ expected_path, actual_path, normalized_expected_path, normalized_actual_path = s
 with open(expected_path, "r", encoding="utf-8") as f:
     expected_json = json.load(f)
 with open(actual_path, "r", encoding="utf-8") as f:
-    actual_json = json.load(f)
+    envelope = json.load(f)
+
+actual_json = envelope
+if isinstance(envelope, dict) and "data" in envelope:
+    actual_json = envelope["data"]
 
 for path, data in [
     (normalized_expected_path, expected_json),
