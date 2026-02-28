@@ -376,4 +376,18 @@ mod tests {
             _ => panic!("expected health command"),
         }
     }
+
+    #[test]
+    fn health_check_rejects_conflicting_manifest_source_flags() {
+        let parsed = Cli::try_parse_from([
+            "dbt-nova",
+            "health",
+            "check",
+            "--manifest-path",
+            "tests/fixtures/nova_manifest.json",
+            "--manifest-uri",
+            "https://example.com/manifest.json",
+        ]);
+        assert!(parsed.is_err());
+    }
 }

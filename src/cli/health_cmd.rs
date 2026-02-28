@@ -117,7 +117,11 @@ pub fn build_health_check_config(args: &HealthCheckArgs) -> Result<DbtNovaConfig
         manifest_uri: args.manifest_uri.clone(),
         ..ManifestLoadArgs::default()
     };
-    build_manifest_load_config(&manifest_load_args)
+    let mut config = build_manifest_load_config(&manifest_load_args)?;
+    // Health checks should not prune or clean storage as a side effect.
+    config.cleanup_storage_on_start = false;
+    config.storage_max_instances = 0;
+    Ok(config)
 }
 
 fn print_human_summary(payload: &JsonValue) {
@@ -235,6 +239,18 @@ mod tests {
         };
         let err = build_health_check_config(&args).expect_err("empty uri should fail");
         assert!(err.to_string().contains("--manifest-uri cannot be empty"));
+    }
+
+    #[test]
+    fn build_health_check_config_disables_storage_maintenance() {
+        let args = HealthCheckArgs {
+            manifest_path: Some(fixture_manifest_path()),
+            manifest_uri: None,
+            json: false,
+        };
+        let config = build_health_check_config(&args).expect("config");
+        assert!(!config.cleanup_storage_on_start);
+        assert_eq!(config.storage_max_instances, 0);
     }
 
     #[tokio::test]
