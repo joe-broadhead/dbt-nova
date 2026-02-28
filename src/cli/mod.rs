@@ -9,27 +9,45 @@ pub mod manifest;
 pub mod output;
 pub mod server_cmd;
 
+pub struct DispatchError {
+    pub error: DbtNovaError,
+    pub rendered: bool,
+}
+
+impl From<DbtNovaError> for DispatchError {
+    fn from(error: DbtNovaError) -> Self {
+        Self {
+            error,
+            rendered: false,
+        }
+    }
+}
+
+pub type DispatchResult = std::result::Result<(), DispatchError>;
+
 /// Dispatches parsed CLI commands to their handlers.
 ///
 /// # Errors
 /// Returns an error when the selected command fails validation or execution.
-pub async fn dispatch(command: args::Command) -> Result<()> {
+pub async fn dispatch(command: args::Command) -> DispatchResult {
     match command {
         args::Command::Server(server) => match server.command {
-            args::ServerCommand::Start => server_cmd::start_from_env().await,
+            args::ServerCommand::Start => server_cmd::start_from_env().await.map_err(Into::into),
         },
         args::Command::Manifest(manifest_args) => match manifest_args.command {
             args::ManifestCommand::Load(load_args) => manifest::run_load_command(&load_args).await,
             args::ManifestCommand::Reload => Err(DbtNovaError::InvalidParams(
                 "manifest reload CLI command is not implemented yet".to_string(),
-            )),
+            )
+            .into()),
         },
         args::Command::Tool(_)
         | args::Command::Config(_)
         | args::Command::Storage(_)
         | args::Command::Health(_) => Err(DbtNovaError::InvalidParams(
             "CLI command group is not implemented yet in current scope".to_string(),
-        )),
+        )
+        .into()),
     }
 }
 
@@ -165,7 +183,10 @@ mod tests {
         .await;
 
         match result {
-            Err(DbtNovaError::InvalidParams(message)) => {
+            Err(err) => {
+                let DbtNovaError::InvalidParams(message) = err.error else {
+                    panic!("expected invalid params error");
+                };
                 assert!(message.contains("not implemented"));
             }
             _ => panic!("expected invalid params error"),

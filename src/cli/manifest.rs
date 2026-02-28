@@ -5,12 +5,13 @@ use std::time::Instant;
 use serde::Serialize;
 
 use crate::cli::args::ManifestLoadArgs;
-use crate::cli::output::CliEnvelope;
+use crate::cli::output::{CliEnvelope, error_envelope};
 use crate::config::DbtNovaConfig;
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::search::ManifestSearch;
+use crate::utils::sanitize_uri;
 
-use super::prepare_storage;
+use super::{DispatchError, DispatchResult, prepare_storage};
 
 #[derive(Debug, Serialize)]
 pub struct ManifestLoadData {
@@ -43,23 +44,50 @@ pub struct SearchReadyInfo {
 ///
 /// # Errors
 /// Returns an error if configuration is invalid, manifest loading fails, or output serialization fails.
-pub async fn run_load_command(args: &ManifestLoadArgs) -> Result<()> {
+pub async fn run_load_command(args: &ManifestLoadArgs) -> DispatchResult {
     let started = Instant::now();
-    let config = build_manifest_load_config(args)?;
-    let load_result = execute_manifest_load(config).await?;
-    let payload = payload_from_result(load_result)?;
+    let config = build_manifest_load_config(args)
+        .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
+    let load_result = execute_manifest_load(config)
+        .await
+        .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
+    let payload = payload_from_result(load_result)
+        .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
 
     if args.json {
         let envelope =
             CliEnvelope::success("manifest load", &payload, started.elapsed().as_millis());
-        let json = serde_json::to_string_pretty(&envelope)
-            .map_err(|error| DbtNovaError::ServerError(error.to_string()))?;
+        let json = serde_json::to_string_pretty(&envelope).map_err(|error| DispatchError {
+            error: DbtNovaError::ServerError(error.to_string()),
+            rendered: false,
+        })?;
         println!("{json}");
     } else {
         print_human_summary(&payload);
     }
 
     Ok(())
+}
+
+fn render_or_propagate_error(
+    args: &ManifestLoadArgs,
+    error: DbtNovaError,
+    elapsed_ms: u128,
+) -> DispatchError {
+    if args.json {
+        let envelope = error_envelope("manifest load", &error, elapsed_ms);
+        if let Ok(json) = serde_json::to_string_pretty(&envelope) {
+            println!("{json}");
+            return DispatchError {
+                error,
+                rendered: true,
+            };
+        }
+    }
+    DispatchError {
+        error,
+        rendered: false,
+    }
 }
 
 fn print_human_summary(payload: &ManifestLoadData) {
@@ -103,7 +131,7 @@ fn payload_from_result(
     }
 
     Ok(ManifestLoadData {
-        source: search.manifest_source_uri.clone(),
+        source: sanitize_uri(&search.manifest_source_uri),
         entity_count: search.entity_count(),
         manifest_hash: search.manifest_hash.clone(),
         manifest_version: search.manifest_version.clone(),
