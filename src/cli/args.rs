@@ -167,7 +167,17 @@ pub struct HealthArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum HealthCommand {
-    Check,
+    Check(HealthCheckArgs),
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct HealthCheckArgs {
+    #[arg(long, value_name = "PATH", conflicts_with = "manifest_uri")]
+    pub manifest_path: Option<String>,
+    #[arg(long, value_name = "URI", conflicts_with = "manifest_path")]
+    pub manifest_uri: Option<String>,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
 }
 
 #[cfg(test)]
@@ -175,7 +185,8 @@ mod tests {
     use clap::Parser;
 
     use super::{
-        Cli, Command, ConfigCommand, ManifestCommand, ServerCommand, StorageCommand, ToolCommand,
+        Cli, Command, ConfigCommand, HealthCommand, ManifestCommand, ServerCommand, StorageCommand,
+        ToolCommand,
     };
 
     #[test]
@@ -340,5 +351,43 @@ mod tests {
             }
             _ => panic!("expected storage command"),
         }
+    }
+
+    #[test]
+    fn health_check_parses_manifest_override_flags() {
+        let cli = Cli::parse_from([
+            "dbt-nova",
+            "health",
+            "check",
+            "--manifest-path",
+            "tests/fixtures/nova_manifest.json",
+            "--json",
+        ]);
+        let command = cli.command.expect("command");
+        match command {
+            Command::Health(health) => {
+                let HealthCommand::Check(check_args) = health.command;
+                assert_eq!(
+                    check_args.manifest_path.as_deref(),
+                    Some("tests/fixtures/nova_manifest.json")
+                );
+                assert!(check_args.json);
+            }
+            _ => panic!("expected health command"),
+        }
+    }
+
+    #[test]
+    fn health_check_rejects_conflicting_manifest_source_flags() {
+        let parsed = Cli::try_parse_from([
+            "dbt-nova",
+            "health",
+            "check",
+            "--manifest-path",
+            "tests/fixtures/nova_manifest.json",
+            "--manifest-uri",
+            "https://example.com/manifest.json",
+        ]);
+        assert!(parsed.is_err());
     }
 }

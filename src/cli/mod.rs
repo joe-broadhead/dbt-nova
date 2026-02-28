@@ -6,6 +6,7 @@ use crate::utils::{dir_in_use, prune_dirs};
 
 pub mod args;
 pub mod config_cmd;
+pub mod health_cmd;
 pub mod manifest;
 pub mod output;
 pub mod server_cmd;
@@ -62,10 +63,11 @@ pub async fn dispatch(command: args::Command) -> DispatchResult {
                 storage_cmd::run_cleanup_command(&cleanup_args)
             }
         },
-        args::Command::Health(_) => Err(DbtNovaError::InvalidParams(
-            "CLI command group is not implemented yet in current scope".to_string(),
-        )
-        .into()),
+        args::Command::Health(health_args) => match health_args.command {
+            args::HealthCommand::Check(check_args) => {
+                health_cmd::run_check_command(&check_args).await
+            }
+        },
     }
 }
 

@@ -7,6 +7,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
 
 use crate::cli::args::{ManifestLoadArgs, ToolCallArgs};
+use crate::cli::health_cmd::build_cli_health_payload;
 use crate::cli::manifest::{build_manifest_load_config, execute_manifest_load};
 use crate::cli::output::{CliEnvelope, error_envelope};
 use crate::error::{DbtNovaError, Result};
@@ -488,52 +489,10 @@ typed_dispatch!(
     execute_sql
 );
 
-fn static_concurrency_snapshot(max_concurrent: usize, max_queue: usize) -> JsonValue {
-    if max_concurrent == 0 {
-        return serde_json::json!({"enabled": false});
-    }
-    serde_json::json!({
-        "enabled": true,
-        "max_concurrent": max_concurrent,
-        "available_slots": max_concurrent,
-        "in_flight": 0,
-        "saturated": false,
-        "max_queue": max_queue,
-        "available_queue": max_queue,
-        "queued": 0,
-        "queue_saturated": false,
-    })
-}
-
 fn dispatch_health(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
     Box::pin(async move {
         decode_empty_params("health", params)?;
-        let mut payload = serde_json::json!({
-            "status": "ready",
-            "entity_count": searcher.entity_count(),
-        });
-        let details = searcher.health_snapshot().await;
-        if let (Some(base), Some(extra)) = (payload.as_object_mut(), details.as_object()) {
-            for (key, value) in extra {
-                base.insert(key.clone(), value.clone());
-            }
-        }
-        if let Some(base) = payload.as_object_mut() {
-            let config = searcher.config();
-            base.insert(
-                "search_concurrency".to_string(),
-                static_concurrency_snapshot(
-                    config.search.search_max_concurrent,
-                    config.search.search_max_queue,
-                ),
-            );
-            base.insert(
-                "sql_concurrency".to_string(),
-                static_concurrency_snapshot(config.sql_max_concurrent, config.sql_max_queue),
-            );
-            // CLI mode has no long-lived MCP server metrics store.
-            base.insert("tool_metrics".to_string(), serde_json::json!({}));
-        }
+        let payload = build_cli_health_payload(searcher).await;
         serde_json::to_value(SuccessResponse::new(payload, 1))
             .map_err(|error| DbtNovaError::ServerError(error.to_string()))
     })
