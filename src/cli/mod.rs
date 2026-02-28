@@ -104,6 +104,27 @@ pub fn prune_storage_instances(
     if let Some(instance) = exclude_instance {
         exclude.push(instance);
     }
+    if max_keep == 0 {
+        for entry in fs::read_dir(&storage_root)
+            .map_err(|error| DbtNovaError::ServerError(format!("Storage scan failed: {error}")))?
+        {
+            let entry = entry.map_err(|error| {
+                DbtNovaError::ServerError(format!("Storage scan failed: {error}"))
+            })?;
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if exclude.contains(&name) || dir_in_use(&path) {
+                continue;
+            }
+            fs::remove_dir_all(&path).map_err(|error| {
+                DbtNovaError::ServerError(format!("Storage prune failed: {error}"))
+            })?;
+        }
+        return Ok(());
+    }
     prune_dirs(
         &storage_root,
         max_keep,
@@ -191,6 +212,25 @@ mod tests {
         prune_storage_instances(&config, 0, Some("active")).expect("prune succeeds");
         assert!(active_dir.exists());
         assert!(!stale_dir.exists());
+    }
+
+    #[test]
+    fn prune_storage_instances_zero_max_keep_removes_stale_without_byte_limit() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path(), "active");
+        config.storage_max_bytes = 0;
+        let instances_dir = config.storage_instances_dir().expect("instances dir");
+        let active_dir = instances_dir.join("active");
+        let old_orders_dir = instances_dir.join("old-orders");
+        let old_users_dir = instances_dir.join("old-users");
+        fs::create_dir_all(&active_dir).expect("create active dir");
+        fs::create_dir_all(&old_orders_dir).expect("create old-orders dir");
+        fs::create_dir_all(&old_users_dir).expect("create old-users dir");
+
+        prune_storage_instances(&config, 0, Some("active")).expect("prune succeeds");
+        assert!(active_dir.exists());
+        assert!(!old_orders_dir.exists());
+        assert!(!old_users_dir.exists());
     }
 
     #[tokio::test]

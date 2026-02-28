@@ -114,9 +114,7 @@ pub fn run_prune_command(args: &StoragePruneArgs) -> DispatchResult {
             )
         })?;
 
-    let max_keep = args
-        .max_keep
-        .unwrap_or(config.storage_max_instances.saturating_sub(1));
+    let (max_keep, max_keep_report) = resolve_max_keep(args.max_keep, config.storage_max_instances);
     let max_bytes = args.max_bytes.unwrap_or(config.storage_max_bytes);
     config.storage_max_bytes = max_bytes;
 
@@ -178,7 +176,7 @@ pub fn run_prune_command(args: &StoragePruneArgs) -> DispatchResult {
             .to_string(),
         instances_dir: instances_dir.to_string_lossy().to_string(),
         configured_instance_id: config.storage_instance_id.clone(),
-        max_keep,
+        max_keep: max_keep_report,
         max_bytes,
         instances_before: before.len(),
         instances_after: after.len(),
@@ -198,6 +196,18 @@ pub fn run_prune_command(args: &StoragePruneArgs) -> DispatchResult {
     }
 
     Ok(())
+}
+
+fn resolve_max_keep(args_max_keep: Option<usize>, storage_max_instances: usize) -> (usize, usize) {
+    let max_keep = if let Some(max_keep) = args_max_keep {
+        max_keep
+    } else if storage_max_instances > 0 {
+        storage_max_instances.saturating_sub(1)
+    } else {
+        usize::MAX
+    };
+    let reported = if max_keep == usize::MAX { 0 } else { max_keep };
+    (max_keep, reported)
 }
 
 /// Runs the `storage cleanup` CLI command.
@@ -509,7 +519,7 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use super::{build_storage_config, inspect_storage};
+    use super::{build_storage_config, inspect_storage, resolve_max_keep};
     use crate::config::DbtNovaConfig;
 
     #[test]
@@ -554,5 +564,26 @@ mod tests {
         assert_eq!(instance.instance_id, "manifest-abc");
         assert_eq!(instance.current_version.as_deref(), Some("version-a"));
         assert_eq!(instance.version_count, 1);
+    }
+
+    #[test]
+    fn resolve_max_keep_uses_unlimited_when_config_has_no_count_limit() {
+        let (effective, reported) = resolve_max_keep(None, 0);
+        assert_eq!(effective, usize::MAX);
+        assert_eq!(reported, 0);
+    }
+
+    #[test]
+    fn resolve_max_keep_preserves_explicit_zero_override() {
+        let (effective, reported) = resolve_max_keep(Some(0), 3);
+        assert_eq!(effective, 0);
+        assert_eq!(reported, 0);
+    }
+
+    #[test]
+    fn resolve_max_keep_configured_single_instance_maps_to_zero_stale_keep() {
+        let (effective, reported) = resolve_max_keep(None, 1);
+        assert_eq!(effective, 0);
+        assert_eq!(reported, 0);
     }
 }
