@@ -65,8 +65,14 @@ Only `master` is tagged for releases. Docs deploy from release tags.
 
 This repo enforces strict quality rules:
 
-- **Max file size:** 500 LOC (excluding generated code)
-- **Max function size:** 50 LOC
+- **File size policy (ratchet model):**
+  - Soft target: `<= 1200` LOC (excluding generated code)
+  - Hard review threshold: `> 1800` LOC requires explicit PR rationale
+  - When touching files above the soft target, avoid unnecessary net growth and prefer incremental extraction.
+- **Function size policy (ratchet model):**
+  - Soft target: `<= 120` LOC
+  - Hard review threshold: `> 220` LOC requires explicit PR rationale
+  - Prefer decomposition in high-churn or bug-prone paths first.
 - **No `.expect()` in production code** (use `?` or recover gracefully)
 - **No silently ignored errors** (log or propagate)
 - **Prefer ASCII** in source and docs unless non-ASCII is required

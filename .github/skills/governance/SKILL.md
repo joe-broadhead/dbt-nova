@@ -6,7 +6,7 @@ allowed-tools: "mcp__nova__health mcp__nova__reload_manifest mcp__nova__list_ent
 metadata:
   owner: "dbt-nova"
   persona: "governance"
-  version: "0.0.1"
+  version: "0.0.2"
 ---
 
 # Governance Skill (dbt-nova)
