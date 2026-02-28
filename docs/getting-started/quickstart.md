@@ -212,6 +212,7 @@ parameter contracts, and execution order rules.
 
 ## Next Steps
 
+- [CLI Commands](cli.md) - One-shot command groups, JSON mode, and exit codes
 - [Configuration Reference](../configuration/reference.md) - All configuration options
 - [Tools Reference](../api/tools.md) - Available tools and parameters
 - [Personas](../personas/overview.md) - Workflow guides by role

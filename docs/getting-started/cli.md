@@ -1,0 +1,130 @@
+# CLI Commands
+
+Use `dbt-nova` in two modes:
+
+- No subcommand: start MCP server (backward compatible behavior)
+- Subcommand: run one-shot CLI commands and exit
+
+## Command Tree
+
+```text
+dbt-nova
+├── server start
+├── manifest load [--manifest-path|--manifest-uri] [--storage-instance-id] [--cleanup-storage-on-start] [--read-only] [--json]
+├── manifest reload
+├── tool call <tool_name> [--params-json|--params-file|--params-stdin] [--manifest-path|--manifest-uri] [--storage-instance-id] [--cleanup-storage-on-start] [--read-only] [--json]
+├── config show [--defaults] [--json]
+├── config validate [--json]
+├── storage inspect [--storage-instance-id] [--json]
+├── storage prune [--max-keep] [--max-bytes] [--storage-instance-id] [--json]
+├── storage cleanup [--storage-instance-id] [--json]
+└── health check [--manifest-path|--manifest-uri] [--json]
+```
+
+## No-Arg Compatibility
+
+`dbt-nova` with no subcommand still starts the MCP server:
+
+```bash
+dbt-nova
+```
+
+Equivalent explicit form:
+
+```bash
+dbt-nova server start
+```
+
+## Common Examples
+
+### Build and inspect manifest indexes
+
+```bash
+dbt-nova manifest load \
+  --manifest-path /path/to/target/manifest.json
+```
+
+### One-shot tool execution
+
+```bash
+dbt-nova tool call search \
+  --params-json '{"query":"orders","limit":5}' \
+  --manifest-path /path/to/target/manifest.json
+```
+
+### Health diagnostics
+
+```bash
+dbt-nova health check \
+  --manifest-path /path/to/target/manifest.json \
+  --json
+```
+
+## `tool call` Parameter Input Modes
+
+Exactly one of the following may be used at a time:
+
+- `--params-json '{"query":"orders"}'`
+- `--params-file /path/to/params.json`
+- `--params-stdin` (reads full JSON payload from `stdin`)
+
+Examples:
+
+```bash
+dbt-nova tool call get_entity \
+  --params-file ./params/get_entity.json \
+  --manifest-path /path/to/target/manifest.json
+```
+
+```bash
+echo '{"query":"customers","limit":10}' | \
+  dbt-nova tool call search --params-stdin --manifest-path /path/to/target/manifest.json
+```
+
+## CLI-Mode Limitation: `reload_manifest`
+
+`reload_manifest` is server-only today. In CLI mode:
+
+```bash
+dbt-nova tool call reload_manifest --params-json '{}'
+```
+
+returns `INVALID_PARAMS` with:
+
+`tool 'reload_manifest' is not available in CLI mode`
+
+Use `reload_manifest` through an MCP client connected to a running `dbt-nova` server.
+
+## JSON Envelope and Exit Codes
+
+When `--json` is passed, CLI commands return a standard envelope:
+
+```json
+{
+  "command": "health check",
+  "status": "success",
+  "data": { "status": "ready" },
+  "meta": {
+    "elapsed_ms": 42,
+    "timestamp_ms": 1772304167827,
+    "version": "0.0.2"
+  },
+  "error": null
+}
+```
+
+On errors (`status: "error"`), `error` contains the standard Nova error payload.
+
+Exit codes:
+
+| Code | Category |
+|---|---|
+| `0` | Success |
+| `1` | Invalid params / request shape |
+| `2` | Manifest/index lifecycle errors |
+| `3` | Runtime/server/provider errors |
+
+See also:
+
+- [Response Format](../api/response-format.md)
+- [Error Codes](../api/error-codes.md)
