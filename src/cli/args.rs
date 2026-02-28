@@ -100,8 +100,22 @@ pub struct ConfigArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum ConfigCommand {
-    Show,
-    Validate,
+    Show(ConfigShowArgs),
+    Validate(ConfigValidateArgs),
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct ConfigShowArgs {
+    #[arg(long, default_value_t = false)]
+    pub defaults: bool,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct ConfigValidateArgs {
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -132,7 +146,7 @@ pub enum HealthCommand {
 mod tests {
     use clap::Parser;
 
-    use super::{Cli, Command, ManifestCommand, ServerCommand, ToolCommand};
+    use super::{Cli, Command, ConfigCommand, ManifestCommand, ServerCommand, ToolCommand};
 
     #[test]
     fn cli_parses_no_subcommand() {
@@ -217,6 +231,34 @@ mod tests {
                 assert!(matches!(tool.command, ToolCommand::Call(_)));
             }
             _ => panic!("expected tool command"),
+        }
+    }
+
+    #[test]
+    fn config_show_parses_defaults_and_json_flags() {
+        let cli = Cli::parse_from(["dbt-nova", "config", "show", "--defaults", "--json"]);
+        let command = cli.command.expect("command");
+        match command {
+            Command::Config(config) => {
+                let ConfigCommand::Show(show_args) = config.command else {
+                    panic!("expected config show command");
+                };
+                assert!(show_args.defaults);
+                assert!(show_args.json);
+            }
+            _ => panic!("expected config command"),
+        }
+    }
+
+    #[test]
+    fn config_validate_parses_json_flag() {
+        let cli = Cli::parse_from(["dbt-nova", "config", "validate", "--json"]);
+        let command = cli.command.expect("command");
+        match command {
+            Command::Config(config) => {
+                assert!(matches!(config.command, ConfigCommand::Validate(_)));
+            }
+            _ => panic!("expected config command"),
         }
     }
 }
