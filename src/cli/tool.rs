@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::io::Read;
 use std::pin::Pin;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
@@ -345,7 +345,35 @@ macro_rules! empty_dispatch {
     };
 }
 
-typed_dispatch!(dispatch_search, "search", SearchParams, search);
+async fn run_search_with_timeout<T>(
+    timeout_ms: usize,
+    future: impl Future<Output = Result<T>>,
+) -> Result<T> {
+    if timeout_ms == 0 {
+        return future.await;
+    }
+    let timeout_ms_u64 = u64::try_from(timeout_ms).map_err(|_| {
+        DbtNovaError::ServerError("search timeout exceeds supported duration".to_string())
+    })?;
+    match tokio::time::timeout(Duration::from_millis(timeout_ms_u64), future).await {
+        Ok(result) => result,
+        Err(_) => Err(DbtNovaError::ServerError(format!(
+            "Search timed out after {timeout_ms}ms"
+        ))),
+    }
+}
+
+fn dispatch_search(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: SearchParams = decode_tool_params("search", params)?;
+        run_search_with_timeout(
+            searcher.config().search.search_timeout_ms,
+            searcher.search(&decoded),
+        )
+        .await
+    })
+}
+
 typed_dispatch!(
     dispatch_get_entity,
     "get_entity",
@@ -460,10 +488,53 @@ typed_dispatch!(
     execute_sql
 );
 
+fn static_concurrency_snapshot(max_concurrent: usize, max_queue: usize) -> JsonValue {
+    if max_concurrent == 0 {
+        return serde_json::json!({"enabled": false});
+    }
+    serde_json::json!({
+        "enabled": true,
+        "max_concurrent": max_concurrent,
+        "available_slots": max_concurrent,
+        "in_flight": 0,
+        "saturated": false,
+        "max_queue": max_queue,
+        "available_queue": max_queue,
+        "queued": 0,
+        "queue_saturated": false,
+    })
+}
+
 fn dispatch_health(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
     Box::pin(async move {
         decode_empty_params("health", params)?;
-        serde_json::to_value(SuccessResponse::new(searcher.health_snapshot().await, 1))
+        let mut payload = serde_json::json!({
+            "status": "ready",
+            "entity_count": searcher.entity_count(),
+        });
+        let details = searcher.health_snapshot().await;
+        if let (Some(base), Some(extra)) = (payload.as_object_mut(), details.as_object()) {
+            for (key, value) in extra {
+                base.insert(key.clone(), value.clone());
+            }
+        }
+        if let Some(base) = payload.as_object_mut() {
+            let config = searcher.config();
+            base.insert(
+                "search_concurrency".to_string(),
+                static_concurrency_snapshot(
+                    config.search.search_max_concurrent,
+                    config.search.search_max_queue,
+                ),
+            );
+            base.insert(
+                "sql_concurrency".to_string(),
+                static_concurrency_snapshot(config.sql_max_concurrent, config.sql_max_queue),
+            );
+            // CLI mode has no long-lived MCP server metrics store.
+            base.insert("tool_metrics".to_string(), serde_json::json!({}));
+        }
+        serde_json::to_value(SuccessResponse::new(payload, 1))
             .map_err(|error| DbtNovaError::ServerError(error.to_string()))
     })
 }
@@ -479,11 +550,13 @@ fn dispatch_reload_manifest(_searcher: &ManifestSearch, _params: JsonValue) -> T
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+    use std::time::Duration;
 
     use tempfile::NamedTempFile;
 
     use super::{
-        dispatch_tool, resolve_params_value_with_stdin, run_call_command, tool_registry_names,
+        dispatch_tool, resolve_params_value_with_stdin, run_call_command, run_search_with_timeout,
+        tool_registry_names,
     };
     use crate::cli::args::{ManifestLoadArgs, ToolCallArgs};
     use crate::cli::manifest::{build_manifest_load_config, execute_manifest_load};
@@ -595,6 +668,20 @@ mod tests {
         assert_eq!(result["success"], serde_json::json!(true));
         assert_eq!(result["count"], serde_json::json!(1));
         assert!(result["data"].is_object());
+        assert!(result["data"]["tool_metrics"].is_object());
+        assert!(result["data"]["search_concurrency"].is_object());
+        assert!(result["data"]["sql_concurrency"].is_object());
+    }
+
+    #[tokio::test]
+    async fn run_search_with_timeout_enforces_timeout() {
+        let err = run_search_with_timeout(1, async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            Ok(serde_json::json!({"ok": true}))
+        })
+        .await
+        .expect_err("timeout should fail");
+        assert!(err.to_string().contains("Search timed out after 1ms"));
     }
 
     #[tokio::test]
