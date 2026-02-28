@@ -9,6 +9,7 @@ pub mod config_cmd;
 pub mod manifest;
 pub mod output;
 pub mod server_cmd;
+pub mod storage_cmd;
 pub mod tool;
 
 pub struct DispatchError {
@@ -52,7 +53,16 @@ pub async fn dispatch(command: args::Command) -> DispatchResult {
                 config_cmd::run_validate_command(&validate_args)
             }
         },
-        args::Command::Storage(_) | args::Command::Health(_) => Err(DbtNovaError::InvalidParams(
+        args::Command::Storage(storage_args) => match storage_args.command {
+            args::StorageCommand::Inspect(inspect_args) => {
+                storage_cmd::run_inspect_command(&inspect_args)
+            }
+            args::StorageCommand::Prune(prune_args) => storage_cmd::run_prune_command(&prune_args),
+            args::StorageCommand::Cleanup(cleanup_args) => {
+                storage_cmd::run_cleanup_command(&cleanup_args)
+            }
+        },
+        args::Command::Health(_) => Err(DbtNovaError::InvalidParams(
             "CLI command group is not implemented yet in current scope".to_string(),
         )
         .into()),
@@ -94,6 +104,9 @@ pub fn prune_storage_instances(
     if let Some(instance) = exclude_instance {
         exclude.push(instance);
     }
+    if max_keep == 0 {
+        return prune_all_stale_instances(&storage_root, &exclude);
+    }
     prune_dirs(
         &storage_root,
         max_keep,
@@ -101,6 +114,29 @@ pub fn prune_storage_instances(
         config.storage_max_bytes,
         &exclude,
     )
+}
+
+fn prune_all_stale_instances(storage_root: &std::path::Path, exclude: &[&str]) -> Result<()> {
+    if !storage_root.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(storage_root)
+        .map_err(|error| DbtNovaError::ServerError(format!("Storage scan failed: {error}")))?
+    {
+        let entry = entry
+            .map_err(|error| DbtNovaError::ServerError(format!("Storage scan failed: {error}")))?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if exclude.contains(&name) || dir_in_use(&path) {
+            continue;
+        }
+        fs::remove_dir_all(&path)
+            .map_err(|error| DbtNovaError::ServerError(format!("Storage prune failed: {error}")))?;
+    }
+    Ok(())
 }
 
 /// Prepares storage directories before loading/building manifest indexes.
@@ -183,6 +219,34 @@ mod tests {
         assert!(!stale_dir.exists());
     }
 
+    #[test]
+    fn prune_storage_instances_zero_max_keep_removes_stale_without_byte_limit() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path(), "active");
+        config.storage_max_bytes = 0;
+        let instances_dir = config.storage_instances_dir().expect("instances dir");
+        let active_dir = instances_dir.join("active");
+        let old_orders_dir = instances_dir.join("old-orders");
+        let old_users_dir = instances_dir.join("old-users");
+        fs::create_dir_all(&active_dir).expect("create active dir");
+        fs::create_dir_all(&old_orders_dir).expect("create old-orders dir");
+        fs::create_dir_all(&old_users_dir).expect("create old-users dir");
+
+        prune_storage_instances(&config, 0, Some("active")).expect("prune succeeds");
+        assert!(active_dir.exists());
+        assert!(!old_orders_dir.exists());
+        assert!(!old_users_dir.exists());
+    }
+
+    #[test]
+    fn prune_storage_instances_zero_max_keep_missing_root_is_noop() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path(), "active");
+        config.storage_max_bytes = 0;
+
+        prune_storage_instances(&config, 0, Some("active")).expect("missing root should be noop");
+    }
+
     #[tokio::test]
     async fn dispatch_non_server_commands_return_invalid_params() {
         let result = dispatch(super::args::Command::Manifest(super::args::ManifestArgs {
@@ -206,6 +270,18 @@ mod tests {
         let result = dispatch(super::args::Command::Config(super::args::ConfigArgs {
             command: super::args::ConfigCommand::Show(super::args::ConfigShowArgs {
                 defaults: true,
+                json: true,
+            }),
+        }))
+        .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn dispatch_storage_inspect_succeeds() {
+        let result = dispatch(super::args::Command::Storage(super::args::StorageArgs {
+            command: super::args::StorageCommand::Inspect(super::args::StorageInspectArgs {
+                storage_instance_id: None,
                 json: true,
             }),
         }))
