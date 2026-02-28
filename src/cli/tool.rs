@@ -18,6 +18,7 @@ use crate::params::{
     GetUndocumentedParams, ListEntitiesParams, RunRecipeParams, SearchParams, SearchRecipesParams,
     ValidateDagParams,
 };
+use crate::responses::SuccessResponse;
 
 use super::{DispatchError, DispatchResult};
 
@@ -143,6 +144,17 @@ const TOOL_REGISTRY: [ToolRegistryEntry; 26] = [
 /// Returns an error if parameter sources are invalid, manifest loading fails, or tool execution fails.
 pub async fn run_call_command(args: &ToolCallArgs) -> DispatchResult {
     let started = Instant::now();
+    let tool_entry = resolve_tool_entry(&args.tool_name)
+        .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
+    if tool_entry.name == "reload_manifest" {
+        return Err(render_or_propagate_error(
+            args,
+            DbtNovaError::InvalidParams(
+                "tool 'reload_manifest' is not available in CLI mode".to_string(),
+            ),
+            started.elapsed().as_millis(),
+        ));
+    }
     let params = resolve_params_value(args)
         .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
     let config = build_manifest_load_config(&manifest_load_args_from_tool_args(args))
@@ -288,18 +300,26 @@ fn tool_registry_names() -> Vec<&'static str> {
     TOOL_REGISTRY.iter().map(|entry| entry.name).collect()
 }
 
+fn resolve_tool_entry(tool_name: &str) -> Result<ToolRegistryEntry> {
+    TOOL_REGISTRY
+        .iter()
+        .find(|entry| entry.name == tool_name)
+        .copied()
+        .ok_or_else(|| {
+            DbtNovaError::InvalidParams(format!(
+                "unknown tool '{}'; supported tools: {}",
+                tool_name,
+                tool_registry_names().join(", ")
+            ))
+        })
+}
+
 async fn dispatch_tool(
     searcher: &ManifestSearch,
     tool_name: &str,
     params: JsonValue,
 ) -> Result<JsonValue> {
-    let Some(entry) = TOOL_REGISTRY.iter().find(|entry| entry.name == tool_name) else {
-        return Err(DbtNovaError::InvalidParams(format!(
-            "unknown tool '{}'; supported tools: {}",
-            tool_name,
-            tool_registry_names().join(", ")
-        )));
-    };
+    let entry = resolve_tool_entry(tool_name)?;
     (entry.dispatch)(searcher, params).await
 }
 
@@ -443,7 +463,8 @@ typed_dispatch!(
 fn dispatch_health(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
     Box::pin(async move {
         decode_empty_params("health", params)?;
-        Ok(searcher.health_snapshot().await)
+        serde_json::to_value(SuccessResponse::new(searcher.health_snapshot().await, 1))
+            .map_err(|error| DbtNovaError::ServerError(error.to_string()))
     })
 }
 
@@ -461,7 +482,9 @@ mod tests {
 
     use tempfile::NamedTempFile;
 
-    use super::{dispatch_tool, resolve_params_value_with_stdin, tool_registry_names};
+    use super::{
+        dispatch_tool, resolve_params_value_with_stdin, run_call_command, tool_registry_names,
+    };
     use crate::cli::args::{ManifestLoadArgs, ToolCallArgs};
     use crate::cli::manifest::{build_manifest_load_config, execute_manifest_load};
 
@@ -564,6 +587,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dispatch_health_returns_standard_response_shape() {
+        let searcher = fixture_searcher().await;
+        let result = dispatch_tool(&searcher, "health", serde_json::json!({}))
+            .await
+            .expect("health");
+        assert_eq!(result["success"], serde_json::json!(true));
+        assert_eq!(result["count"], serde_json::json!(1));
+        assert!(result["data"].is_object());
+    }
+
+    #[tokio::test]
     async fn dispatch_reload_manifest_returns_cli_mode_error() {
         let searcher = fixture_searcher().await;
         let err = dispatch_tool(&searcher, "reload_manifest", serde_json::json!({}))
@@ -582,6 +616,23 @@ mod tests {
             .await
             .expect_err("unknown tool should fail");
         assert!(err.to_string().contains("unknown tool 'unknown_tool'"));
+    }
+
+    #[tokio::test]
+    async fn run_call_command_unknown_tool_short_circuits_before_manifest_load() {
+        let args = ToolCallArgs {
+            tool_name: "unknown_tool".to_string(),
+            manifest_path: Some("tests/fixtures/missing-manifest.json".to_string()),
+            ..ToolCallArgs::default()
+        };
+        let Err(err) = run_call_command(&args).await else {
+            panic!("unknown tool should fail");
+        };
+        assert!(
+            err.error
+                .to_string()
+                .contains("unknown tool 'unknown_tool'")
+        );
     }
 
     #[test]
