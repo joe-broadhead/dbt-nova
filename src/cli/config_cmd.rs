@@ -107,6 +107,11 @@ fn validate_runtime_config(mut config: DbtNovaConfig) -> crate::error::Result<Db
     config.ensure_storage_instance_id();
     config.ensure_embedding_cache_dir();
     config.validate()?;
+    // Mirror runtime storage-path safety checks used by manifest-loading paths so
+    // `config validate` cannot report success for values that would fail later.
+    let _ = config.manifest_cache_dir()?;
+    let _ = config.storage_base_dir()?;
+    let _ = config.storage_instance_root_dir()?;
     Ok(config)
 }
 
@@ -136,5 +141,26 @@ mod tests {
             validate_runtime_config(DbtNovaConfig::default()).expect("validation should pass");
         assert!(!config.storage_instance_id.is_empty());
         assert!(!config.search.embedding_cache_dir.is_empty());
+    }
+
+    #[test]
+    fn validate_runtime_config_rejects_unsafe_storage_dir() {
+        let config = DbtNovaConfig {
+            storage_dir: "../unsafe".to_string(),
+            ..DbtNovaConfig::default()
+        };
+        let err = validate_runtime_config(config).expect_err("unsafe storage_dir should fail");
+        assert!(err.to_string().contains("storage directory"));
+    }
+
+    #[test]
+    fn validate_runtime_config_rejects_unsafe_storage_instance_id() {
+        let config = DbtNovaConfig {
+            storage_instance_id: "unsafe/id".to_string(),
+            ..DbtNovaConfig::default()
+        };
+        let err =
+            validate_runtime_config(config).expect_err("unsafe storage_instance_id should fail");
+        assert!(err.to_string().contains("storage instance id is unsafe"));
     }
 }
