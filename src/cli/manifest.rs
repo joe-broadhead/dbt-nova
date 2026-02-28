@@ -204,8 +204,9 @@ pub fn build_manifest_load_config(args: &ManifestLoadArgs) -> Result<DbtNovaConf
         config.storage_read_only = true;
     }
 
-    // `manifest load` is explicitly one-shot; no background refresh loop.
-    config.manifest_refresh_secs = 0;
+    // `manifest load` is explicitly one-shot because this command does not start
+    // the background refresh task. Keep configured refresh_secs unchanged so
+    // remote cache freshness rules still apply during source resolution.
     config.ensure_storage_instance_id();
     config.ensure_embedding_cache_dir();
     config.validate()?;
@@ -225,6 +226,7 @@ async fn execute_manifest_load(
 mod tests {
     use super::{build_manifest_load_config, execute_manifest_load};
     use crate::cli::args::ManifestLoadArgs;
+    use crate::config::DbtNovaConfig;
 
     fn fixture_manifest_path() -> String {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -250,7 +252,10 @@ mod tests {
         assert_eq!(config.storage_instance_id, "test-instance");
         assert!(config.cleanup_storage_on_start);
         assert!(config.storage_read_only);
-        assert_eq!(config.manifest_refresh_secs, 0);
+        assert_eq!(
+            config.manifest_refresh_secs,
+            DbtNovaConfig::from_env().manifest_refresh_secs
+        );
     }
 
     #[tokio::test]
