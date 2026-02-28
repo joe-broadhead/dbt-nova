@@ -32,7 +32,9 @@ proptest! {
             ..Default::default()
         };
         support_config::apply_test_storage(&mut cfg, &guard);
-        let searcher = ManifestSearch::new(cfg).expect("fixture manifest must be present");
+        let searcher = ManifestSearch::new(cfg)
+            .expect("fixture manifest must be present")
+            .search;
 
         // Use the public list_entities API to pick a valid model ID.
         let list_params = ListEntitiesParams {

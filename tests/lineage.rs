@@ -60,7 +60,9 @@ async fn lineage_depth_clamps_to_config_max() {
     };
     support_config::apply_test_storage(&mut cfg, &guard);
     cfg.lineage_max_depth = 1;
-    let searcher = ManifestSearch::new(cfg).expect("fixture manifest must be present");
+    let searcher = ManifestSearch::new(cfg)
+        .expect("fixture manifest must be present")
+        .search;
 
     let params = GetLineageParams {
         id_or_name: "model.pkg.downstream".into(),

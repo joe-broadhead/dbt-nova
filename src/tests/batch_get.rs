@@ -158,7 +158,9 @@ async fn test_batch_get_entities_over_limit_returns_error() {
     cfg.storage_max_instances = 1;
     cfg.cleanup_storage_on_start = true;
     cfg.batch_get_max_items = 1;
-    let searcher = ManifestSearch::new(cfg).expect("Failed to load fixture manifest");
+    let searcher = ManifestSearch::new(cfg)
+        .expect("Failed to load fixture manifest")
+        .search;
     let models = match searcher.by_resource_type.get("model") {
         Some(m) if m.len() >= 2 => m,
         _ => return,

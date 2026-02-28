@@ -149,7 +149,9 @@ fn create_duckdb_searcher_for_fixture(fixture_name: &str) -> ToolSearchEnv {
         ..Default::default()
     };
     support_config::apply_test_storage(&mut cfg, &guard);
-    let searcher = ManifestSearch::new(cfg).expect("create manifest searcher");
+    let searcher = ManifestSearch::new(cfg)
+        .expect("create manifest searcher")
+        .search;
     ToolSearchEnv {
         searcher,
         _guard: guard,

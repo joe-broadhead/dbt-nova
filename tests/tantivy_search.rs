@@ -121,7 +121,7 @@ fn create_searcher(manifest_file: &tempfile::NamedTempFile) -> TestSearchEnv {
         ..Default::default()
     };
     support_config::apply_test_storage(&mut cfg, &guard);
-    let searcher = ManifestSearch::new(cfg).unwrap();
+    let searcher = ManifestSearch::new(cfg).unwrap().search;
     TestSearchEnv {
         searcher,
         _guard: guard,
@@ -595,7 +595,7 @@ async fn tantivy_search_with_min_score() {
     };
     support_config::apply_test_storage(&mut cfg, &guard);
     cfg.search.enable_rrf = false;
-    let searcher = ManifestSearch::new(cfg).unwrap();
+    let searcher = ManifestSearch::new(cfg).unwrap().search;
     let searcher = TestSearchEnv {
         searcher,
         _guard: guard,
@@ -766,7 +766,7 @@ async fn tantivy_search_suggestions() {
     };
     support_config::apply_test_storage(&mut cfg, &guard);
     cfg.search.enable_ngram = false;
-    let searcher = ManifestSearch::new(cfg).unwrap();
+    let searcher = ManifestSearch::new(cfg).unwrap().search;
     let searcher = TestSearchEnv {
         searcher,
         _guard: guard,

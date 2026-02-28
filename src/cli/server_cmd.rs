@@ -5,7 +5,7 @@ use crate::server::mcp::DbtNovaServer;
 use crate::utils::sanitize_uri;
 use tracing::{error, info};
 
-use super::{cleanup_storage_dir, prune_storage_instances};
+use super::prepare_storage;
 
 /// Starts dbt-nova server mode using environment-derived configuration.
 ///
@@ -33,16 +33,7 @@ pub async fn start_with_config(config: DbtNovaConfig) -> Result<()> {
         info!(storage_base = %storage_base.display(), "storage base");
     }
 
-    if config.cleanup_storage_on_start {
-        cleanup_storage_dir(&config)?;
-        if config.storage_max_instances > 0 {
-            let max_keep = config.storage_max_instances.saturating_sub(1);
-            prune_storage_instances(&config, max_keep, None)?;
-        }
-    } else if config.storage_max_instances > 0 {
-        let max_keep = config.storage_max_instances.saturating_sub(1);
-        prune_storage_instances(&config, max_keep, Some(config.storage_instance_id.as_str()))?;
-    }
+    prepare_storage(&config)?;
 
     let searcher = ManifestSearchHandle::spawn(config);
     let ready_handle = searcher.clone();

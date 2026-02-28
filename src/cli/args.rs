@@ -36,8 +36,24 @@ pub struct ManifestArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum ManifestCommand {
-    Load,
+    Load(ManifestLoadArgs),
     Reload,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct ManifestLoadArgs {
+    #[arg(long, value_name = "PATH", conflicts_with = "manifest_uri")]
+    pub manifest_path: Option<String>,
+    #[arg(long, value_name = "URI", conflicts_with = "manifest_path")]
+    pub manifest_uri: Option<String>,
+    #[arg(long, value_name = "INSTANCE_ID")]
+    pub storage_instance_id: Option<String>,
+    #[arg(long, default_value_t = false)]
+    pub cleanup_storage_on_start: bool,
+    #[arg(long, default_value_t = false)]
+    pub read_only: bool,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -91,7 +107,7 @@ pub enum HealthCommand {
 mod tests {
     use clap::Parser;
 
-    use super::{Cli, Command, ServerCommand};
+    use super::{Cli, Command, ManifestCommand, ServerCommand};
 
     #[test]
     fn cli_parses_no_subcommand() {
@@ -123,6 +139,32 @@ mod tests {
         for args in groups {
             let cli = Cli::parse_from(args);
             assert!(cli.command.is_some());
+        }
+    }
+
+    #[test]
+    fn manifest_load_rejects_conflicting_source_flags() {
+        let parsed = Cli::try_parse_from([
+            "dbt-nova",
+            "manifest",
+            "load",
+            "--manifest-path",
+            "target/manifest.json",
+            "--manifest-uri",
+            "https://example.com/manifest.json",
+        ]);
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn manifest_load_parses_json_flag() {
+        let cli = Cli::parse_from(["dbt-nova", "manifest", "load", "--json"]);
+        let command = cli.command.expect("command");
+        match command {
+            Command::Manifest(manifest) => {
+                assert!(matches!(manifest.command, ManifestCommand::Load(_)));
+            }
+            _ => panic!("expected manifest command"),
         }
     }
 }

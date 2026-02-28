@@ -138,7 +138,7 @@ fn create_searcher(manifest_file: &tempfile::NamedTempFile) -> TestSearchEnv {
         ..Default::default()
     };
     support_config::apply_test_storage(&mut cfg, &guard);
-    let searcher = ManifestSearch::new(cfg).unwrap();
+    let searcher = ManifestSearch::new(cfg).unwrap().search;
     TestSearchEnv {
         searcher,
         _guard: guard,

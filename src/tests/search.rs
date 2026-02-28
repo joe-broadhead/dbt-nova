@@ -235,7 +235,9 @@ fn governance_search_env(policy: GovernanceGateConfig) -> (ManifestSearch, TempD
     cfg.storage_max_instances = 1;
     cfg.cleanup_storage_on_start = true;
     cfg.governance_gate = policy;
-    let searcher = ManifestSearch::new(cfg).expect("Failed to load fixture manifest");
+    let searcher = ManifestSearch::new(cfg)
+        .expect("Failed to load fixture manifest")
+        .search;
     (searcher, guard)
 }
 

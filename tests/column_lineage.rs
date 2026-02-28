@@ -52,7 +52,9 @@ async fn column_lineage_depth_clamps_to_config_max() {
     };
     support_config::apply_test_storage(&mut cfg, &guard);
     cfg.column_lineage.max_depth = 1;
-    let searcher = dbt_nova::ManifestSearch::new(cfg).expect("fixture manifest must be present");
+    let searcher = dbt_nova::ManifestSearch::new(cfg)
+        .expect("fixture manifest must be present")
+        .search;
 
     let params = GetColumnLineageParams {
         id_or_name: "model.pkg.upstream".into(),

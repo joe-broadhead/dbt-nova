@@ -5,25 +5,49 @@ use crate::error::{DbtNovaError, Result};
 use crate::utils::{dir_in_use, prune_dirs};
 
 pub mod args;
+pub mod manifest;
 pub mod output;
 pub mod server_cmd;
+
+pub struct DispatchError {
+    pub error: DbtNovaError,
+    pub rendered: bool,
+}
+
+impl From<DbtNovaError> for DispatchError {
+    fn from(error: DbtNovaError) -> Self {
+        Self {
+            error,
+            rendered: false,
+        }
+    }
+}
+
+pub type DispatchResult = std::result::Result<(), DispatchError>;
 
 /// Dispatches parsed CLI commands to their handlers.
 ///
 /// # Errors
 /// Returns an error when the selected command fails validation or execution.
-pub async fn dispatch(command: args::Command) -> Result<()> {
+pub async fn dispatch(command: args::Command) -> DispatchResult {
     match command {
         args::Command::Server(server) => match server.command {
-            args::ServerCommand::Start => server_cmd::start_from_env().await,
+            args::ServerCommand::Start => server_cmd::start_from_env().await.map_err(Into::into),
         },
-        args::Command::Manifest(_)
-        | args::Command::Tool(_)
+        args::Command::Manifest(manifest_args) => match manifest_args.command {
+            args::ManifestCommand::Load(load_args) => manifest::run_load_command(&load_args).await,
+            args::ManifestCommand::Reload => Err(DbtNovaError::InvalidParams(
+                "manifest reload CLI command is not implemented yet".to_string(),
+            )
+            .into()),
+        },
+        args::Command::Tool(_)
         | args::Command::Config(_)
         | args::Command::Storage(_)
         | args::Command::Health(_) => Err(DbtNovaError::InvalidParams(
-            "CLI command group is not implemented yet in issue #40 scope".to_string(),
-        )),
+            "CLI command group is not implemented yet in current scope".to_string(),
+        )
+        .into()),
     }
 }
 
@@ -71,6 +95,24 @@ pub fn prune_storage_instances(
     )
 }
 
+/// Prepares storage directories before loading/building manifest indexes.
+///
+/// # Errors
+/// Returns an error if cleanup or pruning fails.
+pub fn prepare_storage(config: &DbtNovaConfig) -> Result<()> {
+    if config.cleanup_storage_on_start {
+        cleanup_storage_dir(config)?;
+        if config.storage_max_instances > 0 {
+            let max_keep = config.storage_max_instances.saturating_sub(1);
+            prune_storage_instances(config, max_keep, None)?;
+        }
+    } else if config.storage_max_instances > 0 {
+        let max_keep = config.storage_max_instances.saturating_sub(1);
+        prune_storage_instances(config, max_keep, Some(config.storage_instance_id.as_str()))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -81,7 +123,7 @@ mod tests {
     use crate::config::DbtNovaConfig;
     use crate::error::DbtNovaError;
 
-    use super::{cleanup_storage_dir, dispatch, prune_storage_instances};
+    use super::{cleanup_storage_dir, dispatch, prepare_storage, prune_storage_instances};
 
     fn fixture_manifest_path() -> String {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -136,15 +178,35 @@ mod tests {
     #[tokio::test]
     async fn dispatch_non_server_commands_return_invalid_params() {
         let result = dispatch(super::args::Command::Manifest(super::args::ManifestArgs {
-            command: super::args::ManifestCommand::Load,
+            command: super::args::ManifestCommand::Reload,
         }))
         .await;
 
         match result {
-            Err(DbtNovaError::InvalidParams(message)) => {
-                assert!(message.contains("issue #40"));
+            Err(err) => {
+                let DbtNovaError::InvalidParams(message) = err.error else {
+                    panic!("expected invalid params error");
+                };
+                assert!(message.contains("not implemented"));
             }
             _ => panic!("expected invalid params error"),
         }
+    }
+
+    #[test]
+    fn prepare_storage_prunes_excluded_instance() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path(), "active");
+        config.storage_max_instances = 1;
+        let instances_dir = config.storage_instances_dir().expect("instances dir");
+        let active_dir = instances_dir.join("active");
+        let stale_dir = instances_dir.join("stale");
+        fs::create_dir_all(&active_dir).expect("create active");
+        fs::create_dir_all(&stale_dir).expect("create stale");
+        fs::write(stale_dir.join("payload.bin"), vec![1_u8; 2048]).expect("write stale");
+
+        prepare_storage(&config).expect("prepare succeeds");
+        assert!(active_dir.exists());
+        assert!(!stale_dir.exists());
     }
 }

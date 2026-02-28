@@ -304,18 +304,20 @@ fn build_searcher(
     let guard = TestStorageGuard::new();
     let cfg = build_profile_config(manifest_path, profile, &guard);
     let searcher = with_download_guard(allow_download, || {
-        ManifestSearch::new(cfg).unwrap_or_else(|e| {
-            let extra = if !allow_download && profile_requires_model_components(profile) {
-                " (embeddings/sparse/reranker downloads were disabled via DBT_NOVA_EVAL_ALLOW_EMBEDDING_DOWNLOAD=0)"
-            } else {
-                ""
-            };
-            panic!(
-                "failed to build searcher for profile '{}' with manifest '{}': {e}{extra}",
-                profile.name,
-                manifest_path.display()
-            )
-        })
+        ManifestSearch::new(cfg)
+            .map(|loaded| loaded.search)
+            .unwrap_or_else(|e| {
+                let extra = if !allow_download && profile_requires_model_components(profile) {
+                    " (embeddings/sparse/reranker downloads were disabled via DBT_NOVA_EVAL_ALLOW_EMBEDDING_DOWNLOAD=0)"
+                } else {
+                    ""
+                };
+                panic!(
+                    "failed to build searcher for profile '{}' with manifest '{}': {e}{extra}",
+                    profile.name,
+                    manifest_path.display()
+                )
+            })
     });
 
     if require_models {

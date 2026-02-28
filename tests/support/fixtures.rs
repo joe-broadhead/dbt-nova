@@ -33,7 +33,7 @@ pub fn load_fixture(name: &str) -> Result<FixtureSearchEnv> {
         ..Default::default()
     };
     apply_test_storage(&mut cfg, &guard);
-    let searcher = ManifestSearch::new(cfg)?;
+    let searcher = ManifestSearch::new(cfg)?.search;
     Ok(FixtureSearchEnv {
         searcher,
         _guard: guard,

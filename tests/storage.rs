@@ -18,7 +18,9 @@ async fn entity_store_persists_on_disk() {
         ..Default::default()
     };
     support_config::apply_test_storage(&mut cfg, &guard);
-    let searcher = ManifestSearch::new(cfg).expect("fixture manifest must be present");
+    let searcher = ManifestSearch::new(cfg)
+        .expect("fixture manifest must be present")
+        .search;
     let key = "model.nova_test.int__campaign_features";
     let entity = searcher
         .get_entity(key)
@@ -39,7 +41,9 @@ fn missing_checksum_rejects_entity_store() {
         ..Default::default()
     };
     support_config::apply_test_storage(&mut cfg, &guard);
-    let _searcher = ManifestSearch::new(cfg.clone()).expect("fixture manifest must be present");
+    let _searcher = ManifestSearch::new(cfg.clone())
+        .expect("fixture manifest must be present")
+        .search;
 
     let instance_root = cfg.storage_instance_root_dir().expect("instance root dir");
     let current_path = instance_root.join("manifest.current.json");
@@ -75,7 +79,9 @@ fn corrupted_entity_store_is_rejected() {
         ..Default::default()
     };
     support_config::apply_test_storage(&mut cfg, &guard);
-    let searcher = ManifestSearch::new(cfg.clone()).expect("fixture manifest must be present");
+    let searcher = ManifestSearch::new(cfg.clone())
+        .expect("fixture manifest must be present")
+        .search;
 
     let instance_root = cfg.storage_instance_root_dir().expect("instance root dir");
     let current_path = instance_root.join("manifest.current.json");
