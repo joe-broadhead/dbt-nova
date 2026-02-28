@@ -126,9 +126,37 @@ pub struct StorageArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum StorageCommand {
-    Inspect,
-    Prune,
-    Cleanup,
+    Inspect(StorageInspectArgs),
+    Prune(StoragePruneArgs),
+    Cleanup(StorageCleanupArgs),
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct StorageInspectArgs {
+    #[arg(long, value_name = "INSTANCE_ID")]
+    pub storage_instance_id: Option<String>,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct StoragePruneArgs {
+    #[arg(long, value_name = "N")]
+    pub max_keep: Option<usize>,
+    #[arg(long, value_name = "BYTES")]
+    pub max_bytes: Option<u64>,
+    #[arg(long, value_name = "INSTANCE_ID")]
+    pub storage_instance_id: Option<String>,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct StorageCleanupArgs {
+    #[arg(long, value_name = "INSTANCE_ID")]
+    pub storage_instance_id: Option<String>,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -146,7 +174,9 @@ pub enum HealthCommand {
 mod tests {
     use clap::Parser;
 
-    use super::{Cli, Command, ConfigCommand, ManifestCommand, ServerCommand, ToolCommand};
+    use super::{
+        Cli, Command, ConfigCommand, ManifestCommand, ServerCommand, StorageCommand, ToolCommand,
+    };
 
     #[test]
     fn cli_parses_no_subcommand() {
@@ -259,6 +289,56 @@ mod tests {
                 assert!(matches!(config.command, ConfigCommand::Validate(_)));
             }
             _ => panic!("expected config command"),
+        }
+    }
+
+    #[test]
+    fn storage_prune_parses_limit_flags() {
+        let cli = Cli::parse_from([
+            "dbt-nova",
+            "storage",
+            "prune",
+            "--max-keep",
+            "2",
+            "--max-bytes",
+            "1000",
+            "--json",
+        ]);
+        let command = cli.command.expect("command");
+        match command {
+            Command::Storage(storage) => {
+                let StorageCommand::Prune(prune_args) = storage.command else {
+                    panic!("expected storage prune command");
+                };
+                assert_eq!(prune_args.max_keep, Some(2));
+                assert_eq!(prune_args.max_bytes, Some(1000));
+                assert!(prune_args.json);
+            }
+            _ => panic!("expected storage command"),
+        }
+    }
+
+    #[test]
+    fn storage_cleanup_parses_storage_instance_id_flag() {
+        let cli = Cli::parse_from([
+            "dbt-nova",
+            "storage",
+            "cleanup",
+            "--storage-instance-id",
+            "manifest-abc123",
+        ]);
+        let command = cli.command.expect("command");
+        match command {
+            Command::Storage(storage) => {
+                let StorageCommand::Cleanup(cleanup_args) = storage.command else {
+                    panic!("expected storage cleanup command");
+                };
+                assert_eq!(
+                    cleanup_args.storage_instance_id.as_deref(),
+                    Some("manifest-abc123")
+                );
+            }
+            _ => panic!("expected storage command"),
         }
     }
 }

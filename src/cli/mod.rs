@@ -9,6 +9,7 @@ pub mod config_cmd;
 pub mod manifest;
 pub mod output;
 pub mod server_cmd;
+pub mod storage_cmd;
 pub mod tool;
 
 pub struct DispatchError {
@@ -52,7 +53,16 @@ pub async fn dispatch(command: args::Command) -> DispatchResult {
                 config_cmd::run_validate_command(&validate_args)
             }
         },
-        args::Command::Storage(_) | args::Command::Health(_) => Err(DbtNovaError::InvalidParams(
+        args::Command::Storage(storage_args) => match storage_args.command {
+            args::StorageCommand::Inspect(inspect_args) => {
+                storage_cmd::run_inspect_command(&inspect_args)
+            }
+            args::StorageCommand::Prune(prune_args) => storage_cmd::run_prune_command(&prune_args),
+            args::StorageCommand::Cleanup(cleanup_args) => {
+                storage_cmd::run_cleanup_command(&cleanup_args)
+            }
+        },
+        args::Command::Health(_) => Err(DbtNovaError::InvalidParams(
             "CLI command group is not implemented yet in current scope".to_string(),
         )
         .into()),
@@ -206,6 +216,18 @@ mod tests {
         let result = dispatch(super::args::Command::Config(super::args::ConfigArgs {
             command: super::args::ConfigCommand::Show(super::args::ConfigShowArgs {
                 defaults: true,
+                json: true,
+            }),
+        }))
+        .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn dispatch_storage_inspect_succeeds() {
+        let result = dispatch(super::args::Command::Storage(super::args::StorageArgs {
+            command: super::args::StorageCommand::Inspect(super::args::StorageInspectArgs {
+                storage_instance_id: None,
                 json: true,
             }),
         }))
