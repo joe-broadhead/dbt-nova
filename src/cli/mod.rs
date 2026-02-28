@@ -105,28 +105,7 @@ pub fn prune_storage_instances(
         exclude.push(instance);
     }
     if max_keep == 0 {
-        if !storage_root.exists() {
-            return Ok(());
-        }
-        for entry in fs::read_dir(&storage_root)
-            .map_err(|error| DbtNovaError::ServerError(format!("Storage scan failed: {error}")))?
-        {
-            let entry = entry.map_err(|error| {
-                DbtNovaError::ServerError(format!("Storage scan failed: {error}"))
-            })?;
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if exclude.contains(&name) || dir_in_use(&path) {
-                continue;
-            }
-            fs::remove_dir_all(&path).map_err(|error| {
-                DbtNovaError::ServerError(format!("Storage prune failed: {error}"))
-            })?;
-        }
-        return Ok(());
+        return prune_all_stale_instances(&storage_root, &exclude);
     }
     prune_dirs(
         &storage_root,
@@ -135,6 +114,29 @@ pub fn prune_storage_instances(
         config.storage_max_bytes,
         &exclude,
     )
+}
+
+fn prune_all_stale_instances(storage_root: &std::path::Path, exclude: &[&str]) -> Result<()> {
+    if !storage_root.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(storage_root)
+        .map_err(|error| DbtNovaError::ServerError(format!("Storage scan failed: {error}")))?
+    {
+        let entry = entry
+            .map_err(|error| DbtNovaError::ServerError(format!("Storage scan failed: {error}")))?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if exclude.contains(&name) || dir_in_use(&path) {
+            continue;
+        }
+        fs::remove_dir_all(&path)
+            .map_err(|error| DbtNovaError::ServerError(format!("Storage prune failed: {error}")))?;
+    }
+    Ok(())
 }
 
 /// Prepares storage directories before loading/building manifest indexes.
