@@ -264,6 +264,34 @@ mod tests {
     }
 
     #[test]
+    fn tool_call_rejects_conflicting_json_and_stdin_sources() {
+        let parsed = Cli::try_parse_from([
+            "dbt-nova",
+            "tool",
+            "call",
+            "search",
+            "--params-json",
+            "{}",
+            "--params-stdin",
+        ]);
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn tool_call_rejects_conflicting_file_and_stdin_sources() {
+        let parsed = Cli::try_parse_from([
+            "dbt-nova",
+            "tool",
+            "call",
+            "search",
+            "--params-file",
+            "params.json",
+            "--params-stdin",
+        ]);
+        assert!(parsed.is_err());
+    }
+
+    #[test]
     fn tool_call_parses_json_flag() {
         let cli = Cli::parse_from(["dbt-nova", "tool", "call", "search", "--json"]);
         let command = cli.command.expect("command");
