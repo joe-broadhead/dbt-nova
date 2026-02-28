@@ -213,6 +213,11 @@ pub fn build_manifest_load_config(args: &ManifestLoadArgs) -> Result<DbtNovaConf
     // the background refresh task. Keep configured refresh_secs unchanged so
     // remote cache freshness rules still apply during source resolution.
     config.ensure_storage_instance_id();
+    if !is_safe_storage_instance_id(config.storage_instance_id.trim()) {
+        return Err(DbtNovaError::InvalidParams(
+            "--storage-instance-id must be a single safe path segment".to_string(),
+        ));
+    }
     config.ensure_embedding_cache_dir();
     config.validate()?;
     Ok(config)
@@ -237,7 +242,9 @@ fn is_safe_storage_instance_id(instance_id: &str) -> bool {
 async fn execute_manifest_load(
     config: DbtNovaConfig,
 ) -> Result<crate::manifest::loader::ManifestLoadResult> {
-    prepare_storage(&config)?;
+    if !config.storage_read_only {
+        prepare_storage(&config)?;
+    }
     tokio::task::spawn_blocking(move || ManifestSearch::new(config))
         .await
         .map_err(|error| DbtNovaError::ServerError(error.to_string()))?
@@ -245,9 +252,12 @@ async fn execute_manifest_load(
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::{build_manifest_load_config, execute_manifest_load};
     use crate::cli::args::ManifestLoadArgs;
     use crate::config::DbtNovaConfig;
+    use tempfile::TempDir;
 
     fn fixture_manifest_path() -> String {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -327,5 +337,58 @@ mod tests {
         };
 
         assert!(err.to_string().contains("Manifest error"));
+    }
+
+    #[tokio::test]
+    async fn execute_manifest_load_read_only_skips_storage_cleanup() {
+        let temp_dir = TempDir::new().expect("temp dir");
+
+        let args = ManifestLoadArgs {
+            manifest_path: Some(fixture_manifest_path()),
+            storage_instance_id: Some("readonly-instance".to_string()),
+            ..ManifestLoadArgs::default()
+        };
+
+        let mut bootstrap = build_manifest_load_config(&args).expect("bootstrap config");
+        bootstrap.storage_dir = temp_dir
+            .path()
+            .join(".dbt-nova")
+            .to_string_lossy()
+            .to_string();
+        bootstrap.cleanup_storage_on_start = false;
+        bootstrap.search.enable_vector_search = false;
+        bootstrap.search.enable_sparse_search = false;
+        bootstrap.search.enable_reranker = false;
+        let _ = execute_manifest_load(bootstrap)
+            .await
+            .expect("bootstrap load");
+
+        let mut readonly = build_manifest_load_config(&args).expect("readonly config");
+        readonly.storage_dir = temp_dir
+            .path()
+            .join(".dbt-nova")
+            .to_string_lossy()
+            .to_string();
+        readonly.storage_read_only = true;
+        readonly.cleanup_storage_on_start = true;
+        readonly.search.enable_vector_search = false;
+        readonly.search.enable_sparse_search = false;
+        readonly.search.enable_reranker = false;
+
+        let marker = readonly
+            .storage_instance_root_dir()
+            .expect("instance root")
+            .join("marker.txt");
+        fs::create_dir_all(marker.parent().expect("marker parent")).expect("create marker parent");
+        fs::write(&marker, b"keep").expect("write marker");
+
+        let _ = execute_manifest_load(readonly)
+            .await
+            .expect("read-only load should succeed");
+
+        assert!(
+            marker.exists(),
+            "read-only manifest load should not clean storage"
+        );
     }
 }
