@@ -172,11 +172,24 @@ jobs:
           metadata_uris='${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_metadata_uris }}'
           models_uris='${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_models_uris }}'
 
-          test -n "${published_targets}"
-          test "${published_targets}" = "dbfs,gcs,s3"
+          echo "published_targets=${published_targets}"
+          echo "published_storage_uris=${storage_uris}"
+          echo "published_metadata_uris=${metadata_uris}"
+          echo "published_models_uris=${models_uris}"
 
-          echo "${storage_uris}" | jq -e '.s3 and .gcs and .dbfs' >/dev/null
-          echo "${metadata_uris}" | jq -e '.s3 and .gcs and .dbfs' >/dev/null
+          test -n "${published_targets}"
+          normalized_targets="$(
+            printf '%s\n' "${published_targets}" \
+            | tr ',' '\n' \
+            | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+            | sed '/^$/d' \
+            | sort -u \
+            | paste -sd, -
+          )"
+          test "${normalized_targets}" = "dbfs,gcs,s3"
+
+          echo "${storage_uris}" | jq -e 'keys | sort == ["dbfs", "gcs", "s3"]' >/dev/null
+          echo "${metadata_uris}" | jq -e 'keys | sort == ["dbfs", "gcs", "s3"]' >/dev/null
           echo "${models_uris}" | jq -e '. == {}' >/dev/null
 
   reusable-assets-readonly-consumer:
