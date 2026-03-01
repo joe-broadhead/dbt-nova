@@ -114,9 +114,14 @@ async fn test_list_entities_invalid_type() {
         },
     };
     let result = searcher.list_entities(&params).await.json();
-    let count = result
-        .get("count")
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(0);
-    assert_eq!(count, 0, "Should return empty for invalid type");
+    let success = result
+        .get("success")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true);
+    assert!(!success, "invalid resource_type should return an error");
+    let error_code = result
+        .get("error_code")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    assert_eq!(error_code, "INVALID_PARAMS");
 }

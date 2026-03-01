@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use serde::Serialize;
 
-use crate::cli::args::ManifestLoadArgs;
+use crate::cli::args::{ManifestLoadArgs, ManifestReloadArgs};
 use crate::cli::output::{CliEnvelope, error_envelope};
 use crate::config::DbtNovaConfig;
 use crate::error::{DbtNovaError, Result};
@@ -45,24 +45,45 @@ pub struct SearchReadyInfo {
 /// # Errors
 /// Returns an error if configuration is invalid, manifest loading fails, or output serialization fails.
 pub async fn run_load_command(args: &ManifestLoadArgs) -> DispatchResult {
-    let started = Instant::now();
-    let config = build_manifest_load_config(args)
-        .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
-    let load_result = execute_manifest_load(config)
-        .await
-        .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
-    let payload = payload_from_result(load_result)
-        .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
+    run_manifest_command("manifest load", args.json, build_manifest_load_config(args)).await
+}
 
-    if args.json {
-        let json =
-            render_success_json(&payload, started.elapsed().as_millis()).map_err(|error| {
-                DispatchError {
-                    error,
-                    rendered: false,
-                }
+/// Runs the `manifest reload` CLI command.
+///
+/// # Errors
+/// Returns an error if configuration is invalid, manifest loading fails, or output serialization fails.
+pub async fn run_reload_command(args: &ManifestReloadArgs) -> DispatchResult {
+    run_manifest_command(
+        "manifest reload",
+        args.json,
+        build_manifest_reload_config(args),
+    )
+    .await
+}
+
+async fn run_manifest_command(
+    command_name: &'static str,
+    json: bool,
+    config_result: Result<DbtNovaConfig>,
+) -> DispatchResult {
+    let started = Instant::now();
+    let config = config_result.map_err(|error| {
+        render_or_propagate_error(command_name, json, error, started.elapsed().as_millis())
+    })?;
+    let load_result = execute_manifest_load(config).await.map_err(|error| {
+        render_or_propagate_error(command_name, json, error, started.elapsed().as_millis())
+    })?;
+    let payload = payload_from_result(load_result).map_err(|error| {
+        render_or_propagate_error(command_name, json, error, started.elapsed().as_millis())
+    })?;
+
+    if json {
+        let output = render_success_json(command_name, &payload, started.elapsed().as_millis())
+            .map_err(|error| DispatchError {
+                error,
+                rendered: false,
             })?;
-        println!("{json}");
+        println!("{output}");
     } else {
         print_human_summary(&payload);
     }
@@ -71,12 +92,13 @@ pub async fn run_load_command(args: &ManifestLoadArgs) -> DispatchResult {
 }
 
 fn render_or_propagate_error(
-    args: &ManifestLoadArgs,
+    command_name: &str,
+    json: bool,
     error: DbtNovaError,
     elapsed_ms: u128,
 ) -> DispatchError {
-    if args.json {
-        let envelope = error_envelope("manifest load", &error, elapsed_ms);
+    if json {
+        let envelope = error_envelope(command_name, &error, elapsed_ms);
         if let Ok(json) = serde_json::to_string_pretty(&envelope) {
             println!("{json}");
             return DispatchError {
@@ -121,8 +143,12 @@ fn ready_label(ready: bool) -> &'static str {
     if ready { "ready" } else { "not_ready" }
 }
 
-fn render_success_json(payload: &ManifestLoadData, elapsed_ms: u128) -> Result<String> {
-    let envelope = CliEnvelope::success("manifest load", payload, elapsed_ms);
+fn render_success_json(
+    command_name: &str,
+    payload: &ManifestLoadData,
+    elapsed_ms: u128,
+) -> Result<String> {
+    let envelope = CliEnvelope::success(command_name, payload, elapsed_ms);
     serde_json::to_string_pretty(&envelope)
         .map_err(|error| DbtNovaError::ServerError(error.to_string()))
 }
@@ -172,62 +198,35 @@ fn storage_path_for_search(search: &ManifestSearch) -> Result<PathBuf> {
 /// Returns an error if overrides are invalid or resulting configuration fails validation.
 pub fn build_manifest_load_config(args: &ManifestLoadArgs) -> Result<DbtNovaConfig> {
     let mut config = DbtNovaConfig::from_env();
+    apply_manifest_common_overrides(
+        &mut config,
+        args.manifest_path.as_deref(),
+        args.manifest_uri.as_deref(),
+        args.storage_instance_id.as_deref(),
+        args.cleanup_storage_on_start,
+        args.read_only,
+    )?;
+    finalize_manifest_config(config)
+}
 
-    if let Some(path) = args.manifest_path.as_ref() {
-        let trimmed = path.trim();
-        if trimmed.is_empty() {
-            return Err(DbtNovaError::InvalidParams(
-                "--manifest-path cannot be empty".to_string(),
-            ));
-        }
-        config.manifest_path = trimmed.to_string();
-        config.manifest_uri.clear();
+/// Builds a manifest-reload configuration from environment defaults plus CLI overrides.
+///
+/// # Errors
+/// Returns an error if overrides are invalid or resulting configuration fails validation.
+pub fn build_manifest_reload_config(args: &ManifestReloadArgs) -> Result<DbtNovaConfig> {
+    let mut config = DbtNovaConfig::from_env();
+    apply_manifest_common_overrides(
+        &mut config,
+        args.manifest_path.as_deref(),
+        args.manifest_uri.as_deref(),
+        args.storage_instance_id.as_deref(),
+        args.cleanup_storage_on_start,
+        args.read_only,
+    )?;
+    if let Some(refresh_secs) = args.refresh_secs {
+        config.manifest_refresh_secs = refresh_secs;
     }
-
-    if let Some(uri) = args.manifest_uri.as_ref() {
-        let trimmed = uri.trim();
-        if trimmed.is_empty() {
-            return Err(DbtNovaError::InvalidParams(
-                "--manifest-uri cannot be empty".to_string(),
-            ));
-        }
-        config.manifest_uri = trimmed.to_string();
-    }
-
-    if let Some(instance_id) = args.storage_instance_id.as_ref() {
-        let trimmed = instance_id.trim();
-        if trimmed.is_empty() {
-            return Err(DbtNovaError::InvalidParams(
-                "--storage-instance-id cannot be empty".to_string(),
-            ));
-        }
-        if !is_safe_storage_instance_id(trimmed) {
-            return Err(DbtNovaError::InvalidParams(
-                "--storage-instance-id must be a single safe path segment".to_string(),
-            ));
-        }
-        config.storage_instance_id = trimmed.to_string();
-    }
-
-    if args.cleanup_storage_on_start {
-        config.cleanup_storage_on_start = true;
-    }
-    if args.read_only {
-        config.storage_read_only = true;
-    }
-
-    // `manifest load` is explicitly one-shot because this command does not start
-    // the background refresh task. Keep configured refresh_secs unchanged so
-    // remote cache freshness rules still apply during source resolution.
-    config.ensure_storage_instance_id();
-    if !is_safe_storage_instance_id(config.storage_instance_id.trim()) {
-        return Err(DbtNovaError::InvalidParams(
-            "--storage-instance-id must be a single safe path segment".to_string(),
-        ));
-    }
-    config.ensure_embedding_cache_dir();
-    config.validate()?;
-    Ok(config)
+    finalize_manifest_config(config)
 }
 
 fn is_safe_storage_instance_id(instance_id: &str) -> bool {
@@ -246,6 +245,75 @@ fn is_safe_storage_instance_id(instance_id: &str) -> bool {
     )
 }
 
+fn apply_manifest_common_overrides(
+    config: &mut DbtNovaConfig,
+    manifest_path: Option<&str>,
+    manifest_uri: Option<&str>,
+    storage_instance_id: Option<&str>,
+    cleanup_storage_on_start: bool,
+    read_only: bool,
+) -> Result<()> {
+    if let Some(path) = manifest_path {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            return Err(DbtNovaError::InvalidParams(
+                "--manifest-path cannot be empty".to_string(),
+            ));
+        }
+        config.manifest_path = trimmed.to_string();
+        config.manifest_uri.clear();
+    }
+
+    if let Some(uri) = manifest_uri {
+        let trimmed = uri.trim();
+        if trimmed.is_empty() {
+            return Err(DbtNovaError::InvalidParams(
+                "--manifest-uri cannot be empty".to_string(),
+            ));
+        }
+        config.manifest_uri = trimmed.to_string();
+    }
+
+    if let Some(instance_id) = storage_instance_id {
+        let trimmed = instance_id.trim();
+        if trimmed.is_empty() {
+            return Err(DbtNovaError::InvalidParams(
+                "--storage-instance-id cannot be empty".to_string(),
+            ));
+        }
+        if !is_safe_storage_instance_id(trimmed) {
+            return Err(DbtNovaError::InvalidParams(
+                "--storage-instance-id must be a single safe path segment".to_string(),
+            ));
+        }
+        config.storage_instance_id = trimmed.to_string();
+    }
+
+    if cleanup_storage_on_start {
+        config.cleanup_storage_on_start = true;
+    }
+    if read_only {
+        config.storage_read_only = true;
+    }
+
+    Ok(())
+}
+
+fn finalize_manifest_config(mut config: DbtNovaConfig) -> Result<DbtNovaConfig> {
+    // CLI manifest commands are one-shot; they do not start the background
+    // refresh task. Keep refresh_secs unchanged so remote cache freshness rules
+    // still apply during source resolution.
+    config.ensure_storage_instance_id();
+    if !is_safe_storage_instance_id(config.storage_instance_id.trim()) {
+        return Err(DbtNovaError::InvalidParams(
+            "--storage-instance-id must be a single safe path segment".to_string(),
+        ));
+    }
+    config.ensure_embedding_cache_dir();
+    config.validate()?;
+    Ok(config)
+}
+
 pub(crate) async fn execute_manifest_load(
     config: DbtNovaConfig,
 ) -> Result<crate::manifest::loader::ManifestLoadResult> {
@@ -262,9 +330,10 @@ mod tests {
     use std::fs;
 
     use super::{
-        build_manifest_load_config, execute_manifest_load, payload_from_result, render_success_json,
+        build_manifest_load_config, build_manifest_reload_config, execute_manifest_load,
+        payload_from_result, render_success_json,
     };
-    use crate::cli::args::ManifestLoadArgs;
+    use crate::cli::args::{ManifestLoadArgs, ManifestReloadArgs};
     use crate::config::DbtNovaConfig;
     use tempfile::TempDir;
 
@@ -299,6 +368,25 @@ mod tests {
     }
 
     #[test]
+    fn build_manifest_reload_config_uses_refresh_override() {
+        let args = ManifestReloadArgs {
+            manifest_path: Some(fixture_manifest_path()),
+            refresh_secs: Some(120),
+            storage_instance_id: Some("test-instance".to_string()),
+            cleanup_storage_on_start: true,
+            read_only: true,
+            json: true,
+            ..ManifestReloadArgs::default()
+        };
+
+        let config = build_manifest_reload_config(&args).expect("config");
+        assert_eq!(config.manifest_refresh_secs, 120);
+        assert_eq!(config.storage_instance_id, "test-instance");
+        assert!(config.cleanup_storage_on_start);
+        assert!(config.storage_read_only);
+    }
+
+    #[test]
     fn build_manifest_load_config_rejects_unsafe_instance_id() {
         let args = ManifestLoadArgs {
             manifest_path: Some(fixture_manifest_path()),
@@ -307,6 +395,22 @@ mod tests {
         };
 
         let error = build_manifest_load_config(&args).expect_err("expected unsafe id rejection");
+        assert!(
+            error
+                .to_string()
+                .contains("--storage-instance-id must be a single safe path segment")
+        );
+    }
+
+    #[test]
+    fn build_manifest_reload_config_rejects_unsafe_instance_id() {
+        let args = ManifestReloadArgs {
+            manifest_path: Some(fixture_manifest_path()),
+            storage_instance_id: Some("../unsafe".to_string()),
+            ..ManifestReloadArgs::default()
+        };
+
+        let error = build_manifest_reload_config(&args).expect_err("expected unsafe id rejection");
         assert!(
             error
                 .to_string()
@@ -441,7 +545,7 @@ mod tests {
         config.search.enable_reranker = false;
         let loaded = execute_manifest_load(config).await.expect("load result");
         let payload = payload_from_result(loaded).expect("payload");
-        let json = render_success_json(&payload, 123).expect("json");
+        let json = render_success_json("manifest load", &payload, 123).expect("json");
         let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse json");
 
         assert_eq!(parsed["command"], serde_json::json!("manifest load"));

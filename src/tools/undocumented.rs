@@ -14,19 +14,12 @@ impl ManifestSearch {
     #[instrument(skip(self, params), fields(tool = "get_undocumented", resource_type = %params.resource_type, limit = params.pagination.limit, offset = params.pagination.offset, include_columns = params.include_columns))]
     #[allow(clippy::too_many_lines)]
     pub async fn get_undocumented(&self, params: &GetUndocumentedParams) -> Result<JsonValue> {
-        let resource_type = params.resource_type.clone();
-        let Some(resource_candidates) = self.by_resource_type.get(&resource_type) else {
-            return Ok(serde_json::to_value(SuccessResponse::new(
-                serde_json::json!({
-                    "entities": [],
-                    "summary": {
-                        "entities_missing_docs": 0,
-                        "columns_missing_docs": 0
-                    }
-                }),
-                0,
-            ))?);
-        };
+        let resource_type = self.normalize_resource_type_key(&params.resource_type)?;
+        let resource_candidates = self.by_resource_type.get(&resource_type).ok_or_else(|| {
+            crate::error::DbtNovaError::ServerError(format!(
+                "resource_type '{resource_type}' resolved but was not indexed"
+            ))
+        })?;
 
         let candidates: Vec<String> = if let Some(id_or_name) = params.id_or_name.as_deref() {
             vec![self.resolve_single_id(id_or_name, Some(&resource_type))?]

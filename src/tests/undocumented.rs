@@ -140,20 +140,14 @@ async fn test_get_undocumented_invalid_resource_type() {
     let result = searcher.get_undocumented(&params).await.json();
     let success = result
         .get("success")
-        .expect("response missing 'success' field")
-        .as_bool()
-        .expect("'success' field should be boolean");
-    assert!(
-        success,
-        "Expected success=true but got error: {:?}",
-        result.get("error")
-    );
-    // Should return empty results, not error
-    let count = result
-        .get("count")
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(1);
-    assert_eq!(count, 0);
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true);
+    assert!(!success, "invalid resource_type should return an error");
+    let error_code = result
+        .get("error_code")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    assert_eq!(error_code, "INVALID_PARAMS");
 }
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_undocumented_include_full() {
