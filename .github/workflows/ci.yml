@@ -133,6 +133,52 @@ jobs:
       artifact_name_prefix: ci-readonly-smoke
       retention_days: 1
 
+  reusable-assets-remote-publish-dryrun:
+    name: reusable-assets-remote-publish-dryrun
+    uses: ./.github/workflows/nova-build-assets.yml
+    with:
+      manifest_path: tests/fixtures/nova_manifest.json
+      storage_instance_id: ci-remote-publish-dryrun
+      artifact_name_prefix: ci-remote-publish-dryrun
+      retention_days: 1
+      publish_targets: s3,gcs,dbfs
+      publish_s3_prefix: s3://ci-dryrun-bucket/dbt-nova
+      publish_gcs_prefix: gs://ci-dryrun-bucket/dbt-nova
+      publish_dbfs_prefix: dbfs:/ci-dryrun/dbt-nova
+      publish_dry_run: true
+
+  reusable-assets-remote-publish-dryrun-assert:
+    name: reusable-assets-remote-publish-dryrun-assert
+    runs-on: ubuntu-22.04
+    needs: reusable-assets-remote-publish-dryrun
+    steps:
+      - name: Ensure jq is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v jq >/dev/null 2>&1; then
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Assert dry-run publish outputs are populated per target
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          published_targets='${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_targets }}'
+          storage_uris='${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_storage_uris }}'
+          metadata_uris='${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_metadata_uris }}'
+          models_uris='${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_models_uris }}'
+
+          test -n "${published_targets}"
+          test "${published_targets}" = "dbfs,gcs,s3"
+
+          echo "${storage_uris}" | jq -e '.s3 and .gcs and .dbfs' >/dev/null
+          echo "${metadata_uris}" | jq -e '.s3 and .gcs and .dbfs' >/dev/null
+          echo "${models_uris}" | jq -e '. == {}' >/dev/null
+
   reusable-assets-readonly-consumer:
     name: reusable-assets-readonly-consumer
     runs-on: ubuntu-22.04

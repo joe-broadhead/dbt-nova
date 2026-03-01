@@ -62,6 +62,11 @@ on:
         required: false
         type: string
         default: ""
+      publish_dry_run:
+        description: "If true, computes publish URIs without performing network uploads"
+        required: false
+        type: boolean
+        default: false
     outputs:
       manifest_hash:
         description: "Manifest content hash (populated by producer build in follow-up step)"
@@ -154,6 +159,11 @@ on:
         required: false
         type: string
         default: ""
+      publish_dry_run:
+        description: "If true, computes publish URIs without performing network uploads"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -174,6 +184,7 @@ jobs:
       publish_s3_prefix: ${{ steps.resolve.outputs.publish_s3_prefix }}
       publish_gcs_prefix: ${{ steps.resolve.outputs.publish_gcs_prefix }}
       publish_dbfs_prefix: ${{ steps.resolve.outputs.publish_dbfs_prefix }}
+      publish_dry_run: ${{ steps.resolve.outputs.publish_dry_run }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -194,6 +205,7 @@ jobs:
           INPUT_PUBLISH_S3_PREFIX: ${{ inputs.publish_s3_prefix }}
           INPUT_PUBLISH_GCS_PREFIX: ${{ inputs.publish_gcs_prefix }}
           INPUT_PUBLISH_DBFS_PREFIX: ${{ inputs.publish_dbfs_prefix }}
+          INPUT_PUBLISH_DRY_RUN: ${{ inputs.publish_dry_run }}
         run: |
           set -euo pipefail
 
@@ -209,6 +221,7 @@ jobs:
           publish_s3_prefix="${INPUT_PUBLISH_S3_PREFIX}"
           publish_gcs_prefix="${INPUT_PUBLISH_GCS_PREFIX}"
           publish_dbfs_prefix="${INPUT_PUBLISH_DBFS_PREFIX}"
+          publish_dry_run="${INPUT_PUBLISH_DRY_RUN}"
 
           if [[ -z "${storage_instance_id}" ]]; then
             echo "storage_instance_id is required."
@@ -243,6 +256,11 @@ jobs:
           fi
           if (( retention_days < 1 || retention_days > 90 )); then
             echo "retention_days must be between 1 and 90."
+            exit 1
+          fi
+
+          if [[ "${publish_dry_run}" != "true" && "${publish_dry_run}" != "false" ]]; then
+            echo "publish_dry_run must be true or false."
             exit 1
           fi
 
@@ -310,6 +328,7 @@ jobs:
           echo "publish_s3_prefix=${publish_s3_prefix}" >> "$GITHUB_OUTPUT"
           echo "publish_gcs_prefix=${publish_gcs_prefix}" >> "$GITHUB_OUTPUT"
           echo "publish_dbfs_prefix=${publish_dbfs_prefix}" >> "$GITHUB_OUTPUT"
+          echo "publish_dry_run=${publish_dry_run}" >> "$GITHUB_OUTPUT"
 
       - name: Summarize contract
         shell: bash
@@ -323,6 +342,7 @@ jobs:
             echo "- artifact_name_models: \`${{ steps.resolve.outputs.artifact_name_models }}\`"
             echo "- storage_instance_id: \`${{ steps.resolve.outputs.storage_instance_id }}\`"
             echo "- publish_targets: \`${{ steps.resolve.outputs.publish_targets }}\`"
+            echo "- publish_dry_run: \`${{ steps.resolve.outputs.publish_dry_run }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   build:
@@ -348,6 +368,7 @@ jobs:
       DBT_NOVA_PUBLISH_S3_PREFIX: ${{ needs.prepare.outputs.publish_s3_prefix }}
       DBT_NOVA_PUBLISH_GCS_PREFIX: ${{ needs.prepare.outputs.publish_gcs_prefix }}
       DBT_NOVA_PUBLISH_DBFS_PREFIX: ${{ needs.prepare.outputs.publish_dbfs_prefix }}
+      DBT_NOVA_PUBLISH_DRY_RUN: ${{ needs.prepare.outputs.publish_dry_run }}
     steps:
       - name: Checkout caller repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -591,6 +612,7 @@ jobs:
           set -euo pipefail
 
           publish_targets="${DBT_NOVA_PUBLISH_TARGETS:-}"
+          publish_dry_run="${DBT_NOVA_PUBLISH_DRY_RUN:-false}"
           storage_archive="${{ steps.collect.outputs.artifact_name_storage }}.tar.gz"
           metadata_source="${{ steps.collect.outputs.metadata_path }}"
           metadata_filename="${{ steps.collect.outputs.artifact_name_metadata }}.json"
@@ -673,7 +695,7 @@ jobs:
           publish_to_dbfs() {
             local local_path="$1"
             local remote_path="$2"
-            python - "${local_path}" "${remote_path}" <<'PY'
+            python -c 'import sys, textwrap; exec(textwrap.dedent(sys.stdin.read()))' "${local_path}" "${remote_path}" <<'PY'
             import base64
             import json
             import os
@@ -766,72 +788,84 @@ jobs:
           for target in "${publish_targets_array[@]}"; do
             case "${target}" in
               s3)
-                if ! command -v aws >/dev/null 2>&1; then
-                  echo "publish target s3 requires aws CLI."
-                  exit 1
-                fi
                 s3_storage_uri="${DBT_NOVA_PUBLISH_S3_PREFIX}/${storage_archive}"
                 s3_metadata_uri="${DBT_NOVA_PUBLISH_S3_PREFIX}/${metadata_filename}"
-                retry_with_backoff 4 publish_to_s3 "${storage_archive}" "${s3_storage_uri}" || {
-                  echo "failed uploading storage archive to s3 after retries"
-                  exit 1
-                }
-                retry_with_backoff 4 publish_to_s3 "${metadata_publish_path}" "${s3_metadata_uri}" || {
-                  echo "failed uploading metadata contract to s3 after retries"
-                  exit 1
-                }
-                if [[ -n "${models_archive}" ]]; then
-                  s3_models_uri="${DBT_NOVA_PUBLISH_S3_PREFIX}/${models_archive}"
-                  retry_with_backoff 4 publish_to_s3 "${models_archive}" "${s3_models_uri}" || {
-                    echo "failed uploading models archive to s3 after retries"
+                if [[ "${publish_dry_run}" != "true" ]]; then
+                  if ! command -v aws >/dev/null 2>&1; then
+                    echo "publish target s3 requires aws CLI."
+                    exit 1
+                  fi
+                  retry_with_backoff 4 publish_to_s3 "${storage_archive}" "${s3_storage_uri}" || {
+                    echo "failed uploading storage archive to s3 after retries"
                     exit 1
                   }
+                  retry_with_backoff 4 publish_to_s3 "${metadata_publish_path}" "${s3_metadata_uri}" || {
+                    echo "failed uploading metadata contract to s3 after retries"
+                    exit 1
+                  }
+                  if [[ -n "${models_archive}" ]]; then
+                    s3_models_uri="${DBT_NOVA_PUBLISH_S3_PREFIX}/${models_archive}"
+                    retry_with_backoff 4 publish_to_s3 "${models_archive}" "${s3_models_uri}" || {
+                      echo "failed uploading models archive to s3 after retries"
+                      exit 1
+                    }
+                  fi
+                elif [[ -n "${models_archive}" ]]; then
+                  s3_models_uri="${DBT_NOVA_PUBLISH_S3_PREFIX}/${models_archive}"
                 fi
                 ;;
               gcs)
-                GCS_ACCESS_TOKEN="$(resolve_gcs_access_token)" || {
-                  echo "publish target gcs requires a Google access token (DBT_NOVA_GCP_ACCESS_TOKEN, DBT_NOVA_BIGQUERY_ACCESS_TOKEN, GCP_ACCESS_TOKEN, GOOGLE_OAUTH_ACCESS_TOKEN, or gcloud ADC)."
-                  exit 1
-                }
                 gcs_storage_uri="${DBT_NOVA_PUBLISH_GCS_PREFIX}/${storage_archive}"
                 gcs_metadata_uri="${DBT_NOVA_PUBLISH_GCS_PREFIX}/${metadata_filename}"
-                retry_with_backoff 4 publish_to_gcs "${storage_archive}" "${gcs_storage_uri}" || {
-                  echo "failed uploading storage archive to gcs after retries"
-                  exit 1
-                }
-                retry_with_backoff 4 publish_to_gcs "${metadata_publish_path}" "${gcs_metadata_uri}" || {
-                  echo "failed uploading metadata contract to gcs after retries"
-                  exit 1
-                }
-                if [[ -n "${models_archive}" ]]; then
-                  gcs_models_uri="${DBT_NOVA_PUBLISH_GCS_PREFIX}/${models_archive}"
-                  retry_with_backoff 4 publish_to_gcs "${models_archive}" "${gcs_models_uri}" || {
-                    echo "failed uploading models archive to gcs after retries"
+                if [[ "${publish_dry_run}" != "true" ]]; then
+                  GCS_ACCESS_TOKEN="$(resolve_gcs_access_token)" || {
+                    echo "publish target gcs requires a Google access token (DBT_NOVA_GCP_ACCESS_TOKEN, DBT_NOVA_BIGQUERY_ACCESS_TOKEN, GCP_ACCESS_TOKEN, GOOGLE_OAUTH_ACCESS_TOKEN, or gcloud ADC)."
                     exit 1
                   }
+                  retry_with_backoff 4 publish_to_gcs "${storage_archive}" "${gcs_storage_uri}" || {
+                    echo "failed uploading storage archive to gcs after retries"
+                    exit 1
+                  }
+                  retry_with_backoff 4 publish_to_gcs "${metadata_publish_path}" "${gcs_metadata_uri}" || {
+                    echo "failed uploading metadata contract to gcs after retries"
+                    exit 1
+                  }
+                  if [[ -n "${models_archive}" ]]; then
+                    gcs_models_uri="${DBT_NOVA_PUBLISH_GCS_PREFIX}/${models_archive}"
+                    retry_with_backoff 4 publish_to_gcs "${models_archive}" "${gcs_models_uri}" || {
+                      echo "failed uploading models archive to gcs after retries"
+                      exit 1
+                    }
+                  fi
+                elif [[ -n "${models_archive}" ]]; then
+                  gcs_models_uri="${DBT_NOVA_PUBLISH_GCS_PREFIX}/${models_archive}"
                 fi
                 ;;
               dbfs)
-                if [[ -z "${DATABRICKS_HOST:-}" || -z "${DATABRICKS_ACCESS_TOKEN:-}" ]]; then
-                  echo "publish target dbfs requires DATABRICKS_HOST and DATABRICKS_ACCESS_TOKEN."
-                  exit 1
-                fi
                 dbfs_storage_uri="${DBT_NOVA_PUBLISH_DBFS_PREFIX}/${storage_archive}"
                 dbfs_metadata_uri="${DBT_NOVA_PUBLISH_DBFS_PREFIX}/${metadata_filename}"
-                retry_with_backoff 4 publish_to_dbfs "${storage_archive}" "${dbfs_storage_uri}" || {
-                  echo "failed uploading storage archive to dbfs after retries"
-                  exit 1
-                }
-                retry_with_backoff 4 publish_to_dbfs "${metadata_publish_path}" "${dbfs_metadata_uri}" || {
-                  echo "failed uploading metadata contract to dbfs after retries"
-                  exit 1
-                }
-                if [[ -n "${models_archive}" ]]; then
-                  dbfs_models_uri="${DBT_NOVA_PUBLISH_DBFS_PREFIX}/${models_archive}"
-                  retry_with_backoff 4 publish_to_dbfs "${models_archive}" "${dbfs_models_uri}" || {
-                    echo "failed uploading models archive to dbfs after retries"
+                if [[ "${publish_dry_run}" != "true" ]]; then
+                  if [[ -z "${DATABRICKS_HOST:-}" || -z "${DATABRICKS_ACCESS_TOKEN:-}" ]]; then
+                    echo "publish target dbfs requires DATABRICKS_HOST and DATABRICKS_ACCESS_TOKEN."
+                    exit 1
+                  fi
+                  retry_with_backoff 4 publish_to_dbfs "${storage_archive}" "${dbfs_storage_uri}" || {
+                    echo "failed uploading storage archive to dbfs after retries"
                     exit 1
                   }
+                  retry_with_backoff 4 publish_to_dbfs "${metadata_publish_path}" "${dbfs_metadata_uri}" || {
+                    echo "failed uploading metadata contract to dbfs after retries"
+                    exit 1
+                  }
+                  if [[ -n "${models_archive}" ]]; then
+                    dbfs_models_uri="${DBT_NOVA_PUBLISH_DBFS_PREFIX}/${models_archive}"
+                    retry_with_backoff 4 publish_to_dbfs "${models_archive}" "${dbfs_models_uri}" || {
+                      echo "failed uploading models archive to dbfs after retries"
+                      exit 1
+                    }
+                  fi
+                elif [[ -n "${models_archive}" ]]; then
+                  dbfs_models_uri="${DBT_NOVA_PUBLISH_DBFS_PREFIX}/${models_archive}"
                 fi
                 ;;
               *)
@@ -879,6 +913,7 @@ jobs:
           {
             echo "### Remote Publish"
             echo ""
+            echo "- dry_run: \`${publish_dry_run}\`"
             echo "- targets: \`${published_targets_success}\`"
             echo "- storage_uris: \`${published_storage_uris}\`"
             echo "- metadata_uris: \`${published_metadata_uris}\`"
