@@ -458,7 +458,7 @@ impl ManifestSearch {
             let current_dir = versions_root.join(current);
             let current_sig_path = current_dir.join(MANIFEST_SIGNATURE_FILENAME);
             if let Some(existing) = read_manifest_signature(&current_sig_path)?
-                && existing == signature
+                && manifest_signature_matches_for_reuse(&existing, &signature)
             {
                 storage_dir = current_dir;
                 signature_path = current_sig_path;
@@ -471,7 +471,7 @@ impl ManifestSearch {
                 }
             }
         } else if let Some(existing) = read_manifest_signature(&signature_path)?
-            && existing == signature
+            && manifest_signature_matches_for_reuse(&existing, &signature)
         {
             if let Ok(store) = EntityStore::open(&storage_dir) {
                 entities = Some(store);
@@ -1063,6 +1063,15 @@ fn write_manifest_signature(path: &Path, sig: &ManifestSignature) -> Result<()> 
     Ok(())
 }
 
+fn manifest_signature_matches_for_reuse(
+    existing: &ManifestSignature,
+    expected: &ManifestSignature,
+) -> bool {
+    !existing.content_hash.is_empty()
+        && !expected.content_hash.is_empty()
+        && existing.content_hash == expected.content_hash
+}
+
 fn read_current_version(path: &Path) -> Result<Option<String>> {
     let current_path = path.join(MANIFEST_CURRENT_FILENAME);
     if !current_path.exists() {
@@ -1332,5 +1341,60 @@ mod tests {
             !aliases.contains_key("model.pkg.metric__invalid"),
             "invalid payload_json should be skipped"
         );
+    }
+
+    #[test]
+    fn manifest_signature_reuse_match_uses_content_hash() {
+        let expected = ManifestSignature {
+            path: "/tmp/new/path/manifest.json".to_string(),
+            len: 12_345,
+            modified_ms: 9_999,
+            content_hash: "same-hash".to_string(),
+            source_uri: "file:///new/path".to_string(),
+        };
+        let existing = ManifestSignature {
+            path: "/tmp/old/path/manifest.json".to_string(),
+            len: 1,
+            modified_ms: 1,
+            content_hash: "same-hash".to_string(),
+            source_uri: "file:///old/path".to_string(),
+        };
+        assert!(
+            manifest_signature_matches_for_reuse(&existing, &expected),
+            "content hash should be sufficient for reusable index matching"
+        );
+    }
+
+    #[test]
+    fn manifest_signature_reuse_match_rejects_mismatch_or_missing_hash() {
+        let expected = ManifestSignature {
+            path: "/tmp/new/path/manifest.json".to_string(),
+            len: 12_345,
+            modified_ms: 9_999,
+            content_hash: "expected-hash".to_string(),
+            source_uri: "file:///new/path".to_string(),
+        };
+        let different_hash = ManifestSignature {
+            path: "/tmp/old/path/manifest.json".to_string(),
+            len: 12_345,
+            modified_ms: 1,
+            content_hash: "different-hash".to_string(),
+            source_uri: "file:///old/path".to_string(),
+        };
+        let missing_hash = ManifestSignature {
+            path: "/tmp/old/path/manifest.json".to_string(),
+            len: 12_345,
+            modified_ms: 1,
+            content_hash: String::new(),
+            source_uri: "file:///old/path".to_string(),
+        };
+        assert!(!manifest_signature_matches_for_reuse(
+            &different_hash,
+            &expected
+        ));
+        assert!(!manifest_signature_matches_for_reuse(
+            &missing_hash,
+            &expected
+        ));
     }
 }
