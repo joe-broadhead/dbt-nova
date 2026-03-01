@@ -239,17 +239,52 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq
 
-      - name: Install dbt-nova
+      - name: Resolve installer source
+        id: installer_source
+        shell: bash
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          ACTION_REPOSITORY: ${{ github.action_repository }}
+          ACTION_REF: ${{ github.action_ref }}
+          CURRENT_REPOSITORY: ${{ github.repository }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          repo=""
+          ref=""
+          if [[ -n "${WORKFLOW_REF}" && "${WORKFLOW_REF}" == *"/.github/workflows/"* && "${WORKFLOW_REF}" == *"@"* ]]; then
+            repo="${WORKFLOW_REF%%/.github/workflows/*}"
+            ref="${WORKFLOW_REF##*@}"
+          fi
+          if [[ -z "${repo}" ]]; then
+            repo="${ACTION_REPOSITORY:-${CURRENT_REPOSITORY}}"
+          fi
+          if [[ -z "${ref}" ]]; then
+            ref="${ACTION_REF:-${CURRENT_SHA}}"
+          fi
+
+          case "${ref}" in
+            refs/heads/*) ref="${ref#refs/heads/}" ;;
+            refs/tags/*) ref="${ref#refs/tags/}" ;;
+          esac
+
+          echo "repo=${repo}" >> "$GITHUB_OUTPUT"
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout installer source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ${{ steps.installer_source.outputs.repo }}
+          ref: ${{ steps.installer_source.outputs.ref }}
+          path: .nova-installer-source
+          fetch-depth: 1
+
+      - name: Install dbt-nova from pinned workflow source
         shell: bash
         run: |
           set -euo pipefail
-          repo="${GITHUB_ACTION_REPOSITORY:-joe-broadhead/dbt-nova}"
-          ref="${GITHUB_ACTION_REF:-master}"
-          install_url="https://raw.githubusercontent.com/${repo}/${ref}/scripts/install.sh"
-          if ! curl -fsSL "${install_url}" | bash; then
-            echo "Falling back to install script from joe-broadhead/dbt-nova@master"
-            curl -fsSL "https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh" | bash
-          fi
+          bash .nova-installer-source/scripts/install.sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Optionally generate manifest via dbt
@@ -257,7 +292,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          eval "${{ inputs.dbt_command }}"
+          bash -lc "${{ inputs.dbt_command }}"
 
       - name: Run manifest load + smoke validations
         id: collect
@@ -324,7 +359,7 @@ jobs:
           tar -C "$(dirname "${DBT_NOVA_STORAGE_DIR}")" -czf "${storage_archive}" "$(basename "${DBT_NOVA_STORAGE_DIR}")"
 
       - name: Upload storage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
         with:
           name: ${{ steps.collect.outputs.artifact_name_storage }}
           path: ${{ steps.collect.outputs.artifact_name_storage }}.tar.gz
@@ -341,7 +376,7 @@ jobs:
 
       - name: Upload models artifact
         if: ${{ inputs.include_models_cache }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
         with:
           name: ${{ steps.collect.outputs.artifact_name_models }}
           path: ${{ steps.collect.outputs.artifact_name_models }}.tar.gz
