@@ -205,7 +205,12 @@ jobs:
           # Force strict read-only semantics: any attempted rebuild write should fail.
           chmod -R a-w "${storage_dir}"
           cp tests/fixtures/nova_manifest.json "${consumer_workspace}/manifest.json"
-          storage_snapshot_before="$(tar -C "${storage_dir}" -cf - . | sha256sum | awk '{print $1}')"
+          storage_snapshot_before="$(
+            (
+              cd "${storage_dir}"
+              find . -type f -print0 | sort -z | xargs -0 sha256sum
+            ) | sha256sum | awk '{print $1}'
+          )"
 
           echo "workspace_dir=${consumer_workspace}" >> "$GITHUB_OUTPUT"
           echo "storage_dir=${storage_dir}" >> "$GITHUB_OUTPUT"
@@ -262,7 +267,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          storage_snapshot_after="$(tar -C "${{ steps.workspace.outputs.storage_dir }}" -cf - . | sha256sum | awk '{print $1}')"
+          storage_snapshot_after="$(
+            (
+              cd "${{ steps.workspace.outputs.storage_dir }}"
+              find . -type f -print0 | sort -z | xargs -0 sha256sum
+            ) | sha256sum | awk '{print $1}'
+          )"
           test "${storage_snapshot_after}" = "${{ steps.workspace.outputs.storage_snapshot_before }}" || {
             echo "storage content changed during read-only consumer execution"
             exit 1
