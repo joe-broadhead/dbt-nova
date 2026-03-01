@@ -58,6 +58,9 @@ on:
       artifact_name_models:
         description: "Planned models artifact name (empty when include_models_cache=false)"
         value: ${{ jobs.build.outputs.artifact_name_models }}
+      artifact_name_metadata:
+        description: "Build metadata artifact name"
+        value: ${{ jobs.build.outputs.artifact_name_metadata }}
   workflow_dispatch:
     inputs:
       manifest_path:
@@ -221,6 +224,7 @@ jobs:
       entity_count: ${{ steps.collect.outputs.entity_count }}
       artifact_name_storage: ${{ steps.collect.outputs.artifact_name_storage }}
       artifact_name_models: ${{ steps.collect.outputs.artifact_name_models }}
+      artifact_name_metadata: ${{ steps.collect.outputs.artifact_name_metadata }}
     env:
       DBT_NOVA_STORAGE_DIR: ${{ needs.prepare.outputs.storage_dir }}
       DBT_NOVA_EMBEDDINGS_CACHE_DIR: ${{ needs.prepare.outputs.models_dir }}
@@ -354,12 +358,70 @@ jobs:
           if [[ "${INPUT_INCLUDE_MODELS_CACHE}" == "true" ]]; then
             artifact_name_models="${INPUT_ARTIFACT_NAME_MODELS}-${hash_short}"
           fi
+          artifact_name_metadata="${artifact_name_storage}-metadata"
+
+          if ! [[ "${entity_count}" =~ ^[0-9]+$ ]]; then
+            echo "entity_count is not an integer: ${entity_count}"
+            exit 1
+          fi
+
+          dbt_nova_version="$(dbt-nova --version | awk '{print $2}')"
+          if [[ -z "${dbt_nova_version}" ]]; then
+            echo "failed to resolve dbt-nova version for metadata contract"
+            exit 1
+          fi
+          build_timestamp="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+          metadata_path="out/nova-build-metadata.json"
+          jq -n \
+            --arg contract_version "v1" \
+            --arg manifest_hash "${manifest_hash}" \
+            --arg manifest_version "${manifest_version}" \
+            --arg storage_instance_id "${DBT_NOVA_STORAGE_INSTANCE_ID}" \
+            --arg dbt_nova_version "${dbt_nova_version}" \
+            --arg build_timestamp "${build_timestamp}" \
+            --arg artifact_name_storage "${artifact_name_storage}" \
+            --arg artifact_name_models "${artifact_name_models}" \
+            --argjson entity_count "${entity_count}" \
+            '{
+              contract_version: $contract_version,
+              manifest_hash: $manifest_hash,
+              manifest_version: $manifest_version,
+              entity_count: $entity_count,
+              storage_instance_id: $storage_instance_id,
+              dbt_nova_version: $dbt_nova_version,
+              build_timestamp: $build_timestamp,
+              artifact_name_storage: $artifact_name_storage,
+              artifact_name_models: $artifact_name_models
+            }' > "${metadata_path}"
+
+          jq -e '
+            .contract_version == "v1" and
+            (.manifest_hash | type == "string" and length > 0) and
+            (.manifest_version | type == "string" and length > 0) and
+            (.entity_count | type == "number" and . >= 0) and
+            (.storage_instance_id | type == "string" and length > 0) and
+            (.dbt_nova_version | type == "string" and length > 0) and
+            (.build_timestamp | fromdateiso8601 >= 0) and
+            (.artifact_name_storage | type == "string" and length > 0) and
+            (.artifact_name_models | type == "string")
+          ' "${metadata_path}" >/dev/null
 
           echo "manifest_hash=${manifest_hash}" >> "$GITHUB_OUTPUT"
           echo "manifest_version=${manifest_version}" >> "$GITHUB_OUTPUT"
           echo "entity_count=${entity_count}" >> "$GITHUB_OUTPUT"
           echo "artifact_name_storage=${artifact_name_storage}" >> "$GITHUB_OUTPUT"
           echo "artifact_name_models=${artifact_name_models}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name_metadata=${artifact_name_metadata}" >> "$GITHUB_OUTPUT"
+          echo "metadata_path=${metadata_path}" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Build Metadata Contract"
+            echo ""
+            echo "- metadata_path: \`${metadata_path}\`"
+            echo "- artifact_name_metadata: \`${artifact_name_metadata}\`"
+            echo "- contract_version: \`v1\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Package storage directory
         shell: bash
@@ -373,6 +435,14 @@ jobs:
         with:
           name: ${{ steps.collect.outputs.artifact_name_storage }}
           path: ${{ steps.collect.outputs.artifact_name_storage }}.tar.gz
+          retention-days: ${{ inputs.retention_days }}
+          if-no-files-found: error
+
+      - name: Upload build metadata artifact
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        with:
+          name: ${{ steps.collect.outputs.artifact_name_metadata }}
+          path: ${{ steps.collect.outputs.metadata_path }}
           retention-days: ${{ inputs.retention_days }}
           if-no-files-found: error
 
