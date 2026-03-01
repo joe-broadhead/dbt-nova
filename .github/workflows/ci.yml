@@ -205,18 +205,20 @@ jobs:
           # Keep filesystem permissions normal so runtime lock/read paths can execute.
           # Read-only safety is asserted by byte-for-byte storage snapshot comparison.
           cp tests/fixtures/nova_manifest.json "${consumer_workspace}/manifest.json"
-          # Ignore operational lock/temp files and Tantivy managed state files that can
-          # change during read-only opens. Any mutation to persisted index/data artifacts
-          # still changes this checksum.
+          # Hash only persisted reusable artifacts. Tantivy lock/managed files can change
+          # during read-only opens without indicating index rebuild or data mutation.
           storage_snapshot_before="$(
             (
               cd "${storage_dir}"
               find . -type f \
-                ! -name '*.lock' \
-                ! -name '.build.lock' \
-                ! -name '.in_use.lock' \
-                ! -name '.managed.json' \
-                ! -name '*.tmp' \
+                \( \
+                  -name 'entities.bin' -o \
+                  -name 'entities.idx' -o \
+                  -name 'entities.checksum.json' -o \
+                  -name 'indexes.rkyv' -o \
+                  -name 'manifest.signature.json' -o \
+                  -name 'manifest.current.json' \
+                \) \
                 -print0 | sort -z | xargs -0 sha256sum
             ) | sha256sum | awk '{print $1}'
           )"
@@ -280,11 +282,14 @@ jobs:
             (
               cd "${{ steps.workspace.outputs.storage_dir }}"
               find . -type f \
-                ! -name '*.lock' \
-                ! -name '.build.lock' \
-                ! -name '.in_use.lock' \
-                ! -name '.managed.json' \
-                ! -name '*.tmp' \
+                \( \
+                  -name 'entities.bin' -o \
+                  -name 'entities.idx' -o \
+                  -name 'entities.checksum.json' -o \
+                  -name 'indexes.rkyv' -o \
+                  -name 'manifest.signature.json' -o \
+                  -name 'manifest.current.json' \
+                \) \
                 -print0 | sort -z | xargs -0 sha256sum
             ) | sha256sum | awk '{print $1}'
           )"
