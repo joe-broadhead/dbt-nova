@@ -131,6 +131,7 @@ nav:
     - Nova Meta (Metrics): features/nova-meta-metrics.md
   - Operations:
     - Ops & Troubleshooting: operations/ops.md
+    - Prebuilt Asset Workflow: operations/prebuilt-assets.md
     - Performance: operations/performance.md
     - Limitations: operations/limitations.md
     - Troubleshooting: operations/troubleshooting.md
