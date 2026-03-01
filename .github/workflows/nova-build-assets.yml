@@ -42,6 +42,26 @@ on:
         required: false
         type: number
         default: 14
+      publish_targets:
+        description: "Comma-separated remote publish targets: s3,gcs,dbfs"
+        required: false
+        type: string
+        default: ""
+      publish_s3_prefix:
+        description: "S3 URI prefix for remote publish (e.g. s3://bucket/prefix)"
+        required: false
+        type: string
+        default: ""
+      publish_gcs_prefix:
+        description: "GCS URI prefix for remote publish (e.g. gs://bucket/prefix)"
+        required: false
+        type: string
+        default: ""
+      publish_dbfs_prefix:
+        description: "DBFS path prefix for remote publish (e.g. dbfs:/mnt/prefix)"
+        required: false
+        type: string
+        default: ""
     outputs:
       manifest_hash:
         description: "Manifest content hash (populated by producer build in follow-up step)"
@@ -61,6 +81,18 @@ on:
       artifact_name_metadata:
         description: "Build metadata artifact name"
         value: ${{ jobs.build.outputs.artifact_name_metadata }}
+      published_targets:
+        description: "Comma-separated publish targets that completed successfully"
+        value: ${{ jobs.build.outputs.published_targets }}
+      published_storage_uris:
+        description: "JSON object with published storage archive URIs by target"
+        value: ${{ jobs.build.outputs.published_storage_uris }}
+      published_metadata_uris:
+        description: "JSON object with published metadata URIs by target"
+        value: ${{ jobs.build.outputs.published_metadata_uris }}
+      published_models_uris:
+        description: "JSON object with published models archive URIs by target"
+        value: ${{ jobs.build.outputs.published_models_uris }}
   workflow_dispatch:
     inputs:
       manifest_path:
@@ -102,6 +134,26 @@ on:
         required: false
         type: number
         default: 14
+      publish_targets:
+        description: "Comma-separated remote publish targets: s3,gcs,dbfs"
+        required: false
+        type: string
+        default: ""
+      publish_s3_prefix:
+        description: "S3 URI prefix for remote publish (e.g. s3://bucket/prefix)"
+        required: false
+        type: string
+        default: ""
+      publish_gcs_prefix:
+        description: "GCS URI prefix for remote publish (e.g. gs://bucket/prefix)"
+        required: false
+        type: string
+        default: ""
+      publish_dbfs_prefix:
+        description: "DBFS path prefix for remote publish (e.g. dbfs:/mnt/prefix)"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -118,6 +170,10 @@ jobs:
       manifest_path: ${{ steps.resolve.outputs.manifest_path }}
       manifest_uri: ${{ steps.resolve.outputs.manifest_uri }}
       storage_instance_id: ${{ steps.resolve.outputs.storage_instance_id }}
+      publish_targets: ${{ steps.resolve.outputs.publish_targets }}
+      publish_s3_prefix: ${{ steps.resolve.outputs.publish_s3_prefix }}
+      publish_gcs_prefix: ${{ steps.resolve.outputs.publish_gcs_prefix }}
+      publish_dbfs_prefix: ${{ steps.resolve.outputs.publish_dbfs_prefix }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -134,6 +190,10 @@ jobs:
           INPUT_INCLUDE_MODELS_CACHE: ${{ inputs.include_models_cache }}
           INPUT_ARTIFACT_NAME_PREFIX: ${{ inputs.artifact_name_prefix }}
           INPUT_RETENTION_DAYS: ${{ inputs.retention_days }}
+          INPUT_PUBLISH_TARGETS: ${{ inputs.publish_targets }}
+          INPUT_PUBLISH_S3_PREFIX: ${{ inputs.publish_s3_prefix }}
+          INPUT_PUBLISH_GCS_PREFIX: ${{ inputs.publish_gcs_prefix }}
+          INPUT_PUBLISH_DBFS_PREFIX: ${{ inputs.publish_dbfs_prefix }}
         run: |
           set -euo pipefail
 
@@ -145,6 +205,10 @@ jobs:
           include_models_cache="${INPUT_INCLUDE_MODELS_CACHE}"
           artifact_name_prefix="${INPUT_ARTIFACT_NAME_PREFIX}"
           retention_days="${INPUT_RETENTION_DAYS}"
+          publish_targets_raw="${INPUT_PUBLISH_TARGETS}"
+          publish_s3_prefix="${INPUT_PUBLISH_S3_PREFIX}"
+          publish_gcs_prefix="${INPUT_PUBLISH_GCS_PREFIX}"
+          publish_dbfs_prefix="${INPUT_PUBLISH_DBFS_PREFIX}"
 
           if [[ -z "${storage_instance_id}" ]]; then
             echo "storage_instance_id is required."
@@ -182,6 +246,48 @@ jobs:
             exit 1
           fi
 
+          if [[ -n "${publish_targets_raw}" ]]; then
+            publish_targets_normalized="$(echo "${publish_targets_raw}" | tr '[:upper:]' '[:lower:]' | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d' | sort -u | paste -sd, -)"
+          else
+            publish_targets_normalized=""
+          fi
+
+          if [[ -n "${publish_targets_normalized}" ]]; then
+            IFS=',' read -r -a publish_targets_array <<< "${publish_targets_normalized}"
+            for target in "${publish_targets_array[@]}"; do
+              case "${target}" in
+                s3|gcs|dbfs) ;;
+                *)
+                  echo "publish_targets supports only: s3,gcs,dbfs"
+                  exit 1
+                  ;;
+              esac
+            done
+          fi
+
+          if [[ ",${publish_targets_normalized}," == *,s3,* ]]; then
+            if [[ -z "${publish_s3_prefix}" || "${publish_s3_prefix}" != s3://* ]]; then
+              echo "publish_s3_prefix is required for s3 target and must start with s3://"
+              exit 1
+            fi
+          fi
+          if [[ ",${publish_targets_normalized}," == *,gcs,* ]]; then
+            if [[ -z "${publish_gcs_prefix}" || "${publish_gcs_prefix}" != gs://* ]]; then
+              echo "publish_gcs_prefix is required for gcs target and must start with gs://"
+              exit 1
+            fi
+          fi
+          if [[ ",${publish_targets_normalized}," == *,dbfs,* ]]; then
+            if [[ -z "${publish_dbfs_prefix}" || "${publish_dbfs_prefix}" != dbfs:/* ]]; then
+              echo "publish_dbfs_prefix is required for dbfs target and must start with dbfs:/"
+              exit 1
+            fi
+          fi
+
+          publish_s3_prefix="${publish_s3_prefix%/}"
+          publish_gcs_prefix="${publish_gcs_prefix%/}"
+          publish_dbfs_prefix="${publish_dbfs_prefix%/}"
+
           storage_dir="${GITHUB_WORKSPACE}/out/dbt-nova-storage"
           models_dir="${GITHUB_WORKSPACE}/out/dbt-nova-models"
           mkdir -p "${storage_dir}" "${models_dir}"
@@ -200,6 +306,10 @@ jobs:
           echo "manifest_path=${manifest_path}" >> "$GITHUB_OUTPUT"
           echo "manifest_uri=${manifest_uri}" >> "$GITHUB_OUTPUT"
           echo "storage_instance_id=${storage_instance_id}" >> "$GITHUB_OUTPUT"
+          echo "publish_targets=${publish_targets_normalized}" >> "$GITHUB_OUTPUT"
+          echo "publish_s3_prefix=${publish_s3_prefix}" >> "$GITHUB_OUTPUT"
+          echo "publish_gcs_prefix=${publish_gcs_prefix}" >> "$GITHUB_OUTPUT"
+          echo "publish_dbfs_prefix=${publish_dbfs_prefix}" >> "$GITHUB_OUTPUT"
 
       - name: Summarize contract
         shell: bash
@@ -212,6 +322,7 @@ jobs:
             echo "- artifact_name_storage: \`${{ steps.resolve.outputs.artifact_name_storage }}\`"
             echo "- artifact_name_models: \`${{ steps.resolve.outputs.artifact_name_models }}\`"
             echo "- storage_instance_id: \`${{ steps.resolve.outputs.storage_instance_id }}\`"
+            echo "- publish_targets: \`${{ steps.resolve.outputs.publish_targets }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   build:
@@ -225,10 +336,18 @@ jobs:
       artifact_name_storage: ${{ steps.collect.outputs.artifact_name_storage }}
       artifact_name_models: ${{ steps.collect.outputs.artifact_name_models }}
       artifact_name_metadata: ${{ steps.collect.outputs.artifact_name_metadata }}
+      published_targets: ${{ steps.publish.outputs.published_targets }}
+      published_storage_uris: ${{ steps.publish.outputs.published_storage_uris }}
+      published_metadata_uris: ${{ steps.publish.outputs.published_metadata_uris }}
+      published_models_uris: ${{ steps.publish.outputs.published_models_uris }}
     env:
       DBT_NOVA_STORAGE_DIR: ${{ needs.prepare.outputs.storage_dir }}
       DBT_NOVA_EMBEDDINGS_CACHE_DIR: ${{ needs.prepare.outputs.models_dir }}
       DBT_NOVA_STORAGE_INSTANCE_ID: ${{ needs.prepare.outputs.storage_instance_id }}
+      DBT_NOVA_PUBLISH_TARGETS: ${{ needs.prepare.outputs.publish_targets }}
+      DBT_NOVA_PUBLISH_S3_PREFIX: ${{ needs.prepare.outputs.publish_s3_prefix }}
+      DBT_NOVA_PUBLISH_GCS_PREFIX: ${{ needs.prepare.outputs.publish_gcs_prefix }}
+      DBT_NOVA_PUBLISH_DBFS_PREFIX: ${{ needs.prepare.outputs.publish_dbfs_prefix }}
     steps:
       - name: Checkout caller repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -462,3 +581,306 @@ jobs:
           path: ${{ steps.collect.outputs.artifact_name_models }}.tar.gz
           retention-days: ${{ inputs.retention_days }}
           if-no-files-found: error
+
+      - name: Optional remote publish (S3/GCS/DBFS)
+        id: publish
+        shell: bash
+        env:
+          INPUT_INCLUDE_MODELS_CACHE: ${{ inputs.include_models_cache }}
+        run: |
+          set -euo pipefail
+
+          publish_targets="${DBT_NOVA_PUBLISH_TARGETS:-}"
+          storage_archive="${{ steps.collect.outputs.artifact_name_storage }}.tar.gz"
+          metadata_source="${{ steps.collect.outputs.metadata_path }}"
+          metadata_filename="${{ steps.collect.outputs.artifact_name_metadata }}.json"
+          metadata_publish_path="out/${metadata_filename}"
+          cp "${metadata_source}" "${metadata_publish_path}"
+
+          models_archive=""
+          if [[ "${INPUT_INCLUDE_MODELS_CACHE}" == "true" ]]; then
+            models_archive="${{ steps.collect.outputs.artifact_name_models }}.tar.gz"
+          fi
+
+          # Defaults for workflow outputs when publish is disabled.
+          if [[ -z "${publish_targets}" ]]; then
+            {
+              echo "published_targets="
+              echo 'published_storage_uris={}'
+              echo 'published_metadata_uris={}'
+              echo 'published_models_uris={}'
+            } >> "$GITHUB_OUTPUT"
+            {
+              echo "### Remote Publish"
+              echo ""
+              echo "Remote publish disabled (publish_targets is empty)."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          retry_with_backoff() {
+            local max_attempts="$1"
+            shift
+            local attempt=1
+            local delay_secs=2
+            while true; do
+              if "$@"; then
+                return 0
+              fi
+              if (( attempt >= max_attempts )); then
+                return 1
+              fi
+              sleep "${delay_secs}"
+              delay_secs=$((delay_secs * 2))
+              attempt=$((attempt + 1))
+            done
+          }
+
+          publish_to_s3() {
+            local local_path="$1"
+            local remote_uri="$2"
+            aws s3 cp --only-show-errors "${local_path}" "${remote_uri}"
+          }
+
+          publish_to_gcs() {
+            local local_path="$1"
+            local remote_uri="$2"
+            local bucket object object_encoded
+
+            if [[ "${remote_uri}" != gs://* ]]; then
+              echo "invalid GCS URI: ${remote_uri}"
+              return 1
+            fi
+            bucket="${remote_uri#gs://}"
+            bucket="${bucket%%/*}"
+            object="${remote_uri#gs://${bucket}/}"
+            if [[ -z "${bucket}" || -z "${object}" || "${object}" == "${remote_uri}" ]]; then
+              echo "invalid GCS URI: ${remote_uri}"
+              return 1
+            fi
+
+            object_encoded="$(python -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "${object}")"
+
+            curl -fsS \
+              -X POST \
+              -H "Authorization: Bearer ${GCS_ACCESS_TOKEN}" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary "@${local_path}" \
+              "https://storage.googleapis.com/upload/storage/v1/b/${bucket}/o?uploadType=media&name=${object_encoded}" \
+              >/dev/null
+          }
+
+          publish_to_dbfs() {
+            local local_path="$1"
+            local remote_path="$2"
+            python - "${local_path}" "${remote_path}" <<'PY'
+            import base64
+            import json
+            import os
+            import sys
+            import urllib.request
+
+            local_path = sys.argv[1]
+            remote_uri = sys.argv[2]
+            host = os.environ["DATABRICKS_HOST"].rstrip("/")
+            token = os.environ["DATABRICKS_ACCESS_TOKEN"]
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            }
+
+            if remote_uri.startswith("dbfs:/"):
+                remote_path = "/" + remote_uri[len("dbfs:/"):].lstrip("/")
+            elif remote_uri.startswith("/"):
+                remote_path = remote_uri
+            else:
+                raise ValueError(f"Invalid DBFS path: {remote_uri}")
+
+            def call_dbfs(endpoint: str, payload: dict) -> dict:
+                request = urllib.request.Request(
+                    f"{host}/api/2.0/dbfs/{endpoint}",
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers=headers,
+                )
+                with urllib.request.urlopen(request, timeout=120) as response:
+                    body = response.read()
+                if not body:
+                    return {}
+                return json.loads(body.decode("utf-8"))
+
+            handle = call_dbfs("create", {"path": remote_path, "overwrite": True})["handle"]
+            chunk_size = 1024 * 768
+            with open(local_path, "rb") as file_handle:
+                while True:
+                    chunk = file_handle.read(chunk_size)
+                    if not chunk:
+                        break
+                    call_dbfs(
+                        "add-block",
+                        {
+                            "handle": handle,
+                            "data": base64.b64encode(chunk).decode("utf-8"),
+                        },
+                    )
+            call_dbfs("close", {"handle": handle})
+            PY
+          }
+
+          resolve_gcs_access_token() {
+            local token=""
+            for var_name in \
+              DBT_NOVA_GCP_ACCESS_TOKEN \
+              DBT_NOVA_BIGQUERY_ACCESS_TOKEN \
+              GCP_ACCESS_TOKEN \
+              GOOGLE_OAUTH_ACCESS_TOKEN
+            do
+              token="${!var_name:-}"
+              if [[ -n "${token}" ]]; then
+                printf '%s' "${token}"
+                return 0
+              fi
+            done
+
+            if command -v gcloud >/dev/null 2>&1; then
+              token="$(gcloud auth application-default print-access-token 2>/dev/null || true)"
+              if [[ -n "${token}" ]]; then
+                printf '%s' "${token}"
+                return 0
+              fi
+            fi
+            return 1
+          }
+
+          s3_storage_uri=""
+          s3_metadata_uri=""
+          s3_models_uri=""
+          gcs_storage_uri=""
+          gcs_metadata_uri=""
+          gcs_models_uri=""
+          dbfs_storage_uri=""
+          dbfs_metadata_uri=""
+          dbfs_models_uri=""
+          published_targets_success=""
+
+          IFS=',' read -r -a publish_targets_array <<< "${publish_targets}"
+          for target in "${publish_targets_array[@]}"; do
+            case "${target}" in
+              s3)
+                if ! command -v aws >/dev/null 2>&1; then
+                  echo "publish target s3 requires aws CLI."
+                  exit 1
+                fi
+                s3_storage_uri="${DBT_NOVA_PUBLISH_S3_PREFIX}/${storage_archive}"
+                s3_metadata_uri="${DBT_NOVA_PUBLISH_S3_PREFIX}/${metadata_filename}"
+                retry_with_backoff 4 publish_to_s3 "${storage_archive}" "${s3_storage_uri}" || {
+                  echo "failed uploading storage archive to s3 after retries"
+                  exit 1
+                }
+                retry_with_backoff 4 publish_to_s3 "${metadata_publish_path}" "${s3_metadata_uri}" || {
+                  echo "failed uploading metadata contract to s3 after retries"
+                  exit 1
+                }
+                if [[ -n "${models_archive}" ]]; then
+                  s3_models_uri="${DBT_NOVA_PUBLISH_S3_PREFIX}/${models_archive}"
+                  retry_with_backoff 4 publish_to_s3 "${models_archive}" "${s3_models_uri}" || {
+                    echo "failed uploading models archive to s3 after retries"
+                    exit 1
+                  }
+                fi
+                ;;
+              gcs)
+                GCS_ACCESS_TOKEN="$(resolve_gcs_access_token)" || {
+                  echo "publish target gcs requires a Google access token (DBT_NOVA_GCP_ACCESS_TOKEN, DBT_NOVA_BIGQUERY_ACCESS_TOKEN, GCP_ACCESS_TOKEN, GOOGLE_OAUTH_ACCESS_TOKEN, or gcloud ADC)."
+                  exit 1
+                }
+                gcs_storage_uri="${DBT_NOVA_PUBLISH_GCS_PREFIX}/${storage_archive}"
+                gcs_metadata_uri="${DBT_NOVA_PUBLISH_GCS_PREFIX}/${metadata_filename}"
+                retry_with_backoff 4 publish_to_gcs "${storage_archive}" "${gcs_storage_uri}" || {
+                  echo "failed uploading storage archive to gcs after retries"
+                  exit 1
+                }
+                retry_with_backoff 4 publish_to_gcs "${metadata_publish_path}" "${gcs_metadata_uri}" || {
+                  echo "failed uploading metadata contract to gcs after retries"
+                  exit 1
+                }
+                if [[ -n "${models_archive}" ]]; then
+                  gcs_models_uri="${DBT_NOVA_PUBLISH_GCS_PREFIX}/${models_archive}"
+                  retry_with_backoff 4 publish_to_gcs "${models_archive}" "${gcs_models_uri}" || {
+                    echo "failed uploading models archive to gcs after retries"
+                    exit 1
+                  }
+                fi
+                ;;
+              dbfs)
+                if [[ -z "${DATABRICKS_HOST:-}" || -z "${DATABRICKS_ACCESS_TOKEN:-}" ]]; then
+                  echo "publish target dbfs requires DATABRICKS_HOST and DATABRICKS_ACCESS_TOKEN."
+                  exit 1
+                fi
+                dbfs_storage_uri="${DBT_NOVA_PUBLISH_DBFS_PREFIX}/${storage_archive}"
+                dbfs_metadata_uri="${DBT_NOVA_PUBLISH_DBFS_PREFIX}/${metadata_filename}"
+                retry_with_backoff 4 publish_to_dbfs "${storage_archive}" "${dbfs_storage_uri}" || {
+                  echo "failed uploading storage archive to dbfs after retries"
+                  exit 1
+                }
+                retry_with_backoff 4 publish_to_dbfs "${metadata_publish_path}" "${dbfs_metadata_uri}" || {
+                  echo "failed uploading metadata contract to dbfs after retries"
+                  exit 1
+                }
+                if [[ -n "${models_archive}" ]]; then
+                  dbfs_models_uri="${DBT_NOVA_PUBLISH_DBFS_PREFIX}/${models_archive}"
+                  retry_with_backoff 4 publish_to_dbfs "${models_archive}" "${dbfs_models_uri}" || {
+                    echo "failed uploading models archive to dbfs after retries"
+                    exit 1
+                  }
+                fi
+                ;;
+              *)
+                echo "unsupported publish target: ${target}"
+                exit 1
+                ;;
+            esac
+
+            if [[ -z "${published_targets_success}" ]]; then
+              published_targets_success="${target}"
+            else
+              published_targets_success="${published_targets_success},${target}"
+            fi
+          done
+
+          published_storage_uris="$(jq -cn \
+            --arg s3 "${s3_storage_uri}" \
+            --arg gcs "${gcs_storage_uri}" \
+            --arg dbfs "${dbfs_storage_uri}" \
+            'if $s3 != "" then . + {s3: $s3} else . end
+            | if $gcs != "" then . + {gcs: $gcs} else . end
+            | if $dbfs != "" then . + {dbfs: $dbfs} else . end')"
+          published_metadata_uris="$(jq -cn \
+            --arg s3 "${s3_metadata_uri}" \
+            --arg gcs "${gcs_metadata_uri}" \
+            --arg dbfs "${dbfs_metadata_uri}" \
+            'if $s3 != "" then . + {s3: $s3} else . end
+            | if $gcs != "" then . + {gcs: $gcs} else . end
+            | if $dbfs != "" then . + {dbfs: $dbfs} else . end')"
+          published_models_uris="$(jq -cn \
+            --arg s3 "${s3_models_uri}" \
+            --arg gcs "${gcs_models_uri}" \
+            --arg dbfs "${dbfs_models_uri}" \
+            'if $s3 != "" then . + {s3: $s3} else . end
+            | if $gcs != "" then . + {gcs: $gcs} else . end
+            | if $dbfs != "" then . + {dbfs: $dbfs} else . end')"
+
+          {
+            echo "published_targets=${published_targets_success}"
+            echo "published_storage_uris=${published_storage_uris}"
+            echo "published_metadata_uris=${published_metadata_uris}"
+            echo "published_models_uris=${published_models_uris}"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Remote Publish"
+            echo ""
+            echo "- targets: \`${published_targets_success}\`"
+            echo "- storage_uris: \`${published_storage_uris}\`"
+            echo "- metadata_uris: \`${published_metadata_uris}\`"
+            echo "- models_uris: \`${published_models_uris}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

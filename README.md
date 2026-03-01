@@ -196,6 +196,10 @@ export DBT_NOVA_STORAGE_INSTANCE_ID=analytics-prod
 export DBT_NOVA_STORAGE_READ_ONLY=true
 ```
 
+Optional: publish artifacts directly to cloud targets from the reusable
+workflow with `publish_targets` plus per-target prefixes
+(`publish_s3_prefix`, `publish_gcs_prefix`, `publish_dbfs_prefix`).
+
 Full guide:
 **[Prebuilt Asset Workflow](docs/operations/prebuilt-assets.md)**.
 

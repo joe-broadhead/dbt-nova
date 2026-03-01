@@ -15,7 +15,7 @@ reuse them across jobs/repos in read-only mode.
 - Optional models cache artifact is supported via `include_models_cache`.
 - Consumers are read-only (`DBT_NOVA_STORAGE_READ_ONLY=true`) and do **not**
   fall back to rebuilding.
-- Optional S3/GCS/DBFS publish targets are out of scope for this version.
+- Optional S3/GCS/DBFS publish targets are supported and disabled by default.
 
 ## Producer (build once)
 
@@ -36,6 +36,7 @@ jobs:
       artifact_name_prefix: analytics-prod
       retention_days: 14
       include_models_cache: false
+      publish_targets: ""
 ```
 
 Alternative producer inputs:
@@ -48,6 +49,40 @@ The producer emits:
 - storage artifact (required)
 - metadata contract artifact (`nova-build-metadata.json`, required)
 - models artifact (optional when `include_models_cache=true`)
+- optional remote publish outputs (`published_*_uris`) when `publish_targets`
+  is configured
+
+## Optional remote publish targets
+
+Use this when consumers should pull artifacts from cloud storage instead of
+GitHub Actions artifacts.
+
+Workflow inputs:
+
+- `publish_targets`: comma-separated list from `s3,gcs,dbfs`
+- `publish_s3_prefix`: e.g. `s3://my-bucket/nova-assets/prod`
+- `publish_gcs_prefix`: e.g. `gs://my-bucket/nova-assets/prod`
+- `publish_dbfs_prefix`: e.g. `dbfs:/mnt/nova-assets/prod`
+
+Auth per target:
+
+- `s3`: standard AWS env credentials used by `aws` CLI
+- `gcs`: one of `DBT_NOVA_GCP_ACCESS_TOKEN`, `DBT_NOVA_BIGQUERY_ACCESS_TOKEN`,
+  `GCP_ACCESS_TOKEN`, `GOOGLE_OAUTH_ACCESS_TOKEN` (or gcloud ADC token)
+- `dbfs`: `DATABRICKS_HOST` and `DATABRICKS_ACCESS_TOKEN`
+
+Published object naming is deterministic:
+
+- storage: `<prefix>/<artifact_name_storage>.tar.gz`
+- metadata: `<prefix>/<artifact_name_metadata>.json`
+- models (optional): `<prefix>/<artifact_name_models>.tar.gz`
+
+Producer outputs include:
+
+- `published_targets` (comma-separated successful targets)
+- `published_storage_uris` (JSON object by target)
+- `published_metadata_uris` (JSON object by target)
+- `published_models_uris` (JSON object by target)
 
 ## Consumer (reuse in read-only mode)
 
@@ -77,6 +112,29 @@ dbt-nova health check --manifest-path "$DBT_MANIFEST_PATH" --json
 If you publish/download the optional models artifact, also set:
 
 - `DBT_NOVA_EMBEDDINGS_CACHE_DIR` to the extracted models directory.
+
+### Consumer retrieval examples
+
+S3:
+
+```bash
+aws s3 cp s3://my-bucket/nova-assets/prod/<artifact_name_storage>.tar.gz .
+tar -xzf <artifact_name_storage>.tar.gz
+```
+
+GCS:
+
+```bash
+gcloud storage cp gs://my-bucket/nova-assets/prod/<artifact_name_storage>.tar.gz .
+tar -xzf <artifact_name_storage>.tar.gz
+```
+
+DBFS (Databricks CLI):
+
+```bash
+databricks fs cp dbfs:/mnt/nova-assets/prod/<artifact_name_storage>.tar.gz .
+tar -xzf <artifact_name_storage>.tar.gz
+```
 
 ## MCP client env example (read-only consumer)
 

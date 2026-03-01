@@ -162,6 +162,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq
 
+      - name: Validate default remote publish outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "${{ needs.reusable-assets-producer.outputs.published_targets }}"
+          test '${{ needs.reusable-assets-producer.outputs.published_storage_uris }}' = '{}'
+          test '${{ needs.reusable-assets-producer.outputs.published_metadata_uris }}' = '{}'
+          test '${{ needs.reusable-assets-producer.outputs.published_models_uris }}' = '{}'
+
       - name: Download storage artifact
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
