@@ -280,11 +280,21 @@ jobs:
           path: .nova-installer-source
           fetch-depth: 1
 
-      - name: Install dbt-nova from pinned workflow source
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+
+      - name: Rust cache (installer source)
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+        with:
+          workspaces: ".nova-installer-source -> .nova-installer-source/target"
+
+      - name: Build dbt-nova from pinned workflow source
         shell: bash
         run: |
           set -euo pipefail
-          bash .nova-installer-source/scripts/install.sh
+          cargo build --locked --release --manifest-path .nova-installer-source/Cargo.toml
+          mkdir -p "$HOME/.local/bin"
+          install -m 755 .nova-installer-source/target/release/dbt-nova "$HOME/.local/bin/dbt-nova"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Optionally generate manifest via dbt
