@@ -6,9 +6,11 @@ use std::time::{Duration, Instant};
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
 
-use crate::cli::args::{ManifestLoadArgs, ToolCallArgs};
+use crate::cli::args::{ManifestLoadArgs, ManifestReloadArgs, ToolCallArgs};
 use crate::cli::health_cmd::build_cli_health_payload;
-use crate::cli::manifest::{build_manifest_load_config, execute_manifest_load};
+use crate::cli::manifest::{
+    build_manifest_load_config, build_manifest_reload_config, execute_manifest_load,
+};
 use crate::cli::output::{CliEnvelope, error_envelope};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::search::ManifestSearch;
@@ -16,8 +18,8 @@ use crate::params::{
     BatchGetParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams, GetColumnLineageParams,
     GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams, GetLineageParams,
     GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
-    GetUndocumentedParams, ListEntitiesParams, RunRecipeParams, SearchParams, SearchRecipesParams,
-    ValidateDagParams,
+    GetUndocumentedParams, ListEntitiesParams, ReloadManifestParams, RunRecipeParams, SearchParams,
+    SearchRecipesParams, ValidateDagParams,
 };
 use crate::responses::SuccessResponse;
 
@@ -148,13 +150,7 @@ pub async fn run_call_command(args: &ToolCallArgs) -> DispatchResult {
     let tool_entry = resolve_tool_entry(&args.tool_name)
         .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
     if tool_entry.name == "reload_manifest" {
-        return Err(render_or_propagate_error(
-            args,
-            DbtNovaError::InvalidParams(
-                "tool 'reload_manifest' is not available in CLI mode".to_string(),
-            ),
-            started.elapsed().as_millis(),
-        ));
+        return run_reload_manifest_tool_call(args, started).await;
     }
     let params = resolve_params_value(args)
         .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
@@ -186,6 +182,92 @@ pub async fn run_call_command(args: &ToolCallArgs) -> DispatchResult {
     }
 
     Ok(())
+}
+
+async fn run_reload_manifest_tool_call(args: &ToolCallArgs, started: Instant) -> DispatchResult {
+    let params = resolve_params_value(args)
+        .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
+    let reload_params: ReloadManifestParams = decode_tool_params("reload_manifest", params)
+        .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
+    let reload_args = build_reload_args_from_tool_call(args, &reload_params);
+    let config = build_manifest_reload_config(&reload_args)
+        .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
+    let load_result = execute_manifest_load(config)
+        .await
+        .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
+    let payload = serde_json::json!({
+        "status": "reloaded",
+        "manifest_path": load_result.search.config().manifest_path,
+        "manifest_uri": load_result.search.config().manifest_uri,
+        "manifest_refresh_secs": load_result.search.config().manifest_refresh_secs,
+        "storage_instance_id": load_result.search.config().storage_instance_id,
+        "manifest_hash": load_result.search.manifest_hash,
+        "manifest_version": load_result.search.manifest_version,
+        "entity_count": load_result.search.entity_count(),
+    });
+    let result = serde_json::to_value(SuccessResponse::new(payload, 1)).map_err(|error| {
+        render_or_propagate_error(
+            args,
+            DbtNovaError::ServerError(error.to_string()),
+            started.elapsed().as_millis(),
+        )
+    })?;
+
+    if args.json {
+        let envelope = CliEnvelope::success(
+            format!("tool call {}", args.tool_name),
+            result,
+            started.elapsed().as_millis(),
+        );
+        let out = serde_json::to_string_pretty(&envelope).map_err(|error| DispatchError {
+            error: DbtNovaError::ServerError(error.to_string()),
+            rendered: false,
+        })?;
+        println!("{out}");
+    } else {
+        print_human_result(&result).map_err(|error| DispatchError {
+            error,
+            rendered: false,
+        })?;
+    }
+
+    Ok(())
+}
+
+fn build_reload_args_from_tool_call(
+    args: &ToolCallArgs,
+    params: &ReloadManifestParams,
+) -> ManifestReloadArgs {
+    let mut manifest_path = args.manifest_path.clone();
+    let mut manifest_uri = args.manifest_uri.clone();
+
+    if let Some(uri) = normalize_param_string(params.manifest_uri.as_deref()) {
+        manifest_uri = Some(uri);
+    }
+    if let Some(path) = normalize_param_string(params.manifest_path.as_deref()) {
+        manifest_path = Some(path);
+        manifest_uri = None;
+    }
+
+    let storage_instance_id = normalize_param_string(params.storage_instance_id.as_deref())
+        .or_else(|| args.storage_instance_id.clone());
+
+    ManifestReloadArgs {
+        manifest_path,
+        manifest_uri,
+        refresh_secs: params.refresh_secs,
+        storage_instance_id,
+        cleanup_storage_on_start: args.cleanup_storage_on_start,
+        read_only: args.read_only,
+        json: false,
+    }
+}
+
+fn normalize_param_string(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|trimmed| !trimmed.is_empty())
+        .map(ToString::to_string)
 }
 
 fn print_human_result(result: &JsonValue) -> Result<()> {
@@ -514,11 +596,12 @@ mod tests {
     use tempfile::NamedTempFile;
 
     use super::{
-        dispatch_tool, resolve_params_value_with_stdin, run_call_command, run_search_with_timeout,
-        tool_registry_names,
+        build_reload_args_from_tool_call, dispatch_tool, resolve_params_value_with_stdin,
+        run_call_command, run_search_with_timeout, tool_registry_names,
     };
     use crate::cli::args::{ManifestLoadArgs, ToolCallArgs};
     use crate::cli::manifest::{build_manifest_load_config, execute_manifest_load};
+    use crate::params::ReloadManifestParams;
 
     fn fixture_manifest_path() -> String {
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -671,6 +754,52 @@ mod tests {
             err.to_string()
                 .contains("tool 'reload_manifest' is not available in CLI mode")
         );
+    }
+
+    #[test]
+    fn build_reload_args_from_tool_call_prefers_non_empty_params() {
+        let args = ToolCallArgs {
+            tool_name: "reload_manifest".to_string(),
+            manifest_path: Some("cli/manifest.json".to_string()),
+            manifest_uri: Some("dbfs:/from-cli".to_string()),
+            storage_instance_id: Some("from-cli".to_string()),
+            cleanup_storage_on_start: true,
+            read_only: true,
+            ..ToolCallArgs::default()
+        };
+        let params = ReloadManifestParams {
+            manifest_uri: Some("dbfs:/from-params".to_string()),
+            manifest_path: Some("  ".to_string()),
+            refresh_secs: Some(600),
+            storage_instance_id: Some("from-params".to_string()),
+        };
+        let merged = build_reload_args_from_tool_call(&args, &params);
+        assert_eq!(merged.manifest_uri.as_deref(), Some("dbfs:/from-params"));
+        assert_eq!(merged.manifest_path.as_deref(), Some("cli/manifest.json"));
+        assert_eq!(merged.storage_instance_id.as_deref(), Some("from-params"));
+        assert_eq!(merged.refresh_secs, Some(600));
+        assert!(merged.cleanup_storage_on_start);
+        assert!(merged.read_only);
+    }
+
+    #[test]
+    fn build_reload_args_from_tool_call_path_takes_precedence_over_uri() {
+        let args = ToolCallArgs {
+            tool_name: "reload_manifest".to_string(),
+            ..ToolCallArgs::default()
+        };
+        let params = ReloadManifestParams {
+            manifest_uri: Some("dbfs:/from-params".to_string()),
+            manifest_path: Some("/tmp/from-params.json".to_string()),
+            refresh_secs: None,
+            storage_instance_id: None,
+        };
+        let merged = build_reload_args_from_tool_call(&args, &params);
+        assert_eq!(
+            merged.manifest_path.as_deref(),
+            Some("/tmp/from-params.json")
+        );
+        assert_eq!(merged.manifest_uri, None);
     }
 
     #[tokio::test]

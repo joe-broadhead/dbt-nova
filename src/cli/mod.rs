@@ -40,10 +40,9 @@ pub async fn dispatch(command: args::Command) -> DispatchResult {
         },
         args::Command::Manifest(manifest_args) => match manifest_args.command {
             args::ManifestCommand::Load(load_args) => manifest::run_load_command(&load_args).await,
-            args::ManifestCommand::Reload => Err(DbtNovaError::InvalidParams(
-                "manifest reload CLI command is not implemented yet".to_string(),
-            )
-            .into()),
+            args::ManifestCommand::Reload(reload_args) => {
+                manifest::run_reload_command(&reload_args).await
+            }
         },
         args::Command::Tool(tool_args) => match tool_args.command {
             args::ToolCommand::Call(call_args) => tool::run_call_command(&call_args).await,
@@ -166,10 +165,8 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use crate::config::DbtNovaConfig;
-    use crate::error::DbtNovaError;
-
     use super::{cleanup_storage_dir, dispatch, prepare_storage, prune_storage_instances};
+    use crate::config::DbtNovaConfig;
 
     fn fixture_manifest_path() -> String {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -250,21 +247,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dispatch_non_server_commands_return_invalid_params() {
+    async fn dispatch_manifest_reload_succeeds_with_fixture_path() {
         let result = dispatch(super::args::Command::Manifest(super::args::ManifestArgs {
-            command: super::args::ManifestCommand::Reload,
+            command: super::args::ManifestCommand::Reload(super::args::ManifestReloadArgs {
+                manifest_path: Some(fixture_manifest_path()),
+                json: true,
+                ..super::args::ManifestReloadArgs::default()
+            }),
         }))
         .await;
 
-        match result {
-            Err(err) => {
-                let DbtNovaError::InvalidParams(message) = err.error else {
-                    panic!("expected invalid params error");
-                };
-                assert!(message.contains("not implemented"));
-            }
-            _ => panic!("expected invalid params error"),
-        }
+        assert!(result.is_ok());
     }
 
     #[tokio::test]

@@ -37,7 +37,7 @@ pub struct ManifestArgs {
 #[derive(Debug, Subcommand)]
 pub enum ManifestCommand {
     Load(ManifestLoadArgs),
-    Reload,
+    Reload(ManifestReloadArgs),
 }
 
 #[derive(Debug, Clone, Args, Default)]
@@ -46,6 +46,24 @@ pub struct ManifestLoadArgs {
     pub manifest_path: Option<String>,
     #[arg(long, value_name = "URI", conflicts_with = "manifest_path")]
     pub manifest_uri: Option<String>,
+    #[arg(long, value_name = "INSTANCE_ID")]
+    pub storage_instance_id: Option<String>,
+    #[arg(long, default_value_t = false)]
+    pub cleanup_storage_on_start: bool,
+    #[arg(long, default_value_t = false)]
+    pub read_only: bool,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct ManifestReloadArgs {
+    #[arg(long, value_name = "PATH", conflicts_with = "manifest_uri")]
+    pub manifest_path: Option<String>,
+    #[arg(long, value_name = "URI", conflicts_with = "manifest_path")]
+    pub manifest_uri: Option<String>,
+    #[arg(long, value_name = "SECS")]
+    pub refresh_secs: Option<u64>,
     #[arg(long, value_name = "INSTANCE_ID")]
     pub storage_instance_id: Option<String>,
     #[arg(long, default_value_t = false)]
@@ -244,6 +262,46 @@ mod tests {
             Command::Manifest(manifest) => {
                 assert!(matches!(manifest.command, ManifestCommand::Load(_)));
             }
+            _ => panic!("expected manifest command"),
+        }
+    }
+
+    #[test]
+    fn manifest_reload_rejects_conflicting_source_flags() {
+        let parsed = Cli::try_parse_from([
+            "dbt-nova",
+            "manifest",
+            "reload",
+            "--manifest-path",
+            "target/manifest.json",
+            "--manifest-uri",
+            "https://example.com/manifest.json",
+        ]);
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn manifest_reload_parses_flags() {
+        let cli = Cli::parse_from([
+            "dbt-nova",
+            "manifest",
+            "reload",
+            "--manifest-path",
+            "target/manifest.json",
+            "--refresh-secs",
+            "120",
+            "--json",
+        ]);
+        let command = cli.command.expect("command");
+        match command {
+            Command::Manifest(manifest) => match manifest.command {
+                ManifestCommand::Reload(args) => {
+                    assert_eq!(args.manifest_path.as_deref(), Some("target/manifest.json"));
+                    assert_eq!(args.refresh_secs, Some(120));
+                    assert!(args.json);
+                }
+                ManifestCommand::Load(_) => panic!("expected manifest reload command"),
+            },
             _ => panic!("expected manifest command"),
         }
     }

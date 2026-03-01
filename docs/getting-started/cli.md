@@ -11,7 +11,7 @@ Use `dbt-nova` in two modes:
 dbt-nova
 ├── server start
 ├── manifest load [--manifest-path|--manifest-uri] [--storage-instance-id] [--cleanup-storage-on-start] [--read-only] [--json]
-├── manifest reload
+├── manifest reload [--manifest-path|--manifest-uri] [--refresh-secs] [--storage-instance-id] [--cleanup-storage-on-start] [--read-only] [--json]
 ├── tool call <tool_name> [--params-json|--params-file|--params-stdin] [--manifest-path|--manifest-uri] [--storage-instance-id] [--cleanup-storage-on-start] [--read-only] [--json]
 ├── config show [--defaults] [--json]
 ├── config validate [--json]
@@ -42,6 +42,15 @@ dbt-nova server start
 ```bash
 dbt-nova manifest load \
   --manifest-path /path/to/target/manifest.json
+```
+
+### Rebuild manifest indexes with override settings
+
+```bash
+dbt-nova manifest reload \
+  --manifest-path /path/to/target/manifest.json \
+  --refresh-secs 300 \
+  --json
 ```
 
 ### One-shot tool execution
@@ -81,19 +90,23 @@ echo '{"query":"customers","limit":10}' | \
   dbt-nova tool call search --params-stdin --manifest-path /path/to/target/manifest.json
 ```
 
-## CLI-Mode Limitation: `reload_manifest`
+## `reload_manifest` via `tool call`
 
-`reload_manifest` is server-only today. In CLI mode:
+`reload_manifest` is available in CLI mode through `tool call`:
 
 ```bash
-dbt-nova tool call reload_manifest --params-json '{}'
+dbt-nova tool call reload_manifest \
+  --manifest-path /path/to/target/manifest.json \
+  --params-json '{"refresh_secs":300}' \
+  --json
 ```
 
-returns `INVALID_PARAMS` with:
+`tool call reload_manifest` runs as a one-shot reload and returns a
+`SuccessResponse` payload with updated manifest settings and loaded manifest
+metadata (`manifest_hash`, `manifest_version`, `entity_count`).
 
-`tool 'reload_manifest' is not available in CLI mode`
-
-Use `reload_manifest` through an MCP client connected to a running `dbt-nova` server.
+If both `manifest_uri` and `manifest_path` are provided in params, `manifest_path`
+takes precedence.
 
 ## JSON Envelope and Exit Codes
 

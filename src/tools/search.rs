@@ -636,15 +636,16 @@ impl ManifestSearch {
     #[instrument(skip(self, params), fields(tool = "list_entities", resource_type = %params.resource_type, limit = params.pagination.limit, offset = params.pagination.offset))]
     #[allow(clippy::too_many_lines)]
     pub async fn list_entities(&self, params: &ListEntitiesParams) -> Result<JsonValue> {
-        let candidates = match self.by_resource_type.get(&params.resource_type) {
-            Some(ids) => ids.as_slice(),
-            None => {
-                return Ok(serde_json::to_value(SuccessResponse::new(
-                    Vec::<JsonValue>::new(),
-                    0,
-                ))?);
-            }
-        };
+        let resource_type_key = self.normalize_resource_type_key(&params.resource_type)?;
+        let candidates = self
+            .by_resource_type
+            .get(&resource_type_key)
+            .map(Vec::as_slice)
+            .ok_or_else(|| {
+                DbtNovaError::ServerError(format!(
+                    "resource_type '{resource_type_key}' resolved but was not indexed"
+                ))
+            })?;
 
         let mut allowed: Option<HashSet<String>> = None;
 

@@ -305,6 +305,35 @@ impl ManifestSearch {
         }
     }
 
+    /// Normalize and validate a resource type key against loaded manifest types.
+    ///
+    /// # Errors
+    /// Returns `INVALID_PARAMS` when `resource_type` is empty or not present in
+    /// the loaded manifest.
+    pub(crate) fn normalize_resource_type_key(&self, resource_type: &str) -> Result<String> {
+        let requested = resource_type.trim();
+        if requested.is_empty() {
+            return Err(DbtNovaError::InvalidParams(
+                "resource_type cannot be empty".to_string(),
+            ));
+        }
+
+        if let Some(canonical) = self
+            .by_resource_type
+            .keys()
+            .find(|key| key.eq_ignore_ascii_case(requested))
+        {
+            return Ok(canonical.clone());
+        }
+
+        let mut available: Vec<String> = self.by_resource_type.keys().cloned().collect();
+        available.sort();
+        Err(DbtNovaError::InvalidParams(format!(
+            "resource_type '{requested}' is invalid; allowed values: {}",
+            available.join(", ")
+        )))
+    }
+
     /// Get entity column names in a deterministic order.
     #[must_use]
     pub fn get_entity_columns(&self, entity: &Entity) -> Vec<String> {
