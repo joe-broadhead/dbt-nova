@@ -745,7 +745,7 @@ jobs:
                         },
                     )
             call_dbfs("close", {"handle": handle})
-            PY
+          PY
           }
 
           resolve_gcs_access_token() {
