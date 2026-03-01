@@ -45,19 +45,19 @@ on:
     outputs:
       manifest_hash:
         description: "Manifest content hash (populated by producer build in follow-up step)"
-        value: ${{ jobs.prepare.outputs.manifest_hash }}
+        value: ${{ jobs.build.outputs.manifest_hash }}
       manifest_version:
         description: "Manifest version directory (populated by producer build in follow-up step)"
-        value: ${{ jobs.prepare.outputs.manifest_version }}
+        value: ${{ jobs.build.outputs.manifest_version }}
       entity_count:
         description: "Entity count loaded from manifest (populated by producer build in follow-up step)"
-        value: ${{ jobs.prepare.outputs.entity_count }}
+        value: ${{ jobs.build.outputs.entity_count }}
       artifact_name_storage:
         description: "Planned storage artifact name"
-        value: ${{ jobs.prepare.outputs.artifact_name_storage }}
+        value: ${{ jobs.build.outputs.artifact_name_storage }}
       artifact_name_models:
         description: "Planned models artifact name (empty when include_models_cache=false)"
-        value: ${{ jobs.prepare.outputs.artifact_name_models }}
+        value: ${{ jobs.build.outputs.artifact_name_models }}
   workflow_dispatch:
     inputs:
       manifest_path:
@@ -108,9 +108,6 @@ jobs:
     name: Validate inputs and define contract outputs
     runs-on: ubuntu-22.04
     outputs:
-      manifest_hash: ${{ steps.resolve.outputs.manifest_hash }}
-      manifest_version: ${{ steps.resolve.outputs.manifest_version }}
-      entity_count: ${{ steps.resolve.outputs.entity_count }}
       artifact_name_storage: ${{ steps.resolve.outputs.artifact_name_storage }}
       artifact_name_models: ${{ steps.resolve.outputs.artifact_name_models }}
       storage_dir: ${{ steps.resolve.outputs.storage_dir }}
@@ -193,10 +190,6 @@ jobs:
             artifact_name_models="${artifact_name_prefix}-models-${run_suffix}"
           fi
 
-          # Output contract placeholders; populated with real values in producer build step.
-          echo "manifest_hash=" >> "$GITHUB_OUTPUT"
-          echo "manifest_version=" >> "$GITHUB_OUTPUT"
-          echo "entity_count=0" >> "$GITHUB_OUTPUT"
           echo "artifact_name_storage=${artifact_name_storage}" >> "$GITHUB_OUTPUT"
           echo "artifact_name_models=${artifact_name_models}" >> "$GITHUB_OUTPUT"
           echo "storage_dir=${storage_dir}" >> "$GITHUB_OUTPUT"
@@ -217,3 +210,185 @@ jobs:
             echo "- artifact_name_models: \`${{ steps.resolve.outputs.artifact_name_models }}\`"
             echo "- storage_instance_id: \`${{ steps.resolve.outputs.storage_instance_id }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Build, validate, and publish storage artifact
+    runs-on: ubuntu-22.04
+    needs: prepare
+    outputs:
+      manifest_hash: ${{ steps.collect.outputs.manifest_hash }}
+      manifest_version: ${{ steps.collect.outputs.manifest_version }}
+      entity_count: ${{ steps.collect.outputs.entity_count }}
+      artifact_name_storage: ${{ steps.collect.outputs.artifact_name_storage }}
+      artifact_name_models: ${{ steps.collect.outputs.artifact_name_models }}
+    env:
+      DBT_NOVA_STORAGE_DIR: ${{ needs.prepare.outputs.storage_dir }}
+      DBT_NOVA_EMBEDDINGS_CACHE_DIR: ${{ needs.prepare.outputs.models_dir }}
+      DBT_NOVA_STORAGE_INSTANCE_ID: ${{ needs.prepare.outputs.storage_instance_id }}
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install jq
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v jq >/dev/null 2>&1; then
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Resolve installer source
+        id: installer_source
+        shell: bash
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          ACTION_REPOSITORY: ${{ github.action_repository }}
+          ACTION_REF: ${{ github.action_ref }}
+          CURRENT_REPOSITORY: ${{ github.repository }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          repo=""
+          ref=""
+          if [[ -n "${WORKFLOW_REF}" && "${WORKFLOW_REF}" == *"/.github/workflows/"* && "${WORKFLOW_REF}" == *"@"* ]]; then
+            repo="${WORKFLOW_REF%%/.github/workflows/*}"
+            ref="${WORKFLOW_REF##*@}"
+          fi
+          if [[ -z "${repo}" ]]; then
+            repo="${ACTION_REPOSITORY:-${CURRENT_REPOSITORY}}"
+          fi
+          if [[ -z "${ref}" ]]; then
+            ref="${ACTION_REF:-${CURRENT_SHA}}"
+          fi
+
+          case "${ref}" in
+            refs/heads/*) ref="${ref#refs/heads/}" ;;
+            refs/tags/*) ref="${ref#refs/tags/}" ;;
+          esac
+
+          echo "repo=${repo}" >> "$GITHUB_OUTPUT"
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout installer source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ${{ steps.installer_source.outputs.repo }}
+          ref: ${{ steps.installer_source.outputs.ref }}
+          path: .nova-installer-source
+          fetch-depth: 1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+
+      - name: Rust cache (installer source)
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+        with:
+          workspaces: ".nova-installer-source -> .nova-installer-source/target"
+
+      - name: Build dbt-nova from pinned workflow source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release --manifest-path .nova-installer-source/Cargo.toml
+          mkdir -p "$HOME/.local/bin"
+          install -m 755 .nova-installer-source/target/release/dbt-nova "$HOME/.local/bin/dbt-nova"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Optionally generate manifest via dbt
+        if: ${{ inputs.dbt_generate_manifest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -lc "${{ inputs.dbt_command }}"
+
+      - name: Run manifest load + smoke validations
+        id: collect
+        shell: bash
+        env:
+          INPUT_MANIFEST_PATH: ${{ needs.prepare.outputs.manifest_path }}
+          INPUT_MANIFEST_URI: ${{ needs.prepare.outputs.manifest_uri }}
+          INPUT_INCLUDE_MODELS_CACHE: ${{ inputs.include_models_cache }}
+          INPUT_ARTIFACT_NAME_STORAGE: ${{ needs.prepare.outputs.artifact_name_storage }}
+          INPUT_ARTIFACT_NAME_MODELS: ${{ needs.prepare.outputs.artifact_name_models }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+
+          manifest_path="${INPUT_MANIFEST_PATH}"
+          manifest_uri="${INPUT_MANIFEST_URI}"
+          if [[ -z "${manifest_path}" && -z "${manifest_uri}" ]]; then
+            manifest_path="target/manifest.json"
+          fi
+
+          manifest_args=()
+          if [[ -n "${manifest_uri}" ]]; then
+            manifest_args+=(--manifest-uri "${manifest_uri}")
+          else
+            manifest_args+=(--manifest-path "${manifest_path}")
+          fi
+
+          dbt-nova manifest load "${manifest_args[@]}" --storage-instance-id "${DBT_NOVA_STORAGE_INSTANCE_ID}" --json | tee out/manifest-load.json
+          jq -e '.status == "success"' out/manifest-load.json >/dev/null
+
+          manifest_hash="$(jq -r '.data.manifest_hash // empty' out/manifest-load.json)"
+          manifest_version="$(jq -r '.data.manifest_version // empty' out/manifest-load.json)"
+          entity_count="$(jq -r '.data.entity_count // 0' out/manifest-load.json)"
+          if [[ -z "${manifest_hash}" || -z "${manifest_version}" ]]; then
+            echo "manifest load output missing manifest_hash/manifest_version"
+            exit 1
+          fi
+          hash_short="${manifest_hash:0:12}"
+
+          dbt-nova health check "${manifest_args[@]}" --json | tee out/health.json
+          jq -e '.status == "success"' out/health.json >/dev/null
+          jq -e '.data.status == "ready" or .data.status == "refreshing"' out/health.json >/dev/null
+
+          dbt-nova tool call show_metadata --params-json '{}' "${manifest_args[@]}" --storage-instance-id "${DBT_NOVA_STORAGE_INSTANCE_ID}" --json | tee out/show-metadata.json
+          jq -e '.status == "success"' out/show-metadata.json >/dev/null
+
+          artifact_name_storage="${INPUT_ARTIFACT_NAME_STORAGE}-${hash_short}"
+          artifact_name_models=""
+          if [[ "${INPUT_INCLUDE_MODELS_CACHE}" == "true" ]]; then
+            artifact_name_models="${INPUT_ARTIFACT_NAME_MODELS}-${hash_short}"
+          fi
+
+          echo "manifest_hash=${manifest_hash}" >> "$GITHUB_OUTPUT"
+          echo "manifest_version=${manifest_version}" >> "$GITHUB_OUTPUT"
+          echo "entity_count=${entity_count}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name_storage=${artifact_name_storage}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name_models=${artifact_name_models}" >> "$GITHUB_OUTPUT"
+
+      - name: Package storage directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          storage_archive="${{ steps.collect.outputs.artifact_name_storage }}.tar.gz"
+          tar -C "$(dirname "${DBT_NOVA_STORAGE_DIR}")" -czf "${storage_archive}" "$(basename "${DBT_NOVA_STORAGE_DIR}")"
+
+      - name: Upload storage artifact
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        with:
+          name: ${{ steps.collect.outputs.artifact_name_storage }}
+          path: ${{ steps.collect.outputs.artifact_name_storage }}.tar.gz
+          retention-days: ${{ inputs.retention_days }}
+          if-no-files-found: error
+
+      - name: Package models directory
+        if: ${{ inputs.include_models_cache }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          models_archive="${{ steps.collect.outputs.artifact_name_models }}.tar.gz"
+          tar -C "$(dirname "${DBT_NOVA_EMBEDDINGS_CACHE_DIR}")" -czf "${models_archive}" "$(basename "${DBT_NOVA_EMBEDDINGS_CACHE_DIR}")"
+
+      - name: Upload models artifact
+        if: ${{ inputs.include_models_cache }}
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        with:
+          name: ${{ steps.collect.outputs.artifact_name_models }}
+          path: ${{ steps.collect.outputs.artifact_name_models }}.tar.gz
+          retention-days: ${{ inputs.retention_days }}
+          if-no-files-found: error
