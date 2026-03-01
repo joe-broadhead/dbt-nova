@@ -22,6 +22,39 @@ curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scrip
 
 use that exact same `DBT_NOVA_EMBEDDINGS_CACHE_DIR` path in your MCP client env.
 
+## Prebuilt Read-Only Consumer Setup
+
+If you consume prebuilt Nova storage artifacts (built by the reusable producer
+workflow), set these env vars in your MCP client:
+
+- `DBT_NOVA_STORAGE_DIR` (path to extracted storage artifact root)
+- `DBT_NOVA_STORAGE_INSTANCE_ID` (must match producer workflow input)
+- `DBT_NOVA_STORAGE_READ_ONLY=true`
+
+Recommended with prebuilt artifacts:
+
+- Keep `DBT_MANIFEST_PATH` or `DBT_NOVA_MANIFEST_URI` pointed at the same
+  manifest content used by the producer build.
+- Use the same Nova release on producer and consumer.
+
+Codex TOML example:
+
+```toml
+[mcp_servers.dbt-nova]
+command = "/path/to/dbt-nova"
+startup_timeout_sec = 60
+
+[mcp_servers.dbt-nova.env]
+DBT_MANIFEST_PATH = "/path/to/manifest.json"
+DBT_NOVA_STORAGE_DIR = "/path/to/dbt-nova-storage"
+DBT_NOVA_STORAGE_INSTANCE_ID = "analytics-prod"
+DBT_NOVA_STORAGE_READ_ONLY = "true"
+DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/models"
+```
+
+For producer/consumer workflow details, see:
+- [Prebuilt Asset Workflow](../operations/prebuilt-assets.md)
+
 ## Claude Desktop (`claude_desktop_config.json`)
 
 ```json

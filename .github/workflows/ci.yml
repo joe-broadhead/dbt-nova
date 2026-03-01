@@ -123,3 +123,413 @@ jobs:
 
       - name: Cargo Deny
         run: cargo deny check advisories licenses sources
+
+  reusable-assets-producer:
+    name: reusable-assets-producer
+    uses: ./.github/workflows/nova-build-assets.yml
+    with:
+      manifest_path: tests/fixtures/nova_manifest.json
+      storage_instance_id: ci-readonly-smoke
+      artifact_name_prefix: ci-readonly-smoke
+      retention_days: 1
+
+  reusable-assets-remote-publish-dryrun:
+    name: reusable-assets-remote-publish-dryrun
+    uses: ./.github/workflows/nova-build-assets.yml
+    with:
+      manifest_path: tests/fixtures/nova_manifest.json
+      storage_instance_id: ci-remote-publish-dryrun
+      artifact_name_prefix: ci-remote-publish-dryrun
+      retention_days: 1
+      publish_targets: s3,gcs,dbfs
+      publish_s3_prefix: s3://ci-dryrun-bucket/dbt-nova
+      publish_gcs_prefix: gs://ci-dryrun-bucket/dbt-nova
+      publish_dbfs_prefix: dbfs:/ci-dryrun/dbt-nova
+      publish_dry_run: true
+
+  reusable-assets-remote-publish-dryrun-assert:
+    name: reusable-assets-remote-publish-dryrun-assert
+    runs-on: ubuntu-22.04
+    needs: reusable-assets-remote-publish-dryrun
+    steps:
+      - name: Ensure jq is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v jq >/dev/null 2>&1; then
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Assert dry-run publish outputs are populated per target
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          published_targets='${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_targets }}'
+          storage_uris='${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_storage_uris }}'
+          metadata_uris='${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_metadata_uris }}'
+          models_uris='${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_models_uris }}'
+
+          echo "published_targets=${published_targets}"
+          echo "published_storage_uris=${storage_uris}"
+          echo "published_metadata_uris=${metadata_uris}"
+          echo "published_models_uris=${models_uris}"
+
+          test -n "${published_targets}"
+          normalized_targets="$(
+            printf '%s\n' "${published_targets}" \
+            | tr ',' '\n' \
+            | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+            | sed '/^$/d' \
+            | sort -u \
+            | paste -sd, -
+          )"
+          test "${normalized_targets}" = "dbfs,gcs,s3"
+
+          echo "${storage_uris}" | jq -e 'keys | sort == ["dbfs", "gcs", "s3"]' >/dev/null
+          echo "${metadata_uris}" | jq -e 'keys | sort == ["dbfs", "gcs", "s3"]' >/dev/null
+          echo "${models_uris}" | jq -e '. == {}' >/dev/null
+
+  reusable-assets-readonly-consumer:
+    name: reusable-assets-readonly-consumer
+    runs-on: ubuntu-22.04
+    needs: reusable-assets-producer
+    env:
+      STORAGE_INSTANCE_ID: ci-readonly-smoke
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
+      - name: Build dbt-nova CLI binary
+        run: cargo build --locked --bin dbt-nova
+
+      - name: Ensure jq is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v jq >/dev/null 2>&1; then
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Validate default remote publish outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "${{ needs.reusable-assets-producer.outputs.published_targets }}"
+          test '${{ needs.reusable-assets-producer.outputs.published_storage_uris }}' = '{}'
+          test '${{ needs.reusable-assets-producer.outputs.published_metadata_uris }}' = '{}'
+          test '${{ needs.reusable-assets-producer.outputs.published_models_uris }}' = '{}'
+
+      - name: Download storage artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: ${{ needs.reusable-assets-producer.outputs.artifact_name_storage }}
+          path: consumer-artifacts/storage
+
+      - name: Download metadata artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: ${{ needs.reusable-assets-producer.outputs.artifact_name_metadata }}
+          path: consumer-artifacts/metadata
+
+      - name: Extract artifact into fresh workspace
+        id: workspace
+        shell: bash
+        env:
+          STORAGE_ARTIFACT_NAME: ${{ needs.reusable-assets-producer.outputs.artifact_name_storage }}
+        run: |
+          set -euo pipefail
+
+          consumer_workspace="$(mktemp -d)"
+          storage_archive="consumer-artifacts/storage/${STORAGE_ARTIFACT_NAME}.tar.gz"
+          metadata_path="consumer-artifacts/metadata/nova-build-metadata.json"
+
+          test -f "${storage_archive}" || {
+            echo "missing storage archive: ${storage_archive}"
+            exit 1
+          }
+          test -f "${metadata_path}" || {
+            echo "missing metadata file: ${metadata_path}"
+            exit 1
+          }
+
+          tar -C "${consumer_workspace}" -xzf "${storage_archive}"
+          storage_dir="${consumer_workspace}/dbt-nova-storage"
+          test -d "${storage_dir}" || {
+            echo "missing extracted storage directory: ${storage_dir}"
+            exit 1
+          }
+
+          # Keep filesystem permissions normal so runtime lock/read paths can execute.
+          # Read-only safety is asserted by byte-for-byte storage snapshot comparison.
+          cp tests/fixtures/nova_manifest.json "${consumer_workspace}/manifest.json"
+          # Hash only persisted reusable artifacts. Tantivy lock/managed files can change
+          # during read-only opens without indicating index rebuild or data mutation.
+          storage_snapshot_before="$(
+            (
+              cd "${storage_dir}"
+              find . -type f \
+                \( \
+                  -name 'entities.bin' -o \
+                  -name 'entities.idx' -o \
+                  -name 'entities.checksum.json' -o \
+                  -name 'indexes.rkyv' -o \
+                  -name 'manifest.signature.json' -o \
+                  -name 'manifest.current.json' \
+                \) \
+                -print0 | sort -z | xargs -0 sha256sum
+            ) | sha256sum | awk '{print $1}'
+          )"
+
+          echo "workspace_dir=${consumer_workspace}" >> "$GITHUB_OUTPUT"
+          echo "storage_dir=${storage_dir}" >> "$GITHUB_OUTPUT"
+          echo "metadata_path=${metadata_path}" >> "$GITHUB_OUTPUT"
+          echo "storage_snapshot_before=${storage_snapshot_before}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate metadata contract fields
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -e --arg storage_instance_id "${STORAGE_INSTANCE_ID}" '
+            .contract_version == "v1" and
+            (.storage_instance_id == $storage_instance_id) and
+            (.manifest_hash | type == "string" and length > 0) and
+            (.manifest_version | type == "string" and length > 0) and
+            (.entity_count | type == "number" and . >= 0) and
+            (.dbt_nova_version | type == "string" and length > 0) and
+            (.artifact_name_storage | type == "string" and length > 0)
+          ' "${{ steps.workspace.outputs.metadata_path }}" >/dev/null
+
+      - name: Read-only health check succeeds from reusable artifact
+        shell: bash
+        env:
+          DBT_NOVA_STORAGE_DIR: ${{ steps.workspace.outputs.storage_dir }}
+          DBT_NOVA_STORAGE_INSTANCE_ID: ${{ env.STORAGE_INSTANCE_ID }}
+          DBT_NOVA_STORAGE_READ_ONLY: "true"
+        run: |
+          set -euo pipefail
+          ./target/debug/dbt-nova health check \
+            --manifest-path "${{ steps.workspace.outputs.workspace_dir }}/manifest.json" \
+            --json | tee "${{ steps.workspace.outputs.workspace_dir }}/health.json"
+
+          jq -e '.status == "success"' "${{ steps.workspace.outputs.workspace_dir }}/health.json" >/dev/null
+          jq -e '.data.status == "ready" or .data.status == "refreshing"' "${{ steps.workspace.outputs.workspace_dir }}/health.json" >/dev/null
+
+      - name: Read-only tool call succeeds without rebuild
+        shell: bash
+        env:
+          DBT_NOVA_STORAGE_DIR: ${{ steps.workspace.outputs.storage_dir }}
+          DBT_NOVA_STORAGE_INSTANCE_ID: ${{ env.STORAGE_INSTANCE_ID }}
+          DBT_NOVA_STORAGE_READ_ONLY: "true"
+        run: |
+          set -euo pipefail
+          ./target/debug/dbt-nova tool call show_metadata \
+            --params-json '{}' \
+            --manifest-path "${{ steps.workspace.outputs.workspace_dir }}/manifest.json" \
+            --storage-instance-id "${STORAGE_INSTANCE_ID}" \
+            --read-only \
+            --json | tee "${{ steps.workspace.outputs.workspace_dir }}/show-metadata.json"
+
+          jq -e '.status == "success"' "${{ steps.workspace.outputs.workspace_dir }}/show-metadata.json" >/dev/null
+
+      - name: Assert storage bytes unchanged in read-only mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          storage_snapshot_after="$(
+            (
+              cd "${{ steps.workspace.outputs.storage_dir }}"
+              find . -type f \
+                \( \
+                  -name 'entities.bin' -o \
+                  -name 'entities.idx' -o \
+                  -name 'entities.checksum.json' -o \
+                  -name 'indexes.rkyv' -o \
+                  -name 'manifest.signature.json' -o \
+                  -name 'manifest.current.json' \
+                \) \
+                -print0 | sort -z | xargs -0 sha256sum
+            ) | sha256sum | awk '{print $1}'
+          )"
+          test "${storage_snapshot_after}" = "${{ steps.workspace.outputs.storage_snapshot_before }}" || {
+            echo "storage content changed during read-only consumer execution"
+            exit 1
+          }
+
+  reusable-assets-negative-contract:
+    name: reusable-assets-negative-contract
+    runs-on: ubuntu-22.04
+    needs: reusable-assets-producer
+    env:
+      STORAGE_INSTANCE_ID: ci-readonly-smoke
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
+      - name: Build dbt-nova CLI binary
+        run: cargo build --locked --bin dbt-nova
+
+      - name: Ensure jq is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v jq >/dev/null 2>&1; then
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Download storage artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: ${{ needs.reusable-assets-producer.outputs.artifact_name_storage }}
+          path: negative-artifacts/storage
+
+      - name: Download metadata artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: ${{ needs.reusable-assets-producer.outputs.artifact_name_metadata }}
+          path: negative-artifacts/metadata
+
+      - name: Prepare negative test workspace
+        id: workspace
+        shell: bash
+        env:
+          STORAGE_ARTIFACT_NAME: ${{ needs.reusable-assets-producer.outputs.artifact_name_storage }}
+        run: |
+          set -euo pipefail
+
+          workspace_dir="$(mktemp -d)"
+          storage_archive="negative-artifacts/storage/${STORAGE_ARTIFACT_NAME}.tar.gz"
+          metadata_path="negative-artifacts/metadata/nova-build-metadata.json"
+
+          test -f "${storage_archive}" || {
+            echo "missing storage archive: ${storage_archive}"
+            exit 1
+          }
+          test -f "${metadata_path}" || {
+            echo "missing metadata file: ${metadata_path}"
+            exit 1
+          }
+
+          tar -C "${workspace_dir}" -xzf "${storage_archive}"
+          storage_dir="${workspace_dir}/dbt-nova-storage"
+          test -d "${storage_dir}" || {
+            echo "missing extracted storage directory: ${storage_dir}"
+            exit 1
+          }
+
+          cp tests/fixtures/nova_manifest.json "${workspace_dir}/manifest.json"
+          echo "workspace_dir=${workspace_dir}" >> "$GITHUB_OUTPUT"
+          echo "storage_dir=${storage_dir}" >> "$GITHUB_OUTPUT"
+          echo "manifest_path=${workspace_dir}/manifest.json" >> "$GITHUB_OUTPUT"
+          echo "metadata_path=${metadata_path}" >> "$GITHUB_OUTPUT"
+
+      - name: Read-only mismatch and missing-storage cases fail with actionable error
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          expect_failure() {
+            local label="$1"
+            local expected_substring="$2"
+            shift 2
+            local output=""
+            local status=0
+            set +e
+            output="$("$@" 2>&1)"
+            status=$?
+            set -e
+            if [[ ${status} -eq 0 ]]; then
+              echo "expected failure for: ${label}"
+              echo "${output}"
+              exit 1
+            fi
+            if ! grep -F "${expected_substring}" <<<"${output}" >/dev/null; then
+              echo "unexpected error output for: ${label}"
+              echo "${output}"
+              exit 1
+            fi
+          }
+
+          expect_failure \
+            "storage_instance_id mismatch" \
+            "Storage is read-only and no reusable index is available" \
+            env \
+              DBT_NOVA_STORAGE_DIR="${{ steps.workspace.outputs.storage_dir }}" \
+              DBT_NOVA_STORAGE_INSTANCE_ID="ci-readonly-smoke-mismatch" \
+              DBT_NOVA_STORAGE_READ_ONLY=true \
+            ./target/debug/dbt-nova health check \
+              --manifest-path "${{ steps.workspace.outputs.manifest_path }}" \
+              --json
+
+          empty_storage_dir="${{ steps.workspace.outputs.workspace_dir }}/empty-storage"
+          mkdir -p "${empty_storage_dir}"
+          expect_failure \
+            "read-only with absent reusable index files" \
+            "Storage is read-only and no reusable index is available" \
+            env \
+              DBT_NOVA_STORAGE_DIR="${empty_storage_dir}" \
+              DBT_NOVA_STORAGE_INSTANCE_ID="${STORAGE_INSTANCE_ID}" \
+              DBT_NOVA_STORAGE_READ_ONLY=true \
+            ./target/debug/dbt-nova tool call show_metadata \
+              --params-json '{}' \
+              --manifest-path "${{ steps.workspace.outputs.manifest_path }}" \
+              --storage-instance-id "${STORAGE_INSTANCE_ID}" \
+              --read-only \
+              --json
+
+      - name: Metadata contract validation fails on missing/corrupt/incompatible files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          validate_metadata_contract() {
+            local metadata_file="$1"
+            jq -e --arg storage_instance_id "${STORAGE_INSTANCE_ID}" '
+              .contract_version == "v1" and
+              (.storage_instance_id == $storage_instance_id) and
+              (.manifest_hash | type == "string" and length > 0) and
+              (.manifest_version | type == "string" and length > 0) and
+              (.entity_count | type == "number" and . >= 0) and
+              (.dbt_nova_version | type == "string" and length > 0) and
+              (.artifact_name_storage | type == "string" and length > 0)
+            ' "${metadata_file}" >/dev/null
+          }
+
+          missing_metadata="${{ steps.workspace.outputs.workspace_dir }}/missing-metadata.json"
+          if validate_metadata_contract "${missing_metadata}"; then
+            echo "expected metadata validation failure for missing file"
+            exit 1
+          fi
+
+          corrupt_metadata="${{ steps.workspace.outputs.workspace_dir }}/corrupt-metadata.json"
+          printf '{ invalid json' > "${corrupt_metadata}"
+          if validate_metadata_contract "${corrupt_metadata}"; then
+            echo "expected metadata validation failure for corrupt json"
+            exit 1
+          fi
+
+          incompatible_metadata="${{ steps.workspace.outputs.workspace_dir }}/incompatible-metadata.json"
+          jq '.contract_version = "v999" | del(.manifest_hash)' \
+            "${{ steps.workspace.outputs.metadata_path }}" > "${incompatible_metadata}"
+          if validate_metadata_contract "${incompatible_metadata}"; then
+            echo "expected metadata validation failure for incompatible contract"
+            exit 1
+          fi

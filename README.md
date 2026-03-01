@@ -171,6 +171,38 @@ For recurring analysis topics, start with:
 - **[Analysis Recipes](docs/features/recipes.md)** to design deterministic workflows.
 - `search_recipes` -> `get_recipe` -> `run_recipe` in your MCP client.
 
+## Build Once, Reuse Many
+
+For CI/distributed consumers, build Nova assets once and run consumers in
+read-only mode from prebuilt artifacts.
+
+Producer (reusable workflow):
+
+```yaml
+jobs:
+  build_nova_assets:
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.2
+    with:
+      manifest_path: target/manifest.json
+      storage_instance_id: analytics-prod
+      artifact_name_prefix: analytics-prod
+```
+
+Consumer env (required):
+
+```bash
+export DBT_NOVA_STORAGE_DIR=/path/to/dbt-nova-storage
+export DBT_NOVA_STORAGE_INSTANCE_ID=analytics-prod
+export DBT_NOVA_STORAGE_READ_ONLY=true
+```
+
+Optional: publish artifacts directly to cloud targets from the reusable
+workflow with `publish_targets` plus per-target prefixes
+(`publish_s3_prefix`, `publish_gcs_prefix`, `publish_dbfs_prefix`).
+
+Full guide:
+**[Prebuilt Asset Workflow](docs/operations/prebuilt-assets.md)**.
+
 ## CLI Command Mode
 
 `dbt-nova` supports one-shot CLI commands in addition to server mode.
@@ -238,6 +270,7 @@ via build locks and in‑use locks; pruning removes only inactive instances.
 - [Architecture](docs/development/architecture.md)
 - [Operations & Troubleshooting](docs/operations/ops.md)
 - [Performance](docs/operations/performance.md)
+- [Prebuilt Asset Workflow](docs/operations/prebuilt-assets.md)
 - [Security & Limits](docs/operations/security.md)
 - [Testing](docs/operations/testing.md)
 - [Release & Distribution](docs/development/release.md)
