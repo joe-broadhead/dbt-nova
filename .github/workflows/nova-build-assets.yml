@@ -1,0 +1,219 @@
+name: Build Nova Assets
+
+on:
+  workflow_call:
+    inputs:
+      manifest_path:
+        description: "Path to manifest.json in the caller repository"
+        required: false
+        type: string
+        default: ""
+      manifest_uri:
+        description: "Remote manifest URI (file/http(s)/s3/gs/dbfs)"
+        required: false
+        type: string
+        default: ""
+      storage_instance_id:
+        description: "Stable storage instance id used by producers/consumers"
+        required: true
+        type: string
+      dbt_generate_manifest:
+        description: "Whether to run dbt before building Nova assets"
+        required: false
+        type: boolean
+        default: false
+      dbt_command:
+        description: "dbt command to generate the manifest when enabled"
+        required: false
+        type: string
+        default: ""
+      include_models_cache:
+        description: "Publish an additional models-cache artifact"
+        required: false
+        type: boolean
+        default: false
+      artifact_name_prefix:
+        description: "Prefix used when naming output artifacts"
+        required: false
+        type: string
+        default: "dbt-nova-index"
+      retention_days:
+        description: "Artifact retention period in days (1-90)"
+        required: false
+        type: number
+        default: 14
+    outputs:
+      manifest_hash:
+        description: "Manifest content hash (populated by producer build in follow-up step)"
+        value: ${{ jobs.prepare.outputs.manifest_hash }}
+      manifest_version:
+        description: "Manifest version directory (populated by producer build in follow-up step)"
+        value: ${{ jobs.prepare.outputs.manifest_version }}
+      entity_count:
+        description: "Entity count loaded from manifest (populated by producer build in follow-up step)"
+        value: ${{ jobs.prepare.outputs.entity_count }}
+      artifact_name_storage:
+        description: "Planned storage artifact name"
+        value: ${{ jobs.prepare.outputs.artifact_name_storage }}
+      artifact_name_models:
+        description: "Planned models artifact name (empty when include_models_cache=false)"
+        value: ${{ jobs.prepare.outputs.artifact_name_models }}
+  workflow_dispatch:
+    inputs:
+      manifest_path:
+        description: "Path to manifest.json in the caller repository"
+        required: false
+        type: string
+        default: ""
+      manifest_uri:
+        description: "Remote manifest URI (file/http(s)/s3/gs/dbfs)"
+        required: false
+        type: string
+        default: ""
+      storage_instance_id:
+        description: "Stable storage instance id used by producers/consumers"
+        required: true
+        type: string
+      dbt_generate_manifest:
+        description: "Whether to run dbt before building Nova assets"
+        required: false
+        type: boolean
+        default: false
+      dbt_command:
+        description: "dbt command to generate the manifest when enabled"
+        required: false
+        type: string
+        default: ""
+      include_models_cache:
+        description: "Publish an additional models-cache artifact"
+        required: false
+        type: boolean
+        default: false
+      artifact_name_prefix:
+        description: "Prefix used when naming output artifacts"
+        required: false
+        type: string
+        default: "dbt-nova-index"
+      retention_days:
+        description: "Artifact retention period in days (1-90)"
+        required: false
+        type: number
+        default: 14
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Validate inputs and define contract outputs
+    runs-on: ubuntu-22.04
+    outputs:
+      manifest_hash: ${{ steps.resolve.outputs.manifest_hash }}
+      manifest_version: ${{ steps.resolve.outputs.manifest_version }}
+      entity_count: ${{ steps.resolve.outputs.entity_count }}
+      artifact_name_storage: ${{ steps.resolve.outputs.artifact_name_storage }}
+      artifact_name_models: ${{ steps.resolve.outputs.artifact_name_models }}
+      storage_dir: ${{ steps.resolve.outputs.storage_dir }}
+      models_dir: ${{ steps.resolve.outputs.models_dir }}
+      manifest_path: ${{ steps.resolve.outputs.manifest_path }}
+      manifest_uri: ${{ steps.resolve.outputs.manifest_uri }}
+      storage_instance_id: ${{ steps.resolve.outputs.storage_instance_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Validate inputs and set deterministic paths
+        id: resolve
+        shell: bash
+        env:
+          INPUT_MANIFEST_PATH: ${{ inputs.manifest_path }}
+          INPUT_MANIFEST_URI: ${{ inputs.manifest_uri }}
+          INPUT_STORAGE_INSTANCE_ID: ${{ inputs.storage_instance_id }}
+          INPUT_DBT_GENERATE_MANIFEST: ${{ inputs.dbt_generate_manifest }}
+          INPUT_DBT_COMMAND: ${{ inputs.dbt_command }}
+          INPUT_INCLUDE_MODELS_CACHE: ${{ inputs.include_models_cache }}
+          INPUT_ARTIFACT_NAME_PREFIX: ${{ inputs.artifact_name_prefix }}
+          INPUT_RETENTION_DAYS: ${{ inputs.retention_days }}
+        run: |
+          set -euo pipefail
+
+          manifest_path="${INPUT_MANIFEST_PATH}"
+          manifest_uri="${INPUT_MANIFEST_URI}"
+          storage_instance_id="${INPUT_STORAGE_INSTANCE_ID}"
+          dbt_generate_manifest="${INPUT_DBT_GENERATE_MANIFEST}"
+          dbt_command="${INPUT_DBT_COMMAND}"
+          include_models_cache="${INPUT_INCLUDE_MODELS_CACHE}"
+          artifact_name_prefix="${INPUT_ARTIFACT_NAME_PREFIX}"
+          retention_days="${INPUT_RETENTION_DAYS}"
+
+          if [[ -z "${storage_instance_id}" ]]; then
+            echo "storage_instance_id is required."
+            exit 1
+          fi
+          if [[ ! "${storage_instance_id}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "storage_instance_id must match ^[A-Za-z0-9._-]+$"
+            exit 1
+          fi
+
+          if [[ -z "${manifest_path}" && -z "${manifest_uri}" && "${dbt_generate_manifest}" != "true" ]]; then
+            echo "Provide manifest_path or manifest_uri, or set dbt_generate_manifest=true."
+            exit 1
+          fi
+          if [[ -n "${manifest_path}" && -n "${manifest_uri}" ]]; then
+            echo "Provide only one of manifest_path or manifest_uri."
+            exit 1
+          fi
+          if [[ "${dbt_generate_manifest}" == "true" && -z "${dbt_command}" ]]; then
+            echo "dbt_generate_manifest=true requires dbt_command."
+            exit 1
+          fi
+
+          if [[ ! "${artifact_name_prefix}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "artifact_name_prefix must match ^[A-Za-z0-9._-]+$"
+            exit 1
+          fi
+
+          if ! [[ "${retention_days}" =~ ^[0-9]+$ ]]; then
+            echo "retention_days must be an integer between 1 and 90."
+            exit 1
+          fi
+          if (( retention_days < 1 || retention_days > 90 )); then
+            echo "retention_days must be between 1 and 90."
+            exit 1
+          fi
+
+          storage_dir="${GITHUB_WORKSPACE}/out/dbt-nova-storage"
+          models_dir="${GITHUB_WORKSPACE}/out/dbt-nova-models"
+          mkdir -p "${storage_dir}" "${models_dir}"
+
+          run_suffix="${GITHUB_RUN_ID}"
+          artifact_name_storage="${artifact_name_prefix}-storage-${run_suffix}"
+          artifact_name_models=""
+          if [[ "${include_models_cache}" == "true" ]]; then
+            artifact_name_models="${artifact_name_prefix}-models-${run_suffix}"
+          fi
+
+          # Output contract placeholders; populated with real values in producer build step.
+          echo "manifest_hash=" >> "$GITHUB_OUTPUT"
+          echo "manifest_version=" >> "$GITHUB_OUTPUT"
+          echo "entity_count=0" >> "$GITHUB_OUTPUT"
+          echo "artifact_name_storage=${artifact_name_storage}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name_models=${artifact_name_models}" >> "$GITHUB_OUTPUT"
+          echo "storage_dir=${storage_dir}" >> "$GITHUB_OUTPUT"
+          echo "models_dir=${models_dir}" >> "$GITHUB_OUTPUT"
+          echo "manifest_path=${manifest_path}" >> "$GITHUB_OUTPUT"
+          echo "manifest_uri=${manifest_uri}" >> "$GITHUB_OUTPUT"
+          echo "storage_instance_id=${storage_instance_id}" >> "$GITHUB_OUTPUT"
+
+      - name: Summarize contract
+        shell: bash
+        run: |
+          {
+            echo "### Reusable Workflow Contract"
+            echo ""
+            echo "- storage_dir: \`${{ steps.resolve.outputs.storage_dir }}\`"
+            echo "- models_dir: \`${{ steps.resolve.outputs.models_dir }}\`"
+            echo "- artifact_name_storage: \`${{ steps.resolve.outputs.artifact_name_storage }}\`"
+            echo "- artifact_name_models: \`${{ steps.resolve.outputs.artifact_name_models }}\`"
+            echo "- storage_instance_id: \`${{ steps.resolve.outputs.storage_instance_id }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
