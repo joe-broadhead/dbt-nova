@@ -202,8 +202,8 @@ jobs:
             exit 1
           }
 
-          # Force strict read-only semantics: any attempted rebuild write should fail.
-          chmod -R a-w "${storage_dir}"
+          # Keep filesystem permissions normal so runtime lock/read paths can execute.
+          # Read-only safety is asserted by byte-for-byte storage snapshot comparison.
           cp tests/fixtures/nova_manifest.json "${consumer_workspace}/manifest.json"
           storage_snapshot_before="$(
             (
