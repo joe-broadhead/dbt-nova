@@ -506,6 +506,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn execute_manifest_load_read_only_reuses_indexes_when_manifest_path_changes() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let copied_manifest_path = temp_dir.path().join("copied-manifest.json");
+        fs::copy(fixture_manifest_path(), &copied_manifest_path).expect("copy manifest");
+
+        let bootstrap_args = ManifestLoadArgs {
+            manifest_path: Some(fixture_manifest_path()),
+            storage_instance_id: Some("readonly-path-change".to_string()),
+            ..ManifestLoadArgs::default()
+        };
+        let mut bootstrap = build_manifest_load_config(&bootstrap_args).expect("bootstrap config");
+        bootstrap.storage_dir = temp_dir
+            .path()
+            .join(".dbt-nova")
+            .to_string_lossy()
+            .to_string();
+        bootstrap.cleanup_storage_on_start = false;
+        bootstrap.search.enable_vector_search = false;
+        bootstrap.search.enable_sparse_search = false;
+        bootstrap.search.enable_reranker = false;
+        execute_manifest_load(bootstrap)
+            .await
+            .expect("bootstrap load should succeed");
+
+        let readonly_args = ManifestLoadArgs {
+            manifest_path: Some(copied_manifest_path.to_string_lossy().to_string()),
+            storage_instance_id: Some("readonly-path-change".to_string()),
+            read_only: true,
+            ..ManifestLoadArgs::default()
+        };
+        let mut readonly = build_manifest_load_config(&readonly_args).expect("readonly config");
+        readonly.storage_dir = temp_dir
+            .path()
+            .join(".dbt-nova")
+            .to_string_lossy()
+            .to_string();
+        readonly.storage_read_only = true;
+        readonly.cleanup_storage_on_start = false;
+        readonly.search.enable_vector_search = false;
+        readonly.search.enable_sparse_search = false;
+        readonly.search.enable_reranker = false;
+
+        let loaded = execute_manifest_load(readonly)
+            .await
+            .expect("read-only load should reuse existing indexes");
+        assert!(loaded.entity_store_reused);
+        assert!(loaded.tantivy_reused);
+    }
+
+    #[tokio::test]
     async fn execute_manifest_load_read_only_without_reusable_index_fails() {
         let temp_dir = TempDir::new().expect("temp dir");
         let args = ManifestLoadArgs {
