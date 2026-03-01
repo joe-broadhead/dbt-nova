@@ -356,10 +356,10 @@ jobs:
       artifact_name_storage: ${{ steps.collect.outputs.artifact_name_storage }}
       artifact_name_models: ${{ steps.collect.outputs.artifact_name_models }}
       artifact_name_metadata: ${{ steps.collect.outputs.artifact_name_metadata }}
-      published_targets: ${{ steps.publish.outputs.published_targets }}
-      published_storage_uris: ${{ steps.publish.outputs.published_storage_uris }}
-      published_metadata_uris: ${{ steps.publish.outputs.published_metadata_uris }}
-      published_models_uris: ${{ steps.publish.outputs.published_models_uris }}
+      published_targets: ${{ steps.publish.outputs.published_targets || '' }}
+      published_storage_uris: ${{ steps.publish.outputs.published_storage_uris || '{}' }}
+      published_metadata_uris: ${{ steps.publish.outputs.published_metadata_uris || '{}' }}
+      published_models_uris: ${{ steps.publish.outputs.published_models_uris || '{}' }}
     env:
       DBT_NOVA_STORAGE_DIR: ${{ needs.prepare.outputs.storage_dir }}
       DBT_NOVA_EMBEDDINGS_CACHE_DIR: ${{ needs.prepare.outputs.models_dir }}
