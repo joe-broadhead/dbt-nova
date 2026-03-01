@@ -885,21 +885,21 @@ jobs:
             --arg s3 "${s3_storage_uri}" \
             --arg gcs "${gcs_storage_uri}" \
             --arg dbfs "${dbfs_storage_uri}" \
-            'if $s3 != "" then . + {s3: $s3} else . end
+            '{} | if $s3 != "" then . + {s3: $s3} else . end
             | if $gcs != "" then . + {gcs: $gcs} else . end
             | if $dbfs != "" then . + {dbfs: $dbfs} else . end')"
           published_metadata_uris="$(jq -cn \
             --arg s3 "${s3_metadata_uri}" \
             --arg gcs "${gcs_metadata_uri}" \
             --arg dbfs "${dbfs_metadata_uri}" \
-            'if $s3 != "" then . + {s3: $s3} else . end
+            '{} | if $s3 != "" then . + {s3: $s3} else . end
             | if $gcs != "" then . + {gcs: $gcs} else . end
             | if $dbfs != "" then . + {dbfs: $dbfs} else . end')"
           published_models_uris="$(jq -cn \
             --arg s3 "${s3_models_uri}" \
             --arg gcs "${gcs_models_uri}" \
             --arg dbfs "${dbfs_models_uri}" \
-            'if $s3 != "" then . + {s3: $s3} else . end
+            '{} | if $s3 != "" then . + {s3: $s3} else . end
             | if $gcs != "" then . + {gcs: $gcs} else . end
             | if $dbfs != "" then . + {dbfs: $dbfs} else . end')"
 
