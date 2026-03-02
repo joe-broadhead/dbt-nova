@@ -9,16 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Dedicated CLI command docs covering command tree, one-shot usage patterns,
-  `tool call` parameter input modes, and server-compatibility behavior when no
-  subcommand is passed.
+- Full one-shot CLI command surface:
+  `config show|validate`, `storage inspect|prune|cleanup`, `health check`,
+  `manifest load|reload`, and `tool call` parity with MCP tools.
+- `tool call reload_manifest` support in CLI mode with one-shot reload output.
+- Reusable asset producer workflow (`.github/workflows/nova-build-assets.yml`)
+  to build and publish storage artifacts + metadata contract from
+  `manifest_path`, `manifest_uri`, or an optional dbt command.
+- CI coverage for reusable producer/consumer contracts, including read-only
+  consumer smoke tests and negative-path contract checks.
+- Optional remote publish targets (`s3`, `gcs`, `dbfs`) for reusable assets,
+  including `publish_dry_run` contract coverage.
 
 ### Changed
 
-- README and Quick Start now explicitly document CLI command mode alongside MCP
-  server mode, including examples for `health check` and `tool call`.
-- API response format docs now include CLI JSON envelope structure and CLI exit
-  code mapping.
+- Read-only index reuse now keys on manifest content hash (path-independent),
+  so prebuilt assets can be reused when manifest content matches even if file
+  paths differ.
+- README and MkDocs now document the prebuilt asset producer/consumer workflow,
+  CLI command mode, and MCP read-only consumer env setup.
+- CI now validates reusable-asset dry-run publish outputs and metadata contract
+  outputs as part of the main PR/push pipeline.
+
+### Fixed
+
+- CLI error handling now emits structured JSON envelopes for command failures
+  and validates/sanitizes manifest source inputs more strictly.
+- CLI safety checks now enforce storage instance-id override semantics and
+  read-only final instance-id validation.
+- CLI manifest-load path now preserves URI refresh/cache semantics.
+- Reusable asset CI checks now ignore transient Tantivy lock/managed files and
+  hash only persisted contract artifacts.
+- Reusable remote publish workflow now emits stable non-null URI outputs and
+  fixes DBFS publish heredoc execution parsing in CI.
 
 ## [0.0.2] - 2026-02-28
 

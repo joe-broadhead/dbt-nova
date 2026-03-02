@@ -15,7 +15,22 @@ This repository uses GitHub Actions for CI, releases, and documentation.
   `mkdocs build --strict` (with `docs/requirements.txt`), `scripts/check_advisory_ignores.sh`,
   `scripts/check_dependency_watchlist.sh`,
   `scripts/check_config_reference.sh`, and `cargo deny check advisories licenses sources`
+- **Reusable asset contract checks:** calls the reusable producer workflow in
+  standard mode and dry-run remote publish mode, then validates:
+  - metadata contract artifact correctness
+  - read-only consumer behavior from extracted artifacts
+  - negative-path behavior (missing/mismatched storage + invalid metadata)
 - **Note:** sets `DBT_NOVA_STRICT_SCHEMA=1` so schema parsing failures break the build
+
+### Reusable Nova Asset Workflow
+
+- **File:** `.github/workflows/nova-build-assets.yml`
+- **Use:** reusable workflow invoked by CI and downstream repos
+- **Inputs:** `manifest_path` or `manifest_uri`, `storage_instance_id`,
+  optional dbt manifest generation, optional models artifact, optional remote
+  publish targets (`s3`, `gcs`, `dbfs`) and `publish_dry_run`
+- **Outputs:** manifest metadata (`manifest_hash`, `manifest_version`,
+  `entity_count`), artifact names, and optional published URI JSON objects
 
 ### Prepare Release
 
