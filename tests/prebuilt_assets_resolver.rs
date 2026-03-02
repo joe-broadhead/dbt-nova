@@ -299,6 +299,97 @@ fn materialize_file_artifacts_if_missing_skips_existing_storage() {
 }
 
 #[test]
+fn materialize_file_artifacts_if_missing_skips_remote_storage_fetch_when_local_present() {
+    let workspace = TempDir::new().expect("tempdir");
+    let mut config = setup_config(&workspace);
+
+    let existing_version_dir = PathBuf::from(&config.storage_dir)
+        .join("instances")
+        .join("analytics-prod")
+        .join("versions")
+        .join("existing");
+    write_file(&existing_version_dir.join("entities.bin"), b"entities");
+
+    let metadata_path = workspace.path().join("nova-build-metadata.json");
+    write_file(
+        &metadata_path,
+        br#"{
+  "contract_version":"v1",
+  "manifest_hash":"manifest-hash",
+  "manifest_version":"v12",
+  "entity_count":42,
+  "storage_instance_id":"analytics-prod",
+  "dbt_nova_version":"0.0.2",
+  "build_timestamp":"2026-03-02T00:00:00Z",
+  "artifact_name_storage":"storage-asset",
+  "artifact_name_models":""
+}"#,
+    );
+
+    config.storage_artifact_uri = "s3://bucket/storage.tar.gz".to_string();
+    config.metadata_artifact_uri = to_file_uri(&metadata_path);
+    config.artifact_fetch_policy = ArtifactFetchPolicy::IfMissing;
+
+    let outcome = materialize_file_artifacts(&config, "manifest-hash")
+        .expect("existing local storage should avoid remote storage fetch")
+        .expect("artifact mode enabled");
+    assert!(!outcome.storage_materialized);
+}
+
+#[test]
+fn materialize_file_artifacts_if_missing_skips_remote_models_fetch_when_local_present() {
+    let workspace = TempDir::new().expect("tempdir");
+    let mut config = setup_config(&workspace);
+    config.search.embedding_cache_dir = workspace
+        .path()
+        .join("embedding-cache")
+        .to_string_lossy()
+        .to_string();
+
+    let existing_version_dir = PathBuf::from(&config.storage_dir)
+        .join("instances")
+        .join("analytics-prod")
+        .join("versions")
+        .join("existing");
+    write_file(&existing_version_dir.join("entities.bin"), b"entities");
+
+    let existing_model = PathBuf::from(&config.search.embedding_cache_dir)
+        .join("models--intfloat--multilingual-e5-base")
+        .join("snapshots")
+        .join("main")
+        .join("onnx")
+        .join("model.onnx");
+    write_file(&existing_model, b"model");
+
+    let metadata_path = workspace.path().join("nova-build-metadata.json");
+    write_file(
+        &metadata_path,
+        br#"{
+  "contract_version":"v1",
+  "manifest_hash":"manifest-hash",
+  "manifest_version":"v12",
+  "entity_count":42,
+  "storage_instance_id":"analytics-prod",
+  "dbt_nova_version":"0.0.2",
+  "build_timestamp":"2026-03-02T00:00:00Z",
+  "artifact_name_storage":"storage-asset",
+  "artifact_name_models":"models-asset"
+}"#,
+    );
+
+    config.storage_artifact_uri = "s3://bucket/storage.tar.gz".to_string();
+    config.metadata_artifact_uri = to_file_uri(&metadata_path);
+    config.models_artifact_uri = "gs://bucket/models.tar.gz".to_string();
+    config.artifact_fetch_policy = ArtifactFetchPolicy::IfMissing;
+
+    let outcome = materialize_file_artifacts(&config, "manifest-hash")
+        .expect("existing local models should avoid remote models fetch")
+        .expect("artifact mode enabled");
+    assert!(!outcome.storage_materialized);
+    assert!(!outcome.models_materialized);
+}
+
+#[test]
 fn materialize_file_artifacts_supports_remote_cached_uris_when_policy_never() {
     let workspace = TempDir::new().expect("tempdir");
     let mut config = setup_config(&workspace);

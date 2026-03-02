@@ -46,30 +46,12 @@ pub fn materialize_file_artifacts(
     let metadata = PrebuiltAssetsMetadata::from_json_str(&metadata_raw)?;
     validate_metadata_against_runtime(&metadata, config, expected_manifest_hash)?;
 
-    let storage_archive_path = resolve_artifact_uri_to_local(
-        config,
-        "DBT_NOVA_STORAGE_ARTIFACT_URI",
-        &config.storage_artifact_uri,
-    )?;
-    ensure_regular_file("DBT_NOVA_STORAGE_ARTIFACT_URI", &storage_archive_path)?;
-
-    let models_archive_path = if config.models_artifact_uri.trim().is_empty() {
-        None
-    } else {
-        let path = resolve_artifact_uri_to_local(
-            config,
-            "DBT_NOVA_MODELS_ARTIFACT_URI",
-            &config.models_artifact_uri,
-        )?;
-        ensure_regular_file("DBT_NOVA_MODELS_ARTIFACT_URI", &path)?;
-        if !metadata.has_models_artifact() {
-            return Err(DbtNovaError::InvalidParams(
-                "DBT_NOVA_MODELS_ARTIFACT_URI is set but metadata contract has no artifact_name_models"
-                    .to_string(),
-            ));
-        }
-        Some(path)
-    };
+    if !config.models_artifact_uri.trim().is_empty() && !metadata.has_models_artifact() {
+        return Err(DbtNovaError::InvalidParams(
+            "DBT_NOVA_MODELS_ARTIFACT_URI is set but metadata contract has no artifact_name_models"
+                .to_string(),
+        ));
+    }
 
     let storage_target = config.storage_root_dir()?;
     let storage_present = storage_instance_present(config)?;
@@ -80,6 +62,12 @@ pub fn materialize_file_artifacts(
     )?;
     ensure_materialization_allowed(config, should_materialize_storage, "storage artifacts")?;
     let storage_materialized = if should_materialize_storage {
+        let storage_archive_path = resolve_artifact_uri_to_local(
+            config,
+            "DBT_NOVA_STORAGE_ARTIFACT_URI",
+            &config.storage_artifact_uri,
+        )?;
+        ensure_regular_file("DBT_NOVA_STORAGE_ARTIFACT_URI", &storage_archive_path)?;
         extract_archive_atomically(&storage_archive_path, &storage_target)?;
         true
     } else {
@@ -87,7 +75,7 @@ pub fn materialize_file_artifacts(
     };
 
     let mut models_materialized = false;
-    if let Some(models_archive_path) = models_archive_path {
+    if !config.models_artifact_uri.trim().is_empty() {
         let models_target = PathBuf::from(&config.search.embedding_cache_dir);
         let models_present = directory_has_files(&models_target)?;
         let should_materialize_models = should_materialize(
@@ -97,6 +85,12 @@ pub fn materialize_file_artifacts(
         )?;
         ensure_materialization_allowed(config, should_materialize_models, "models artifacts")?;
         if should_materialize_models {
+            let models_archive_path = resolve_artifact_uri_to_local(
+                config,
+                "DBT_NOVA_MODELS_ARTIFACT_URI",
+                &config.models_artifact_uri,
+            )?;
+            ensure_regular_file("DBT_NOVA_MODELS_ARTIFACT_URI", &models_archive_path)?;
             extract_archive_atomically(&models_archive_path, &models_target)?;
             models_materialized = true;
         }
