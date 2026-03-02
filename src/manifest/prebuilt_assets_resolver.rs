@@ -3,6 +3,7 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
+use blake3;
 use flate2::read::GzDecoder;
 use tar::Archive;
 use tracing::info;
@@ -10,9 +11,10 @@ use tracing::info;
 use crate::config::{ArtifactFetchPolicy, DbtNovaConfig};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::prebuilt_assets::PrebuiltAssetsMetadata;
+use crate::manifest::source::resolve_manifest;
 use crate::utils::{sanitize_uri, unique_suffix};
 
-/// Result of file-based prebuilt artifact materialization.
+/// Result of prebuilt artifact materialization.
 #[derive(Debug, Clone)]
 pub struct FileArtifactMaterialization {
     pub metadata: PrebuiltAssetsMetadata,
@@ -20,10 +22,7 @@ pub struct FileArtifactMaterialization {
     pub models_materialized: bool,
 }
 
-/// Materialize prebuilt artifacts from file URIs.
-///
-/// This is the P2 resolver MVP and currently supports only local file sources
-/// (`file://` or plain paths).
+/// Materialize prebuilt artifacts from configured URIs.
 ///
 /// # Errors
 ///
@@ -37,15 +36,18 @@ pub fn materialize_file_artifacts(
         return Ok(None);
     }
 
-    let metadata_path = resolve_file_artifact_uri(
+    let metadata_path = resolve_artifact_uri_to_local(
+        config,
         "DBT_NOVA_METADATA_ARTIFACT_URI",
         &config.metadata_artifact_uri,
     )?;
+    ensure_regular_file("DBT_NOVA_METADATA_ARTIFACT_URI", &metadata_path)?;
     let metadata_raw = read_small_text_file(&metadata_path, config.manifest_max_bytes)?;
     let metadata = PrebuiltAssetsMetadata::from_json_str(&metadata_raw)?;
     validate_metadata_against_runtime(&metadata, config, expected_manifest_hash)?;
 
-    let storage_archive_path = resolve_file_artifact_uri(
+    let storage_archive_path = resolve_artifact_uri_to_local(
+        config,
         "DBT_NOVA_STORAGE_ARTIFACT_URI",
         &config.storage_artifact_uri,
     )?;
@@ -54,8 +56,11 @@ pub fn materialize_file_artifacts(
     let models_archive_path = if config.models_artifact_uri.trim().is_empty() {
         None
     } else {
-        let path =
-            resolve_file_artifact_uri("DBT_NOVA_MODELS_ARTIFACT_URI", &config.models_artifact_uri)?;
+        let path = resolve_artifact_uri_to_local(
+            config,
+            "DBT_NOVA_MODELS_ARTIFACT_URI",
+            &config.models_artifact_uri,
+        )?;
         ensure_regular_file("DBT_NOVA_MODELS_ARTIFACT_URI", &path)?;
         if !metadata.has_models_artifact() {
             return Err(DbtNovaError::InvalidParams(
@@ -111,6 +116,95 @@ pub fn materialize_file_artifacts(
         storage_materialized,
         models_materialized,
     }))
+}
+
+#[derive(Debug, Clone)]
+struct ArtifactLocator {
+    raw: String,
+    scheme: String,
+}
+
+fn resolve_artifact_uri_to_local(config: &DbtNovaConfig, name: &str, uri: &str) -> Result<PathBuf> {
+    let locator = parse_artifact_locator(name, uri)?;
+    if locator.scheme == "file" {
+        return resolve_file_artifact_uri(name, &locator.raw);
+    }
+
+    let cache_dir = config.artifacts_cache_dir()?;
+    fs::create_dir_all(&cache_dir)?;
+    let (cache_path, meta_path) = artifact_cache_paths(&cache_dir, &locator.raw);
+
+    match config.artifact_fetch_policy {
+        ArtifactFetchPolicy::Never => {
+            if cache_path.exists() {
+                return Ok(cache_path);
+            }
+            return Err(DbtNovaError::ServerError(format!(
+                "artifact fetch policy is 'never' but no cached copy exists for {name}: {}",
+                sanitize_uri(&locator.raw)
+            )));
+        }
+        ArtifactFetchPolicy::IfMissing => {
+            if cache_path.exists() {
+                return Ok(cache_path);
+            }
+        }
+        ArtifactFetchPolicy::Always => {
+            let _ = fs::remove_file(&cache_path);
+            let _ = fs::remove_file(&meta_path);
+        }
+    }
+
+    let mut fetch_config = config.clone();
+    fetch_config.manifest_path = String::new();
+    fetch_config.manifest_uri = locator.raw;
+    fetch_config.manifest_cache_dir = cache_dir.to_string_lossy().to_string();
+    // Artifacts can exceed manifest limits; metadata size is enforced after fetch.
+    fetch_config.manifest_max_bytes = 0;
+    fetch_config.manifest_refresh_secs = 0;
+    fetch_config.manifest_allow_http = config.artifact_allow_http;
+    fetch_config.manifest_fetch_timeout_secs = config.artifact_timeout_secs;
+    fetch_config.manifest_http_timeout_secs = config.artifact_timeout_secs;
+    fetch_config.manifest_http_connect_timeout_secs = config.artifact_timeout_secs;
+
+    let resolution = resolve_manifest(&fetch_config)?;
+    Ok(resolution.local_path)
+}
+
+fn parse_artifact_locator(name: &str, uri: &str) -> Result<ArtifactLocator> {
+    let trimmed = uri.trim();
+    if trimmed.is_empty() {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "{name} cannot be empty"
+        )));
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("dbfs:/") && !lower.starts_with("dbfs://") {
+        return Ok(ArtifactLocator {
+            raw: trimmed.to_string(),
+            scheme: "dbfs".to_string(),
+        });
+    }
+
+    if let Some((scheme, _)) = lower.split_once("://") {
+        return Ok(ArtifactLocator {
+            raw: trimmed.to_string(),
+            scheme: scheme.to_string(),
+        });
+    }
+
+    Ok(ArtifactLocator {
+        raw: trimmed.to_string(),
+        scheme: "file".to_string(),
+    })
+}
+
+fn artifact_cache_paths(cache_dir: &Path, uri: &str) -> (PathBuf, PathBuf) {
+    let hash = blake3::hash(uri.as_bytes()).to_hex().to_string();
+    let cache_path = cache_dir.join(format!("{hash}.json"));
+    let meta_path = cache_dir.join(format!("{hash}.meta.json"));
+    (cache_path, meta_path)
 }
 
 fn ensure_materialization_allowed(
