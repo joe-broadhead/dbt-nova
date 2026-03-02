@@ -5,8 +5,44 @@ use flate2::write::GzEncoder;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use tar::Builder;
 use tempfile::TempDir;
+
+static ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+    ENV_MUTEX
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
+struct EnvVarRestore {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl EnvVarRestore {
+    fn remove(key: &'static str) -> Self {
+        let previous = std::env::var(key).ok();
+        // SAFETY: tests serialize environment mutation with `ENV_MUTEX`.
+        unsafe { std::env::remove_var(key) };
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarRestore {
+    fn drop(&mut self) {
+        if let Some(value) = self.previous.take() {
+            // SAFETY: tests serialize environment mutation with `ENV_MUTEX`.
+            unsafe { std::env::set_var(self.key, value) };
+        } else {
+            // SAFETY: tests serialize environment mutation with `ENV_MUTEX`.
+            unsafe { std::env::remove_var(self.key) };
+        }
+    }
+}
 
 fn create_archive_from_dir(source_dir: &Path, archive_path: &Path) {
     let file = File::create(archive_path).expect("create archive file");
@@ -33,6 +69,13 @@ fn write_file(path: &Path, content: &[u8]) {
 
 fn to_file_uri(path: &Path) -> String {
     format!("file://{}", path.display())
+}
+
+fn write_cached_artifact(cache_dir: &Path, uri: &str, source: &Path) {
+    fs::create_dir_all(cache_dir).expect("create artifacts cache dir");
+    let hash = blake3::hash(uri.as_bytes()).to_hex().to_string();
+    let cache_path = cache_dir.join(format!("{hash}.json"));
+    fs::copy(source, cache_path).expect("copy cached artifact");
 }
 
 fn setup_config(workspace: &TempDir) -> DbtNovaConfig {
@@ -256,13 +299,214 @@ fn materialize_file_artifacts_if_missing_skips_existing_storage() {
 }
 
 #[test]
-fn materialize_file_artifacts_rejects_non_file_scheme_for_p2() {
+fn materialize_file_artifacts_if_missing_skips_remote_storage_fetch_when_local_present() {
     let workspace = TempDir::new().expect("tempdir");
     let mut config = setup_config(&workspace);
+
+    let existing_version_dir = PathBuf::from(&config.storage_dir)
+        .join("instances")
+        .join("analytics-prod")
+        .join("versions")
+        .join("existing");
+    write_file(&existing_version_dir.join("entities.bin"), b"entities");
+
+    let metadata_path = workspace.path().join("nova-build-metadata.json");
+    write_file(
+        &metadata_path,
+        br#"{
+  "contract_version":"v1",
+  "manifest_hash":"manifest-hash",
+  "manifest_version":"v12",
+  "entity_count":42,
+  "storage_instance_id":"analytics-prod",
+  "dbt_nova_version":"0.0.2",
+  "build_timestamp":"2026-03-02T00:00:00Z",
+  "artifact_name_storage":"storage-asset",
+  "artifact_name_models":""
+}"#,
+    );
+
     config.storage_artifact_uri = "s3://bucket/storage.tar.gz".to_string();
-    config.metadata_artifact_uri = "s3://bucket/nova-build-metadata.json".to_string();
+    config.metadata_artifact_uri = to_file_uri(&metadata_path);
+    config.artifact_fetch_policy = ArtifactFetchPolicy::IfMissing;
+
+    let outcome = materialize_file_artifacts(&config, "manifest-hash")
+        .expect("existing local storage should avoid remote storage fetch")
+        .expect("artifact mode enabled");
+    assert!(!outcome.storage_materialized);
+}
+
+#[test]
+fn materialize_file_artifacts_if_missing_skips_remote_models_fetch_when_local_present() {
+    let workspace = TempDir::new().expect("tempdir");
+    let mut config = setup_config(&workspace);
+    config.search.embedding_cache_dir = workspace
+        .path()
+        .join("embedding-cache")
+        .to_string_lossy()
+        .to_string();
+
+    let existing_version_dir = PathBuf::from(&config.storage_dir)
+        .join("instances")
+        .join("analytics-prod")
+        .join("versions")
+        .join("existing");
+    write_file(&existing_version_dir.join("entities.bin"), b"entities");
+
+    let existing_model = PathBuf::from(&config.search.embedding_cache_dir)
+        .join("models--intfloat--multilingual-e5-base")
+        .join("snapshots")
+        .join("main")
+        .join("onnx")
+        .join("model.onnx");
+    write_file(&existing_model, b"model");
+
+    let metadata_path = workspace.path().join("nova-build-metadata.json");
+    write_file(
+        &metadata_path,
+        br#"{
+  "contract_version":"v1",
+  "manifest_hash":"manifest-hash",
+  "manifest_version":"v12",
+  "entity_count":42,
+  "storage_instance_id":"analytics-prod",
+  "dbt_nova_version":"0.0.2",
+  "build_timestamp":"2026-03-02T00:00:00Z",
+  "artifact_name_storage":"storage-asset",
+  "artifact_name_models":"models-asset"
+}"#,
+    );
+
+    config.storage_artifact_uri = "s3://bucket/storage.tar.gz".to_string();
+    config.metadata_artifact_uri = to_file_uri(&metadata_path);
+    config.models_artifact_uri = "gs://bucket/models.tar.gz".to_string();
+    config.artifact_fetch_policy = ArtifactFetchPolicy::IfMissing;
+
+    let outcome = materialize_file_artifacts(&config, "manifest-hash")
+        .expect("existing local models should avoid remote models fetch")
+        .expect("artifact mode enabled");
+    assert!(!outcome.storage_materialized);
+    assert!(!outcome.models_materialized);
+}
+
+#[test]
+fn materialize_file_artifacts_supports_remote_cached_uris_when_policy_never() {
+    let workspace = TempDir::new().expect("tempdir");
+    let mut config = setup_config(&workspace);
+    let existing_version_dir = PathBuf::from(&config.storage_dir)
+        .join("instances")
+        .join("analytics-prod")
+        .join("versions")
+        .join("existing");
+    write_file(&existing_version_dir.join("entities.bin"), b"entities");
+
+    let storage_source = create_storage_source(&workspace);
+    let storage_archive = workspace.path().join("storage.tar.gz");
+    create_archive_from_dir(&storage_source, &storage_archive);
+
+    let metadata_path = workspace.path().join("nova-build-metadata.json");
+    write_file(
+        &metadata_path,
+        br#"{
+  "contract_version":"v1",
+  "manifest_hash":"manifest-hash",
+  "manifest_version":"v12",
+  "entity_count":42,
+  "storage_instance_id":"analytics-prod",
+  "dbt_nova_version":"0.0.2",
+  "build_timestamp":"2026-03-02T00:00:00Z",
+  "artifact_name_storage":"storage-asset",
+  "artifact_name_models":""
+}"#,
+    );
+
+    let storage_uri = "s3://bucket/storage.tar.gz";
+    let metadata_uri = "gs://bucket/nova-build-metadata.json";
+
+    let cache_dir = config
+        .artifacts_cache_dir()
+        .expect("resolve artifacts cache dir");
+    write_cached_artifact(&cache_dir, storage_uri, &storage_archive);
+    write_cached_artifact(&cache_dir, metadata_uri, &metadata_path);
+
+    config.storage_artifact_uri = storage_uri.to_string();
+    config.metadata_artifact_uri = metadata_uri.to_string();
+    config.artifact_fetch_policy = ArtifactFetchPolicy::Never;
+
+    let outcome = materialize_file_artifacts(&config, "manifest-hash")
+        .expect("materialization should succeed from cached remote metadata")
+        .expect("artifact mode enabled");
+    assert!(!outcome.storage_materialized);
+    assert!(!outcome.models_materialized);
+}
+
+#[test]
+fn materialize_file_artifacts_if_missing_uses_cached_dbfs_without_auth() {
+    let _env_guard = lock_env();
+    let _host_restore = EnvVarRestore::remove("DATABRICKS_HOST");
+    let _token_restore = EnvVarRestore::remove("DATABRICKS_ACCESS_TOKEN");
+
+    let workspace = TempDir::new().expect("tempdir");
+    let mut config = setup_config(&workspace);
+    let existing_version_dir = PathBuf::from(&config.storage_dir)
+        .join("instances")
+        .join("analytics-prod")
+        .join("versions")
+        .join("existing");
+    write_file(&existing_version_dir.join("entities.bin"), b"entities");
+
+    let storage_source = create_storage_source(&workspace);
+    let storage_archive = workspace.path().join("storage.tar.gz");
+    create_archive_from_dir(&storage_source, &storage_archive);
+
+    let metadata_path = workspace.path().join("nova-build-metadata.json");
+    write_file(
+        &metadata_path,
+        br#"{
+  "contract_version":"v1",
+  "manifest_hash":"manifest-hash",
+  "manifest_version":"v12",
+  "entity_count":42,
+  "storage_instance_id":"analytics-prod",
+  "dbt_nova_version":"0.0.2",
+  "build_timestamp":"2026-03-02T00:00:00Z",
+  "artifact_name_storage":"storage-asset",
+  "artifact_name_models":""
+}"#,
+    );
+
+    let storage_uri = "dbfs:/FileStore/storage.tar.gz";
+    let metadata_uri = "dbfs:/FileStore/nova-build-metadata.json";
+    let cache_dir = config
+        .artifacts_cache_dir()
+        .expect("resolve artifacts cache dir");
+    write_cached_artifact(&cache_dir, storage_uri, &storage_archive);
+    write_cached_artifact(&cache_dir, metadata_uri, &metadata_path);
+
+    config.storage_artifact_uri = storage_uri.to_string();
+    config.metadata_artifact_uri = metadata_uri.to_string();
+    config.artifact_fetch_policy = ArtifactFetchPolicy::IfMissing;
+
+    let outcome = materialize_file_artifacts(&config, "manifest-hash")
+        .expect("cached DBFS artifacts should not require auth")
+        .expect("artifact mode enabled");
+    assert!(!outcome.storage_materialized);
+}
+
+#[test]
+fn materialize_file_artifacts_dbfs_requires_databricks_auth() {
+    let _env_guard = lock_env();
+    let _host_restore = EnvVarRestore::remove("DATABRICKS_HOST");
+    let _token_restore = EnvVarRestore::remove("DATABRICKS_ACCESS_TOKEN");
+
+    let workspace = TempDir::new().expect("tempdir");
+    let mut config = setup_config(&workspace);
+    config.storage_artifact_uri = "dbfs:/FileStore/storage.tar.gz".to_string();
+    config.metadata_artifact_uri = "dbfs:/FileStore/nova-build-metadata.json".to_string();
+    config.artifact_fetch_policy = ArtifactFetchPolicy::IfMissing;
 
     let err = materialize_file_artifacts(&config, "manifest-hash")
-        .expect_err("non-file URIs should be rejected by file resolver");
-    assert!(err.to_string().contains("non-file URI scheme"));
+        .expect_err("dbfs fetch without auth should fail");
+    let message = err.to_string();
+    assert!(message.contains("DATABRICKS_HOST not set"));
 }
