@@ -37,6 +37,8 @@ jsonwebtoken = "9"
 base64 = "0.22"
 zstd = "0.13"
 duckdb = { version = "1", features = ["bundled"] }
+flate2 = "1.0"
+tar = "0.4"
 aws-config = { version = "1.1", optional = true, features = ["behavior-version-latest"] }
 aws-sdk-s3 = { version = "1.1", optional = true }
 google-cloud-storage = { version = "0.17", optional = true }
