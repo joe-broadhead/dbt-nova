@@ -217,7 +217,7 @@ tar -xzf <artifact_name_storage>.tar.gz
 | --- | --- | --- |
 | `Storage is read-only and no reusable index is available` | Missing storage files, mismatched `storage_instance_id`, or manifest content mismatch | Re-download artifacts, verify instance id, verify manifest is identical to producer input |
 | Metadata contract validation fails | Missing/corrupt `nova-build-metadata.json` or unsupported contract version | Re-run producer and consume both storage + metadata artifacts together |
-| Health passes but embeddings are missing | Models artifact was not downloaded in slim/read-only flow | Download models artifact (if produced) and set `DBT_NOVA_EMBEDDINGS_CACHE_DIR` |
+| Health passes but embeddings are missing | Models artifact not provided in consumer setup | Native mode: set `DBT_NOVA_MODELS_ARTIFACT_URI` to the producer models artifact URI. Manual mode: extract models artifact and set `DBT_NOVA_EMBEDDINGS_CACHE_DIR`. |
 
 ## Related docs
 

@@ -503,6 +503,10 @@ Readiness and status (`loading`/`ready`/`refreshing`/`failed`) plus retriever in
 Includes `manifest_health` diagnostics for lineage metadata quality, including
 models with `ref(...)` calls but no manifest dependencies.
 
+Also includes `artifact_consumer` status when prebuilt artifact consumer mode is
+configured (`enabled`, `fetch_policy`, validation/materialization flags, and
+last evaluation/materialization timestamps).
+
 `status=failed` indicates manifest initialization is not yet available. Keep the source
 valid and allow the configured refresh interval to recover automatically.
 

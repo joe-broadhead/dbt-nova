@@ -191,14 +191,23 @@ jobs:
 Consumer env (required):
 
 ```bash
-export DBT_NOVA_STORAGE_DIR=/path/to/dbt-nova-storage
+# Native remote artifact mode (recommended)
+export DBT_NOVA_STORAGE_DIR=/path/to/.dbt-nova
 export DBT_NOVA_STORAGE_INSTANCE_ID=analytics-prod
 export DBT_NOVA_STORAGE_READ_ONLY=true
+export DBT_NOVA_STORAGE_ARTIFACT_URI="$STORAGE_URI"
+export DBT_NOVA_METADATA_ARTIFACT_URI="$METADATA_URI"
+export DBT_NOVA_MODELS_ARTIFACT_URI="$MODELS_URI"   # optional
+export DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing
 ```
 
 Optional: publish artifacts directly to cloud targets from the reusable
 workflow with `publish_targets` plus per-target prefixes
 (`publish_s3_prefix`, `publish_gcs_prefix`, `publish_dbfs_prefix`).
+
+Legacy fallback: if you manually extract artifacts locally, you can omit
+`DBT_NOVA_*_ARTIFACT_URI` vars and keep only
+`DBT_NOVA_STORAGE_DIR` + `DBT_NOVA_STORAGE_INSTANCE_ID` + `DBT_NOVA_STORAGE_READ_ONLY=true`.
 
 Full guide:
 **[Prebuilt Asset Workflow](docs/operations/prebuilt-assets.md)**.

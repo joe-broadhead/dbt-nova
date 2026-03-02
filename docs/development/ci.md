@@ -19,6 +19,7 @@ This repository uses GitHub Actions for CI, releases, and documentation.
   standard mode and dry-run remote publish mode, then validates:
   - metadata contract artifact correctness
   - read-only consumer behavior from extracted artifacts
+  - native remote consumer behavior via `file://` artifact URIs
   - negative-path behavior (missing/mismatched storage + invalid metadata)
 - **Note:** sets `DBT_NOVA_STRICT_SCHEMA=1` so schema parsing failures break the build
 
