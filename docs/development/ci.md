@@ -30,6 +30,9 @@ This repository uses GitHub Actions for CI, releases, and documentation.
 - **Inputs:** `manifest_path` or `manifest_uri`, `storage_instance_id`,
   optional dbt manifest generation, optional models artifact, optional remote
   publish targets (`s3`, `gcs`, `dbfs`) and `publish_dry_run`
+- **Trust boundary:** when `dbt_generate_manifest=true`, `dbt_command` is
+  executed via `bash -lc` in the caller repository context and must be treated
+  as trusted caller input
 - **Outputs:** manifest metadata (`manifest_hash`, `manifest_version`,
   `entity_count`), artifact names, and optional published URI JSON objects
 

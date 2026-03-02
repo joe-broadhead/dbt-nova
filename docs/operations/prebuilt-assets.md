@@ -44,6 +44,10 @@ Alternative producer inputs:
 - `manifest_uri` (instead of `manifest_path`)
 - `dbt_generate_manifest: true` + `dbt_command` (build manifest in workflow)
 
+`dbt_command` is executed as `bash -lc "<command>"` inside the caller
+repository checkout. Treat it as a trusted command surface and only use this
+mode in repositories/branches where workflow callers are trusted.
+
 The producer emits:
 
 - storage artifact (required)

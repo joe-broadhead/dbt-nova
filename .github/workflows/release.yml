@@ -28,11 +28,13 @@ jobs:
       - name: Resolve tag
         id: resolve_tag
         shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
           release_tag="${GITHUB_REF_NAME}"
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            release_tag="${{ inputs.tag }}"
+            release_tag="${INPUT_TAG}"
           fi
           if ! [[ "${release_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Invalid release tag: ${release_tag}"
@@ -51,8 +53,10 @@ jobs:
           git fetch --tags origin
 
       - name: Ensure tag is on master
+        env:
+          RELEASE_TAG: ${{ steps.resolve_tag.outputs.release_tag }}
         run: |
-          TAG_COMMIT="$(git rev-list -n1 "${{ steps.resolve_tag.outputs.release_tag }}")"
+          TAG_COMMIT="$(git rev-list -n1 "${RELEASE_TAG}")"
           if ! git merge-base --is-ancestor "$TAG_COMMIT" origin/master; then
             echo "Release tags must point to a commit on master."
             exit 1
@@ -98,21 +102,27 @@ jobs:
           cosign-release: "v2.4.1"
 
       - name: Build (release, all features)
-        run: cargo build --locked --release --all-features --target ${{ matrix.target }}
+        env:
+          TARGET_TRIPLE: ${{ matrix.target }}
+        run: cargo build --locked --release --all-features --target "${TARGET_TRIPLE}"
 
       - name: Package
         shell: bash
+        env:
+          TARGET_TRIPLE: ${{ matrix.target }}
+          ASSET_NAME: ${{ matrix.asset }}
+          BIN_EXT: ${{ matrix.ext }}
         run: |
           set -euo pipefail
-          BIN="target/${{ matrix.target }}/release/dbt-nova${{ matrix.ext }}"
+          BIN="target/${TARGET_TRIPLE}/release/dbt-nova${BIN_EXT}"
           mkdir -p dist/slim
           cp "$BIN" dist/slim/
 
-          tar -C dist/slim -czf "dbt-nova-${{ matrix.asset }}.tar.gz" "dbt-nova${{ matrix.ext }}"
-          shasum -a 256 "dbt-nova-${{ matrix.asset }}.tar.gz" > "dbt-nova-${{ matrix.asset }}.sha256"
+          tar -C dist/slim -czf "dbt-nova-${ASSET_NAME}.tar.gz" "dbt-nova${BIN_EXT}"
+          shasum -a 256 "dbt-nova-${ASSET_NAME}.tar.gz" > "dbt-nova-${ASSET_NAME}.sha256"
           for artifact in \
-            "dbt-nova-${{ matrix.asset }}.tar.gz" \
-            "dbt-nova-${{ matrix.asset }}.sha256"
+            "dbt-nova-${ASSET_NAME}.tar.gz" \
+            "dbt-nova-${ASSET_NAME}.sha256"
           do
             COSIGN_EXPERIMENTAL=1 COSIGN_YES=1 cosign sign-blob \
               --output-signature "${artifact}.sig" \

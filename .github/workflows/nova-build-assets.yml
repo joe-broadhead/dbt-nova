@@ -23,7 +23,7 @@ on:
         type: boolean
         default: false
       dbt_command:
-        description: "dbt command to generate the manifest when enabled"
+        description: "Trusted shell command executed via bash -lc when dbt_generate_manifest=true"
         required: false
         type: string
         default: ""
@@ -120,7 +120,7 @@ on:
         type: boolean
         default: false
       dbt_command:
-        description: "dbt command to generate the manifest when enabled"
+        description: "Trusted shell command executed via bash -lc when dbt_generate_manifest=true"
         required: false
         type: string
         default: ""
@@ -444,9 +444,12 @@ jobs:
       - name: Optionally generate manifest via dbt
         if: ${{ inputs.dbt_generate_manifest }}
         shell: bash
+        env:
+          INPUT_DBT_COMMAND: ${{ inputs.dbt_command }}
         run: |
           set -euo pipefail
-          bash -lc "${{ inputs.dbt_command }}"
+          # Trust boundary: callers control INPUT_DBT_COMMAND in their own repository.
+          bash -lc "${INPUT_DBT_COMMAND}"
 
       - name: Run manifest load + smoke validations
         id: collect
