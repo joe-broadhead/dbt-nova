@@ -366,6 +366,130 @@ jobs:
             exit 1
           }
 
+  reusable-assets-remote-consumer-smoke:
+    name: reusable-assets-remote-consumer-smoke
+    runs-on: ubuntu-22.04
+    needs: reusable-assets-producer
+    env:
+      STORAGE_INSTANCE_ID: ci-readonly-smoke
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
+      - name: Build dbt-nova CLI binary
+        run: cargo build --locked --bin dbt-nova
+
+      - name: Ensure jq is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v jq >/dev/null 2>&1; then
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Download storage artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: ${{ needs.reusable-assets-producer.outputs.artifact_name_storage }}
+          path: remote-consumer-artifacts/storage
+
+      - name: Download metadata artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: ${{ needs.reusable-assets-producer.outputs.artifact_name_metadata }}
+          path: remote-consumer-artifacts/metadata
+
+      - name: Prepare file URI smoke workspace
+        id: remote_workspace
+        shell: bash
+        env:
+          STORAGE_ARTIFACT_NAME: ${{ needs.reusable-assets-producer.outputs.artifact_name_storage }}
+        run: |
+          set -euo pipefail
+
+          workspace_dir="$(mktemp -d)"
+          storage_root="${workspace_dir}/nova-storage"
+          mkdir -p "${storage_root}"
+
+          storage_archive="remote-consumer-artifacts/storage/${STORAGE_ARTIFACT_NAME}.tar.gz"
+          metadata_path="remote-consumer-artifacts/metadata/nova-build-metadata.json"
+          test -f "${storage_archive}"
+          test -f "${metadata_path}"
+
+          manifest_path="${workspace_dir}/manifest.json"
+          cp tests/fixtures/nova_manifest.json "${manifest_path}"
+
+          storage_uri="file://$(realpath "${storage_archive}")"
+          metadata_uri="file://$(realpath "${metadata_path}")"
+
+          echo "workspace_dir=${workspace_dir}" >> "$GITHUB_OUTPUT"
+          echo "storage_root=${storage_root}" >> "$GITHUB_OUTPUT"
+          echo "manifest_path=${manifest_path}" >> "$GITHUB_OUTPUT"
+          echo "storage_uri=${storage_uri}" >> "$GITHUB_OUTPUT"
+          echo "metadata_uri=${metadata_uri}" >> "$GITHUB_OUTPUT"
+
+      - name: First run materializes from file URIs
+        shell: bash
+        env:
+          DBT_NOVA_STORAGE_DIR: ${{ steps.remote_workspace.outputs.storage_root }}
+          DBT_NOVA_STORAGE_INSTANCE_ID: ${{ env.STORAGE_INSTANCE_ID }}
+          DBT_NOVA_STORAGE_ARTIFACT_URI: ${{ steps.remote_workspace.outputs.storage_uri }}
+          DBT_NOVA_METADATA_ARTIFACT_URI: ${{ steps.remote_workspace.outputs.metadata_uri }}
+          DBT_NOVA_ARTIFACT_FETCH_POLICY: if_missing
+        run: |
+          set -euo pipefail
+          ./target/debug/dbt-nova health check \
+            --manifest-path "${{ steps.remote_workspace.outputs.manifest_path }}" \
+            --json | tee "${{ steps.remote_workspace.outputs.workspace_dir }}/remote-health-first.json"
+
+          jq -e '.status == "success"' "${{ steps.remote_workspace.outputs.workspace_dir }}/remote-health-first.json" >/dev/null
+          jq -e '.data.artifact_consumer.enabled == true' "${{ steps.remote_workspace.outputs.workspace_dir }}/remote-health-first.json" >/dev/null
+          jq -e '.data.artifact_consumer.metadata_validated == true' "${{ steps.remote_workspace.outputs.workspace_dir }}/remote-health-first.json" >/dev/null
+          jq -e '.data.artifact_consumer.storage_materialized == true' "${{ steps.remote_workspace.outputs.workspace_dir }}/remote-health-first.json" >/dev/null
+
+      - name: Second run reuses local storage under if_missing
+        shell: bash
+        env:
+          DBT_NOVA_STORAGE_DIR: ${{ steps.remote_workspace.outputs.storage_root }}
+          DBT_NOVA_STORAGE_INSTANCE_ID: ${{ env.STORAGE_INSTANCE_ID }}
+          DBT_NOVA_STORAGE_ARTIFACT_URI: ${{ steps.remote_workspace.outputs.storage_uri }}
+          DBT_NOVA_METADATA_ARTIFACT_URI: ${{ steps.remote_workspace.outputs.metadata_uri }}
+          DBT_NOVA_ARTIFACT_FETCH_POLICY: if_missing
+        run: |
+          set -euo pipefail
+          ./target/debug/dbt-nova health check \
+            --manifest-path "${{ steps.remote_workspace.outputs.manifest_path }}" \
+            --json | tee "${{ steps.remote_workspace.outputs.workspace_dir }}/remote-health-second.json"
+
+          jq -e '.status == "success"' "${{ steps.remote_workspace.outputs.workspace_dir }}/remote-health-second.json" >/dev/null
+          jq -e '.data.artifact_consumer.storage_materialized == false' "${{ steps.remote_workspace.outputs.workspace_dir }}/remote-health-second.json" >/dev/null
+
+      - name: Read-only mode succeeds with never policy after materialization
+        shell: bash
+        env:
+          DBT_NOVA_STORAGE_DIR: ${{ steps.remote_workspace.outputs.storage_root }}
+          DBT_NOVA_STORAGE_INSTANCE_ID: ${{ env.STORAGE_INSTANCE_ID }}
+          DBT_NOVA_STORAGE_READ_ONLY: "true"
+          DBT_NOVA_STORAGE_ARTIFACT_URI: ${{ steps.remote_workspace.outputs.storage_uri }}
+          DBT_NOVA_METADATA_ARTIFACT_URI: ${{ steps.remote_workspace.outputs.metadata_uri }}
+          DBT_NOVA_ARTIFACT_FETCH_POLICY: never
+        run: |
+          set -euo pipefail
+          ./target/debug/dbt-nova health check \
+            --manifest-path "${{ steps.remote_workspace.outputs.manifest_path }}" \
+            --json | tee "${{ steps.remote_workspace.outputs.workspace_dir }}/remote-health-readonly.json"
+
+          jq -e '.status == "success"' "${{ steps.remote_workspace.outputs.workspace_dir }}/remote-health-readonly.json" >/dev/null
+          jq -e '.data.artifact_consumer.fetch_policy == "never"' "${{ steps.remote_workspace.outputs.workspace_dir }}/remote-health-readonly.json" >/dev/null
+
   reusable-assets-negative-contract:
     name: reusable-assets-negative-contract
     runs-on: ubuntu-22.04
