@@ -17,6 +17,7 @@ use crate::config::DbtNovaConfig;
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::entity::Entity;
 use crate::manifest::lineage_sql::{extract_ref_calls, find_sql_aliases, sql_for_matching};
+use crate::manifest::prebuilt_assets_resolver::materialize_file_artifacts;
 use crate::manifest::rkyv_indexes;
 use crate::manifest::rkyv_types::{PersistedIndexes, RKYV_SCHEMA_VERSION};
 use crate::manifest::search::{EntityCache, InUseLocks, ManifestSearch, compile_layer_rules};
@@ -449,6 +450,17 @@ impl ManifestSearch {
             &instance_root,
             config.storage_build_lock_wait_secs,
         )?);
+
+        if config.remote_artifact_mode_enabled() {
+            let materialization = materialize_file_artifacts(&config, &signature.content_hash)?;
+            if let Some(outcome) = materialization {
+                info!(
+                    storage_materialized = outcome.storage_materialized,
+                    models_materialized = outcome.models_materialized,
+                    "evaluated remote artifact materialization"
+                );
+            }
+        }
 
         let mut entities: Option<EntityStore> = None;
         let mut reuse_store = false;

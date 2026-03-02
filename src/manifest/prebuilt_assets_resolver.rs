@@ -73,6 +73,7 @@ pub fn materialize_file_artifacts(
         config.artifact_fetch_policy,
         storage_present,
     )?;
+    ensure_materialization_allowed(config, should_materialize_storage, "storage artifacts")?;
     let storage_materialized = if should_materialize_storage {
         extract_archive_atomically(&storage_archive_path, &storage_target)?;
         true
@@ -89,6 +90,7 @@ pub fn materialize_file_artifacts(
             config.artifact_fetch_policy,
             models_present,
         )?;
+        ensure_materialization_allowed(config, should_materialize_models, "models artifacts")?;
         if should_materialize_models {
             extract_archive_atomically(&models_archive_path, &models_target)?;
             models_materialized = true;
@@ -109,6 +111,19 @@ pub fn materialize_file_artifacts(
         storage_materialized,
         models_materialized,
     }))
+}
+
+fn ensure_materialization_allowed(
+    config: &DbtNovaConfig,
+    should_materialize: bool,
+    label: &str,
+) -> Result<()> {
+    if config.storage_read_only && should_materialize {
+        return Err(DbtNovaError::ServerError(format!(
+            "Storage is read-only; cannot materialize {label} (set DBT_NOVA_ARTIFACT_FETCH_POLICY=never and pre-materialize assets)"
+        )));
+    }
+    Ok(())
 }
 
 fn should_materialize(label: &str, policy: ArtifactFetchPolicy, is_present: bool) -> Result<bool> {
