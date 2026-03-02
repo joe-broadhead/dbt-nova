@@ -36,7 +36,7 @@ fn to_file_uri(path: &Path) -> String {
 }
 
 fn setup_config(workspace: &TempDir) -> DbtNovaConfig {
-    let manifest_path = workspace.path().join("manifest.json");
+    let manifest_path = workspace.path().join("nova_manifest.json");
     write_file(&manifest_path, br#"{"metadata":{"dbt_version":"1.8.0"}}"#);
 
     DbtNovaConfig {
