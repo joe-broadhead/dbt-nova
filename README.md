@@ -181,7 +181,7 @@ Producer (reusable workflow):
 ```yaml
 jobs:
   build_nova_assets:
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.2
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@master
     with:
       manifest_path: target/manifest.json
       storage_instance_id: analytics-prod
@@ -234,7 +234,14 @@ dbt-nova tool call search \
 - `--params-file`
 - `--params-stdin`
 
-`reload_manifest` is intentionally unavailable in CLI mode; call it through an MCP client against a running server.
+`reload_manifest` is available in CLI mode through `tool call`:
+
+```bash
+dbt-nova tool call reload_manifest \
+  --params-json '{"refresh_secs":300}' \
+  --manifest-path /path/to/manifest.json \
+  --json
+```
 
 ## Release Size
 

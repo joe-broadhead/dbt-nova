@@ -29,7 +29,7 @@ on:
 
 jobs:
   build_nova_assets:
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.2
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@master
     with:
       manifest_path: target/manifest.json
       storage_instance_id: analytics-prod
