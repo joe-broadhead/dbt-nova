@@ -25,7 +25,7 @@ use crate::manifest::source::{ManifestSignature, manifest_signature, resolve_man
 use crate::manifest::store::{EntityStore, EntityStoreBuilder};
 use crate::manifest::tantivy_search::TantivySearcher;
 use crate::manifest::vector_search::{Reranker, SparseSearcher, VectorSearcher};
-use crate::utils::{CircuitBreaker, IN_USE_LOCK_FILENAME, prune_dirs, unique_suffix};
+use crate::utils::{CircuitBreaker, IN_USE_LOCK_FILENAME, prune_dirs, sanitize_uri, unique_suffix};
 use tracing::{info, instrument, warn};
 
 struct ManifestAccumulator {
@@ -451,9 +451,22 @@ impl ManifestSearch {
             config.storage_build_lock_wait_secs,
         )?);
 
+        let mut artifact_consumer_status = build_artifact_consumer_status(&config, None, None);
         if config.remote_artifact_mode_enabled() {
+            let evaluated_at_ms = current_time_ms();
             let materialization = materialize_file_artifacts(&config, &signature.content_hash)?;
             if let Some(outcome) = materialization {
+                let last_materialized_at_ms =
+                    if outcome.storage_materialized || outcome.models_materialized {
+                        Some(evaluated_at_ms)
+                    } else {
+                        None
+                    };
+                artifact_consumer_status = build_artifact_consumer_status(
+                    &config,
+                    Some(&outcome),
+                    Some((evaluated_at_ms, last_materialized_at_ms)),
+                );
                 info!(
                     storage_materialized = outcome.storage_materialized,
                     models_materialized = outcome.models_materialized,
@@ -853,6 +866,7 @@ impl ManifestSearch {
                 column_lineage_aliases,
                 manifest_metadata: accumulator.manifest_metadata,
                 manifest_health,
+                artifact_consumer: artifact_consumer_status,
                 entity_counts: accumulator.entity_counts,
                 entity_cache,
                 lineage_cache,
@@ -1030,6 +1044,45 @@ fn build_manifest_health(
         "malformed_ref_candidate_sample": malformed_ref_candidate_sample,
         "ref_calls_without_dependencies_sample": ref_without_dependencies_sample
     }))
+}
+
+fn artifact_fetch_policy_label(policy: crate::config::ArtifactFetchPolicy) -> &'static str {
+    match policy {
+        crate::config::ArtifactFetchPolicy::IfMissing => "if_missing",
+        crate::config::ArtifactFetchPolicy::Always => "always",
+        crate::config::ArtifactFetchPolicy::Never => "never",
+    }
+}
+
+fn build_artifact_consumer_status(
+    config: &DbtNovaConfig,
+    outcome: Option<&crate::manifest::prebuilt_assets_resolver::FileArtifactMaterialization>,
+    timing: Option<(u128, Option<u128>)>,
+) -> JsonValue {
+    let (last_evaluated_at_ms, last_materialized_at_ms) = timing
+        .map_or((None, None), |(evaluated, materialized)| {
+            (Some(evaluated), materialized)
+        });
+
+    serde_json::json!({
+        "enabled": config.remote_artifact_mode_enabled(),
+        "fetch_policy": artifact_fetch_policy_label(config.artifact_fetch_policy),
+        "allow_http": config.artifact_allow_http,
+        "timeout_secs": config.artifact_timeout_secs,
+        "cache_dir": config
+            .artifacts_cache_dir()
+            .ok()
+            .map(|path| path.to_string_lossy().to_string()),
+        "storage_uri": sanitize_uri(&config.storage_artifact_uri),
+        "metadata_uri": sanitize_uri(&config.metadata_artifact_uri),
+        "models_uri": sanitize_uri(&config.models_artifact_uri),
+        "metadata_validated": outcome.is_some(),
+        "metadata_contract_version": outcome.map(|value| value.metadata.contract_version.clone()),
+        "storage_materialized": outcome.is_some_and(|value| value.storage_materialized),
+        "models_materialized": outcome.is_some_and(|value| value.models_materialized),
+        "last_evaluated_at_ms": last_evaluated_at_ms,
+        "last_materialized_at_ms": last_materialized_at_ms,
+    })
 }
 
 fn has_apparent_malformed_ref(sql: &str) -> bool {

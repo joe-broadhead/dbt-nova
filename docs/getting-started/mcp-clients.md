@@ -27,15 +27,20 @@ use that exact same `DBT_NOVA_EMBEDDINGS_CACHE_DIR` path in your MCP client env.
 If you consume prebuilt Nova storage artifacts (built by the reusable producer
 workflow), set these env vars in your MCP client:
 
-- `DBT_NOVA_STORAGE_DIR` (path to extracted storage artifact root)
+- `DBT_NOVA_STORAGE_DIR` (local Nova storage root)
 - `DBT_NOVA_STORAGE_INSTANCE_ID` (must match producer workflow input)
 - `DBT_NOVA_STORAGE_READ_ONLY=true`
+- `DBT_NOVA_STORAGE_ARTIFACT_URI`
+- `DBT_NOVA_METADATA_ARTIFACT_URI`
+- `DBT_NOVA_MODELS_ARTIFACT_URI` (optional)
+- `DBT_NOVA_ARTIFACT_FETCH_POLICY` (recommended: `if_missing`)
 
 Recommended with prebuilt artifacts:
 
 - Keep `DBT_MANIFEST_PATH` or `DBT_NOVA_MANIFEST_URI` pointed at the same
   manifest content used by the producer build.
 - Use the same Nova release on producer and consumer.
+- Keep artifact URIs stable and allow Nova to cache them locally.
 
 Codex TOML example:
 
@@ -46,9 +51,13 @@ startup_timeout_sec = 60
 
 [mcp_servers.dbt-nova.env]
 DBT_MANIFEST_PATH = "/path/to/manifest.json"
-DBT_NOVA_STORAGE_DIR = "/path/to/dbt-nova-storage"
+DBT_NOVA_STORAGE_DIR = "/path/to/.dbt-nova"
 DBT_NOVA_STORAGE_INSTANCE_ID = "analytics-prod"
 DBT_NOVA_STORAGE_READ_ONLY = "true"
+DBT_NOVA_STORAGE_ARTIFACT_URI = "s3://my-bucket/nova-assets/prod/storage-asset.tar.gz"
+DBT_NOVA_METADATA_ARTIFACT_URI = "s3://my-bucket/nova-assets/prod/nova-build-metadata.json"
+DBT_NOVA_MODELS_ARTIFACT_URI = "s3://my-bucket/nova-assets/prod/models-asset.tar.gz"
+DBT_NOVA_ARTIFACT_FETCH_POLICY = "if_missing"
 DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/models"
 ```
 

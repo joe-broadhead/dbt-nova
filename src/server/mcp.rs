@@ -988,6 +988,11 @@ mod tests {
         assert!(payload["data"]["tool_metrics"].is_object());
         assert!(payload["data"]["search_concurrency"].is_object());
         assert!(payload["data"]["sql_concurrency"].is_object());
+        assert!(payload["data"]["artifact_consumer"].is_object());
+        assert_eq!(
+            payload["data"]["artifact_consumer"]["enabled"],
+            serde_json::json!(false)
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -190,6 +190,32 @@ fn manifest_load_materializes_file_artifacts_before_reuse() {
     assert!(load.tantivy_reused, "tantivy index should be reused");
     assert!(load.indexes_reused, "indexes cache should be reused");
     assert!(load.search.entity_count() > 0);
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let health = runtime.block_on(load.search.health_snapshot());
+    let artifact_consumer = &health["artifact_consumer"];
+    assert_eq!(artifact_consumer["enabled"], serde_json::json!(true));
+    assert_eq!(
+        artifact_consumer["fetch_policy"],
+        serde_json::json!("always")
+    );
+    assert_eq!(
+        artifact_consumer["metadata_validated"],
+        serde_json::json!(true)
+    );
+    assert_eq!(
+        artifact_consumer["storage_materialized"],
+        serde_json::json!(true)
+    );
+    assert!(artifact_consumer["last_evaluated_at_ms"].as_u64().is_some());
+    assert!(
+        artifact_consumer["last_materialized_at_ms"]
+            .as_u64()
+            .is_some()
+    );
 }
 
 #[test]

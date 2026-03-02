@@ -6,7 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use blake3;
 use flate2::read::GzDecoder;
 use tar::Archive;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::config::{ArtifactFetchPolicy, DbtNovaConfig};
 use crate::error::{DbtNovaError, Result};
@@ -120,38 +120,168 @@ struct ArtifactLocator {
 
 fn resolve_artifact_uri_to_local(config: &DbtNovaConfig, name: &str, uri: &str) -> Result<PathBuf> {
     let locator = parse_artifact_locator(name, uri)?;
+    let sanitized_uri = sanitize_uri(&locator.raw);
+    let policy = artifact_fetch_policy_label(config.artifact_fetch_policy);
     if locator.scheme == "file" {
+        info!(
+            artifact = name,
+            scheme = %locator.scheme,
+            fetch_policy = policy,
+            uri = %sanitized_uri,
+            "artifact resolver using local file URI"
+        );
         return resolve_file_artifact_uri(name, &locator.raw);
     }
 
+    resolve_remote_artifact_uri(config, name, &locator, &sanitized_uri, policy)
+}
+
+fn resolve_remote_artifact_uri(
+    config: &DbtNovaConfig,
+    name: &str,
+    locator: &ArtifactLocator,
+    sanitized_uri: &str,
+    policy: &'static str,
+) -> Result<PathBuf> {
     let cache_dir = config.artifacts_cache_dir()?;
     fs::create_dir_all(&cache_dir)?;
     let (cache_path, meta_path) = artifact_cache_paths(&cache_dir, &locator.raw);
 
+    if let Some(path) = maybe_reuse_cached_artifact(
+        config,
+        name,
+        locator,
+        sanitized_uri,
+        policy,
+        &cache_path,
+        &meta_path,
+    )? {
+        return Ok(path);
+    }
+
+    fetch_remote_artifact(
+        config,
+        name,
+        locator,
+        sanitized_uri,
+        policy,
+        cache_dir.as_path(),
+    )
+}
+
+fn maybe_reuse_cached_artifact(
+    config: &DbtNovaConfig,
+    name: &str,
+    locator: &ArtifactLocator,
+    sanitized_uri: &str,
+    policy: &'static str,
+    cache_path: &Path,
+    meta_path: &Path,
+) -> Result<Option<PathBuf>> {
     match config.artifact_fetch_policy {
         ArtifactFetchPolicy::Never => {
             if cache_path.exists() {
-                return Ok(cache_path);
+                info!(
+                    artifact = name,
+                    scheme = %locator.scheme,
+                    fetch_policy = policy,
+                    cache_hit = true,
+                    fetched = false,
+                    uri = %sanitized_uri,
+                    cache_path = %cache_path.display(),
+                    "artifact resolver using cached artifact (policy=never)"
+                );
+                return Ok(Some(cache_path.to_path_buf()));
             }
-            return Err(DbtNovaError::ServerError(format!(
-                "artifact fetch policy is 'never' but no cached copy exists for {name}: {}",
-                sanitize_uri(&locator.raw)
-            )));
+            warn!(
+                artifact = name,
+                scheme = %locator.scheme,
+                fetch_policy = policy,
+                cache_hit = false,
+                fetched = false,
+                uri = %sanitized_uri,
+                "artifact resolver missing cached artifact (policy=never)"
+            );
+            Err(DbtNovaError::ServerError(format!(
+                "artifact fetch policy is 'never' but no cached copy exists for {name}: {sanitized_uri}"
+            )))
         }
         ArtifactFetchPolicy::IfMissing => {
             if cache_path.exists() {
-                return Ok(cache_path);
+                info!(
+                    artifact = name,
+                    scheme = %locator.scheme,
+                    fetch_policy = policy,
+                    cache_hit = true,
+                    fetched = false,
+                    uri = %sanitized_uri,
+                    cache_path = %cache_path.display(),
+                    "artifact resolver using cached artifact (policy=if_missing)"
+                );
+                return Ok(Some(cache_path.to_path_buf()));
             }
+            Ok(None)
         }
         ArtifactFetchPolicy::Always => {
-            let _ = fs::remove_file(&cache_path);
-            let _ = fs::remove_file(&meta_path);
+            info!(
+                artifact = name,
+                scheme = %locator.scheme,
+                fetch_policy = policy,
+                cache_hit = cache_path.exists(),
+                fetched = true,
+                uri = %sanitized_uri,
+                "artifact resolver forcing refetch (policy=always)"
+            );
+            let _ = fs::remove_file(cache_path);
+            let _ = fs::remove_file(meta_path);
+            Ok(None)
         }
     }
+}
 
+fn fetch_remote_artifact(
+    config: &DbtNovaConfig,
+    name: &str,
+    locator: &ArtifactLocator,
+    sanitized_uri: &str,
+    policy: &'static str,
+    cache_dir: &Path,
+) -> Result<PathBuf> {
+    let fetch_config = build_remote_artifact_fetch_config(config, &locator.raw, cache_dir);
+
+    info!(
+        artifact = name,
+        scheme = %locator.scheme,
+        fetch_policy = policy,
+        cache_hit = false,
+        fetched = true,
+        allow_http = config.artifact_allow_http,
+        timeout_secs = config.artifact_timeout_secs,
+        uri = %sanitized_uri,
+        "artifact resolver fetching remote artifact"
+    );
+    let resolution = resolve_manifest(&fetch_config)?;
+    info!(
+        artifact = name,
+        scheme = %locator.scheme,
+        fetch_policy = policy,
+        fetched = !resolution.cached,
+        cached_copy_used = resolution.cached,
+        uri = %sanitized_uri,
+        local_path = %resolution.local_path.display(),
+        "artifact resolver completed remote artifact resolution"
+    );
+    Ok(resolution.local_path)
+}
+
+fn build_remote_artifact_fetch_config(
+    config: &DbtNovaConfig,
+    uri: &str,
+    cache_dir: &Path,
+) -> DbtNovaConfig {
     let mut fetch_config = config.clone();
     fetch_config.manifest_path = String::new();
-    fetch_config.manifest_uri = locator.raw;
+    fetch_config.manifest_uri = uri.to_string();
     fetch_config.manifest_cache_dir = cache_dir.to_string_lossy().to_string();
     // Artifacts can exceed manifest limits; metadata size is enforced after fetch.
     fetch_config.manifest_max_bytes = 0;
@@ -160,9 +290,7 @@ fn resolve_artifact_uri_to_local(config: &DbtNovaConfig, name: &str, uri: &str) 
     fetch_config.manifest_fetch_timeout_secs = config.artifact_timeout_secs;
     fetch_config.manifest_http_timeout_secs = config.artifact_timeout_secs;
     fetch_config.manifest_http_connect_timeout_secs = config.artifact_timeout_secs;
-
-    let resolution = resolve_manifest(&fetch_config)?;
-    Ok(resolution.local_path)
+    fetch_config
 }
 
 fn parse_artifact_locator(name: &str, uri: &str) -> Result<ArtifactLocator> {
@@ -201,6 +329,14 @@ fn artifact_cache_paths(cache_dir: &Path, uri: &str) -> (PathBuf, PathBuf) {
     (cache_path, meta_path)
 }
 
+fn artifact_fetch_policy_label(policy: ArtifactFetchPolicy) -> &'static str {
+    match policy {
+        ArtifactFetchPolicy::IfMissing => "if_missing",
+        ArtifactFetchPolicy::Always => "always",
+        ArtifactFetchPolicy::Never => "never",
+    }
+}
+
 fn ensure_materialization_allowed(
     config: &DbtNovaConfig,
     should_materialize: bool,
@@ -236,18 +372,42 @@ fn validate_metadata_against_runtime(
     expected_manifest_hash: &str,
 ) -> Result<()> {
     let instance_id = config.storage_instance_id.trim();
+    info!(
+        contract_version = %metadata.contract_version,
+        metadata_storage_instance_id = %metadata.storage_instance_id,
+        runtime_storage_instance_id = %instance_id,
+        metadata_manifest_hash = %metadata.manifest_hash,
+        runtime_manifest_hash = %expected_manifest_hash,
+        has_models_artifact = metadata.has_models_artifact(),
+        "validating prebuilt artifact metadata contract"
+    );
     if metadata.storage_instance_id.trim() != instance_id {
+        warn!(
+            metadata_storage_instance_id = %metadata.storage_instance_id,
+            runtime_storage_instance_id = %instance_id,
+            "prebuilt artifact metadata contract validation failed: storage_instance_id mismatch"
+        );
         return Err(DbtNovaError::ServerError(format!(
             "storage_instance_id mismatch: metadata='{}' runtime='{}'",
             metadata.storage_instance_id, instance_id
         )));
     }
     if metadata.manifest_hash.trim() != expected_manifest_hash.trim() {
+        warn!(
+            metadata_manifest_hash = %metadata.manifest_hash,
+            runtime_manifest_hash = %expected_manifest_hash,
+            "prebuilt artifact metadata contract validation failed: manifest hash mismatch"
+        );
         return Err(DbtNovaError::ServerError(format!(
             "manifest hash mismatch: metadata='{}' runtime='{}'",
             metadata.manifest_hash, expected_manifest_hash
         )));
     }
+    info!(
+        storage_instance_id = %metadata.storage_instance_id,
+        manifest_hash = %metadata.manifest_hash,
+        "prebuilt artifact metadata contract validated"
+    );
     Ok(())
 }
 

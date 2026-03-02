@@ -58,6 +58,7 @@ pub struct ManifestSearch {
     // === Metadata ===
     pub(crate) manifest_metadata: JsonValue,
     pub(crate) manifest_health: JsonValue,
+    pub(crate) artifact_consumer: JsonValue,
 
     // === Stats ===
     pub(crate) entity_counts: HashMap<String, usize>,
@@ -471,6 +472,7 @@ impl ManifestSearch {
                 "loaded_age_ms": loaded_age_ms,
             },
             "manifest_health": self.manifest_health,
+            "artifact_consumer": self.artifact_consumer,
             "manifest_cache": {
                 "hits": manifest_cache_hits,
                 "misses": manifest_cache_misses,
