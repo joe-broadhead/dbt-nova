@@ -2,6 +2,7 @@ pub mod entity;
 pub(crate) mod lineage_sql;
 pub mod loader;
 pub mod prebuilt_assets;
+pub mod prebuilt_assets_resolver;
 pub mod rkyv_cache;
 pub mod rkyv_embeddings;
 pub mod rkyv_indexes;
