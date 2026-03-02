@@ -83,9 +83,35 @@ impl GovernanceGateConfig {
     }
 }
 
+/// Fetch policy for remote prebuilt artifact materialization.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactFetchPolicy {
+    /// Materialize artifacts when local materialization is missing.
+    #[default]
+    IfMissing,
+    /// Always re-fetch and re-materialize artifacts.
+    Always,
+    /// Never fetch artifacts; rely on pre-materialized local files.
+    Never,
+}
+
+impl ArtifactFetchPolicy {
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "if_missing" => Some(Self::IfMissing),
+            "always" => Some(Self::Always),
+            "never" => Some(Self::Never),
+            _ => None,
+        }
+    }
+}
+
 /// Configuration for the dbt-nova server.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct DbtNovaConfig {
     /// Path to the dbt `manifest.json` file
     pub manifest_path: String,
@@ -123,6 +149,20 @@ pub struct DbtNovaConfig {
     pub storage_build_lock_wait_secs: u64,
     /// Disallow building indexes (fail if instance not present)
     pub storage_read_only: bool,
+    /// Remote URI to the prebuilt storage archive (`file://`, `s3://`, `gs://`, `dbfs://`, `http(s)://`)
+    pub storage_artifact_uri: String,
+    /// Remote URI to the prebuilt metadata contract JSON
+    pub metadata_artifact_uri: String,
+    /// Optional remote URI to the prebuilt models archive
+    pub models_artifact_uri: String,
+    /// Optional local cache directory for downloaded prebuilt artifacts
+    pub artifacts_cache_dir: String,
+    /// Remote artifact fetch policy
+    pub artifact_fetch_policy: ArtifactFetchPolicy,
+    /// Timeout in seconds for artifact fetch operations (0 = no timeout)
+    pub artifact_timeout_secs: u64,
+    /// Allow non-TLS remote artifact URIs (`http://`)
+    pub artifact_allow_http: bool,
     /// Per-tool rate limits (comma-separated, e.g. "`search=60,execute_sql=30,default=120`")
     pub tool_rate_limits: String,
     /// Rate limit window size in seconds
@@ -188,6 +228,13 @@ impl Default for DbtNovaConfig {
             storage_max_bytes: 5 * 1024 * 1024 * 1024, // 5 GiB
             storage_build_lock_wait_secs: 300,
             storage_read_only: false,
+            storage_artifact_uri: String::new(),
+            metadata_artifact_uri: String::new(),
+            models_artifact_uri: String::new(),
+            artifacts_cache_dir: String::new(),
+            artifact_fetch_policy: ArtifactFetchPolicy::IfMissing,
+            artifact_timeout_secs: 300,
+            artifact_allow_http: false,
             tool_rate_limits: "search=60,execute_sql=20,default=120".to_string(),
             tool_rate_limit_window_secs: 60,
             sql_provider: DEFAULT_SQL_PROVIDER.to_string(),
@@ -273,6 +320,26 @@ impl DbtNovaConfig {
         Ok(self.storage_root_dir()?.join("manifests"))
     }
 
+    /// Resolve the artifacts cache directory, creating a default if unset.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the storage root cannot be resolved.
+    pub fn artifacts_cache_dir(&self) -> Result<PathBuf> {
+        if !self.artifacts_cache_dir.trim().is_empty() {
+            return Ok(PathBuf::from(&self.artifacts_cache_dir));
+        }
+        Ok(self.storage_root_dir()?.join("artifacts"))
+    }
+
+    /// Whether remote prebuilt artifact mode is configured.
+    #[must_use]
+    pub fn remote_artifact_mode_enabled(&self) -> bool {
+        !self.storage_artifact_uri.trim().is_empty()
+            || !self.metadata_artifact_uri.trim().is_empty()
+            || !self.models_artifact_uri.trim().is_empty()
+    }
+
     /// Ensure the embedding cache directory is set under the cache root.
     pub fn ensure_embedding_cache_dir(&mut self) {
         if !self.search.embedding_cache_dir.trim().is_empty() {
@@ -338,6 +405,35 @@ impl DbtNovaConfig {
                 lineage_cache_size = self.search.lineage_cache_size,
                 "lineage cache size is very small; expect low hit rates"
             );
+        }
+
+        if self.remote_artifact_mode_enabled() {
+            let has_storage = !self.storage_artifact_uri.trim().is_empty();
+            let has_metadata = !self.metadata_artifact_uri.trim().is_empty();
+            if !has_storage || !has_metadata {
+                return Err(DbtNovaError::InvalidParams(
+                    "remote artifact mode requires both DBT_NOVA_STORAGE_ARTIFACT_URI and DBT_NOVA_METADATA_ARTIFACT_URI"
+                        .to_string(),
+                ));
+            }
+
+            validate_artifact_uri(
+                "DBT_NOVA_STORAGE_ARTIFACT_URI",
+                &self.storage_artifact_uri,
+                self.artifact_allow_http,
+            )?;
+            validate_artifact_uri(
+                "DBT_NOVA_METADATA_ARTIFACT_URI",
+                &self.metadata_artifact_uri,
+                self.artifact_allow_http,
+            )?;
+            if !self.models_artifact_uri.trim().is_empty() {
+                validate_artifact_uri(
+                    "DBT_NOVA_MODELS_ARTIFACT_URI",
+                    &self.models_artifact_uri,
+                    self.artifact_allow_http,
+                )?;
+            }
         }
 
         Ok(())
@@ -451,6 +547,7 @@ impl DbtNovaConfig {
     pub fn from_env() -> Self {
         let mut config = Self::default();
         config.apply_manifest_env();
+        config.apply_artifact_env();
         config.apply_storage_env();
         config.apply_runtime_limits_env();
         config.apply_lineage_and_cache_env();
@@ -485,6 +582,41 @@ impl DbtNovaConfig {
         }
         if let Some(value) = parse_bool("DBT_NOVA_MANIFEST_ALLOW_HTTP") {
             self.manifest_allow_http = value;
+        }
+    }
+
+    fn apply_artifact_env(&mut self) {
+        set_string(
+            "DBT_NOVA_STORAGE_ARTIFACT_URI",
+            &mut self.storage_artifact_uri,
+        );
+        set_string(
+            "DBT_NOVA_METADATA_ARTIFACT_URI",
+            &mut self.metadata_artifact_uri,
+        );
+        set_string(
+            "DBT_NOVA_MODELS_ARTIFACT_URI",
+            &mut self.models_artifact_uri,
+        );
+        set_string(
+            "DBT_NOVA_ARTIFACTS_CACHE_DIR",
+            &mut self.artifacts_cache_dir,
+        );
+        if let Some(value) = env_string("DBT_NOVA_ARTIFACT_FETCH_POLICY") {
+            if let Some(policy) = ArtifactFetchPolicy::parse(&value) {
+                self.artifact_fetch_policy = policy;
+            } else {
+                warn!(
+                    "Invalid DBT_NOVA_ARTIFACT_FETCH_POLICY value '{}'; expected if_missing|always|never",
+                    value
+                );
+            }
+        }
+        if let Some(v) = parse_u64("DBT_NOVA_ARTIFACT_TIMEOUT_SECS") {
+            self.artifact_timeout_secs = v;
+        }
+        if let Some(value) = parse_bool("DBT_NOVA_ARTIFACT_ALLOW_HTTP") {
+            self.artifact_allow_http = value;
         }
     }
 
@@ -653,5 +785,142 @@ impl DbtNovaConfig {
         if let Some(value) = parse_bool("DBT_NOVA_GOV_GATE_BLOCK_ON_FAILURE") {
             self.governance_gate.block_on_failure = value;
         }
+    }
+}
+
+fn artifact_uri_scheme(uri: &str) -> String {
+    let lower = uri.trim().to_ascii_lowercase();
+    if lower.starts_with("dbfs:/") && !lower.starts_with("dbfs://") {
+        return "dbfs".to_string();
+    }
+    if let Some((scheme, _)) = lower.split_once("://") {
+        return scheme.to_string();
+    }
+    "file".to_string()
+}
+
+fn validate_artifact_uri(name: &str, uri: &str, allow_http: bool) -> Result<()> {
+    let trimmed = uri.trim();
+    if trimmed.is_empty() {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "{name} cannot be empty"
+        )));
+    }
+
+    let scheme = artifact_uri_scheme(trimmed);
+    match scheme.as_str() {
+        "file" | "https" | "http" | "dbfs" | "s3" | "gs" => {}
+        _ => {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "{name} has unsupported URI scheme '{scheme}' (supported: file,https,http,dbfs,s3,gs)"
+            )));
+        }
+    }
+
+    if scheme == "http" && !allow_http {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "{name} uses http:// but DBT_NOVA_ARTIFACT_ALLOW_HTTP=false"
+        )));
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ArtifactFetchPolicy, DbtNovaConfig};
+
+    fn base_config() -> DbtNovaConfig {
+        DbtNovaConfig {
+            manifest_uri: "file:///tmp/manifest.json".to_string(),
+            ..DbtNovaConfig::default()
+        }
+    }
+
+    #[test]
+    fn artifact_fetch_policy_parse_is_case_insensitive() {
+        assert_eq!(
+            ArtifactFetchPolicy::parse("if_missing"),
+            Some(ArtifactFetchPolicy::IfMissing)
+        );
+        assert_eq!(
+            ArtifactFetchPolicy::parse("Always"),
+            Some(ArtifactFetchPolicy::Always)
+        );
+        assert_eq!(
+            ArtifactFetchPolicy::parse("NEVER"),
+            Some(ArtifactFetchPolicy::Never)
+        );
+        assert_eq!(ArtifactFetchPolicy::parse("unknown"), None);
+    }
+
+    #[test]
+    fn validate_rejects_incomplete_remote_artifact_configuration() {
+        let mut config = base_config();
+        config.storage_artifact_uri = "s3://bucket/storage.tar.gz".to_string();
+
+        let error = config
+            .validate()
+            .expect_err("incomplete remote artifact config should fail");
+        let message = error.to_string();
+        assert!(message.contains("DBT_NOVA_STORAGE_ARTIFACT_URI"));
+        assert!(message.contains("DBT_NOVA_METADATA_ARTIFACT_URI"));
+    }
+
+    #[test]
+    fn validate_rejects_unsupported_remote_artifact_scheme() {
+        let mut config = base_config();
+        config.storage_artifact_uri = "ftp://bucket/storage.tar.gz".to_string();
+        config.metadata_artifact_uri = "file:///tmp/nova-build-metadata.json".to_string();
+
+        let error = config
+            .validate()
+            .expect_err("unsupported scheme should fail validation");
+        assert!(
+            error.to_string().contains("unsupported URI scheme 'ftp'"),
+            "error should include unsupported scheme"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_http_artifact_uri_when_disabled() {
+        let mut config = base_config();
+        config.storage_artifact_uri = "http://example.com/storage.tar.gz".to_string();
+        config.metadata_artifact_uri = "https://example.com/nova-build-metadata.json".to_string();
+
+        let error = config
+            .validate()
+            .expect_err("http artifact URI should fail by default");
+        assert!(
+            error
+                .to_string()
+                .contains("DBT_NOVA_ARTIFACT_ALLOW_HTTP=false")
+        );
+    }
+
+    #[test]
+    fn validate_accepts_remote_artifact_uris_when_http_enabled() {
+        let mut config = base_config();
+        config.storage_artifact_uri = "http://example.com/storage.tar.gz".to_string();
+        config.metadata_artifact_uri = "https://example.com/nova-build-metadata.json".to_string();
+        config.models_artifact_uri = "dbfs:/FileStore/models.tar.gz".to_string();
+        config.artifact_allow_http = true;
+
+        config
+            .validate()
+            .expect("remote artifact config should validate");
+    }
+
+    #[test]
+    fn artifacts_cache_dir_defaults_under_storage_root() {
+        let config = base_config();
+        let path = config
+            .artifacts_cache_dir()
+            .expect("artifacts cache directory should resolve");
+        assert!(
+            path.ends_with(".dbt-nova/artifacts"),
+            "unexpected artifacts cache path: {}",
+            path.display()
+        );
     }
 }
