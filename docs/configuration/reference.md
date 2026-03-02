@@ -18,6 +18,13 @@ that file and ensure this page stays in sync.
 - `DBT_NOVA_MANIFEST_HTTP_TIMEOUT_SECS` – HTTP request timeout for manifest fetches (`0` = disabled, default: `120`)
 - `DBT_NOVA_MANIFEST_FETCH_TIMEOUT_SECS` – total fetch deadline for manifest fetches (`0` = disabled, default: `300`)
 - `DBT_NOVA_MANIFEST_ALLOW_HTTP` – allow `http://` manifest URIs (`true`|`false`, default: `false`)
+- `DBT_NOVA_STORAGE_ARTIFACT_URI` – optional URI to prebuilt storage archive (`file://`, `s3://`, `gs://`, `dbfs://`, `http(s)://`)
+- `DBT_NOVA_METADATA_ARTIFACT_URI` – optional URI to prebuilt metadata contract JSON (required with `DBT_NOVA_STORAGE_ARTIFACT_URI`)
+- `DBT_NOVA_MODELS_ARTIFACT_URI` – optional URI to prebuilt models archive
+- `DBT_NOVA_ARTIFACTS_CACHE_DIR` – optional cache dir for downloaded artifact archives (default: `<storage_root>/artifacts`)
+- `DBT_NOVA_ARTIFACT_FETCH_POLICY` – artifact fetch policy (`if_missing`, `always`, `never`; default: `if_missing`)
+- `DBT_NOVA_ARTIFACT_TIMEOUT_SECS` – fetch timeout for remote artifact downloads (`0` = disabled, default: `300`)
+- `DBT_NOVA_ARTIFACT_ALLOW_HTTP` – allow `http://` artifact URIs (`true`|`false`, default: `false`)
 - `DBT_NOVA_STRICT_SCHEMA` – fail build if schema files are missing or invalid (`true`|`false`, default: `false`; forced `true` in CI)
 - `DBT_NOVA_S3_MODE` – S3 fetch mode (`https` or `sdk`, default: `https`)
 - `DBT_NOVA_GCS_MODE` – GCS fetch mode (`https` or `sdk`, default: `https`)
@@ -47,6 +54,7 @@ Remote manifest notes:
 - To use SDK credentials, set `DBT_NOVA_S3_MODE=sdk` or `DBT_NOVA_GCS_MODE=sdk` (SDKs are included by default builds).
 - To force HTTPS for public/presigned URLs, set `DBT_NOVA_S3_MODE=https` or `DBT_NOVA_GCS_MODE=https`.
 - To allow insecure `http://` manifests (not recommended), set `DBT_NOVA_MANIFEST_ALLOW_HTTP=true`.
+- To allow insecure `http://` prebuilt artifact URIs (not recommended), set `DBT_NOVA_ARTIFACT_ALLOW_HTTP=true`.
 
 ## Storage
 
