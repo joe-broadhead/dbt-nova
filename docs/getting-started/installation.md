@@ -258,6 +258,7 @@ For direct Hugging Face fallback, you can enable checksum verification:
 
 - `DBT_NOVA_WARMUP_CHECKSUM_MODE=off|warn|required` (default: `off`)
 - `DBT_NOVA_WARMUP_CHECKSUM_FILE=/path/to/checksums.txt`
+- Template manifest: `scripts/warm_models.checksums.example`
 
 Checksum manifest format is one entry per line:
 
