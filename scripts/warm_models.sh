@@ -247,10 +247,11 @@ download_hf_file() {
   if [[ -f "$target" && "$expected" -gt 0 ]]; then
     actual="$(wc -c < "$target" | tr -d ' ')"
     if [[ "$actual" == "$expected" ]]; then
-      if ! verify_direct_hf_checksum "$url" "$target"; then
-        return 1
+      if verify_direct_hf_checksum "$url" "$target"; then
+        return 0
       fi
-      return 0
+      echo "Cached file failed checksum verification; re-downloading: $target" >&2
+      rm -f "$target"
     fi
   fi
 
