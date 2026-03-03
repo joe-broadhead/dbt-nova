@@ -152,9 +152,9 @@ curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scrip
   bash -s -- --slim --warm-models --non-interactive
 
 # Optional: enforce SHA-256 verification during direct HF fallback warmup
+# cp scripts/warm_models.checksums.example /path/to/checksums.txt
 # DBT_NOVA_WARMUP_CHECKSUM_MODE=required \
 # DBT_NOVA_WARMUP_CHECKSUM_FILE=/path/to/checksums.txt \
-# cp scripts/warm_models.checksums.example /path/to/checksums.txt
 #   bash scripts/warm_models.sh
 
 # Optional: install built-in persona skills to ~/.agents/skills
