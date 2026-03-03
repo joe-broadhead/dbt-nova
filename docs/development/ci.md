@@ -36,7 +36,7 @@ Operational defaults:
   optional dbt manifest generation (`dbt_command`, `dbt_env_json`,
   `dbt_secret_env_map_json`), optional workflow_call secret bundle
   (`DBT_NOVA_SECRET_BUNDLE_JSON`), optional installer source override
-  (`installer_repository`, `installer_ref`), optional models artifact, optional remote publish
+  (`installer_repository`, `installer_ref`, `installer_install_mode`), optional models artifact, optional remote publish
   targets (`s3`, `gcs`, `dbfs`) and `publish_dry_run`
 - **Trust boundary:** when `dbt_generate_manifest=true`, `dbt_command` is
   executed via `bash -lc` in the caller repository context and must be treated

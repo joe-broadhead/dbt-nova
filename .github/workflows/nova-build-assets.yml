@@ -27,6 +27,11 @@ on:
         required: false
         type: string
         default: ""
+      installer_install_mode:
+        description: "How to install dbt-nova in CI: auto (try release, fallback source), release, or source"
+        required: false
+        type: string
+        default: "auto"
       dbt_generate_manifest:
         description: "Whether to run dbt before building Nova assets"
         required: false
@@ -148,6 +153,11 @@ on:
         required: false
         type: string
         default: ""
+      installer_install_mode:
+        description: "How to install dbt-nova in CI: auto (try release, fallback source), release, or source"
+        required: false
+        type: string
+        default: "auto"
       dbt_generate_manifest:
         description: "Whether to run dbt before building Nova assets"
         required: false
@@ -227,6 +237,7 @@ jobs:
       storage_instance_id: ${{ steps.resolve.outputs.storage_instance_id }}
       installer_repository: ${{ steps.resolve.outputs.installer_repository }}
       installer_ref: ${{ steps.resolve.outputs.installer_ref }}
+      installer_install_mode: ${{ steps.resolve.outputs.installer_install_mode }}
       publish_targets: ${{ steps.resolve.outputs.publish_targets }}
       publish_s3_prefix: ${{ steps.resolve.outputs.publish_s3_prefix }}
       publish_gcs_prefix: ${{ steps.resolve.outputs.publish_gcs_prefix }}
@@ -235,9 +246,6 @@ jobs:
       dbt_env_json: ${{ steps.resolve.outputs.dbt_env_json }}
       dbt_secret_env_map_json: ${{ steps.resolve.outputs.dbt_secret_env_map_json }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-
       - name: Validate inputs and set deterministic paths
         id: resolve
         shell: bash
@@ -247,6 +255,7 @@ jobs:
           INPUT_STORAGE_INSTANCE_ID: ${{ inputs.storage_instance_id }}
           INPUT_INSTALLER_REPOSITORY: ${{ inputs.installer_repository }}
           INPUT_INSTALLER_REF: ${{ inputs.installer_ref }}
+          INPUT_INSTALLER_INSTALL_MODE: ${{ inputs.installer_install_mode }}
           INPUT_DBT_GENERATE_MANIFEST: ${{ inputs.dbt_generate_manifest }}
           INPUT_DBT_COMMAND: ${{ inputs.dbt_command }}
           INPUT_DBT_ENV_JSON: ${{ inputs.dbt_env_json }}
@@ -273,6 +282,7 @@ jobs:
           storage_instance_id="${INPUT_STORAGE_INSTANCE_ID}"
           installer_repository="${INPUT_INSTALLER_REPOSITORY}"
           installer_ref="${INPUT_INSTALLER_REF}"
+          installer_install_mode="${INPUT_INSTALLER_INSTALL_MODE}"
           dbt_generate_manifest="${INPUT_DBT_GENERATE_MANIFEST}"
           dbt_command="${INPUT_DBT_COMMAND}"
           dbt_env_json="${INPUT_DBT_ENV_JSON}"
@@ -298,6 +308,13 @@ jobs:
             echo "installer_repository must match owner/repo."
             exit 1
           fi
+          case "${installer_install_mode}" in
+            auto|release|source) ;;
+            *)
+              echo "installer_install_mode must be one of: auto, release, source."
+              exit 1
+              ;;
+          esac
 
           if [[ -z "${manifest_path}" && -z "${manifest_uri}" && "${dbt_generate_manifest}" != "true" ]]; then
             echo "Provide manifest_path or manifest_uri, or set dbt_generate_manifest=true."
@@ -501,6 +518,7 @@ jobs:
           echo "storage_instance_id=${storage_instance_id}" >> "$GITHUB_OUTPUT"
           echo "installer_repository=${installer_repository}" >> "$GITHUB_OUTPUT"
           echo "installer_ref=${installer_ref}" >> "$GITHUB_OUTPUT"
+          echo "installer_install_mode=${installer_install_mode}" >> "$GITHUB_OUTPUT"
           echo "publish_targets=${publish_targets_normalized}" >> "$GITHUB_OUTPUT"
           echo "publish_s3_prefix=${publish_s3_prefix}" >> "$GITHUB_OUTPUT"
           echo "publish_gcs_prefix=${publish_gcs_prefix}" >> "$GITHUB_OUTPUT"
@@ -522,6 +540,7 @@ jobs:
             echo "- storage_instance_id: \`${{ steps.resolve.outputs.storage_instance_id }}\`"
             echo "- installer_repository: \`${{ steps.resolve.outputs.installer_repository }}\`"
             echo "- installer_ref: \`${{ steps.resolve.outputs.installer_ref }}\`"
+            echo "- installer_install_mode: \`${{ steps.resolve.outputs.installer_install_mode }}\`"
             echo "- publish_targets: \`${{ steps.resolve.outputs.publish_targets }}\`"
             echo "- publish_dry_run: \`${{ steps.resolve.outputs.publish_dry_run }}\`"
             echo "- dbt_env_json: \`${{ steps.resolve.outputs.dbt_env_json }}\`"
@@ -567,7 +586,75 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq
 
+      - name: Install dbt-nova from release assets
+        id: install_release
+        if: ${{ needs.prepare.outputs.installer_install_mode != 'source' }}
+        shell: bash
+        env:
+          INSTALLER_REPOSITORY: ${{ needs.prepare.outputs.installer_repository }}
+          INSTALLER_REF: ${{ needs.prepare.outputs.installer_ref }}
+          INSTALLER_INSTALL_MODE: ${{ needs.prepare.outputs.installer_install_mode }}
+        run: |
+          set -euo pipefail
+
+          base_url="https://github.com/${INSTALLER_REPOSITORY}/releases/download/${INSTALLER_REF}"
+          work_dir="${RUNNER_TEMP}/dbt-nova-release-install"
+          tarball_path="${work_dir}/dbt-nova-linux-x86_64.tar.gz"
+          checksum_path="${work_dir}/dbt-nova-linux-x86_64.sha256"
+          mkdir -p "${work_dir}"
+
+          download_asset() {
+            local asset_name="$1"
+            local destination_path="$2"
+            local asset_url="${base_url}/${asset_name}"
+            if ! curl --fail --location --silent --show-error --output "${destination_path}" "${asset_url}"; then
+              return 1
+            fi
+          }
+
+          if ! download_asset "dbt-nova-linux-x86_64.tar.gz" "${tarball_path}"; then
+            if [[ "${INSTALLER_INSTALL_MODE}" == "auto" ]]; then
+              echo "Release binary unavailable at ${base_url}; falling back to source build."
+              echo "installed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Failed to download release binary from ${base_url}."
+            exit 1
+          fi
+
+          if ! download_asset "dbt-nova-linux-x86_64.sha256" "${checksum_path}"; then
+            if [[ "${INSTALLER_INSTALL_MODE}" == "auto" ]]; then
+              echo "Release checksum unavailable at ${base_url}; falling back to source build."
+              echo "installed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Failed to download release checksum from ${base_url}."
+            exit 1
+          fi
+
+          expected_sha="$(awk '{print $1}' "${checksum_path}")"
+          actual_sha="$(sha256sum "${tarball_path}" | awk '{print $1}')"
+          if [[ -z "${expected_sha}" || "${expected_sha}" != "${actual_sha}" ]]; then
+            echo "Release checksum mismatch for dbt-nova-linux-x86_64.tar.gz."
+            echo "expected=${expected_sha}"
+            echo "actual=${actual_sha}"
+            exit 1
+          fi
+
+          tar -xzf "${tarball_path}" -C "${work_dir}"
+          binary_path="$(find "${work_dir}" -maxdepth 2 -type f -name dbt-nova | head -n 1)"
+          if [[ -z "${binary_path}" ]]; then
+            echo "Release tarball did not contain a dbt-nova binary."
+            exit 1
+          fi
+
+          mkdir -p "$HOME/.local/bin"
+          install -m 755 "${binary_path}" "$HOME/.local/bin/dbt-nova"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "installed=true" >> "$GITHUB_OUTPUT"
+
       - name: Checkout installer source
+        if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           repository: ${{ needs.prepare.outputs.installer_repository }}
@@ -576,6 +663,7 @@ jobs:
           fetch-depth: 1
 
       - name: Validate installer source
+        if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -587,14 +675,17 @@ jobs:
           fi
 
       - name: Install Rust toolchain
+        if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
 
       - name: Rust cache (installer source)
+        if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
         with:
           workspaces: ".nova-installer-source -> target"
 
       - name: Build dbt-nova from pinned workflow source
+        if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
         shell: bash
         run: |
           set -euo pipefail

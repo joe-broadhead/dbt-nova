@@ -191,6 +191,8 @@ jobs:
     with:
       manifest_path: target/manifest.json
       storage_instance_id: analytics-prod
+      installer_ref: v0.0.2
+      installer_install_mode: release
       artifact_name_prefix: analytics-prod
 ```
 
@@ -210,6 +212,9 @@ export DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing
 Optional: publish artifacts directly to cloud targets from the reusable
 workflow with `publish_targets` plus per-target prefixes
 (`publish_s3_prefix`, `publish_gcs_prefix`, `publish_dbfs_prefix`).
+For faster CI in downstream repos, set `installer_install_mode=release` with a
+tagged `installer_ref` so the workflow downloads a prebuilt `dbt-nova` binary
+instead of compiling from source.
 
 If you generate manifests in the reusable workflow (`dbt_generate_manifest: true`),
 use `dbt_env_json` and `dbt_secret_env_map_json` to pass profile-specific env/secret
