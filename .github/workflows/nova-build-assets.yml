@@ -657,7 +657,7 @@ jobs:
           echo "installed=true" >> "$GITHUB_OUTPUT"
 
       - name: Checkout installer source
-        if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || steps.install_release.outputs.installed != 'true' }}
+        if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           repository: ${{ needs.prepare.outputs.installer_repository }}
@@ -666,7 +666,7 @@ jobs:
           fetch-depth: 1
 
       - name: Validate installer source
-        if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || steps.install_release.outputs.installed != 'true' }}
+        if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -678,17 +678,17 @@ jobs:
           fi
 
       - name: Install Rust toolchain
-        if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || steps.install_release.outputs.installed != 'true' }}
+        if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
 
       - name: Rust cache (installer source)
-        if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || steps.install_release.outputs.installed != 'true' }}
+        if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
         with:
           workspaces: ".nova-installer-source -> target"
 
       - name: Build dbt-nova from pinned workflow source
-        if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || steps.install_release.outputs.installed != 'true' }}
+        if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
         shell: bash
         run: |
           set -euo pipefail
