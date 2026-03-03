@@ -547,31 +547,36 @@ jobs:
         run: |
           set -euo pipefail
 
-          export_env_var() {
-            local env_name="$1"
-            local env_value="$2"
-            export "${env_name}=${env_value}"
-          }
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
 
-          while IFS= read -r entry; do
-            env_name="$(printf '%s' "${entry}" | jq -r '.key')"
-            env_value="$(printf '%s' "${entry}" | jq -r '.value')"
-            export_env_var "${env_name}" "${env_value}"
-          done < <(jq -c 'to_entries[]' <<< "${INPUT_DBT_ENV_JSON}")
+          command = os.environ["INPUT_DBT_COMMAND"]
+          plain_env = json.loads(os.environ["INPUT_DBT_ENV_JSON"])
+          secret_env_map = json.loads(os.environ["INPUT_DBT_SECRET_ENV_MAP_JSON"])
+          inherited_secrets = json.loads(os.environ["INHERITED_SECRETS_JSON"])
 
-          while IFS= read -r entry; do
-            env_name="$(printf '%s' "${entry}" | jq -r '.key')"
-            secret_name="$(printf '%s' "${entry}" | jq -r '.value')"
-            secret_value="$(jq -r --arg secret_name "${secret_name}" '.[$secret_name] // empty' <<< "${INHERITED_SECRETS_JSON}")"
-            if [[ -z "${secret_value}" ]]; then
-              echo "missing secret '${secret_name}' requested by dbt_secret_env_map_json for env var '${env_name}'"
-              exit 1
-            fi
-            export_env_var "${env_name}" "${secret_value}"
-          done < <(jq -c 'to_entries[]' <<< "${INPUT_DBT_SECRET_ENV_MAP_JSON}")
+          runtime_env = os.environ.copy()
+          for env_name, env_value in plain_env.items():
+              runtime_env[env_name] = env_value
+
+          for env_name, secret_name in secret_env_map.items():
+              secret_value = inherited_secrets.get(secret_name, "")
+              if not secret_value:
+                  print(
+                      f"missing secret '{secret_name}' requested by dbt_secret_env_map_json for env var '{env_name}'",
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
+              # Preserve exact secret bytes (including trailing newlines).
+              runtime_env[env_name] = secret_value
 
           # Trust boundary: callers control INPUT_DBT_COMMAND in their own repository.
-          bash -lc "${INPUT_DBT_COMMAND}"
+          completed = subprocess.run(["bash", "-lc", command], env=runtime_env, check=False)
+          sys.exit(completed.returncode)
+          PY
 
       - name: Run manifest load + smoke validations
         id: collect
