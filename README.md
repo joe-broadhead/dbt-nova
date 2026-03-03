@@ -213,7 +213,10 @@ workflow with `publish_targets` plus per-target prefixes
 
 If you generate manifests in the reusable workflow (`dbt_generate_manifest: true`),
 use `dbt_env_json` and `dbt_secret_env_map_json` to pass profile-specific env/secret
-variables generically (Databricks, BigQuery, DuckDB, etc.).
+variables generically (Databricks, BigQuery, DuckDB, etc.). For cross-owner
+reusable workflow calls, pass one declared secret
+`DBT_NOVA_SECRET_BUNDLE_JSON` (JSON object of key->value) and reference those keys
+in `dbt_secret_env_map_json`.
 
 Legacy fallback: if you manually extract artifacts locally, you can omit
 `DBT_NOVA_*_ARTIFACT_URI` vars and keep only

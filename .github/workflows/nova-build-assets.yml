@@ -87,6 +87,10 @@ on:
         required: false
         type: boolean
         default: false
+    secrets:
+      DBT_NOVA_SECRET_BUNDLE_JSON:
+        description: "Optional JSON object of secret-name -> secret-value pairs used by dbt_secret_env_map_json"
+        required: false
     outputs:
       manifest_hash:
         description: "Manifest content hash (populated by producer build in follow-up step)"
@@ -607,6 +611,7 @@ jobs:
           INPUT_DBT_ENV_JSON: ${{ needs.prepare.outputs.dbt_env_json }}
           INPUT_DBT_SECRET_ENV_MAP_JSON: ${{ needs.prepare.outputs.dbt_secret_env_map_json }}
           INHERITED_SECRETS_JSON: ${{ toJSON(secrets) }}
+          DBT_NOVA_SECRET_BUNDLE_JSON: ${{ secrets.DBT_NOVA_SECRET_BUNDLE_JSON || '' }}
         run: |
           set -euo pipefail
 
@@ -620,6 +625,24 @@ jobs:
           plain_env = json.loads(os.environ["INPUT_DBT_ENV_JSON"])
           secret_env_map = json.loads(os.environ["INPUT_DBT_SECRET_ENV_MAP_JSON"])
           inherited_secrets = json.loads(os.environ["INHERITED_SECRETS_JSON"])
+          secret_bundle_raw = os.environ.get("DBT_NOVA_SECRET_BUNDLE_JSON", "").strip()
+          if secret_bundle_raw:
+              try:
+                  secret_bundle = json.loads(secret_bundle_raw)
+              except json.JSONDecodeError:
+                  print(
+                      "DBT_NOVA_SECRET_BUNDLE_JSON must be valid JSON object.",
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
+              if not isinstance(secret_bundle, dict):
+                  print(
+                      "DBT_NOVA_SECRET_BUNDLE_JSON must be a JSON object.",
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
+          else:
+              secret_bundle = {}
 
           runtime_env = os.environ.copy()
           for helper_var in (
@@ -627,20 +650,33 @@ jobs:
               "INPUT_DBT_ENV_JSON",
               "INPUT_DBT_SECRET_ENV_MAP_JSON",
               "INPUT_DBT_COMMAND",
+              "DBT_NOVA_SECRET_BUNDLE_JSON",
           ):
               runtime_env.pop(helper_var, None)
 
           for env_name, env_value in plain_env.items():
               runtime_env[env_name] = env_value
 
+          def add_mask(secret_value: str) -> None:
+              # Workflow command escaping for %, CR, LF.
+              escaped_value = (
+                  secret_value.replace("%", "%25")
+                  .replace("\r", "%0D")
+                  .replace("\n", "%0A")
+              )
+              print(f"::add-mask::{escaped_value}")
+
           for env_name, secret_name in secret_env_map.items():
-              secret_value = inherited_secrets.get(secret_name, "")
+              secret_value = secret_bundle.get(secret_name)
+              if not isinstance(secret_value, str) or not secret_value:
+                  secret_value = inherited_secrets.get(secret_name, "")
               if not secret_value:
                   print(
                       f"missing secret '{secret_name}' requested by dbt_secret_env_map_json for env var '{env_name}'",
                       file=sys.stderr,
                   )
                   sys.exit(1)
+              add_mask(secret_value)
               # Preserve exact secret bytes (including trailing newlines).
               runtime_env[env_name] = secret_value
 

@@ -45,6 +45,8 @@ Alternative producer inputs:
 - `dbt_generate_manifest: true` + `dbt_command` (build manifest in workflow)
 - `dbt_env_json` (JSON object of non-secret env vars exported before `dbt_command`)
 - `dbt_secret_env_map_json` (JSON object mapping env var names to secret names)
+- workflow_call secret `DBT_NOVA_SECRET_BUNDLE_JSON` (optional JSON object of
+  `secret-name -> secret-value` entries for cross-owner reusable workflow calls)
 
 `dbt_command` is executed as `bash -lc "<command>"` inside the caller
 repository checkout. Treat it as a trusted command surface and only use this
@@ -68,13 +70,16 @@ jobs:
       dbt_secret_env_map_json: >-
         {"DBT_ACCESS_TOKEN":"DBT_ACCESS_TOKEN","DBT_BIGQUERY_KEYFILE_JSON":"DBT_BIGQUERY_KEYFILE_JSON"}
       storage_instance_id: analytics-prod
-    secrets: inherit
+    secrets:
+      DBT_NOVA_SECRET_BUNDLE_JSON: ${{ secrets.DBT_NOVA_SECRET_BUNDLE_JSON }}
 ```
 
 Notes:
 
 - `dbt_env_json` values are plain strings.
-- `dbt_secret_env_map_json` values are **secret names** from the caller repo/org.
+- `dbt_secret_env_map_json` values are looked up in this order:
+  1) keys in `DBT_NOVA_SECRET_BUNDLE_JSON` (when provided),
+  2) inherited workflow secrets (`secrets: inherit`, same-owner/org calls).
 - Missing mapped secrets fail fast before `dbt_command` runs.
 
 The producer emits:
