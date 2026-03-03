@@ -17,11 +17,6 @@ jobs:
       contents: write
       actions: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-        with:
-          fetch-depth: 0
-
       - name: Verify release tag token
         env:
           RELEASE_TAG_TOKEN: ${{ secrets.RELEASE_TAG_TOKEN }}
@@ -31,6 +26,12 @@ jobs:
             echo "Set it to a PAT/GitHub App token with repo contents:write and actions:write."
             exit 1
           fi
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TAG_TOKEN }}
 
       - name: Configure git identity
         run: |
@@ -64,7 +65,7 @@ jobs:
           fi
 
           git tag -a "${tag}" "${MERGE_SHA}" -m "Release ${tag}"
-          git push "https://x-access-token:${RELEASE_TAG_TOKEN}@github.com/${REPOSITORY}.git" "${tag}"
+          git push origin "${tag}"
 
           api="https://api.github.com/repos/${REPOSITORY}/actions/workflows"
           auth_header="Authorization: Bearer ${RELEASE_TAG_TOKEN}"
