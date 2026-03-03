@@ -2,13 +2,6 @@ name: Build Nova Assets
 
 on:
   workflow_call:
-    secrets:
-      DBT_ACCESS_TOKEN:
-        required: false
-      DBT_ACCESS_TOKEN_NONPROD:
-        required: false
-      DBT_ENV_SECRET_GIT_CREDENTIAL:
-        required: false
     inputs:
       manifest_path:
         description: "Path to manifest.json in the caller repository"
@@ -34,6 +27,16 @@ on:
         required: false
         type: string
         default: ""
+      dbt_env_json:
+        description: "JSON object of non-secret env vars exported before dbt_command (e.g. {\"DBT_TARGET\":\"prod\"})"
+        required: false
+        type: string
+        default: "{}"
+      dbt_secret_env_map_json:
+        description: "JSON object mapping env var names to secret names (e.g. {\"DBT_ACCESS_TOKEN\":\"DBT_ACCESS_TOKEN\"})"
+        required: false
+        type: string
+        default: "{}"
       include_models_cache:
         description: "Publish an additional models-cache artifact"
         required: false
@@ -131,6 +134,16 @@ on:
         required: false
         type: string
         default: ""
+      dbt_env_json:
+        description: "JSON object of non-secret env vars exported before dbt_command (e.g. {\"DBT_TARGET\":\"prod\"})"
+        required: false
+        type: string
+        default: "{}"
+      dbt_secret_env_map_json:
+        description: "JSON object mapping env var names to secret names (e.g. {\"DBT_ACCESS_TOKEN\":\"DBT_ACCESS_TOKEN\"})"
+        required: false
+        type: string
+        default: "{}"
       include_models_cache:
         description: "Publish an additional models-cache artifact"
         required: false
@@ -193,6 +206,8 @@ jobs:
       publish_gcs_prefix: ${{ steps.resolve.outputs.publish_gcs_prefix }}
       publish_dbfs_prefix: ${{ steps.resolve.outputs.publish_dbfs_prefix }}
       publish_dry_run: ${{ steps.resolve.outputs.publish_dry_run }}
+      dbt_env_json: ${{ steps.resolve.outputs.dbt_env_json }}
+      dbt_secret_env_map_json: ${{ steps.resolve.outputs.dbt_secret_env_map_json }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -206,6 +221,8 @@ jobs:
           INPUT_STORAGE_INSTANCE_ID: ${{ inputs.storage_instance_id }}
           INPUT_DBT_GENERATE_MANIFEST: ${{ inputs.dbt_generate_manifest }}
           INPUT_DBT_COMMAND: ${{ inputs.dbt_command }}
+          INPUT_DBT_ENV_JSON: ${{ inputs.dbt_env_json }}
+          INPUT_DBT_SECRET_ENV_MAP_JSON: ${{ inputs.dbt_secret_env_map_json }}
           INPUT_INCLUDE_MODELS_CACHE: ${{ inputs.include_models_cache }}
           INPUT_ARTIFACT_NAME_PREFIX: ${{ inputs.artifact_name_prefix }}
           INPUT_RETENTION_DAYS: ${{ inputs.retention_days }}
@@ -222,6 +239,8 @@ jobs:
           storage_instance_id="${INPUT_STORAGE_INSTANCE_ID}"
           dbt_generate_manifest="${INPUT_DBT_GENERATE_MANIFEST}"
           dbt_command="${INPUT_DBT_COMMAND}"
+          dbt_env_json="${INPUT_DBT_ENV_JSON}"
+          dbt_secret_env_map_json="${INPUT_DBT_SECRET_ENV_MAP_JSON}"
           include_models_cache="${INPUT_INCLUDE_MODELS_CACHE}"
           artifact_name_prefix="${INPUT_ARTIFACT_NAME_PREFIX}"
           retention_days="${INPUT_RETENTION_DAYS}"
@@ -252,6 +271,69 @@ jobs:
             echo "dbt_generate_manifest=true requires dbt_command."
             exit 1
           fi
+
+          dbt_env_json="$(
+            DBT_ENV_JSON_INPUT="${dbt_env_json}" python3 - <<'PY'
+          import json
+          import os
+          import re
+          import sys
+
+          raw = os.environ.get("DBT_ENV_JSON_INPUT", "")
+          try:
+              payload = json.loads(raw)
+          except json.JSONDecodeError:
+              print("dbt_env_json must be valid JSON.", file=sys.stderr)
+              sys.exit(1)
+
+          if not isinstance(payload, dict):
+              print("dbt_env_json must be a JSON object.", file=sys.stderr)
+              sys.exit(1)
+
+          env_name_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+          for key, value in payload.items():
+              if not env_name_re.match(str(key)):
+                  print("dbt_env_json contains invalid env var names.", file=sys.stderr)
+                  sys.exit(1)
+              if not isinstance(value, str):
+                  print("dbt_env_json values must be strings.", file=sys.stderr)
+                  sys.exit(1)
+
+          print(json.dumps(payload, separators=(",", ":")))
+          PY
+          )"
+
+          dbt_secret_env_map_json="$(
+            DBT_SECRET_ENV_MAP_JSON_INPUT="${dbt_secret_env_map_json}" python3 - <<'PY'
+          import json
+          import os
+          import re
+          import sys
+
+          raw = os.environ.get("DBT_SECRET_ENV_MAP_JSON_INPUT", "")
+          try:
+              payload = json.loads(raw)
+          except json.JSONDecodeError:
+              print("dbt_secret_env_map_json must be valid JSON.", file=sys.stderr)
+              sys.exit(1)
+
+          if not isinstance(payload, dict):
+              print("dbt_secret_env_map_json must be a JSON object.", file=sys.stderr)
+              sys.exit(1)
+
+          env_name_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+          secret_name_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+          for key, value in payload.items():
+              if not env_name_re.match(str(key)):
+                  print("dbt_secret_env_map_json contains invalid env var names.", file=sys.stderr)
+                  sys.exit(1)
+              if not isinstance(value, str) or not secret_name_re.match(value):
+                  print("dbt_secret_env_map_json values must be valid secret names.", file=sys.stderr)
+                  sys.exit(1)
+
+          print(json.dumps(payload, separators=(",", ":")))
+          PY
+          )"
 
           if [[ ! "${artifact_name_prefix}" =~ ^[A-Za-z0-9._-]+$ ]]; then
             echo "artifact_name_prefix must match ^[A-Za-z0-9._-]+$"
@@ -337,6 +419,8 @@ jobs:
           echo "publish_gcs_prefix=${publish_gcs_prefix}" >> "$GITHUB_OUTPUT"
           echo "publish_dbfs_prefix=${publish_dbfs_prefix}" >> "$GITHUB_OUTPUT"
           echo "publish_dry_run=${publish_dry_run}" >> "$GITHUB_OUTPUT"
+          echo "dbt_env_json=${dbt_env_json}" >> "$GITHUB_OUTPUT"
+          echo "dbt_secret_env_map_json=${dbt_secret_env_map_json}" >> "$GITHUB_OUTPUT"
 
       - name: Summarize contract
         shell: bash
@@ -351,6 +435,8 @@ jobs:
             echo "- storage_instance_id: \`${{ steps.resolve.outputs.storage_instance_id }}\`"
             echo "- publish_targets: \`${{ steps.resolve.outputs.publish_targets }}\`"
             echo "- publish_dry_run: \`${{ steps.resolve.outputs.publish_dry_run }}\`"
+            echo "- dbt_env_json: \`${{ steps.resolve.outputs.dbt_env_json }}\`"
+            echo "- dbt_secret_env_map_json: \`${{ steps.resolve.outputs.dbt_secret_env_map_json }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   build:
@@ -455,11 +541,35 @@ jobs:
         shell: bash
         env:
           INPUT_DBT_COMMAND: ${{ inputs.dbt_command }}
-          DBT_ACCESS_TOKEN: ${{ secrets.DBT_ACCESS_TOKEN }}
-          DBT_ACCESS_TOKEN_NONPROD: ${{ secrets.DBT_ACCESS_TOKEN_NONPROD }}
-          DBT_ENV_SECRET_GIT_CREDENTIAL: ${{ secrets.DBT_ENV_SECRET_GIT_CREDENTIAL }}
+          INPUT_DBT_ENV_JSON: ${{ needs.prepare.outputs.dbt_env_json }}
+          INPUT_DBT_SECRET_ENV_MAP_JSON: ${{ needs.prepare.outputs.dbt_secret_env_map_json }}
+          INHERITED_SECRETS_JSON: ${{ toJSON(secrets) }}
         run: |
           set -euo pipefail
+
+          export_env_var() {
+            local env_name="$1"
+            local env_value="$2"
+            export "${env_name}=${env_value}"
+          }
+
+          while IFS= read -r entry; do
+            env_name="$(printf '%s' "${entry}" | jq -r '.key')"
+            env_value="$(printf '%s' "${entry}" | jq -r '.value')"
+            export_env_var "${env_name}" "${env_value}"
+          done < <(jq -c 'to_entries[]' <<< "${INPUT_DBT_ENV_JSON}")
+
+          while IFS= read -r entry; do
+            env_name="$(printf '%s' "${entry}" | jq -r '.key')"
+            secret_name="$(printf '%s' "${entry}" | jq -r '.value')"
+            secret_value="$(jq -r --arg secret_name "${secret_name}" '.[$secret_name] // empty' <<< "${INHERITED_SECRETS_JSON}")"
+            if [[ -z "${secret_value}" ]]; then
+              echo "missing secret '${secret_name}' requested by dbt_secret_env_map_json for env var '${env_name}'"
+              exit 1
+            fi
+            export_env_var "${env_name}" "${secret_value}"
+          done < <(jq -c 'to_entries[]' <<< "${INPUT_DBT_SECRET_ENV_MAP_JSON}")
+
           # Trust boundary: callers control INPUT_DBT_COMMAND in their own repository.
           bash -lc "${INPUT_DBT_COMMAND}"
 

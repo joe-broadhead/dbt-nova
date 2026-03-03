@@ -33,8 +33,9 @@ Operational defaults:
 - **File:** `.github/workflows/nova-build-assets.yml`
 - **Use:** reusable workflow invoked by CI and downstream repos
 - **Inputs:** `manifest_path` or `manifest_uri`, `storage_instance_id`,
-  optional dbt manifest generation, optional models artifact, optional remote
-  publish targets (`s3`, `gcs`, `dbfs`) and `publish_dry_run`
+  optional dbt manifest generation (`dbt_command`, `dbt_env_json`,
+  `dbt_secret_env_map_json`), optional models artifact, optional remote publish
+  targets (`s3`, `gcs`, `dbfs`) and `publish_dry_run`
 - **Trust boundary:** when `dbt_generate_manifest=true`, `dbt_command` is
   executed via `bash -lc` in the caller repository context and must be treated
   as trusted caller input
