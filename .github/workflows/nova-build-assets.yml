@@ -18,15 +18,15 @@ on:
         required: true
         type: string
       installer_repository:
-        description: "Repository to checkout for building dbt-nova (defaults to current reusable workflow repository)"
+        description: "Repository to checkout for building dbt-nova (default: joe-broadhead/dbt-nova)"
         required: false
         type: string
-        default: ""
+        default: "joe-broadhead/dbt-nova"
       installer_ref:
-        description: "Git ref to checkout for installer_repository (defaults to reusable workflow ref)"
+        description: "Git ref to checkout for installer_repository (default: master)"
         required: false
         type: string
-        default: ""
+        default: "master"
       dbt_generate_manifest:
         description: "Whether to run dbt before building Nova assets"
         required: false
@@ -135,15 +135,15 @@ on:
         required: true
         type: string
       installer_repository:
-        description: "Repository to checkout for building dbt-nova (defaults to current reusable workflow repository)"
+        description: "Repository to checkout for building dbt-nova (default: joe-broadhead/dbt-nova)"
         required: false
         type: string
-        default: ""
+        default: "joe-broadhead/dbt-nova"
       installer_ref:
-        description: "Git ref to checkout for installer_repository (defaults to reusable workflow ref)"
+        description: "Git ref to checkout for installer_repository (default: master)"
         required: false
         type: string
-        default: ""
+        default: "master"
       dbt_generate_manifest:
         description: "Whether to run dbt before building Nova assets"
         required: false
