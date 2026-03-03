@@ -246,9 +246,6 @@ jobs:
       dbt_env_json: ${{ steps.resolve.outputs.dbt_env_json }}
       dbt_secret_env_map_json: ${{ steps.resolve.outputs.dbt_secret_env_map_json }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-
       - name: Validate inputs and set deterministic paths
         id: resolve
         shell: bash
