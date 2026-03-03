@@ -169,15 +169,9 @@ fn dbfs_manifest_rejects_legacy_token_env() {
 }
 
 #[test]
+#[ignore = "requires local socket bind timing behavior; run explicitly in environments that allow loopback bind"]
 fn http_manifest_times_out_without_cache() {
-    let listener = match TcpListener::bind("127.0.0.1:0") {
-        Ok(listener) => listener,
-        Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
-            eprintln!("skipping http timeout test: bind permission denied");
-            return;
-        }
-        Err(err) => panic!("bind: {err}"),
-    };
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral localhost port");
     let addr = listener.local_addr().expect("local addr");
     let handle = thread::spawn(move || {
         if let Ok((stream, _)) = listener.accept() {

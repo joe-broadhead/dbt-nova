@@ -29,8 +29,9 @@ async fn concurrent_searches() {
     let searcher = Arc::new(searcher);
 
     let mut tasks = JoinSet::new();
+    let total_requests = 50usize;
     // Fire a burst of concurrent searches to catch contention or locking issues.
-    for i in 0..50 {
+    for i in 0..total_requests {
         let searcher = Arc::clone(&searcher);
         tasks.spawn(async move {
             let params = SearchParams {
@@ -53,11 +54,9 @@ async fn concurrent_searches() {
         }
     }
 
-    // Allow a small amount of flakiness under load but require a high success rate.
     assert!(
-        successes >= 45,
-        "At least 90% should succeed under load, got {}",
-        successes
+        successes == total_requests,
+        "expected all concurrent searches to succeed ({total_requests}), got {successes}"
     );
 }
 
