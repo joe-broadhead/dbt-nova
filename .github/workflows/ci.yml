@@ -137,7 +137,6 @@ jobs:
 
   reusable-assets-producer:
     name: reusable-assets-producer
-    timeout-minutes: 60
     uses: ./.github/workflows/nova-build-assets.yml
     with:
       manifest_path: tests/fixtures/nova_manifest.json
@@ -147,7 +146,6 @@ jobs:
 
   reusable-assets-remote-publish-dryrun:
     name: reusable-assets-remote-publish-dryrun
-    timeout-minutes: 60
     uses: ./.github/workflows/nova-build-assets.yml
     with:
       manifest_path: tests/fixtures/nova_manifest.json
