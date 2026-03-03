@@ -143,6 +143,8 @@ jobs:
       storage_instance_id: ci-readonly-smoke
       artifact_name_prefix: ci-readonly-smoke
       retention_days: 1
+      installer_repository: ${{ github.repository }}
+      installer_ref: ${{ github.sha }}
 
   reusable-assets-remote-publish-dryrun:
     name: reusable-assets-remote-publish-dryrun
@@ -152,6 +154,8 @@ jobs:
       storage_instance_id: ci-remote-publish-dryrun
       artifact_name_prefix: ci-remote-publish-dryrun
       retention_days: 1
+      installer_repository: ${{ github.repository }}
+      installer_ref: ${{ github.sha }}
       publish_targets: s3,gcs,dbfs
       publish_s3_prefix: s3://ci-dryrun-bucket/dbt-nova
       publish_gcs_prefix: gs://ci-dryrun-bucket/dbt-nova

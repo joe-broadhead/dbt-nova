@@ -98,7 +98,8 @@ Workflow inputs:
 - `publish_dbfs_prefix`: e.g. `dbfs:/mnt/nova-assets/prod`
 - `publish_dry_run`: `true` to compute publish URIs without network uploads
 - `installer_repository` / `installer_ref` (advanced override for which repo/ref
-  is checked out to build `dbt-nova`; defaults to the reusable workflow source)
+  is checked out to build `dbt-nova`; defaults to
+  `joe-broadhead/dbt-nova` plus the resolved reusable-workflow ref when available)
 
 Auth per target:
 

@@ -18,12 +18,12 @@ on:
         required: true
         type: string
       installer_repository:
-        description: "Repository to checkout for building dbt-nova (defaults to current reusable workflow repository)"
+        description: "Repository to checkout for building dbt-nova (default: joe-broadhead/dbt-nova)"
         required: false
         type: string
-        default: ""
+        default: "joe-broadhead/dbt-nova"
       installer_ref:
-        description: "Git ref to checkout for installer_repository (defaults to reusable workflow ref)"
+        description: "Git ref to checkout for installer_repository (defaults to resolved reusable workflow ref)"
         required: false
         type: string
         default: ""
@@ -135,12 +135,12 @@ on:
         required: true
         type: string
       installer_repository:
-        description: "Repository to checkout for building dbt-nova (defaults to current reusable workflow repository)"
+        description: "Repository to checkout for building dbt-nova (default: joe-broadhead/dbt-nova)"
         required: false
         type: string
-        default: ""
+        default: "joe-broadhead/dbt-nova"
       installer_ref:
-        description: "Git ref to checkout for installer_repository (defaults to reusable workflow ref)"
+        description: "Git ref to checkout for installer_repository (defaults to resolved reusable workflow ref)"
         required: false
         type: string
         default: ""
@@ -434,20 +434,20 @@ jobs:
 
           if [[ -z "${installer_repository}" || -z "${installer_ref}" ]]; then
             if [[ -n "${JOB_WORKFLOW_REF:-}" && "${JOB_WORKFLOW_REF}" == *"/.github/workflows/"* && "${JOB_WORKFLOW_REF}" == *"@"* ]]; then
+              job_workflow_repository="${JOB_WORKFLOW_REF%%/.github/workflows/*}"
+              job_workflow_ref="${JOB_WORKFLOW_REF##*@}"
               if [[ -z "${installer_repository}" ]]; then
-                installer_repository="${JOB_WORKFLOW_REF%%/.github/workflows/*}"
+                installer_repository="${job_workflow_repository}"
               fi
-              if [[ -z "${installer_ref}" ]]; then
-                installer_ref="${JOB_WORKFLOW_REF##*@}"
+              if [[ -z "${installer_ref}" && "${installer_repository}" == "${job_workflow_repository}" ]]; then
+                installer_ref="${job_workflow_ref}"
               fi
             fi
           fi
 
-          if [[ -z "${installer_repository}" || -z "${installer_ref}" ]]; then
+          if [[ -z "${installer_repository}" ]]; then
             if [[ -n "${WORKFLOW_REF:-}" && "${WORKFLOW_REF}" == *"/.github/workflows/"* && "${WORKFLOW_REF}" == *"@"* ]]; then
-              if [[ -z "${installer_repository}" ]]; then
-                installer_repository="${WORKFLOW_REF%%/.github/workflows/*}"
-              fi
+              installer_repository="${WORKFLOW_REF%%/.github/workflows/*}"
               if [[ -z "${installer_ref}" ]]; then
                 installer_ref="${WORKFLOW_REF##*@}"
               fi
@@ -455,10 +455,7 @@ jobs:
           fi
 
           if [[ -z "${installer_repository}" ]]; then
-            installer_repository="${ACTION_REPOSITORY:-${CURRENT_REPOSITORY}}"
-          fi
-          if [[ -z "${installer_ref}" ]]; then
-            installer_ref="${ACTION_REF:-${CURRENT_SHA}}"
+            installer_repository="${ACTION_REPOSITORY:-${CURRENT_REPOSITORY:-}}"
           fi
 
           case "${installer_ref}" in
@@ -466,8 +463,17 @@ jobs:
             refs/tags/*) installer_ref="${installer_ref#refs/tags/}" ;;
           esac
 
-          if [[ -z "${installer_repository}" || -z "${installer_ref}" ]]; then
-            echo "failed to resolve installer source repository/ref"
+          if [[ -z "${installer_ref}" && "${installer_repository}" == "${CURRENT_REPOSITORY:-}" && -n "${CURRENT_SHA:-}" ]]; then
+            installer_ref="${CURRENT_SHA}"
+          fi
+
+          if [[ -z "${installer_repository}" ]]; then
+            echo "failed to resolve installer source repository."
+            exit 1
+          fi
+          if [[ -z "${installer_ref}" ]]; then
+            echo "failed to resolve immutable installer ref for '${installer_repository}'."
+            echo "Set installer_ref explicitly when invoking the reusable workflow."
             exit 1
           fi
 
