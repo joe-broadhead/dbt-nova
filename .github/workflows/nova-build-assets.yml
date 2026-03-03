@@ -657,6 +657,15 @@ jobs:
           for env_name, env_value in plain_env.items():
               runtime_env[env_name] = env_value
 
+          def add_mask(secret_value: str) -> None:
+              # Workflow command escaping for %, CR, LF.
+              escaped_value = (
+                  secret_value.replace("%", "%25")
+                  .replace("\r", "%0D")
+                  .replace("\n", "%0A")
+              )
+              print(f"::add-mask::{escaped_value}")
+
           for env_name, secret_name in secret_env_map.items():
               secret_value = secret_bundle.get(secret_name)
               if not isinstance(secret_value, str) or not secret_value:
@@ -667,6 +676,7 @@ jobs:
                       file=sys.stderr,
                   )
                   sys.exit(1)
+              add_mask(secret_value)
               # Preserve exact secret bytes (including trailing newlines).
               runtime_env[env_name] = secret_value
 
