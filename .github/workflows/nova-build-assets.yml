@@ -559,6 +559,14 @@ jobs:
           inherited_secrets = json.loads(os.environ["INHERITED_SECRETS_JSON"])
 
           runtime_env = os.environ.copy()
+          for helper_var in (
+              "INHERITED_SECRETS_JSON",
+              "INPUT_DBT_ENV_JSON",
+              "INPUT_DBT_SECRET_ENV_MAP_JSON",
+              "INPUT_DBT_COMMAND",
+          ):
+              runtime_env.pop(helper_var, None)
+
           for env_name, env_value in plain_env.items():
               runtime_env[env_name] = env_value
 
