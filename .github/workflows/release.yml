@@ -19,7 +19,8 @@ permissions:
 jobs:
   validate:
     name: Validate Release Flow
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
     outputs:
       release_tag: ${{ steps.resolve_tag.outputs.release_tag }}
     permissions:
@@ -71,12 +72,13 @@ jobs:
   build:
     name: Build (${{ matrix.asset }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     needs: validate
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             asset: linux-x86_64
             ext: ""
