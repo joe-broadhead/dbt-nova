@@ -1,13 +1,12 @@
 //! Integration tests for get_context tool behavior.
 use dbt_nova::params::ContextLimits;
 use dbt_nova::params::{ContextMode, GetContextParams};
-use dbt_nova::{DbtNovaConfig, ManifestSearch};
 use serde_json::json;
 use std::io::Write;
-use std::ops::Deref;
-
 #[path = "support/config.rs"]
 mod support_config;
+#[path = "support/fixtures.rs"]
+mod support_fixtures;
 
 fn create_test_manifest() -> tempfile::NamedTempFile {
     let manifest = json!({
@@ -117,32 +116,9 @@ fn create_test_manifest() -> tempfile::NamedTempFile {
     file
 }
 
-struct TestSearchEnv {
-    searcher: ManifestSearch,
-    _guard: support_config::TestStorageGuard,
-}
-
-impl Deref for TestSearchEnv {
-    type Target = ManifestSearch;
-
-    fn deref(&self) -> &Self::Target {
-        &self.searcher
-    }
-}
-
-fn create_searcher(manifest_file: &tempfile::NamedTempFile) -> TestSearchEnv {
-    let guard = support_config::TestStorageGuard::new();
-    let mut cfg = DbtNovaConfig {
-        manifest_path: manifest_file.path().to_string_lossy().to_string(),
-        search: support_config::test_search_config(),
-        ..Default::default()
-    };
-    support_config::apply_test_storage(&mut cfg, &guard);
-    let searcher = ManifestSearch::new(cfg).unwrap().search;
-    TestSearchEnv {
-        searcher,
-        _guard: guard,
-    }
+fn create_searcher(manifest_file: &tempfile::NamedTempFile) -> support_fixtures::FixtureSearchEnv {
+    support_fixtures::load_manifest_path(manifest_file.path())
+        .expect("failed to build searcher from test manifest")
 }
 
 #[tokio::test(flavor = "multi_thread")]

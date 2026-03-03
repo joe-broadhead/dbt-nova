@@ -34,9 +34,10 @@ async fn test_get_context_basic() {
         .get("data")
         .and_then(|d| d.as_array())
         .expect("search response missing 'data' array");
-    if results.is_empty() {
-        return;
-    }
+    assert!(
+        !results.is_empty(),
+        "expected at least one model search result"
+    );
     let model_id = results[0]
         .get("unique_id")
         .and_then(|v| v.as_str())

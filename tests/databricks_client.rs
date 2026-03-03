@@ -6,19 +6,6 @@ use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-fn wiremock_enabled() -> bool {
-    // Gate wiremock integration tests to avoid hitting network in default runs.
-    std::env::var("DBT_NOVA_TEST_HTTPMOCK")
-        .ok()
-        .map(|v| {
-            matches!(
-                v.trim().to_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
-}
-
 fn test_config(host: String) -> DatabricksSqlConfig {
     DatabricksSqlConfig {
         host,
@@ -33,13 +20,8 @@ fn test_config(host: String) -> DatabricksSqlConfig {
 }
 
 #[tokio::test]
+#[ignore = "requires local socket bind for wiremock; run explicitly in environments that allow loopback bind"]
 async fn databricks_query_succeeds_inline() {
-    if !wiremock_enabled() {
-        eprintln!(
-            "Skipping databricks_query_succeeds_inline (set DBT_NOVA_TEST_HTTPMOCK=1 to run)"
-        );
-        return;
-    }
     // Mock a one-shot SQL response where results are embedded inline.
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -72,13 +54,8 @@ async fn databricks_query_succeeds_inline() {
 }
 
 #[tokio::test]
+#[ignore = "requires local socket bind for wiremock; run explicitly in environments that allow loopback bind"]
 async fn databricks_query_polls_and_fetches_chunks() {
-    if !wiremock_enabled() {
-        eprintln!(
-            "Skipping databricks_query_polls_and_fetches_chunks (set DBT_NOVA_TEST_HTTPMOCK=1 to run)"
-        );
-        return;
-    }
     // Mock a multi-step query that transitions from RUNNING to SUCCEEDED and fetches chunks.
     let server = MockServer::start().await;
 
@@ -137,13 +114,8 @@ async fn databricks_query_polls_and_fetches_chunks() {
 }
 
 #[tokio::test]
+#[ignore = "requires local socket bind for wiremock; run explicitly in environments that allow loopback bind"]
 async fn databricks_query_failed_returns_error() {
-    if !wiremock_enabled() {
-        eprintln!(
-            "Skipping databricks_query_failed_returns_error (set DBT_NOVA_TEST_HTTPMOCK=1 to run)"
-        );
-        return;
-    }
     // Mock a FAILED status to ensure error surfaces with message context.
     let server = MockServer::start().await;
     Mock::given(method("POST"))
