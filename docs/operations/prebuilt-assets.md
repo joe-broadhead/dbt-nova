@@ -33,6 +33,8 @@ jobs:
     with:
       manifest_path: target/manifest.json
       storage_instance_id: analytics-prod
+      installer_ref: v0.0.2
+      installer_install_mode: release
       artifact_name_prefix: analytics-prod
       retention_days: 14
       include_models_cache: false
@@ -103,8 +105,10 @@ Workflow inputs:
 - `publish_dbfs_prefix`: e.g. `dbfs:/mnt/nova-assets/prod`
 - `publish_dry_run`: `true` to compute publish URIs without network uploads
 - `installer_repository` / `installer_ref` (advanced override for which repo/ref
-  is checked out to build `dbt-nova`; defaults to
+  is used for installing `dbt-nova`; defaults to
   `joe-broadhead/dbt-nova` plus the resolved reusable-workflow ref when available)
+- `installer_install_mode`: `auto` (default; try release binary then fall back to source build),
+  `release` (release binary only), or `source` (always build from source)
 
 Auth per target:
 
@@ -112,6 +116,13 @@ Auth per target:
 - `gcs`: one of `DBT_NOVA_GCP_ACCESS_TOKEN`, `DBT_NOVA_BIGQUERY_ACCESS_TOKEN`,
   `GCP_ACCESS_TOKEN`, `GOOGLE_OAUTH_ACCESS_TOKEN` (or gcloud ADC token)
 - `dbfs`: `DATABRICKS_HOST` and `DATABRICKS_ACCESS_TOKEN`
+
+Installer mode guidance:
+
+- Use `installer_install_mode: release` with a release tag ref (for example
+  `installer_ref: v0.0.2`) to minimize runtime.
+- Use `installer_install_mode: source` when you need an unreleased commit SHA.
+- Keep `installer_install_mode: auto` for resilient defaults in mixed environments.
 
 Published object naming is deterministic:
 
