@@ -2,6 +2,13 @@ name: Build Nova Assets
 
 on:
   workflow_call:
+    secrets:
+      DBT_ACCESS_TOKEN:
+        required: false
+      DBT_ACCESS_TOKEN_NONPROD:
+        required: false
+      DBT_ENV_SECRET_GIT_CREDENTIAL:
+        required: false
     inputs:
       manifest_path:
         description: "Path to manifest.json in the caller repository"
@@ -448,6 +455,9 @@ jobs:
         shell: bash
         env:
           INPUT_DBT_COMMAND: ${{ inputs.dbt_command }}
+          DBT_ACCESS_TOKEN: ${{ secrets.DBT_ACCESS_TOKEN }}
+          DBT_ACCESS_TOKEN_NONPROD: ${{ secrets.DBT_ACCESS_TOKEN_NONPROD }}
+          DBT_ENV_SECRET_GIT_CREDENTIAL: ${{ secrets.DBT_ENV_SECRET_GIT_CREDENTIAL }}
         run: |
           set -euo pipefail
           # Trust boundary: callers control INPUT_DBT_COMMAND in their own repository.
