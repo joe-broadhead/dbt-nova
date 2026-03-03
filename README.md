@@ -211,6 +211,10 @@ Optional: publish artifacts directly to cloud targets from the reusable
 workflow with `publish_targets` plus per-target prefixes
 (`publish_s3_prefix`, `publish_gcs_prefix`, `publish_dbfs_prefix`).
 
+If you generate manifests in the reusable workflow (`dbt_generate_manifest: true`),
+use `dbt_env_json` and `dbt_secret_env_map_json` to pass profile-specific env/secret
+variables generically (Databricks, BigQuery, DuckDB, etc.).
+
 Legacy fallback: if you manually extract artifacts locally, you can omit
 `DBT_NOVA_*_ARTIFACT_URI` vars and keep only
 `DBT_NOVA_STORAGE_DIR` + `DBT_NOVA_STORAGE_INSTANCE_ID` + `DBT_NOVA_STORAGE_READ_ONLY=true`.

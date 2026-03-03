@@ -43,10 +43,39 @@ Alternative producer inputs:
 
 - `manifest_uri` (instead of `manifest_path`)
 - `dbt_generate_manifest: true` + `dbt_command` (build manifest in workflow)
+- `dbt_env_json` (JSON object of non-secret env vars exported before `dbt_command`)
+- `dbt_secret_env_map_json` (JSON object mapping env var names to secret names)
 
 `dbt_command` is executed as `bash -lc "<command>"` inside the caller
 repository checkout. Treat it as a trusted command surface and only use this
 mode in repositories/branches where workflow callers are trusted.
+
+When using `dbt_generate_manifest: true`, prefer this generic pattern so the
+workflow works across Databricks, BigQuery, DuckDB, and mixed profiles:
+
+```yaml
+jobs:
+  build_nova_assets:
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@master
+    with:
+      dbt_generate_manifest: true
+      dbt_command: |
+        set -euo pipefail
+        dbt deps
+        dbt compile -t "$DBT_TARGET"
+      dbt_env_json: >-
+        {"DBT_TARGET":"prod","DBT_PROFILES_DIR":"./"}
+      dbt_secret_env_map_json: >-
+        {"DBT_ACCESS_TOKEN":"DBT_ACCESS_TOKEN","DBT_BIGQUERY_KEYFILE_JSON":"DBT_BIGQUERY_KEYFILE_JSON"}
+      storage_instance_id: analytics-prod
+    secrets: inherit
+```
+
+Notes:
+
+- `dbt_env_json` values are plain strings.
+- `dbt_secret_env_map_json` values are **secret names** from the caller repo/org.
+- Missing mapped secrets fail fast before `dbt_command` runs.
 
 The producer emits:
 
