@@ -212,7 +212,7 @@ verify_direct_hf_checksum() {
   if [[ -z "$checksum_file" ]]; then
     if [[ "$checksum_mode" == "required" ]]; then
       echo "Checksum verification required but no checksum manifest was configured." >&2
-      return 1
+      return 3
     fi
     echo "Checksum verification warning: no checksum manifest configured; skipping $url." >&2
     return 0
@@ -221,18 +221,18 @@ verify_direct_hf_checksum() {
   if ! expected="$(lookup_expected_checksum "$url" "$checksum_file")"; then
     if [[ "$checksum_mode" == "required" ]]; then
       echo "Checksum verification failed: no checksum entry for $url in $checksum_file" >&2
-      return 1
+      return 3
     fi
     echo "Checksum verification warning: no checksum entry for $url; skipping." >&2
     return 0
   fi
 
   if ! actual="$(sha256_file "$path")"; then
-    return 1
+    return 4
   fi
   if [[ "$actual" != "$expected" ]]; then
     echo "Checksum mismatch for $url (expected $expected, got $actual)." >&2
-    return 1
+    return 2
   fi
   return 0
 }
@@ -240,7 +240,7 @@ verify_direct_hf_checksum() {
 download_hf_file() {
   local url="$1"
   local target="$2"
-  local expected actual tmp
+  local expected actual tmp verify_status
 
   expected="$(get_content_length "$url")"
   mkdir -p "$(dirname "$target")"
@@ -251,8 +251,13 @@ download_hf_file() {
       if verify_direct_hf_checksum "$url" "$target"; then
         return 0
       fi
-      echo "Cached file failed checksum verification; re-downloading: $target" >&2
-      rm -f "$target"
+      verify_status=$?
+      if [[ "$verify_status" -eq 2 ]]; then
+        echo "Cached file failed checksum verification; re-downloading: $target" >&2
+        rm -f "$target"
+      else
+        return "$verify_status"
+      fi
     fi
   fi
 
