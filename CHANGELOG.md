@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   consumer smoke tests and negative-path contract checks.
 - Optional remote publish targets (`s3`, `gcs`, `dbfs`) for reusable assets,
   including `publish_dry_run` contract coverage.
+- Warm-model integrity controls for direct Hugging Face fallback downloads:
+  `DBT_NOVA_WARMUP_CHECKSUM_MODE=off|warn|required` and
+  `DBT_NOVA_WARMUP_CHECKSUM_FILE=/path/to/checksums.txt`.
+- Protocol-level MCP stdio smoke test coverage (`initialize` + `tools/list`)
+  plus shared integration fixture helpers for manifest/search setup.
 
 ### Changed
 
@@ -30,6 +35,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CLI command mode, and MCP read-only consumer env setup.
 - CI now validates reusable-asset dry-run publish outputs and metadata contract
   outputs as part of the main PR/push pipeline.
+- CI/release/docs workflows now use explicit timeout budgets and consistent
+  Linux runner pinning (`ubuntu-22.04`), with improved docs pip cache keys and
+  Rust cache coverage for config/coverage jobs.
+- Workflow shell-boundary hardening routes sensitive expressions via `env`
+  variables, removes token-in-URL git push patterns, and clarifies trusted
+  execution of `dbt_command` in the reusable asset workflow docs.
+- Manifest loader initialization was decomposed into staged helpers, and MCP
+  concurrency-permit error handling is now centralized.
 
 ### Fixed
 
@@ -42,6 +55,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hash only persisted contract artifacts.
 - Reusable remote publish workflow now emits stable non-null URI outputs and
   fixes DBFS publish heredoc execution parsing in CI.
+- Warm-model fallback checksum handling now:
+  - enforces checksum validation for cached files without swallowing verifier status
+  - re-downloads on hash mismatch
+  - preserves usable cache files for non-mismatch verification errors
+  - handles CRLF checksum-manifest lines correctly.
 
 ## [0.0.2] - 2026-02-28
 
