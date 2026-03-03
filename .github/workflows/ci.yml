@@ -16,6 +16,7 @@ concurrency:
 jobs:
   lint-test:
     runs-on: ubuntu-22.04
+    timeout-minutes: 60
     env:
       DBT_NOVA_STRICT_SCHEMA: "1"
     steps:
@@ -51,6 +52,7 @@ jobs:
 
   config-contract:
     runs-on: ubuntu-22.04
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -58,11 +60,15 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
 
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
       - name: Verify generated config reference
         run: scripts/check_config_reference.sh
 
   coverage:
     runs-on: ubuntu-22.04
+    timeout-minutes: 60
     env:
       DBT_NOVA_STRICT_SCHEMA: "1"
     steps:
@@ -74,6 +80,9 @@ jobs:
         with:
           components: llvm-tools-preview
 
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@288875dd3d64326724fa6d9593062d9f8ba0b131
         with:
@@ -84,6 +93,7 @@ jobs:
 
   docs:
     runs-on: ubuntu-22.04
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -103,6 +113,7 @@ jobs:
 
   deny:
     runs-on: ubuntu-22.04
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -150,6 +161,7 @@ jobs:
   reusable-assets-remote-publish-dryrun-assert:
     name: reusable-assets-remote-publish-dryrun-assert
     runs-on: ubuntu-22.04
+    timeout-minutes: 20
     needs: reusable-assets-remote-publish-dryrun
     steps:
       - name: Ensure jq is available
@@ -200,6 +212,7 @@ jobs:
   reusable-assets-readonly-consumer:
     name: reusable-assets-readonly-consumer
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
     needs: reusable-assets-producer
     env:
       STORAGE_INSTANCE_ID: ci-readonly-smoke
@@ -379,6 +392,7 @@ jobs:
   reusable-assets-remote-consumer-smoke:
     name: reusable-assets-remote-consumer-smoke
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
     needs: reusable-assets-producer
     env:
       STORAGE_INSTANCE_ID: ci-readonly-smoke
@@ -503,6 +517,7 @@ jobs:
   reusable-assets-negative-contract:
     name: reusable-assets-negative-contract
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
     needs: reusable-assets-producer
     env:
       STORAGE_INSTANCE_ID: ci-readonly-smoke

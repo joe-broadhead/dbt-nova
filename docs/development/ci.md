@@ -2,6 +2,11 @@
 
 This repository uses GitHub Actions for CI, releases, and documentation.
 
+Operational defaults:
+
+- Linux runners are pinned to `ubuntu-22.04` for consistency.
+- Jobs that execute on local runners set explicit `timeout-minutes` budgets.
+
 ## Workflows
 
 ### CI
