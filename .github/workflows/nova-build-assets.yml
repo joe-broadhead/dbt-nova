@@ -17,6 +17,16 @@ on:
         description: "Stable storage instance id used by producers/consumers"
         required: true
         type: string
+      installer_repository:
+        description: "Repository to checkout for building dbt-nova (defaults to current reusable workflow repository)"
+        required: false
+        type: string
+        default: ""
+      installer_ref:
+        description: "Git ref to checkout for installer_repository (defaults to reusable workflow ref)"
+        required: false
+        type: string
+        default: ""
       dbt_generate_manifest:
         description: "Whether to run dbt before building Nova assets"
         required: false
@@ -124,6 +134,16 @@ on:
         description: "Stable storage instance id used by producers/consumers"
         required: true
         type: string
+      installer_repository:
+        description: "Repository to checkout for building dbt-nova (defaults to current reusable workflow repository)"
+        required: false
+        type: string
+        default: ""
+      installer_ref:
+        description: "Git ref to checkout for installer_repository (defaults to reusable workflow ref)"
+        required: false
+        type: string
+        default: ""
       dbt_generate_manifest:
         description: "Whether to run dbt before building Nova assets"
         required: false
@@ -201,6 +221,8 @@ jobs:
       manifest_path: ${{ steps.resolve.outputs.manifest_path }}
       manifest_uri: ${{ steps.resolve.outputs.manifest_uri }}
       storage_instance_id: ${{ steps.resolve.outputs.storage_instance_id }}
+      installer_repository: ${{ steps.resolve.outputs.installer_repository }}
+      installer_ref: ${{ steps.resolve.outputs.installer_ref }}
       publish_targets: ${{ steps.resolve.outputs.publish_targets }}
       publish_s3_prefix: ${{ steps.resolve.outputs.publish_s3_prefix }}
       publish_gcs_prefix: ${{ steps.resolve.outputs.publish_gcs_prefix }}
@@ -219,6 +241,8 @@ jobs:
           INPUT_MANIFEST_PATH: ${{ inputs.manifest_path }}
           INPUT_MANIFEST_URI: ${{ inputs.manifest_uri }}
           INPUT_STORAGE_INSTANCE_ID: ${{ inputs.storage_instance_id }}
+          INPUT_INSTALLER_REPOSITORY: ${{ inputs.installer_repository }}
+          INPUT_INSTALLER_REF: ${{ inputs.installer_ref }}
           INPUT_DBT_GENERATE_MANIFEST: ${{ inputs.dbt_generate_manifest }}
           INPUT_DBT_COMMAND: ${{ inputs.dbt_command }}
           INPUT_DBT_ENV_JSON: ${{ inputs.dbt_env_json }}
@@ -231,12 +255,20 @@ jobs:
           INPUT_PUBLISH_GCS_PREFIX: ${{ inputs.publish_gcs_prefix }}
           INPUT_PUBLISH_DBFS_PREFIX: ${{ inputs.publish_dbfs_prefix }}
           INPUT_PUBLISH_DRY_RUN: ${{ inputs.publish_dry_run }}
+          JOB_WORKFLOW_REF: ${{ github.job_workflow_ref }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          ACTION_REPOSITORY: ${{ github.action_repository }}
+          ACTION_REF: ${{ github.action_ref }}
+          CURRENT_REPOSITORY: ${{ github.repository }}
+          CURRENT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
 
           manifest_path="${INPUT_MANIFEST_PATH}"
           manifest_uri="${INPUT_MANIFEST_URI}"
           storage_instance_id="${INPUT_STORAGE_INSTANCE_ID}"
+          installer_repository="${INPUT_INSTALLER_REPOSITORY}"
+          installer_ref="${INPUT_INSTALLER_REF}"
           dbt_generate_manifest="${INPUT_DBT_GENERATE_MANIFEST}"
           dbt_command="${INPUT_DBT_COMMAND}"
           dbt_env_json="${INPUT_DBT_ENV_JSON}"
@@ -256,6 +288,10 @@ jobs:
           fi
           if [[ ! "${storage_instance_id}" =~ ^[A-Za-z0-9._-]+$ ]]; then
             echo "storage_instance_id must match ^[A-Za-z0-9._-]+$"
+            exit 1
+          fi
+          if [[ -n "${installer_repository}" && ! "${installer_repository}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+            echo "installer_repository must match owner/repo."
             exit 1
           fi
 
@@ -396,6 +432,45 @@ jobs:
           publish_gcs_prefix="${publish_gcs_prefix%/}"
           publish_dbfs_prefix="${publish_dbfs_prefix%/}"
 
+          if [[ -z "${installer_repository}" || -z "${installer_ref}" ]]; then
+            if [[ -n "${JOB_WORKFLOW_REF:-}" && "${JOB_WORKFLOW_REF}" == *"/.github/workflows/"* && "${JOB_WORKFLOW_REF}" == *"@"* ]]; then
+              if [[ -z "${installer_repository}" ]]; then
+                installer_repository="${JOB_WORKFLOW_REF%%/.github/workflows/*}"
+              fi
+              if [[ -z "${installer_ref}" ]]; then
+                installer_ref="${JOB_WORKFLOW_REF##*@}"
+              fi
+            fi
+          fi
+
+          if [[ -z "${installer_repository}" || -z "${installer_ref}" ]]; then
+            if [[ -n "${WORKFLOW_REF:-}" && "${WORKFLOW_REF}" == *"/.github/workflows/"* && "${WORKFLOW_REF}" == *"@"* ]]; then
+              if [[ -z "${installer_repository}" ]]; then
+                installer_repository="${WORKFLOW_REF%%/.github/workflows/*}"
+              fi
+              if [[ -z "${installer_ref}" ]]; then
+                installer_ref="${WORKFLOW_REF##*@}"
+              fi
+            fi
+          fi
+
+          if [[ -z "${installer_repository}" ]]; then
+            installer_repository="${ACTION_REPOSITORY:-${CURRENT_REPOSITORY}}"
+          fi
+          if [[ -z "${installer_ref}" ]]; then
+            installer_ref="${ACTION_REF:-${CURRENT_SHA}}"
+          fi
+
+          case "${installer_ref}" in
+            refs/heads/*) installer_ref="${installer_ref#refs/heads/}" ;;
+            refs/tags/*) installer_ref="${installer_ref#refs/tags/}" ;;
+          esac
+
+          if [[ -z "${installer_repository}" || -z "${installer_ref}" ]]; then
+            echo "failed to resolve installer source repository/ref"
+            exit 1
+          fi
+
           storage_dir="${GITHUB_WORKSPACE}/out/dbt-nova-storage"
           models_dir="${GITHUB_WORKSPACE}/out/dbt-nova-models"
           mkdir -p "${storage_dir}" "${models_dir}"
@@ -414,6 +489,8 @@ jobs:
           echo "manifest_path=${manifest_path}" >> "$GITHUB_OUTPUT"
           echo "manifest_uri=${manifest_uri}" >> "$GITHUB_OUTPUT"
           echo "storage_instance_id=${storage_instance_id}" >> "$GITHUB_OUTPUT"
+          echo "installer_repository=${installer_repository}" >> "$GITHUB_OUTPUT"
+          echo "installer_ref=${installer_ref}" >> "$GITHUB_OUTPUT"
           echo "publish_targets=${publish_targets_normalized}" >> "$GITHUB_OUTPUT"
           echo "publish_s3_prefix=${publish_s3_prefix}" >> "$GITHUB_OUTPUT"
           echo "publish_gcs_prefix=${publish_gcs_prefix}" >> "$GITHUB_OUTPUT"
@@ -433,6 +510,8 @@ jobs:
             echo "- artifact_name_storage: \`${{ steps.resolve.outputs.artifact_name_storage }}\`"
             echo "- artifact_name_models: \`${{ steps.resolve.outputs.artifact_name_models }}\`"
             echo "- storage_instance_id: \`${{ steps.resolve.outputs.storage_instance_id }}\`"
+            echo "- installer_repository: \`${{ steps.resolve.outputs.installer_repository }}\`"
+            echo "- installer_ref: \`${{ steps.resolve.outputs.installer_ref }}\`"
             echo "- publish_targets: \`${{ steps.resolve.outputs.publish_targets }}\`"
             echo "- publish_dry_run: \`${{ steps.resolve.outputs.publish_dry_run }}\`"
             echo "- dbt_env_json: \`${{ steps.resolve.outputs.dbt_env_json }}\`"
@@ -478,46 +557,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq
 
-      - name: Resolve installer source
-        id: installer_source
-        shell: bash
-        env:
-          WORKFLOW_REF: ${{ github.workflow_ref }}
-          ACTION_REPOSITORY: ${{ github.action_repository }}
-          ACTION_REF: ${{ github.action_ref }}
-          CURRENT_REPOSITORY: ${{ github.repository }}
-          CURRENT_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-
-          repo=""
-          ref=""
-          if [[ -n "${WORKFLOW_REF}" && "${WORKFLOW_REF}" == *"/.github/workflows/"* && "${WORKFLOW_REF}" == *"@"* ]]; then
-            repo="${WORKFLOW_REF%%/.github/workflows/*}"
-            ref="${WORKFLOW_REF##*@}"
-          fi
-          if [[ -z "${repo}" ]]; then
-            repo="${ACTION_REPOSITORY:-${CURRENT_REPOSITORY}}"
-          fi
-          if [[ -z "${ref}" ]]; then
-            ref="${ACTION_REF:-${CURRENT_SHA}}"
-          fi
-
-          case "${ref}" in
-            refs/heads/*) ref="${ref#refs/heads/}" ;;
-            refs/tags/*) ref="${ref#refs/tags/}" ;;
-          esac
-
-          echo "repo=${repo}" >> "$GITHUB_OUTPUT"
-          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
-
       - name: Checkout installer source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          repository: ${{ steps.installer_source.outputs.repo }}
-          ref: ${{ steps.installer_source.outputs.ref }}
+          repository: ${{ needs.prepare.outputs.installer_repository }}
+          ref: ${{ needs.prepare.outputs.installer_ref }}
           path: .nova-installer-source
           fetch-depth: 1
+
+      - name: Validate installer source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f .nova-installer-source/Cargo.toml ]]; then
+            echo "Installer source is missing .nova-installer-source/Cargo.toml."
+            echo "Resolved installer_repository=${{ needs.prepare.outputs.installer_repository }}"
+            echo "Resolved installer_ref=${{ needs.prepare.outputs.installer_ref }}"
+            exit 1
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
@@ -525,7 +582,7 @@ jobs:
       - name: Rust cache (installer source)
         uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
         with:
-          workspaces: ".nova-installer-source -> .nova-installer-source/target"
+          workspaces: ".nova-installer-source -> target"
 
       - name: Build dbt-nova from pinned workflow source
         shell: bash
