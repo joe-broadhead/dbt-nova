@@ -250,8 +250,9 @@ download_hf_file() {
     if [[ "$actual" == "$expected" ]]; then
       if verify_direct_hf_checksum "$url" "$target"; then
         return 0
+      else
+        verify_status=$?
       fi
-      verify_status=$?
       if [[ "$verify_status" -eq 2 ]]; then
         echo "Cached file failed checksum verification; re-downloading: $target" >&2
         rm -f "$target"
