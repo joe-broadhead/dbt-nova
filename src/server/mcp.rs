@@ -75,6 +75,34 @@ impl DbtNovaServer {
         }
     }
 
+    fn serialization_error_response(err: &impl std::fmt::Display) -> String {
+        serde_json::json!({
+            "success": false,
+            "error": format!("Serialization error: {err}"),
+            "error_code": "SERVER_ERROR"
+        })
+        .to_string()
+    }
+
+    fn error_response(err: &DbtNovaError) -> String {
+        serde_json::to_string(&err.to_response())
+            .unwrap_or_else(|ser_err| Self::serialization_error_response(&ser_err))
+    }
+
+    fn permit_from_result(
+        permit_result: Result<Option<ConcurrencyPermit>, DbtNovaError>,
+    ) -> std::result::Result<Option<ConcurrencyPermit>, String> {
+        permit_result.map_err(|err| Self::error_response(&err))
+    }
+
+    async fn acquire_sql_permit_for_tool(&self) -> Result<Option<ConcurrencyPermit>, DbtNovaError> {
+        let Ok(searcher) = self.searcher.get().await else {
+            return Ok(None);
+        };
+        let timeout = sql_queue_timeout(searcher.config());
+        self.acquire_sql_permit(searcher.config(), timeout).await
+    }
+
     async fn handle_async<F, Fut>(&self, tool: &'static str, persona: Option<&str>, f: F) -> String
     where
         F: FnOnce(Arc<ManifestSearch>) -> Fut,
@@ -85,15 +113,7 @@ impl DbtNovaServer {
         let searcher = match self.searcher.get().await {
             Ok(searcher) => searcher,
             Err(err) => {
-                let out = match serde_json::to_string(&err.to_response()) {
-                    Ok(out) => out,
-                    Err(ser_err) => serde_json::json!({
-                        "success": false,
-                        "error": format!("Serialization error: {}", ser_err),
-                        "error_code": "SERVER_ERROR"
-                    })
-                    .to_string(),
-                };
+                let out = Self::error_response(&err);
                 self.record_metrics(tool, persona, elapsed_ms_to_u64(start.elapsed()), success);
                 return out;
             }
@@ -116,22 +136,9 @@ impl DbtNovaServer {
                     success = true;
                     out
                 }
-                Err(e) => serde_json::json!({
-                    "success": false,
-                    "error": format!("Serialization error: {}", e),
-                    "error_code": "SERVER_ERROR"
-                })
-                .to_string(),
+                Err(e) => Self::serialization_error_response(&e),
             },
-            Err(e) => match serde_json::to_string(&e.to_response()) {
-                Ok(out) => out,
-                Err(err) => serde_json::json!({
-                    "success": false,
-                    "error": format!("Serialization error: {}", err),
-                    "error_code": "SERVER_ERROR"
-                })
-                .to_string(),
-            },
+            Err(e) => Self::error_response(&e),
         };
         self.record_metrics(tool, persona, elapsed_ms_to_u64(start.elapsed()), success);
         out
@@ -390,18 +397,9 @@ impl DbtNovaServer {
         } else {
             Ok(None)
         };
-        let permit = match permit_result {
+        let permit = match Self::permit_from_result(permit_result) {
             Ok(permit) => permit,
-            Err(err) => {
-                return serde_json::to_string(&err.to_response()).unwrap_or_else(|ser_err| {
-                    serde_json::json!({
-                        "success": false,
-                        "error": format!("Serialization error: {}", ser_err),
-                        "error_code": "SERVER_ERROR"
-                    })
-                    .to_string()
-                });
-            }
+            Err(response) => return response,
         };
         let result = self
             .handle_async("search", persona.as_deref(), |searcher| async move {
@@ -816,28 +814,9 @@ impl DbtNovaServer {
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn run_recipe(&self, params: Parameters<RunRecipeParams>) -> String {
-        let permit_timeout = match self.searcher.get().await {
-            Ok(searcher) => sql_queue_timeout(searcher.config()),
-            Err(_) => None,
-        };
-        let permit_result = if let Ok(searcher) = self.searcher.get().await {
-            self.acquire_sql_permit(searcher.config(), permit_timeout)
-                .await
-        } else {
-            Ok(None)
-        };
-        let permit = match permit_result {
+        let permit = match Self::permit_from_result(self.acquire_sql_permit_for_tool().await) {
             Ok(permit) => permit,
-            Err(err) => {
-                return serde_json::to_string(&err.to_response()).unwrap_or_else(|ser_err| {
-                    serde_json::json!({
-                        "success": false,
-                        "error": format!("Serialization error: {}", ser_err),
-                        "error_code": "SERVER_ERROR"
-                    })
-                    .to_string()
-                });
-            }
+            Err(response) => return response,
         };
         let result = self
             .handle_async("run_recipe", None, |searcher| async move {
@@ -881,28 +860,9 @@ impl DbtNovaServer {
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn execute_sql(&self, params: Parameters<ExecuteSqlParams>) -> String {
-        let permit_timeout = match self.searcher.get().await {
-            Ok(searcher) => sql_queue_timeout(searcher.config()),
-            Err(_) => None,
-        };
-        let permit_result = if let Ok(searcher) = self.searcher.get().await {
-            self.acquire_sql_permit(searcher.config(), permit_timeout)
-                .await
-        } else {
-            Ok(None)
-        };
-        let permit = match permit_result {
+        let permit = match Self::permit_from_result(self.acquire_sql_permit_for_tool().await) {
             Ok(permit) => permit,
-            Err(err) => {
-                return serde_json::to_string(&err.to_response()).unwrap_or_else(|ser_err| {
-                    serde_json::json!({
-                        "success": false,
-                        "error": format!("Serialization error: {}", ser_err),
-                        "error_code": "SERVER_ERROR"
-                    })
-                    .to_string()
-                });
-            }
+            Err(response) => return response,
         };
         let result = self
             .handle_async("execute_sql", None, |searcher| async move {
