@@ -190,6 +190,7 @@ lookup_expected_checksum() {
       hash=$1
       $1=""
       sub(/^[[:space:]]+/, "", $0)
+      gsub(/[[:space:]]+$/, "", $0)
       if ($0 == target) {
         print tolower(hash)
         found=1
