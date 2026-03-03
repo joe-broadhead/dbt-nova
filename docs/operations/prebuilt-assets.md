@@ -97,6 +97,8 @@ Workflow inputs:
 - `publish_gcs_prefix`: e.g. `gs://my-bucket/nova-assets/prod`
 - `publish_dbfs_prefix`: e.g. `dbfs:/mnt/nova-assets/prod`
 - `publish_dry_run`: `true` to compute publish URIs without network uploads
+- `installer_repository` / `installer_ref` (advanced override for which repo/ref
+  is checked out to build `dbt-nova`; defaults to the reusable workflow source)
 
 Auth per target:
 
