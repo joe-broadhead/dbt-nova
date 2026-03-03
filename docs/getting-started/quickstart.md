@@ -61,6 +61,8 @@ curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scrip
     cargo build --release
     # default mode is partial (model files only); falls back if direct download fails
     bash scripts/warm_models.sh
+    # optional integrity enforcement for direct HF fallback:
+    # DBT_NOVA_WARMUP_CHECKSUM_MODE=required DBT_NOVA_WARMUP_CHECKSUM_FILE=/path/to/checksums.txt bash scripts/warm_models.sh
     # optional full mode: model files + embedding caches for a specific manifest
     # DBT_NOVA_WARMUP_MANIFEST_PATH=/path/to/manifest.json bash scripts/warm_models.sh full
     sudo cp target/release/dbt-nova /usr/local/bin/

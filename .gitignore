@@ -5,6 +5,10 @@
 .dbt-nova
 .fastembed_cache
 
+.env
+.env.*
+!.env.example
+
 .gemini
 .claude
 .codex

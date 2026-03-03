@@ -1,0 +1,30 @@
+# Format:
+# <sha256> <url>
+#
+# Use with:
+#   DBT_NOVA_WARMUP_CHECKSUM_MODE=required
+#   DBT_NOVA_WARMUP_CHECKSUM_FILE=/path/to/warm_models.checksums.txt
+#
+# Direct HF fallback URLs queried by scripts/warm_models.sh.
+# In required mode, include an entry for every URL below.
+
+# intfloat/multilingual-e5-base
+<sha256> https://huggingface.co/intfloat/multilingual-e5-base/resolve/main/onnx/model.onnx
+<sha256> https://huggingface.co/intfloat/multilingual-e5-base/resolve/main/tokenizer.json
+<sha256> https://huggingface.co/intfloat/multilingual-e5-base/resolve/main/config.json
+<sha256> https://huggingface.co/intfloat/multilingual-e5-base/resolve/main/special_tokens_map.json
+<sha256> https://huggingface.co/intfloat/multilingual-e5-base/resolve/main/tokenizer_config.json
+
+# Qdrant/Splade_PP_en_v1
+<sha256> https://huggingface.co/Qdrant/Splade_PP_en_v1/resolve/main/model.onnx
+<sha256> https://huggingface.co/Qdrant/Splade_PP_en_v1/resolve/main/tokenizer.json
+<sha256> https://huggingface.co/Qdrant/Splade_PP_en_v1/resolve/main/config.json
+<sha256> https://huggingface.co/Qdrant/Splade_PP_en_v1/resolve/main/special_tokens_map.json
+<sha256> https://huggingface.co/Qdrant/Splade_PP_en_v1/resolve/main/tokenizer_config.json
+
+# jinaai/jina-reranker-v2-base-multilingual
+<sha256> https://huggingface.co/jinaai/jina-reranker-v2-base-multilingual/resolve/main/onnx/model.onnx
+<sha256> https://huggingface.co/jinaai/jina-reranker-v2-base-multilingual/resolve/main/tokenizer.json
+<sha256> https://huggingface.co/jinaai/jina-reranker-v2-base-multilingual/resolve/main/config.json
+<sha256> https://huggingface.co/jinaai/jina-reranker-v2-base-multilingual/resolve/main/special_tokens_map.json
+<sha256> https://huggingface.co/jinaai/jina-reranker-v2-base-multilingual/resolve/main/tokenizer_config.json

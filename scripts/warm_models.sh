@@ -16,6 +16,8 @@ repo_slug="${DBT_NOVA_WARMUP_REPO:-joe-broadhead/dbt-nova}"
 release_version="${DBT_NOVA_WARMUP_VERSION:-latest}"
 fallback_from_release="${DBT_NOVA_WARMUP_FALLBACK_FROM_RELEASE:-1}"
 fallback_from_hf_direct="${DBT_NOVA_WARMUP_FALLBACK_FROM_HF_DIRECT:-1}"
+checksum_mode="${DBT_NOVA_WARMUP_CHECKSUM_MODE:-off}"
+checksum_file="${DBT_NOVA_WARMUP_CHECKSUM_FILE:-}"
 pid=""
 
 usage() {
@@ -46,6 +48,10 @@ Optional env overrides:
                                        1 to seed from bundled release on warmup failure (default: 1)
   DBT_NOVA_WARMUP_FALLBACK_FROM_HF_DIRECT
                                        1 to seed cache from direct Hugging Face downloads on warmup failure (default: 1)
+  DBT_NOVA_WARMUP_CHECKSUM_MODE        Checksum policy for direct HF fallback downloads:
+                                       off (default) | warn | required
+  DBT_NOVA_WARMUP_CHECKSUM_FILE        Path to checksum manifest for direct HF fallback.
+                                       Format: "<sha256> <url>" (space-delimited)
 
 Example:
   # Model files only (default)
@@ -68,6 +74,21 @@ fi
 
 if [[ $# -gt 1 ]]; then
   echo "Too many arguments. Usage: scripts/warm_models.sh [partial|full]" >&2
+  exit 1
+fi
+
+if [[ "$checksum_mode" != "off" && "$checksum_mode" != "warn" && "$checksum_mode" != "required" ]]; then
+  echo "Invalid DBT_NOVA_WARMUP_CHECKSUM_MODE '$checksum_mode'. Expected off|warn|required." >&2
+  exit 1
+fi
+
+if [[ -n "$checksum_file" && ! -f "$checksum_file" ]]; then
+  echo "Checksum manifest not found: $checksum_file" >&2
+  exit 1
+fi
+
+if [[ "$checksum_mode" == "required" && -z "$checksum_file" ]]; then
+  echo "DBT_NOVA_WARMUP_CHECKSUM_MODE=required requires DBT_NOVA_WARMUP_CHECKSUM_FILE." >&2
   exit 1
 fi
 
@@ -141,10 +162,85 @@ get_content_length() {
     | awk 'tolower($1)=="content-length:"{v=$2} END{print v+0}'
 }
 
+sha256_file() {
+  local path="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$path" | awk '{print tolower($1)}'
+    return 0
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$path" | awk '{print tolower($1)}'
+    return 0
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$path" | awk -F'=' '{gsub(/^[[:space:]]+/, "", $2); print tolower($2)}'
+    return 0
+  fi
+  echo "Checksum verification requires one of: sha256sum, shasum, openssl." >&2
+  return 1
+}
+
+lookup_expected_checksum() {
+  local url="$1"
+  local file="$2"
+  awk -v target="$url" '
+    /^[[:space:]]*#/ { next }
+    NF < 2 { next }
+    {
+      hash=$1
+      $1=""
+      sub(/^[[:space:]]+/, "", $0)
+      gsub(/[[:space:]]+$/, "", $0)
+      if ($0 == target) {
+        print tolower(hash)
+        found=1
+        exit 0
+      }
+    }
+    END { if (!found) exit 1 }
+  ' "$file"
+}
+
+verify_direct_hf_checksum() {
+  local url="$1"
+  local path="$2"
+  local expected actual
+
+  if [[ "$checksum_mode" == "off" ]]; then
+    return 0
+  fi
+  if [[ -z "$checksum_file" ]]; then
+    if [[ "$checksum_mode" == "required" ]]; then
+      echo "Checksum verification required but no checksum manifest was configured." >&2
+      return 3
+    fi
+    echo "Checksum verification warning: no checksum manifest configured; skipping $url." >&2
+    return 0
+  fi
+
+  if ! expected="$(lookup_expected_checksum "$url" "$checksum_file")"; then
+    if [[ "$checksum_mode" == "required" ]]; then
+      echo "Checksum verification failed: no checksum entry for $url in $checksum_file" >&2
+      return 3
+    fi
+    echo "Checksum verification warning: no checksum entry for $url; skipping." >&2
+    return 0
+  fi
+
+  if ! actual="$(sha256_file "$path")"; then
+    return 4
+  fi
+  if [[ "$actual" != "$expected" ]]; then
+    echo "Checksum mismatch for $url (expected $expected, got $actual)." >&2
+    return 2
+  fi
+  return 0
+}
+
 download_hf_file() {
   local url="$1"
   local target="$2"
-  local expected actual tmp
+  local expected actual tmp verify_status
 
   expected="$(get_content_length "$url")"
   mkdir -p "$(dirname "$target")"
@@ -152,7 +248,17 @@ download_hf_file() {
   if [[ -f "$target" && "$expected" -gt 0 ]]; then
     actual="$(wc -c < "$target" | tr -d ' ')"
     if [[ "$actual" == "$expected" ]]; then
-      return 0
+      if verify_direct_hf_checksum "$url" "$target"; then
+        return 0
+      else
+        verify_status=$?
+      fi
+      if [[ "$verify_status" -eq 2 ]]; then
+        echo "Cached file failed checksum verification; re-downloading: $target" >&2
+        rm -f "$target"
+      else
+        return "$verify_status"
+      fi
     fi
   fi
 
@@ -170,6 +276,10 @@ download_hf_file() {
     fi
   fi
 
+  if ! verify_direct_hf_checksum "$url" "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
   mv "$tmp" "$target"
 }
 

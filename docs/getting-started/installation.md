@@ -254,9 +254,29 @@ You can control this behavior with:
 - `DBT_NOVA_WARMUP_VERSION=<tag|latest>`
 - `DBT_NOVA_WARMUP_REQUIRED_CACHE_FILES=<count>` (full mode only, default: `2`)
 
+For direct Hugging Face fallback, you can enable checksum verification:
+
+- `DBT_NOVA_WARMUP_CHECKSUM_MODE=off|warn|required` (default: `off`)
+- `DBT_NOVA_WARMUP_CHECKSUM_FILE=/path/to/checksums.txt`
+
+Checksum manifest format is one entry per line:
+
+```text
+<sha256> <url>
+```
+
+Example:
+
+```text
+3f2c... https://huggingface.co/intfloat/multilingual-e5-base/resolve/main/onnx/model.onnx
+```
+
+`required` mode fails warmup if a checksum entry is missing or mismatched.
+`warn` mode logs and continues when entries are missing.
+
 During direct Hugging Face seeding, downloads are validated against HTTP
-`Content-Length` before replacing cached files, so partial downloads are not
-kept.
+`Content-Length` before replacing cached files, and can be additionally guarded
+by SHA-256 verification when checksum mode is enabled.
 
 Example (pin fallback seed to a specific release tag):
 
