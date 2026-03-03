@@ -1,0 +1,12 @@
+# Format:
+# <sha256> <url>
+#
+# Use with:
+#   DBT_NOVA_WARMUP_CHECKSUM_MODE=required
+#   DBT_NOVA_WARMUP_CHECKSUM_FILE=/path/to/warm_models.checksums.txt
+#
+# Example entries for direct Hugging Face fallback URLs:
+
+<sha256> https://huggingface.co/intfloat/multilingual-e5-base/resolve/main/onnx/model.onnx
+<sha256> https://huggingface.co/Qdrant/Splade_PP_en_v1/resolve/main/model.onnx
+<sha256> https://huggingface.co/jinaai/jina-reranker-v2-base-multilingual/resolve/main/onnx/model.onnx
