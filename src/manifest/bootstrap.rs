@@ -32,6 +32,9 @@ fn should_apply_manifest_uri(config: &DbtNovaConfig) -> bool {
     if !config.manifest_uri.trim().is_empty() {
         return false;
     }
+    if config.manifest_path_explicit {
+        return false;
+    }
     let manifest_path = config.manifest_path.trim();
     manifest_path.is_empty() || manifest_path == default_manifest_path()
 }
@@ -326,6 +329,31 @@ mod tests {
         assert!(
             config.manifest_uri.is_empty(),
             "explicit manifest_path should not be overridden by bootstrap manifest_uri"
+        );
+    }
+
+    #[test]
+    fn apply_bootstrap_defaults_keeps_explicit_default_manifest_path() {
+        let temp_dir = TempDir::new().expect("tempdir");
+        let bootstrap_path = temp_dir.path().join("nova-bootstrap.json");
+        write_bootstrap(&bootstrap_path);
+
+        let mut config = DbtNovaConfig {
+            bootstrap_uri: file_uri(&bootstrap_path),
+            manifest_path: "manifest.json".to_string(),
+            manifest_path_explicit: true,
+            storage_dir: temp_dir
+                .path()
+                .join(".dbt-nova")
+                .to_string_lossy()
+                .to_string(),
+            ..DbtNovaConfig::default()
+        };
+
+        apply_bootstrap_defaults(&mut config).expect("bootstrap loaded");
+        assert!(
+            config.manifest_uri.is_empty(),
+            "explicit default manifest_path should not be overridden by bootstrap manifest_uri"
         );
     }
 

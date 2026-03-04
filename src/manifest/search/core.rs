@@ -728,6 +728,7 @@ impl ManifestSearchHandle {
             let trimmed = path.trim();
             if !trimmed.is_empty() {
                 next.manifest_path = trimmed.to_string();
+                next.manifest_path_explicit = true;
                 next.manifest_uri = String::new();
                 changed_source = true;
                 explicit_manifest_source = true;

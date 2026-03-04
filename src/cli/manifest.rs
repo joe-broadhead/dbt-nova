@@ -262,6 +262,7 @@ fn apply_manifest_common_overrides(
             ));
         }
         config.manifest_path = trimmed.to_string();
+        config.manifest_path_explicit = true;
         config.manifest_uri.clear();
     }
 
