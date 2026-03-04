@@ -34,7 +34,7 @@ jobs:
       manifest_path: target/manifest.json
       storage_instance_id: analytics-prod
       installer_ref: v0.0.2
-      installer_install_mode: release
+      installer_install_mode: auto
       artifact_name_prefix: analytics-prod
       retention_days: 14
       include_models_cache: false
@@ -84,6 +84,11 @@ Notes:
   2) inherited workflow secrets (`secrets: inherit`, same-owner/org calls).
 - Missing mapped secrets fail fast before `dbt_command` runs.
 
+Common downstream pattern: keep a repo-local `workflow_dispatch` wrapper and
+call this reusable workflow from it. This lets each repo set its own target
+defaults, storage instance naming, and publish prefixes without forking Nova's
+workflow.
+
 The producer emits:
 
 - storage artifact (required)
@@ -102,7 +107,7 @@ Workflow inputs:
 - `publish_targets`: comma-separated list from `s3,gcs,dbfs`
 - `publish_s3_prefix`: e.g. `s3://my-bucket/nova-assets/prod`
 - `publish_gcs_prefix`: e.g. `gs://my-bucket/nova-assets/prod`
-- `publish_dbfs_prefix`: e.g. `dbfs:/mnt/nova-assets/prod`
+- `publish_dbfs_prefix`: e.g. `dbfs:/FileStore/projects/my-project/nova-assets/prod`
 - `publish_dry_run`: `true` to compute publish URIs without network uploads
 - `installer_repository` / `installer_ref` (advanced override for which repo/ref
   is used for installing `dbt-nova`; defaults to
@@ -119,10 +124,12 @@ Auth per target:
 
 Installer mode guidance:
 
+- Keep `installer_install_mode: auto` as the default.
 - Use `installer_install_mode: release` with a release tag ref (for example
-  `installer_ref: v0.0.2`) to minimize runtime.
-- Use `installer_install_mode: source` when you need an unreleased commit SHA.
-- Keep `installer_install_mode: auto` for resilient defaults in mixed environments.
+  `installer_ref: v0.0.2`) to minimize runtime on compatible runners.
+- Use `installer_install_mode: source` when you need an unreleased commit SHA
+  or your runner image is incompatible with the prebuilt binary (for example
+  older glibc environments).
 
 Published object naming is deterministic:
 
@@ -251,7 +258,7 @@ tar -xzf <artifact_name_storage>.tar.gz
 DBFS (Databricks CLI):
 
 ```bash
-databricks fs cp dbfs:/mnt/nova-assets/prod/<artifact_name_storage>.tar.gz .
+databricks fs cp dbfs:/FileStore/projects/my-project/nova-assets/prod/<artifact_name_storage>.tar.gz .
 tar -xzf <artifact_name_storage>.tar.gz
 ```
 
