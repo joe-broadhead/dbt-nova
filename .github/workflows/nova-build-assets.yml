@@ -989,7 +989,36 @@ jobs:
         run: |
           set -euo pipefail
           models_archive="${{ steps.collect.outputs.artifact_name_models }}.tar.gz"
-          tar -C "$(dirname "${DBT_NOVA_EMBEDDINGS_CACHE_DIR}")" -czf "${models_archive}" "$(basename "${DBT_NOVA_EMBEDDINGS_CACHE_DIR}")"
+          # Dereference links so remote consumers receive a regular-file archive.
+          tar \
+            -C "$(dirname "${DBT_NOVA_EMBEDDINGS_CACHE_DIR}")" \
+            --dereference \
+            --hard-dereference \
+            -czf "${models_archive}" \
+            "$(basename "${DBT_NOVA_EMBEDDINGS_CACHE_DIR}")"
+
+      - name: Validate models archive entry types
+        if: ${{ inputs.include_models_cache }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          models_archive="${{ steps.collect.outputs.artifact_name_models }}.tar.gz"
+          # Only regular files and directories are allowed for safe extraction.
+          tar -tvf "${models_archive}" | awk '
+            {
+              entry_type = substr($1, 1, 1)
+              if (entry_type != "-" && entry_type != "d") {
+                print $0
+                bad = 1
+              }
+            }
+            END {
+              if (bad == 1) {
+                print "models archive contains unsupported entry types" > "/dev/stderr"
+                exit 1
+              }
+            }
+          '
 
       - name: Upload models artifact
         if: ${{ inputs.include_models_cache }}
