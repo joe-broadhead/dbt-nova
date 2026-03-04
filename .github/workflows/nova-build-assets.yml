@@ -121,23 +121,26 @@ on:
       artifact_name_bootstrap:
         description: "Bootstrap artifact name"
         value: ${{ jobs.build.outputs.artifact_name_bootstrap }}
+      artifact_name_publish_summary:
+        description: "Remote publish summary artifact name"
+        value: ${{ jobs.build.outputs.artifact_name_publish_summary }}
       published_targets:
         description: "Comma-separated publish targets that completed successfully"
         value: ${{ jobs.build.outputs.published_targets }}
       published_storage_uris:
-        description: "JSON object with published storage archive URIs by target"
+        description: "Deprecated: always {}. Use artifact_name_publish_summary artifact instead."
         value: ${{ jobs.build.outputs.published_storage_uris }}
       published_metadata_uris:
-        description: "JSON object with published metadata URIs by target"
+        description: "Deprecated: always {}. Use artifact_name_publish_summary artifact instead."
         value: ${{ jobs.build.outputs.published_metadata_uris }}
       published_manifest_uris:
-        description: "JSON object with published manifest URIs by target"
+        description: "Deprecated: always {}. Use artifact_name_publish_summary artifact instead."
         value: ${{ jobs.build.outputs.published_manifest_uris }}
       published_bootstrap_uris:
-        description: "JSON object with published bootstrap URIs by target"
+        description: "Deprecated: always {}. Use artifact_name_publish_summary artifact instead."
         value: ${{ jobs.build.outputs.published_bootstrap_uris }}
       published_models_uris:
-        description: "JSON object with published models archive URIs by target"
+        description: "Deprecated: always {}. Use artifact_name_publish_summary artifact instead."
         value: ${{ jobs.build.outputs.published_models_uris }}
   workflow_dispatch:
     inputs:
@@ -562,7 +565,7 @@ jobs:
   build:
     name: Build, validate, and publish storage artifact
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 120
     needs: prepare
     outputs:
       manifest_hash: ${{ steps.collect.outputs.manifest_hash }}
@@ -573,12 +576,13 @@ jobs:
       artifact_name_metadata: ${{ steps.collect.outputs.artifact_name_metadata }}
       artifact_name_manifest: ${{ steps.collect.outputs.artifact_name_manifest }}
       artifact_name_bootstrap: ${{ steps.collect.outputs.artifact_name_bootstrap }}
+      artifact_name_publish_summary: ${{ steps.collect.outputs.artifact_name_publish_summary }}
       published_targets: ${{ steps.publish.outputs.published_targets || '' }}
-      published_storage_uris: ${{ steps.publish.outputs.published_storage_uris || '{}' }}
-      published_metadata_uris: ${{ steps.publish.outputs.published_metadata_uris || '{}' }}
-      published_manifest_uris: ${{ steps.publish.outputs.published_manifest_uris || '{}' }}
-      published_bootstrap_uris: ${{ steps.publish.outputs.published_bootstrap_uris || '{}' }}
-      published_models_uris: ${{ steps.publish.outputs.published_models_uris || '{}' }}
+      published_storage_uris: ${{ steps.publish.outputs.published_storage_uris_legacy || '{}' }}
+      published_metadata_uris: ${{ steps.publish.outputs.published_metadata_uris_legacy || '{}' }}
+      published_manifest_uris: ${{ steps.publish.outputs.published_manifest_uris_legacy || '{}' }}
+      published_bootstrap_uris: ${{ steps.publish.outputs.published_bootstrap_uris_legacy || '{}' }}
+      published_models_uris: ${{ steps.publish.outputs.published_models_uris_legacy || '{}' }}
     env:
       DBT_NOVA_STORAGE_DIR: ${{ needs.prepare.outputs.storage_dir }}
       DBT_NOVA_EMBEDDINGS_CACHE_DIR: ${{ needs.prepare.outputs.models_dir }}
@@ -845,6 +849,7 @@ jobs:
           artifact_name_metadata="${artifact_name_storage}-metadata"
           artifact_name_manifest="${artifact_name_storage}-manifest"
           artifact_name_bootstrap="${artifact_name_storage}-bootstrap"
+          artifact_name_publish_summary="${artifact_name_storage}-publish-summary"
 
           manifest_export_path="out/manifest.json"
           if [[ -n "${manifest_uri}" ]]; then
@@ -932,6 +937,7 @@ jobs:
           echo "artifact_name_metadata=${artifact_name_metadata}" >> "$GITHUB_OUTPUT"
           echo "artifact_name_manifest=${artifact_name_manifest}" >> "$GITHUB_OUTPUT"
           echo "artifact_name_bootstrap=${artifact_name_bootstrap}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name_publish_summary=${artifact_name_publish_summary}" >> "$GITHUB_OUTPUT"
           echo "metadata_path=${metadata_path}" >> "$GITHUB_OUTPUT"
           echo "manifest_export_path=${manifest_export_path}" >> "$GITHUB_OUTPUT"
 
@@ -942,6 +948,7 @@ jobs:
             echo "- artifact_name_metadata: \`${artifact_name_metadata}\`"
             echo "- artifact_name_manifest: \`${artifact_name_manifest}\`"
             echo "- artifact_name_bootstrap: \`${artifact_name_bootstrap}\`"
+            echo "- artifact_name_publish_summary: \`${artifact_name_publish_summary}\`"
             echo "- contract_version: \`v1\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -1011,6 +1018,8 @@ jobs:
           metadata_filename="${{ steps.collect.outputs.artifact_name_metadata }}.json"
           metadata_publish_path="out/${metadata_filename}"
           bootstrap_filename="${{ steps.collect.outputs.artifact_name_bootstrap }}.json"
+          publish_summary_filename="${{ steps.collect.outputs.artifact_name_publish_summary }}.json"
+          publish_summary_path="out/${publish_summary_filename}"
           bootstrap_dir="out/bootstrap"
           mkdir -p "${bootstrap_dir}"
           cp "${manifest_source}" "${manifest_publish_path}"
@@ -1023,18 +1032,35 @@ jobs:
 
           # Defaults for workflow outputs when publish is disabled.
           if [[ -z "${publish_targets}" ]]; then
+            jq -n \
+              --arg published_targets "" \
+              --argjson published_storage_uris '{}' \
+              --argjson published_manifest_uris '{}' \
+              --argjson published_metadata_uris '{}' \
+              --argjson published_bootstrap_uris '{}' \
+              --argjson published_models_uris '{}' \
+              '{
+                published_targets: $published_targets,
+                published_storage_uris: $published_storage_uris,
+                published_manifest_uris: $published_manifest_uris,
+                published_metadata_uris: $published_metadata_uris,
+                published_bootstrap_uris: $published_bootstrap_uris,
+                published_models_uris: $published_models_uris
+              }' > "${publish_summary_path}"
             {
               echo "published_targets="
-              echo 'published_storage_uris={}'
-              echo 'published_metadata_uris={}'
-              echo 'published_manifest_uris={}'
-              echo 'published_bootstrap_uris={}'
-              echo 'published_models_uris={}'
+              echo "publish_summary_path=${publish_summary_path}"
+              echo 'published_storage_uris_legacy={}'
+              echo 'published_metadata_uris_legacy={}'
+              echo 'published_manifest_uris_legacy={}'
+              echo 'published_bootstrap_uris_legacy={}'
+              echo 'published_models_uris_legacy={}'
             } >> "$GITHUB_OUTPUT"
             {
               echo "### Remote Publish"
               echo ""
               echo "Remote publish disabled (publish_targets is empty)."
+              echo "- publish_summary_path: \`${publish_summary_path}\`"
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -1416,13 +1442,30 @@ jobs:
             | if $gcs != "" then . + {gcs: $gcs} else . end
             | if $dbfs != "" then . + {dbfs: $dbfs} else . end')"
 
+          jq -n \
+            --arg published_targets "${published_targets_success}" \
+            --argjson published_storage_uris "${published_storage_uris}" \
+            --argjson published_manifest_uris "${published_manifest_uris}" \
+            --argjson published_metadata_uris "${published_metadata_uris}" \
+            --argjson published_bootstrap_uris "${published_bootstrap_uris}" \
+            --argjson published_models_uris "${published_models_uris}" \
+            '{
+              published_targets: $published_targets,
+              published_storage_uris: $published_storage_uris,
+              published_manifest_uris: $published_manifest_uris,
+              published_metadata_uris: $published_metadata_uris,
+              published_bootstrap_uris: $published_bootstrap_uris,
+              published_models_uris: $published_models_uris
+            }' > "${publish_summary_path}"
+
           {
             echo "published_targets=${published_targets_success}"
-            echo "published_storage_uris=${published_storage_uris}"
-            echo "published_manifest_uris=${published_manifest_uris}"
-            echo "published_metadata_uris=${published_metadata_uris}"
-            echo "published_bootstrap_uris=${published_bootstrap_uris}"
-            echo "published_models_uris=${published_models_uris}"
+            echo "publish_summary_path=${publish_summary_path}"
+            echo 'published_storage_uris_legacy={}'
+            echo 'published_manifest_uris_legacy={}'
+            echo 'published_metadata_uris_legacy={}'
+            echo 'published_bootstrap_uris_legacy={}'
+            echo 'published_models_uris_legacy={}'
           } >> "$GITHUB_OUTPUT"
 
           {
@@ -1430,18 +1473,26 @@ jobs:
             echo ""
             echo "- dry_run: \`${publish_dry_run}\`"
             echo "- targets: \`${published_targets_success}\`"
-            echo "- storage_uris: \`${published_storage_uris}\`"
-            echo "- manifest_uris: \`${published_manifest_uris}\`"
-            echo "- metadata_uris: \`${published_metadata_uris}\`"
-            echo "- bootstrap_uris: \`${published_bootstrap_uris}\`"
-            echo "- models_uris: \`${published_models_uris}\`"
+            echo "- publish_summary_path: \`${publish_summary_path}\`"
+            echo ""
+            echo '```json'
+            jq . "${publish_summary_path}"
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload bootstrap contract artifact
-        if: ${{ steps.publish.outputs.published_bootstrap_uris != '{}' }}
+        if: ${{ steps.publish.outputs.published_targets != '' }}
         uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
         with:
           name: ${{ steps.collect.outputs.artifact_name_bootstrap }}
           path: out/bootstrap/*.json
+          retention-days: ${{ inputs.retention_days }}
+          if-no-files-found: error
+
+      - name: Upload publish summary artifact
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        with:
+          name: ${{ steps.collect.outputs.artifact_name_publish_summary }}
+          path: ${{ steps.publish.outputs.publish_summary_path }}
           retention-days: ${{ inputs.retention_days }}
           if-no-files-found: error

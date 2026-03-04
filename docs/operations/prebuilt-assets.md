@@ -96,7 +96,7 @@ The producer emits:
 - metadata contract artifact (`nova-build-metadata.json`, required)
 - models artifact (optional when `include_models_cache=true`)
 - bootstrap contract artifact(s) when remote publish is configured
-- optional remote publish outputs (`published_*_uris`) when `publish_targets` is configured
+- publish summary artifact (`artifact_name_publish_summary`) with published URIs by target
 
 ## Optional remote publish targets
 
@@ -143,16 +143,16 @@ Published object naming is deterministic:
 Producer outputs include:
 
 - `published_targets` (comma-separated successful targets)
-- `published_storage_uris` (JSON object by target)
-- `published_manifest_uris` (JSON object by target)
-- `published_metadata_uris` (JSON object by target)
-- `published_bootstrap_uris` (JSON object by target)
-- `published_models_uris` (JSON object by target)
+- `artifact_name_publish_summary` (artifact containing `published_*_uris` JSON payloads)
+- legacy `published_*_uris` outputs are deprecated and return `{}` for compatibility
 
-Example (extract DBFS bootstrap URI from workflow outputs):
+Example (extract DBFS bootstrap URI from publish summary artifact):
 
 ```bash
-BOOTSTRAP_URI="$(jq -r '.dbfs' <<< "${PUBLISHED_BOOTSTRAP_URIS}")"
+PUBLISH_SUMMARY_DIR="$(mktemp -d)"
+gh run download "$GITHUB_RUN_ID" --name "$ARTIFACT_NAME_PUBLISH_SUMMARY" --dir "$PUBLISH_SUMMARY_DIR"
+PUBLISH_SUMMARY_JSON="$(find "$PUBLISH_SUMMARY_DIR" -type f -name '*.json' | head -n 1)"
+BOOTSTRAP_URI="$(jq -r '.published_bootstrap_uris.dbfs' "$PUBLISH_SUMMARY_JSON")"
 ```
 
 ## Consumer (reuse in read-only mode)
