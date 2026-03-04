@@ -19,6 +19,7 @@ jobs:
     timeout-minutes: 60
     env:
       DBT_NOVA_STRICT_SCHEMA: "1"
+      CARGO_BUILD_JOBS: "2"
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
