@@ -178,31 +178,41 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq
 
+      - name: Download dry-run publish summary artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: ${{ needs.reusable-assets-remote-publish-dryrun.outputs.artifact_name_publish_summary }}
+          path: dryrun-publish-summary
+
       - name: Assert dry-run publish outputs are populated per target
         shell: bash
         env:
           PUBLISHED_TARGETS: ${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_targets }}
-          STORAGE_URIS: ${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_storage_uris }}
-          MANIFEST_URIS: ${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_manifest_uris }}
-          METADATA_URIS: ${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_metadata_uris }}
-          BOOTSTRAP_URIS: ${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_bootstrap_uris }}
-          MODELS_URIS: ${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_models_uris }}
         run: |
           set -euo pipefail
 
+          summary_path="$(find dryrun-publish-summary -type f -name '*.json' | head -n 1)"
+          test -f "${summary_path}" || {
+            echo "missing publish summary artifact content"
+            exit 1
+          }
+
           published_targets="${PUBLISHED_TARGETS}"
-          storage_uris="${STORAGE_URIS}"
-          manifest_uris="${MANIFEST_URIS}"
-          metadata_uris="${METADATA_URIS}"
-          bootstrap_uris="${BOOTSTRAP_URIS}"
-          models_uris="${MODELS_URIS}"
+          storage_uris="$(jq -c '.published_storage_uris' "${summary_path}")"
+          manifest_uris="$(jq -c '.published_manifest_uris' "${summary_path}")"
+          metadata_uris="$(jq -c '.published_metadata_uris' "${summary_path}")"
+          bootstrap_uris="$(jq -c '.published_bootstrap_uris' "${summary_path}")"
+          models_uris="$(jq -c '.published_models_uris' "${summary_path}")"
+          summary_targets="$(jq -r '.published_targets' "${summary_path}")"
 
           echo "published_targets=${published_targets}"
+          echo "summary_targets=${summary_targets}"
           echo "published_storage_uris=${storage_uris}"
           echo "published_manifest_uris=${manifest_uris}"
           echo "published_metadata_uris=${metadata_uris}"
           echo "published_bootstrap_uris=${bootstrap_uris}"
           echo "published_models_uris=${models_uris}"
+          test "${summary_targets}" = "${published_targets}"
 
           test -n "${published_targets}"
           normalized_targets="$(
@@ -264,6 +274,28 @@ jobs:
           test "${PUBLISHED_STORAGE_URIS}" = '{}'
           test "${PUBLISHED_METADATA_URIS}" = '{}'
           test "${PUBLISHED_MODELS_URIS}" = '{}'
+
+      - name: Download publish summary artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: ${{ needs.reusable-assets-producer.outputs.artifact_name_publish_summary }}
+          path: consumer-artifacts/publish-summary
+
+      - name: Validate default publish summary artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          summary_path="$(find consumer-artifacts/publish-summary -type f -name '*.json' | head -n 1)"
+          test -f "${summary_path}" || {
+            echo "missing publish summary artifact json"
+            exit 1
+          }
+          jq -e '.published_targets == ""' "${summary_path}" >/dev/null
+          jq -e '.published_storage_uris == {}' "${summary_path}" >/dev/null
+          jq -e '.published_manifest_uris == {}' "${summary_path}" >/dev/null
+          jq -e '.published_metadata_uris == {}' "${summary_path}" >/dev/null
+          jq -e '.published_bootstrap_uris == {}' "${summary_path}" >/dev/null
+          jq -e '.published_models_uris == {}' "${summary_path}" >/dev/null
 
       - name: Download storage artifact
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
