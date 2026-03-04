@@ -853,7 +853,7 @@ jobs:
               echo "manifest cache directory not found: ${manifest_cache_dir}"
               exit 1
             fi
-            resolved_manifest="$(python -c $'import glob, json, os, sys\nmanifest_uri, cache_dir = sys.argv[1], sys.argv[2]\nfor meta_path in sorted(glob.glob(os.path.join(cache_dir, \"*.meta\"))):\n    try:\n        with open(meta_path, \"r\", encoding=\"utf-8\") as handle:\n            meta = json.load(handle)\n    except Exception:\n        continue\n    if str(meta.get(\"source_uri\", \"\")).strip() != manifest_uri:\n        continue\n    candidate = meta_path[:-5] + \".json\"\n    if os.path.isfile(candidate):\n        print(candidate)\n        sys.exit(0)\nsys.exit(1)' "${manifest_uri}" "${manifest_cache_dir}")" || {
+            resolved_manifest="$(python -c $'import glob, json, os, sys\nmanifest_uri, cache_dir = sys.argv[1], sys.argv[2]\nfor meta_path in sorted(glob.glob(os.path.join(cache_dir, \"*.meta.json\"))):\n    try:\n        with open(meta_path, \"r\", encoding=\"utf-8\") as handle:\n            meta = json.load(handle)\n    except Exception:\n        continue\n    if str(meta.get(\"source_uri\", \"\")).strip() != manifest_uri:\n        continue\n    candidate = f\"{meta_path[:-10]}.json\"\n    if os.path.isfile(candidate):\n        print(candidate)\n        sys.exit(0)\nsys.exit(1)' "${manifest_uri}" "${manifest_cache_dir}")" || {
               echo "failed to resolve cached manifest for URI: ${manifest_uri}"
               exit 1
             }
