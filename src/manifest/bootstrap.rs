@@ -63,6 +63,9 @@ fn validate_models_metadata_contract(
     if bootstrap.models_artifact_uri.trim().is_empty() {
         return Ok(());
     }
+    if !config.models_artifact_uri.trim().is_empty() {
+        return Ok(());
+    }
 
     let metadata_local = resolve_artifact_uri_to_local(
         config,
@@ -437,5 +440,34 @@ mod tests {
 
         let resolution = apply_bootstrap_defaults(&mut config).expect("bootstrap loaded");
         assert_eq!(resolution.status["enabled"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn apply_bootstrap_defaults_skips_models_metadata_validation_when_models_uri_is_explicit() {
+        let temp_dir = TempDir::new().expect("tempdir");
+        let metadata_path = temp_dir.path().join("metadata.json");
+        write_metadata(&metadata_path, "");
+
+        let bootstrap_path = temp_dir.path().join("nova-bootstrap.json");
+        write_bootstrap_with_uris(
+            &bootstrap_path,
+            &file_uri(&metadata_path),
+            "dbfs:/FileStore/nova/prod/models.tar.gz",
+        );
+
+        let mut config = DbtNovaConfig {
+            bootstrap_uri: file_uri(&bootstrap_path),
+            storage_dir: temp_dir
+                .path()
+                .join(".dbt-nova")
+                .to_string_lossy()
+                .to_string(),
+            models_artifact_uri: "dbfs:/manual/models.tar.gz".to_string(),
+            ..DbtNovaConfig::default()
+        };
+
+        let resolution = apply_bootstrap_defaults(&mut config).expect("bootstrap loaded");
+        assert_eq!(resolution.status["enabled"], serde_json::json!(true));
+        assert_eq!(config.models_artifact_uri, "dbfs:/manual/models.tar.gz");
     }
 }
