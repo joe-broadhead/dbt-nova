@@ -183,19 +183,25 @@ jobs:
         env:
           PUBLISHED_TARGETS: ${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_targets }}
           STORAGE_URIS: ${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_storage_uris }}
+          MANIFEST_URIS: ${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_manifest_uris }}
           METADATA_URIS: ${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_metadata_uris }}
+          BOOTSTRAP_URIS: ${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_bootstrap_uris }}
           MODELS_URIS: ${{ needs.reusable-assets-remote-publish-dryrun.outputs.published_models_uris }}
         run: |
           set -euo pipefail
 
           published_targets="${PUBLISHED_TARGETS}"
           storage_uris="${STORAGE_URIS}"
+          manifest_uris="${MANIFEST_URIS}"
           metadata_uris="${METADATA_URIS}"
+          bootstrap_uris="${BOOTSTRAP_URIS}"
           models_uris="${MODELS_URIS}"
 
           echo "published_targets=${published_targets}"
           echo "published_storage_uris=${storage_uris}"
+          echo "published_manifest_uris=${manifest_uris}"
           echo "published_metadata_uris=${metadata_uris}"
+          echo "published_bootstrap_uris=${bootstrap_uris}"
           echo "published_models_uris=${models_uris}"
 
           test -n "${published_targets}"
@@ -210,7 +216,9 @@ jobs:
           test "${normalized_targets}" = "dbfs,gcs,s3"
 
           echo "${storage_uris}" | jq -e 'keys | sort == ["dbfs", "gcs", "s3"]' >/dev/null
+          echo "${manifest_uris}" | jq -e 'keys | sort == ["dbfs", "gcs", "s3"]' >/dev/null
           echo "${metadata_uris}" | jq -e 'keys | sort == ["dbfs", "gcs", "s3"]' >/dev/null
+          echo "${bootstrap_uris}" | jq -e 'keys | sort == ["dbfs", "gcs", "s3"]' >/dev/null
           echo "${models_uris}" | jq -e '. == {}' >/dev/null
 
   reusable-assets-readonly-consumer:

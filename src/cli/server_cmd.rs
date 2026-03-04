@@ -1,5 +1,6 @@
 use crate::config::DbtNovaConfig;
 use crate::error::{DbtNovaError, Result};
+use crate::manifest::bootstrap::prepare_runtime_config;
 use crate::manifest::search::ManifestSearchHandle;
 use crate::server::mcp::DbtNovaServer;
 use crate::utils::sanitize_uri;
@@ -12,17 +13,15 @@ use super::prepare_storage;
 /// # Errors
 /// Returns an error when configuration validation, manifest loading, or server startup fails.
 pub async fn start_from_env() -> Result<()> {
-    let mut config = DbtNovaConfig::from_env();
-    config.ensure_storage_instance_id();
-    config.validate()?;
-    start_with_config(config).await
+    start_with_config(DbtNovaConfig::from_env()).await
 }
 
 /// Starts dbt-nova server mode with an explicit configuration.
 ///
 /// # Errors
 /// Returns an error when storage prep, manifest loading, or MCP transport startup fails.
-pub async fn start_with_config(config: DbtNovaConfig) -> Result<()> {
+pub async fn start_with_config(mut config: DbtNovaConfig) -> Result<()> {
+    let _bootstrap_resolution = prepare_runtime_config(&mut config)?;
     info!("dbt-nova starting");
     if config.manifest_uri.trim().is_empty() {
         info!(manifest_path = %sanitize_uri(&config.manifest_path), "loading manifest");

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
@@ -115,6 +116,9 @@ impl ArtifactFetchPolicy {
 pub struct DbtNovaConfig {
     /// Path to the dbt `manifest.json` file
     pub manifest_path: String,
+    /// True when `manifest_path` was set explicitly by env/CLI/user config.
+    #[serde(skip)]
+    pub manifest_path_explicit: bool,
     /// Optional manifest URI (file://, http(s)://, dbfs://, s3://, gs://)
     pub manifest_uri: String,
     /// Optional manifest cache directory (defaults under storage root)
@@ -157,6 +161,8 @@ pub struct DbtNovaConfig {
     pub models_artifact_uri: String,
     /// Optional local cache directory for downloaded prebuilt artifacts
     pub artifacts_cache_dir: String,
+    /// Optional remote URI to a bootstrap contract JSON document.
+    pub bootstrap_uri: String,
     /// Remote artifact fetch policy
     pub artifact_fetch_policy: ArtifactFetchPolicy,
     /// Timeout in seconds for artifact fetch operations (0 = no timeout)
@@ -205,12 +211,16 @@ pub struct DbtNovaConfig {
     pub governance_required_fields: HashMap<String, Vec<String>>,
     /// Governance gate threshold policy for persona payloads
     pub governance_gate: GovernanceGateConfig,
+    /// Runtime bootstrap resolution status (not user-configurable).
+    #[serde(skip)]
+    pub bootstrap_status: Option<JsonValue>,
 }
 
 impl Default for DbtNovaConfig {
     fn default() -> Self {
         Self {
             manifest_path: "manifest.json".to_string(),
+            manifest_path_explicit: false,
             manifest_uri: String::new(),
             manifest_cache_dir: String::new(),
             recipes_dir: "analyses/recipes".to_string(),
@@ -232,6 +242,7 @@ impl Default for DbtNovaConfig {
             metadata_artifact_uri: String::new(),
             models_artifact_uri: String::new(),
             artifacts_cache_dir: String::new(),
+            bootstrap_uri: String::new(),
             artifact_fetch_policy: ArtifactFetchPolicy::IfMissing,
             artifact_timeout_secs: 300,
             artifact_allow_http: false,
@@ -256,6 +267,7 @@ impl Default for DbtNovaConfig {
             layer_rules: Vec::new(),
             governance_required_fields: default_governance_required_fields(),
             governance_gate: GovernanceGateConfig::default(),
+            bootstrap_status: None,
         }
     }
 }
@@ -436,6 +448,14 @@ impl DbtNovaConfig {
             }
         }
 
+        if !self.bootstrap_uri.trim().is_empty() {
+            validate_artifact_uri(
+                "DBT_NOVA_BOOTSTRAP_URI",
+                &self.bootstrap_uri,
+                self.artifact_allow_http,
+            )?;
+        }
+
         Ok(())
     }
 
@@ -563,6 +583,11 @@ impl DbtNovaConfig {
 
     fn apply_manifest_env(&mut self) {
         set_string("DBT_MANIFEST_PATH", &mut self.manifest_path);
+        if let Some(value) = env_string("DBT_MANIFEST_PATH")
+            && !value.trim().is_empty()
+        {
+            self.manifest_path_explicit = true;
+        }
         set_string("DBT_NOVA_MANIFEST_URI", &mut self.manifest_uri);
         set_string("DBT_NOVA_MANIFEST_CACHE_DIR", &mut self.manifest_cache_dir);
         if let Some(v) = parse_u64("DBT_NOVA_MANIFEST_REFRESH_SECS") {
@@ -602,6 +627,7 @@ impl DbtNovaConfig {
             "DBT_NOVA_ARTIFACTS_CACHE_DIR",
             &mut self.artifacts_cache_dir,
         );
+        set_string("DBT_NOVA_BOOTSTRAP_URI", &mut self.bootstrap_uri);
         if let Some(value) = env_string("DBT_NOVA_ARTIFACT_FETCH_POLICY") {
             if let Some(policy) = ArtifactFetchPolicy::parse(&value) {
                 self.artifact_fetch_policy = policy;
@@ -891,6 +917,35 @@ mod tests {
         let error = config
             .validate()
             .expect_err("http artifact URI should fail by default");
+        assert!(
+            error
+                .to_string()
+                .contains("DBT_NOVA_ARTIFACT_ALLOW_HTTP=false")
+        );
+    }
+
+    #[test]
+    fn validate_rejects_unsupported_bootstrap_scheme() {
+        let mut config = base_config();
+        config.bootstrap_uri = "ftp://bucket/nova-bootstrap.json".to_string();
+
+        let error = config
+            .validate()
+            .expect_err("unsupported bootstrap scheme should fail validation");
+        assert!(
+            error.to_string().contains("DBT_NOVA_BOOTSTRAP_URI"),
+            "error should mention bootstrap var"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_http_bootstrap_uri_when_disabled() {
+        let mut config = base_config();
+        config.bootstrap_uri = "http://example.com/nova-bootstrap.json".to_string();
+
+        let error = config
+            .validate()
+            .expect_err("http bootstrap URI should fail by default");
         assert!(
             error
                 .to_string()

@@ -21,6 +21,7 @@
   "metadata_artifact_uri": "",
   "models_artifact_uri": "",
   "artifacts_cache_dir": "",
+  "bootstrap_uri": "",
   "artifact_fetch_policy": "if_missing",
   "artifact_timeout_secs": 300,
   "artifact_allow_http": false,

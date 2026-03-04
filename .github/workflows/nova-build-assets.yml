@@ -115,6 +115,12 @@ on:
       artifact_name_metadata:
         description: "Build metadata artifact name"
         value: ${{ jobs.build.outputs.artifact_name_metadata }}
+      artifact_name_manifest:
+        description: "Manifest artifact name"
+        value: ${{ jobs.build.outputs.artifact_name_manifest }}
+      artifact_name_bootstrap:
+        description: "Bootstrap artifact name"
+        value: ${{ jobs.build.outputs.artifact_name_bootstrap }}
       published_targets:
         description: "Comma-separated publish targets that completed successfully"
         value: ${{ jobs.build.outputs.published_targets }}
@@ -124,6 +130,12 @@ on:
       published_metadata_uris:
         description: "JSON object with published metadata URIs by target"
         value: ${{ jobs.build.outputs.published_metadata_uris }}
+      published_manifest_uris:
+        description: "JSON object with published manifest URIs by target"
+        value: ${{ jobs.build.outputs.published_manifest_uris }}
+      published_bootstrap_uris:
+        description: "JSON object with published bootstrap URIs by target"
+        value: ${{ jobs.build.outputs.published_bootstrap_uris }}
       published_models_uris:
         description: "JSON object with published models archive URIs by target"
         value: ${{ jobs.build.outputs.published_models_uris }}
@@ -559,9 +571,13 @@ jobs:
       artifact_name_storage: ${{ steps.collect.outputs.artifact_name_storage }}
       artifact_name_models: ${{ steps.collect.outputs.artifact_name_models }}
       artifact_name_metadata: ${{ steps.collect.outputs.artifact_name_metadata }}
+      artifact_name_manifest: ${{ steps.collect.outputs.artifact_name_manifest }}
+      artifact_name_bootstrap: ${{ steps.collect.outputs.artifact_name_bootstrap }}
       published_targets: ${{ steps.publish.outputs.published_targets || '' }}
       published_storage_uris: ${{ steps.publish.outputs.published_storage_uris || '{}' }}
       published_metadata_uris: ${{ steps.publish.outputs.published_metadata_uris || '{}' }}
+      published_manifest_uris: ${{ steps.publish.outputs.published_manifest_uris || '{}' }}
+      published_bootstrap_uris: ${{ steps.publish.outputs.published_bootstrap_uris || '{}' }}
       published_models_uris: ${{ steps.publish.outputs.published_models_uris || '{}' }}
     env:
       DBT_NOVA_STORAGE_DIR: ${{ needs.prepare.outputs.storage_dir }}
@@ -827,6 +843,39 @@ jobs:
             artifact_name_models="${INPUT_ARTIFACT_NAME_MODELS}-${hash_short}"
           fi
           artifact_name_metadata="${artifact_name_storage}-metadata"
+          artifact_name_manifest="${artifact_name_storage}-manifest"
+          artifact_name_bootstrap="${artifact_name_storage}-bootstrap"
+
+          manifest_export_path="out/manifest.json"
+          if [[ -n "${manifest_uri}" ]]; then
+            if [[ "${manifest_uri}" == file://* ]]; then
+              resolved_manifest="$(python -c $'import os, sys, urllib.parse, urllib.request\nuri = sys.argv[1]\nparsed = urllib.parse.urlparse(uri)\nif parsed.scheme != \"file\":\n    sys.exit(1)\npath = urllib.request.url2pathname(urllib.parse.unquote(parsed.path))\nif parsed.netloc and parsed.netloc not in (\"\", \"localhost\"):\n    path = f\"//{parsed.netloc}{path}\"\nif not os.path.isfile(path):\n    sys.exit(1)\nprint(path)' "${manifest_uri}")" || {
+                echo "failed to resolve local manifest for URI: ${manifest_uri}"
+                exit 1
+              }
+            else
+              manifest_cache_dir="${DBT_NOVA_STORAGE_DIR%/}/manifests"
+              if [[ ! -d "${manifest_cache_dir}" ]]; then
+                echo "manifest cache directory not found: ${manifest_cache_dir}"
+                exit 1
+              fi
+              resolved_manifest="$(python -c $'import glob, json, os, sys\nmanifest_uri, cache_dir = sys.argv[1], sys.argv[2]\nfor meta_path in sorted(glob.glob(os.path.join(cache_dir, \"*.meta.json\"))):\n    try:\n        with open(meta_path, \"r\", encoding=\"utf-8\") as handle:\n            meta = json.load(handle)\n    except Exception:\n        continue\n    if str(meta.get(\"source_uri\", \"\")).strip() != manifest_uri:\n        continue\n    candidate = f\"{meta_path[:-10]}.json\"\n    if os.path.isfile(candidate):\n        print(candidate)\n        sys.exit(0)\nsys.exit(1)' "${manifest_uri}" "${manifest_cache_dir}")" || {
+                echo "failed to resolve cached manifest for URI: ${manifest_uri}"
+                exit 1
+              }
+            fi
+            cp "${resolved_manifest}" "${manifest_export_path}"
+          else
+            if [[ ! -f "${manifest_path}" ]]; then
+              echo "manifest file does not exist: ${manifest_path}"
+              exit 1
+            fi
+            cp "${manifest_path}" "${manifest_export_path}"
+          fi
+          jq -e '
+            (.metadata | type == "object")
+            and ((.nodes | type == "object") or (.sources | type == "object"))
+          ' "${manifest_export_path}" >/dev/null
 
           if ! [[ "${entity_count}" =~ ^[0-9]+$ ]]; then
             echo "entity_count is not an integer: ${entity_count}"
@@ -881,13 +930,18 @@ jobs:
           echo "artifact_name_storage=${artifact_name_storage}" >> "$GITHUB_OUTPUT"
           echo "artifact_name_models=${artifact_name_models}" >> "$GITHUB_OUTPUT"
           echo "artifact_name_metadata=${artifact_name_metadata}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name_manifest=${artifact_name_manifest}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name_bootstrap=${artifact_name_bootstrap}" >> "$GITHUB_OUTPUT"
           echo "metadata_path=${metadata_path}" >> "$GITHUB_OUTPUT"
+          echo "manifest_export_path=${manifest_export_path}" >> "$GITHUB_OUTPUT"
 
           {
             echo "### Build Metadata Contract"
             echo ""
             echo "- metadata_path: \`${metadata_path}\`"
             echo "- artifact_name_metadata: \`${artifact_name_metadata}\`"
+            echo "- artifact_name_manifest: \`${artifact_name_manifest}\`"
+            echo "- artifact_name_bootstrap: \`${artifact_name_bootstrap}\`"
             echo "- contract_version: \`v1\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -911,6 +965,14 @@ jobs:
         with:
           name: ${{ steps.collect.outputs.artifact_name_metadata }}
           path: ${{ steps.collect.outputs.metadata_path }}
+          retention-days: ${{ inputs.retention_days }}
+          if-no-files-found: error
+
+      - name: Upload manifest artifact
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        with:
+          name: ${{ steps.collect.outputs.artifact_name_manifest }}
+          path: ${{ steps.collect.outputs.manifest_export_path }}
           retention-days: ${{ inputs.retention_days }}
           if-no-files-found: error
 
@@ -942,9 +1004,16 @@ jobs:
           publish_targets="${DBT_NOVA_PUBLISH_TARGETS:-}"
           publish_dry_run="${DBT_NOVA_PUBLISH_DRY_RUN:-false}"
           storage_archive="${{ steps.collect.outputs.artifact_name_storage }}.tar.gz"
+          manifest_source="${{ steps.collect.outputs.manifest_export_path }}"
+          manifest_filename="${{ steps.collect.outputs.artifact_name_manifest }}.json"
+          manifest_publish_path="out/${manifest_filename}"
           metadata_source="${{ steps.collect.outputs.metadata_path }}"
           metadata_filename="${{ steps.collect.outputs.artifact_name_metadata }}.json"
           metadata_publish_path="out/${metadata_filename}"
+          bootstrap_filename="${{ steps.collect.outputs.artifact_name_bootstrap }}.json"
+          bootstrap_dir="out/bootstrap"
+          mkdir -p "${bootstrap_dir}"
+          cp "${manifest_source}" "${manifest_publish_path}"
           cp "${metadata_source}" "${metadata_publish_path}"
 
           models_archive=""
@@ -958,6 +1027,8 @@ jobs:
               echo "published_targets="
               echo 'published_storage_uris={}'
               echo 'published_metadata_uris={}'
+              echo 'published_manifest_uris={}'
+              echo 'published_bootstrap_uris={}'
               echo 'published_models_uris={}'
             } >> "$GITHUB_OUTPUT"
             {
@@ -1101,14 +1172,60 @@ jobs:
             return 1
           }
 
+          manifest_hash="$(jq -r '.manifest_hash // empty' "${metadata_source}")"
+          dbt_nova_version="$(jq -r '.dbt_nova_version // empty' "${metadata_source}")"
+          build_timestamp="$(jq -r '.build_timestamp // empty' "${metadata_source}")"
+          if [[ -z "${manifest_hash}" || -z "${dbt_nova_version}" || -z "${build_timestamp}" ]]; then
+            echo "metadata contract is missing manifest_hash/dbt_nova_version/build_timestamp"
+            exit 1
+          fi
+
+          write_bootstrap_contract() {
+            local output_path="$1"
+            local profile="$2"
+            local manifest_uri_value="$3"
+            local storage_uri_value="$4"
+            local metadata_uri_value="$5"
+            local models_uri_value="$6"
+            jq -n \
+              --arg contract_version "v1" \
+              --arg profile "${profile}" \
+              --arg storage_instance_id "${DBT_NOVA_STORAGE_INSTANCE_ID}" \
+              --arg manifest_uri "${manifest_uri_value}" \
+              --arg storage_artifact_uri "${storage_uri_value}" \
+              --arg metadata_artifact_uri "${metadata_uri_value}" \
+              --arg models_artifact_uri "${models_uri_value}" \
+              --arg manifest_hash "${manifest_hash}" \
+              --arg dbt_nova_version "${dbt_nova_version}" \
+              --arg build_timestamp "${build_timestamp}" \
+              '{
+                contract_version: $contract_version,
+                profile: $profile,
+                storage_instance_id: $storage_instance_id,
+                manifest_uri: $manifest_uri,
+                storage_artifact_uri: $storage_artifact_uri,
+                metadata_artifact_uri: $metadata_artifact_uri,
+                models_artifact_uri: $models_artifact_uri,
+                manifest_hash: $manifest_hash,
+                dbt_nova_version: $dbt_nova_version,
+                build_timestamp: $build_timestamp
+              }' > "${output_path}"
+          }
+
           s3_storage_uri=""
+          s3_manifest_uri=""
           s3_metadata_uri=""
+          s3_bootstrap_uri=""
           s3_models_uri=""
           gcs_storage_uri=""
+          gcs_manifest_uri=""
           gcs_metadata_uri=""
+          gcs_bootstrap_uri=""
           gcs_models_uri=""
           dbfs_storage_uri=""
+          dbfs_manifest_uri=""
           dbfs_metadata_uri=""
+          dbfs_bootstrap_uri=""
           dbfs_models_uri=""
           published_targets_success=""
 
@@ -1117,7 +1234,20 @@ jobs:
             case "${target}" in
               s3)
                 s3_storage_uri="${DBT_NOVA_PUBLISH_S3_PREFIX}/${storage_archive}"
+                s3_manifest_uri="${DBT_NOVA_PUBLISH_S3_PREFIX}/${manifest_filename}"
                 s3_metadata_uri="${DBT_NOVA_PUBLISH_S3_PREFIX}/${metadata_filename}"
+                s3_bootstrap_uri="${DBT_NOVA_PUBLISH_S3_PREFIX}/${bootstrap_filename}"
+                if [[ -n "${models_archive}" ]]; then
+                  s3_models_uri="${DBT_NOVA_PUBLISH_S3_PREFIX}/${models_archive}"
+                fi
+                s3_bootstrap_path="${bootstrap_dir}/s3-${bootstrap_filename}"
+                write_bootstrap_contract \
+                  "${s3_bootstrap_path}" \
+                  "s3" \
+                  "${s3_manifest_uri}" \
+                  "${s3_storage_uri}" \
+                  "${s3_metadata_uri}" \
+                  "${s3_models_uri}"
                 if [[ "${publish_dry_run}" != "true" ]]; then
                   if ! command -v aws >/dev/null 2>&1; then
                     echo "publish target s3 requires aws CLI."
@@ -1127,24 +1257,42 @@ jobs:
                     echo "failed uploading storage archive to s3 after retries"
                     exit 1
                   }
+                  retry_with_backoff 4 publish_to_s3 "${manifest_publish_path}" "${s3_manifest_uri}" || {
+                    echo "failed uploading manifest to s3 after retries"
+                    exit 1
+                  }
                   retry_with_backoff 4 publish_to_s3 "${metadata_publish_path}" "${s3_metadata_uri}" || {
                     echo "failed uploading metadata contract to s3 after retries"
                     exit 1
                   }
                   if [[ -n "${models_archive}" ]]; then
-                    s3_models_uri="${DBT_NOVA_PUBLISH_S3_PREFIX}/${models_archive}"
                     retry_with_backoff 4 publish_to_s3 "${models_archive}" "${s3_models_uri}" || {
                       echo "failed uploading models archive to s3 after retries"
                       exit 1
                     }
                   fi
-                elif [[ -n "${models_archive}" ]]; then
-                  s3_models_uri="${DBT_NOVA_PUBLISH_S3_PREFIX}/${models_archive}"
+                  retry_with_backoff 4 publish_to_s3 "${s3_bootstrap_path}" "${s3_bootstrap_uri}" || {
+                    echo "failed uploading bootstrap contract to s3 after retries"
+                    exit 1
+                  }
                 fi
                 ;;
               gcs)
                 gcs_storage_uri="${DBT_NOVA_PUBLISH_GCS_PREFIX}/${storage_archive}"
+                gcs_manifest_uri="${DBT_NOVA_PUBLISH_GCS_PREFIX}/${manifest_filename}"
                 gcs_metadata_uri="${DBT_NOVA_PUBLISH_GCS_PREFIX}/${metadata_filename}"
+                gcs_bootstrap_uri="${DBT_NOVA_PUBLISH_GCS_PREFIX}/${bootstrap_filename}"
+                if [[ -n "${models_archive}" ]]; then
+                  gcs_models_uri="${DBT_NOVA_PUBLISH_GCS_PREFIX}/${models_archive}"
+                fi
+                gcs_bootstrap_path="${bootstrap_dir}/gcs-${bootstrap_filename}"
+                write_bootstrap_contract \
+                  "${gcs_bootstrap_path}" \
+                  "gcs" \
+                  "${gcs_manifest_uri}" \
+                  "${gcs_storage_uri}" \
+                  "${gcs_metadata_uri}" \
+                  "${gcs_models_uri}"
                 if [[ "${publish_dry_run}" != "true" ]]; then
                   GCS_ACCESS_TOKEN="$(resolve_gcs_access_token)" || {
                     echo "publish target gcs requires a Google access token (DBT_NOVA_GCP_ACCESS_TOKEN, DBT_NOVA_BIGQUERY_ACCESS_TOKEN, GCP_ACCESS_TOKEN, GOOGLE_OAUTH_ACCESS_TOKEN, or gcloud ADC)."
@@ -1154,24 +1302,42 @@ jobs:
                     echo "failed uploading storage archive to gcs after retries"
                     exit 1
                   }
+                  retry_with_backoff 4 publish_to_gcs "${manifest_publish_path}" "${gcs_manifest_uri}" || {
+                    echo "failed uploading manifest to gcs after retries"
+                    exit 1
+                  }
                   retry_with_backoff 4 publish_to_gcs "${metadata_publish_path}" "${gcs_metadata_uri}" || {
                     echo "failed uploading metadata contract to gcs after retries"
                     exit 1
                   }
                   if [[ -n "${models_archive}" ]]; then
-                    gcs_models_uri="${DBT_NOVA_PUBLISH_GCS_PREFIX}/${models_archive}"
                     retry_with_backoff 4 publish_to_gcs "${models_archive}" "${gcs_models_uri}" || {
                       echo "failed uploading models archive to gcs after retries"
                       exit 1
                     }
                   fi
-                elif [[ -n "${models_archive}" ]]; then
-                  gcs_models_uri="${DBT_NOVA_PUBLISH_GCS_PREFIX}/${models_archive}"
+                  retry_with_backoff 4 publish_to_gcs "${gcs_bootstrap_path}" "${gcs_bootstrap_uri}" || {
+                    echo "failed uploading bootstrap contract to gcs after retries"
+                    exit 1
+                  }
                 fi
                 ;;
               dbfs)
                 dbfs_storage_uri="${DBT_NOVA_PUBLISH_DBFS_PREFIX}/${storage_archive}"
+                dbfs_manifest_uri="${DBT_NOVA_PUBLISH_DBFS_PREFIX}/${manifest_filename}"
                 dbfs_metadata_uri="${DBT_NOVA_PUBLISH_DBFS_PREFIX}/${metadata_filename}"
+                dbfs_bootstrap_uri="${DBT_NOVA_PUBLISH_DBFS_PREFIX}/${bootstrap_filename}"
+                if [[ -n "${models_archive}" ]]; then
+                  dbfs_models_uri="${DBT_NOVA_PUBLISH_DBFS_PREFIX}/${models_archive}"
+                fi
+                dbfs_bootstrap_path="${bootstrap_dir}/dbfs-${bootstrap_filename}"
+                write_bootstrap_contract \
+                  "${dbfs_bootstrap_path}" \
+                  "dbfs" \
+                  "${dbfs_manifest_uri}" \
+                  "${dbfs_storage_uri}" \
+                  "${dbfs_metadata_uri}" \
+                  "${dbfs_models_uri}"
                 if [[ "${publish_dry_run}" != "true" ]]; then
                   if [[ -z "${DATABRICKS_HOST:-}" || -z "${DATABRICKS_ACCESS_TOKEN:-}" ]]; then
                     echo "publish target dbfs requires DATABRICKS_HOST and DATABRICKS_ACCESS_TOKEN."
@@ -1181,19 +1347,24 @@ jobs:
                     echo "failed uploading storage archive to dbfs after retries"
                     exit 1
                   }
+                  retry_with_backoff 4 publish_to_dbfs "${manifest_publish_path}" "${dbfs_manifest_uri}" || {
+                    echo "failed uploading manifest to dbfs after retries"
+                    exit 1
+                  }
                   retry_with_backoff 4 publish_to_dbfs "${metadata_publish_path}" "${dbfs_metadata_uri}" || {
                     echo "failed uploading metadata contract to dbfs after retries"
                     exit 1
                   }
                   if [[ -n "${models_archive}" ]]; then
-                    dbfs_models_uri="${DBT_NOVA_PUBLISH_DBFS_PREFIX}/${models_archive}"
                     retry_with_backoff 4 publish_to_dbfs "${models_archive}" "${dbfs_models_uri}" || {
                       echo "failed uploading models archive to dbfs after retries"
                       exit 1
                     }
                   fi
-                elif [[ -n "${models_archive}" ]]; then
-                  dbfs_models_uri="${DBT_NOVA_PUBLISH_DBFS_PREFIX}/${models_archive}"
+                  retry_with_backoff 4 publish_to_dbfs "${dbfs_bootstrap_path}" "${dbfs_bootstrap_uri}" || {
+                    echo "failed uploading bootstrap contract to dbfs after retries"
+                    exit 1
+                  }
                 fi
                 ;;
               *)
@@ -1216,10 +1387,24 @@ jobs:
             '{} | if $s3 != "" then . + {s3: $s3} else . end
             | if $gcs != "" then . + {gcs: $gcs} else . end
             | if $dbfs != "" then . + {dbfs: $dbfs} else . end')"
+          published_manifest_uris="$(jq -cn \
+            --arg s3 "${s3_manifest_uri}" \
+            --arg gcs "${gcs_manifest_uri}" \
+            --arg dbfs "${dbfs_manifest_uri}" \
+            '{} | if $s3 != "" then . + {s3: $s3} else . end
+            | if $gcs != "" then . + {gcs: $gcs} else . end
+            | if $dbfs != "" then . + {dbfs: $dbfs} else . end')"
           published_metadata_uris="$(jq -cn \
             --arg s3 "${s3_metadata_uri}" \
             --arg gcs "${gcs_metadata_uri}" \
             --arg dbfs "${dbfs_metadata_uri}" \
+            '{} | if $s3 != "" then . + {s3: $s3} else . end
+            | if $gcs != "" then . + {gcs: $gcs} else . end
+            | if $dbfs != "" then . + {dbfs: $dbfs} else . end')"
+          published_bootstrap_uris="$(jq -cn \
+            --arg s3 "${s3_bootstrap_uri}" \
+            --arg gcs "${gcs_bootstrap_uri}" \
+            --arg dbfs "${dbfs_bootstrap_uri}" \
             '{} | if $s3 != "" then . + {s3: $s3} else . end
             | if $gcs != "" then . + {gcs: $gcs} else . end
             | if $dbfs != "" then . + {dbfs: $dbfs} else . end')"
@@ -1234,7 +1419,9 @@ jobs:
           {
             echo "published_targets=${published_targets_success}"
             echo "published_storage_uris=${published_storage_uris}"
+            echo "published_manifest_uris=${published_manifest_uris}"
             echo "published_metadata_uris=${published_metadata_uris}"
+            echo "published_bootstrap_uris=${published_bootstrap_uris}"
             echo "published_models_uris=${published_models_uris}"
           } >> "$GITHUB_OUTPUT"
 
@@ -1244,6 +1431,17 @@ jobs:
             echo "- dry_run: \`${publish_dry_run}\`"
             echo "- targets: \`${published_targets_success}\`"
             echo "- storage_uris: \`${published_storage_uris}\`"
+            echo "- manifest_uris: \`${published_manifest_uris}\`"
             echo "- metadata_uris: \`${published_metadata_uris}\`"
+            echo "- bootstrap_uris: \`${published_bootstrap_uris}\`"
             echo "- models_uris: \`${published_models_uris}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload bootstrap contract artifact
+        if: ${{ steps.publish.outputs.published_bootstrap_uris != '{}' }}
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        with:
+          name: ${{ steps.collect.outputs.artifact_name_bootstrap }}
+          path: out/bootstrap/*.json
+          retention-days: ${{ inputs.retention_days }}
+          if-no-files-found: error

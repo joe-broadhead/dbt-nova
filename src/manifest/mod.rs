@@ -1,3 +1,4 @@
+pub mod bootstrap;
 pub mod entity;
 pub(crate) mod lineage_sql;
 pub mod loader;

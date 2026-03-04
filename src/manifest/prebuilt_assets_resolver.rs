@@ -118,7 +118,11 @@ struct ArtifactLocator {
     scheme: String,
 }
 
-fn resolve_artifact_uri_to_local(config: &DbtNovaConfig, name: &str, uri: &str) -> Result<PathBuf> {
+pub(crate) fn resolve_artifact_uri_to_local(
+    config: &DbtNovaConfig,
+    name: &str,
+    uri: &str,
+) -> Result<PathBuf> {
     let locator = parse_artifact_locator(name, uri)?;
     let sanitized_uri = sanitize_uri(&locator.raw);
     let policy = artifact_fetch_policy_label(config.artifact_fetch_policy);
@@ -445,7 +449,7 @@ fn directory_has_files(path: &Path) -> Result<bool> {
     Ok(false)
 }
 
-fn read_small_text_file(path: &Path, max_bytes: u64) -> Result<String> {
+pub(crate) fn read_small_text_file(path: &Path, max_bytes: u64) -> Result<String> {
     let mut file = File::open(path)?;
     let metadata = file.metadata()?;
     if max_bytes > 0 && metadata.len() > max_bytes {
@@ -494,7 +498,7 @@ fn resolve_file_artifact_uri(name: &str, uri: &str) -> Result<PathBuf> {
     Ok(PathBuf::from(trimmed))
 }
 
-fn ensure_regular_file(name: &str, path: &Path) -> Result<()> {
+pub(crate) fn ensure_regular_file(name: &str, path: &Path) -> Result<()> {
     if !path.exists() {
         return Err(DbtNovaError::ServerError(format!(
             "{name} does not exist: {}",

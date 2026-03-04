@@ -42,7 +42,9 @@ Operational defaults:
   executed via `bash -lc` in the caller repository context and must be treated
   as trusted caller input
 - **Outputs:** manifest metadata (`manifest_hash`, `manifest_version`,
-  `entity_count`), artifact names, and optional published URI JSON objects
+  `entity_count`), artifact names (including manifest/bootstrap), and optional
+  published URI JSON objects (`storage`, `manifest`, `metadata`, `bootstrap`,
+  optional `models`)
 
 ### Prepare Release
 

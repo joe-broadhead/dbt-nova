@@ -8,6 +8,7 @@ use crate::cli::args::{ManifestLoadArgs, ManifestReloadArgs};
 use crate::cli::output::{CliEnvelope, error_envelope};
 use crate::config::DbtNovaConfig;
 use crate::error::{DbtNovaError, Result};
+use crate::manifest::bootstrap::prepare_runtime_config;
 use crate::manifest::search::ManifestSearch;
 use crate::utils::sanitize_uri;
 
@@ -261,6 +262,7 @@ fn apply_manifest_common_overrides(
             ));
         }
         config.manifest_path = trimmed.to_string();
+        config.manifest_path_explicit = true;
         config.manifest_uri.clear();
     }
 
@@ -303,14 +305,12 @@ fn finalize_manifest_config(mut config: DbtNovaConfig) -> Result<DbtNovaConfig> 
     // CLI manifest commands are one-shot; they do not start the background
     // refresh task. Keep refresh_secs unchanged so remote cache freshness rules
     // still apply during source resolution.
-    config.ensure_storage_instance_id();
+    let _bootstrap_resolution = prepare_runtime_config(&mut config)?;
     if !is_safe_storage_instance_id(config.storage_instance_id.trim()) {
         return Err(DbtNovaError::InvalidParams(
             "--storage-instance-id must be a single safe path segment".to_string(),
         ));
     }
-    config.ensure_embedding_cache_dir();
-    config.validate()?;
     Ok(config)
 }
 

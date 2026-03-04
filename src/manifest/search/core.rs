@@ -8,9 +8,10 @@ use moka::sync::Cache as MokaCache;
 use serde_json::Value as JsonValue;
 use tokio::sync::{Notify, RwLock};
 
-use crate::config::DbtNovaConfig;
 use crate::config::core::LayerRule;
+use crate::config::{ArtifactFetchPolicy, DbtNovaConfig};
 use crate::error::{DbtNovaError, Result};
+use crate::manifest::bootstrap::prepare_runtime_config;
 use crate::manifest::entity::{ArchivedEntity, Entity};
 use crate::manifest::store::EntityStore;
 use crate::manifest::tantivy_search::TantivySearcher;
@@ -59,6 +60,7 @@ pub struct ManifestSearch {
     pub(crate) manifest_metadata: JsonValue,
     pub(crate) manifest_health: JsonValue,
     pub(crate) artifact_consumer: JsonValue,
+    pub(crate) bootstrap: JsonValue,
 
     // === Stats ===
     pub(crate) entity_counts: HashMap<String, usize>,
@@ -473,6 +475,7 @@ impl ManifestSearch {
             },
             "manifest_health": self.manifest_health,
             "artifact_consumer": self.artifact_consumer,
+            "bootstrap": self.bootstrap,
             "manifest_cache": {
                 "hits": manifest_cache_hits,
                 "misses": manifest_cache_misses,
@@ -710,20 +713,25 @@ impl ManifestSearchHandle {
         let previous_auto = auto_instance_id(&previous);
         let mut next = previous.clone();
         let mut changed_source = false;
+        let mut explicit_manifest_source = false;
+        let mut explicit_storage_instance_id = false;
 
         if let Some(uri) = params.manifest_uri.as_ref() {
             let trimmed = uri.trim();
             if !trimmed.is_empty() {
                 next.manifest_uri = trimmed.to_string();
                 changed_source = true;
+                explicit_manifest_source = true;
             }
         }
         if let Some(path) = params.manifest_path.as_ref() {
             let trimmed = path.trim();
             if !trimmed.is_empty() {
                 next.manifest_path = trimmed.to_string();
+                next.manifest_path_explicit = true;
                 next.manifest_uri = String::new();
                 changed_source = true;
+                explicit_manifest_source = true;
             }
         }
         if let Some(refresh_secs) = params.refresh_secs {
@@ -733,6 +741,7 @@ impl ManifestSearchHandle {
             let trimmed = instance_id.trim();
             if !trimmed.is_empty() {
                 next.storage_instance_id = trimmed.to_string();
+                explicit_storage_instance_id = true;
             }
         } else if changed_source {
             let previous_id = previous.storage_instance_id.trim().to_string();
@@ -741,9 +750,14 @@ impl ManifestSearchHandle {
             }
         }
 
-        next.ensure_storage_instance_id();
-        next.ensure_embedding_cache_dir();
-        next.validate()?;
+        reset_bootstrap_applied_fields_for_reload(
+            &mut next,
+            previous.bootstrap_status.as_ref(),
+            explicit_manifest_source,
+            explicit_storage_instance_id,
+        );
+
+        let bootstrap_resolution = prepare_runtime_config_for_reload(&mut next)?;
 
         {
             let mut guard = self.config.write().await;
@@ -782,6 +796,7 @@ impl ManifestSearchHandle {
             "manifest_uri": next.manifest_uri,
             "manifest_refresh_secs": next.manifest_refresh_secs,
             "storage_instance_id": next.storage_instance_id,
+            "bootstrap": bootstrap_resolution.status,
         });
         let build_config = next.clone();
         let state_clone = self.state.clone();
@@ -1032,4 +1047,158 @@ fn auto_instance_id(config: &DbtNovaConfig) -> String {
     temp.storage_instance_id = String::new();
     temp.ensure_storage_instance_id();
     temp.storage_instance_id
+}
+
+fn bootstrap_reload_fetch_policy(config: &DbtNovaConfig) -> ArtifactFetchPolicy {
+    if config.bootstrap_uri.trim().is_empty() {
+        config.artifact_fetch_policy
+    } else {
+        ArtifactFetchPolicy::Always
+    }
+}
+
+fn prepare_runtime_config_for_reload(
+    config: &mut DbtNovaConfig,
+) -> Result<crate::manifest::bootstrap::BootstrapResolution> {
+    // Force bootstrap re-evaluation on reload so updates to the remote
+    // bootstrap contract are visible without restarting the process.
+    config.bootstrap_status = None;
+    let original_fetch_policy = config.artifact_fetch_policy;
+    config.artifact_fetch_policy = bootstrap_reload_fetch_policy(config);
+    let runtime_config_result = prepare_runtime_config(config);
+    config.artifact_fetch_policy = original_fetch_policy;
+    runtime_config_result
+}
+
+fn reset_bootstrap_applied_fields_for_reload(
+    next: &mut DbtNovaConfig,
+    bootstrap_status: Option<&JsonValue>,
+    explicit_manifest_source: bool,
+    explicit_storage_instance_id: bool,
+) {
+    let Some(status) = bootstrap_status else {
+        return;
+    };
+    let Some(applied_fields) = status.get("applied_fields").and_then(JsonValue::as_array) else {
+        return;
+    };
+
+    for field in applied_fields.iter().filter_map(JsonValue::as_str) {
+        match field {
+            "manifest_uri" => {
+                if !explicit_manifest_source {
+                    next.manifest_uri.clear();
+                }
+            }
+            "storage_instance_id" => {
+                if !explicit_storage_instance_id {
+                    next.storage_instance_id.clear();
+                }
+            }
+            "storage_artifact_uri" => {
+                next.storage_artifact_uri.clear();
+            }
+            "metadata_artifact_uri" => {
+                next.metadata_artifact_uri.clear();
+            }
+            "models_artifact_uri" => {
+                next.models_artifact_uri.clear();
+            }
+            _ => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{bootstrap_reload_fetch_policy, reset_bootstrap_applied_fields_for_reload};
+    use crate::config::{ArtifactFetchPolicy, DbtNovaConfig};
+
+    #[test]
+    fn reset_bootstrap_fields_clears_previously_applied_values() {
+        let mut config = DbtNovaConfig {
+            manifest_uri: "dbfs:/old/manifest.json".to_string(),
+            storage_instance_id: "old-instance".to_string(),
+            storage_artifact_uri: "dbfs:/old/storage.tar.gz".to_string(),
+            metadata_artifact_uri: "dbfs:/old/metadata.json".to_string(),
+            models_artifact_uri: "dbfs:/old/models.tar.gz".to_string(),
+            ..DbtNovaConfig::default()
+        };
+        let status = json!({
+            "applied_fields": [
+                "manifest_uri",
+                "storage_instance_id",
+                "storage_artifact_uri",
+                "metadata_artifact_uri",
+                "models_artifact_uri"
+            ]
+        });
+
+        reset_bootstrap_applied_fields_for_reload(&mut config, Some(&status), false, false);
+
+        assert!(config.manifest_uri.is_empty());
+        assert!(config.storage_instance_id.is_empty());
+        assert!(config.storage_artifact_uri.is_empty());
+        assert!(config.metadata_artifact_uri.is_empty());
+        assert!(config.models_artifact_uri.is_empty());
+    }
+
+    #[test]
+    fn reset_bootstrap_fields_preserves_explicit_reload_overrides() {
+        let mut config = DbtNovaConfig {
+            manifest_uri: "dbfs:/manual/manifest.json".to_string(),
+            storage_instance_id: "manual-instance".to_string(),
+            storage_artifact_uri: "dbfs:/old/storage.tar.gz".to_string(),
+            metadata_artifact_uri: "dbfs:/old/metadata.json".to_string(),
+            models_artifact_uri: "dbfs:/old/models.tar.gz".to_string(),
+            ..DbtNovaConfig::default()
+        };
+        let status = json!({
+            "applied_fields": [
+                "manifest_uri",
+                "storage_instance_id",
+                "storage_artifact_uri",
+                "metadata_artifact_uri",
+                "models_artifact_uri"
+            ]
+        });
+
+        reset_bootstrap_applied_fields_for_reload(&mut config, Some(&status), true, true);
+
+        assert_eq!(config.manifest_uri, "dbfs:/manual/manifest.json");
+        assert_eq!(config.storage_instance_id, "manual-instance");
+        assert!(config.storage_artifact_uri.is_empty());
+        assert!(config.metadata_artifact_uri.is_empty());
+        assert!(config.models_artifact_uri.is_empty());
+    }
+
+    #[test]
+    fn bootstrap_reload_fetch_policy_uses_always_when_bootstrap_uri_is_set() {
+        let config = DbtNovaConfig {
+            bootstrap_uri: "dbfs:/FileStore/nova/prod/nova-bootstrap.json".to_string(),
+            artifact_fetch_policy: ArtifactFetchPolicy::IfMissing,
+            ..DbtNovaConfig::default()
+        };
+
+        assert_eq!(
+            bootstrap_reload_fetch_policy(&config),
+            ArtifactFetchPolicy::Always
+        );
+    }
+
+    #[test]
+    fn bootstrap_reload_fetch_policy_preserves_runtime_policy_without_bootstrap() {
+        let config = DbtNovaConfig {
+            bootstrap_uri: String::new(),
+            artifact_fetch_policy: ArtifactFetchPolicy::Never,
+            ..DbtNovaConfig::default()
+        };
+
+        assert_eq!(
+            bootstrap_reload_fetch_policy(&config),
+            ArtifactFetchPolicy::Never
+        );
+    }
 }
