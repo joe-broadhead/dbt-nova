@@ -105,13 +105,6 @@ Models distribution modes:
 - `publish_only`: package/publish models artifact, but bootstrap still omits `models_artifact_uri`.
 - `publish_and_bootstrap`: package/publish models artifact and include `models_artifact_uri` in bootstrap.
 
-Compatibility:
-
-- `include_models_cache` is still accepted for legacy callers.
-- When `models_distribution_mode` is set, it takes precedence.
-- When `models_distribution_mode` is empty, workflow derives behavior from `include_models_cache`:
-  `true -> publish_and_bootstrap`, `false -> none`.
-
 ## Optional remote publish targets
 
 Use this when consumers should pull artifacts from cloud storage instead of

@@ -52,16 +52,11 @@ on:
         required: false
         type: string
         default: "{}"
-      include_models_cache:
-        description: "Legacy compatibility switch. Prefer models_distribution_mode."
-        required: false
-        type: boolean
-        default: false
       models_distribution_mode:
-        description: "How models are distributed: none, publish_only, or publish_and_bootstrap (empty = derive from include_models_cache)"
+        description: "How models are distributed: none, publish_only, or publish_and_bootstrap"
         required: false
         type: string
-        default: ""
+        default: "none"
       artifact_name_prefix:
         description: "Prefix used when naming output artifacts"
         required: false
@@ -198,16 +193,11 @@ on:
         required: false
         type: string
         default: "{}"
-      include_models_cache:
-        description: "Legacy compatibility switch. Prefer models_distribution_mode."
-        required: false
-        type: boolean
-        default: false
       models_distribution_mode:
-        description: "How models are distributed: none, publish_only, or publish_and_bootstrap (empty = derive from include_models_cache)"
+        description: "How models are distributed: none, publish_only, or publish_and_bootstrap"
         required: false
         type: string
-        default: ""
+        default: "none"
       artifact_name_prefix:
         description: "Prefix used when naming output artifacts"
         required: false
@@ -269,7 +259,7 @@ jobs:
       publish_dbfs_prefix: ${{ steps.resolve.outputs.publish_dbfs_prefix }}
       publish_dry_run: ${{ steps.resolve.outputs.publish_dry_run }}
       models_distribution_mode: ${{ steps.resolve.outputs.models_distribution_mode }}
-      include_models_cache: ${{ steps.resolve.outputs.include_models_cache }}
+      publish_models_archive: ${{ steps.resolve.outputs.publish_models_archive }}
       include_models_in_bootstrap: ${{ steps.resolve.outputs.include_models_in_bootstrap }}
       dbt_env_json: ${{ steps.resolve.outputs.dbt_env_json }}
       dbt_secret_env_map_json: ${{ steps.resolve.outputs.dbt_secret_env_map_json }}
@@ -288,7 +278,6 @@ jobs:
           INPUT_DBT_COMMAND: ${{ inputs.dbt_command }}
           INPUT_DBT_ENV_JSON: ${{ inputs.dbt_env_json }}
           INPUT_DBT_SECRET_ENV_MAP_JSON: ${{ inputs.dbt_secret_env_map_json }}
-          INPUT_INCLUDE_MODELS_CACHE: ${{ inputs.include_models_cache }}
           INPUT_MODELS_DISTRIBUTION_MODE: ${{ inputs.models_distribution_mode }}
           INPUT_ARTIFACT_NAME_PREFIX: ${{ inputs.artifact_name_prefix }}
           INPUT_RETENTION_DAYS: ${{ inputs.retention_days }}
@@ -316,7 +305,6 @@ jobs:
           dbt_command="${INPUT_DBT_COMMAND}"
           dbt_env_json="${INPUT_DBT_ENV_JSON}"
           dbt_secret_env_map_json="${INPUT_DBT_SECRET_ENV_MAP_JSON}"
-          include_models_cache="${INPUT_INCLUDE_MODELS_CACHE}"
           models_distribution_mode="${INPUT_MODELS_DISTRIBUTION_MODE}"
           artifact_name_prefix="${INPUT_ARTIFACT_NAME_PREFIX}"
           retention_days="${INPUT_RETENTION_DAYS}"
@@ -443,11 +431,7 @@ jobs:
 
           models_distribution_mode="$(echo "${models_distribution_mode}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
           if [[ -z "${models_distribution_mode}" ]]; then
-            if [[ "${include_models_cache}" == "true" ]]; then
-              models_distribution_mode="publish_and_bootstrap"
-            else
-              models_distribution_mode="none"
-            fi
+            models_distribution_mode="none"
           fi
           case "${models_distribution_mode}" in
             none|publish_only|publish_and_bootstrap) ;;
@@ -456,14 +440,14 @@ jobs:
               exit 1
               ;;
           esac
-          include_models_cache="false"
+          publish_models_archive="false"
           include_models_in_bootstrap="false"
           case "${models_distribution_mode}" in
             publish_only)
-              include_models_cache="true"
+              publish_models_archive="true"
               ;;
             publish_and_bootstrap)
-              include_models_cache="true"
+              publish_models_archive="true"
               include_models_in_bootstrap="true"
               ;;
           esac
@@ -562,7 +546,7 @@ jobs:
           run_suffix="${GITHUB_RUN_ID}"
           artifact_name_storage="${artifact_name_prefix}-storage-${run_suffix}"
           artifact_name_models=""
-          if [[ "${include_models_cache}" == "true" ]]; then
+          if [[ "${publish_models_archive}" == "true" ]]; then
             artifact_name_models="${artifact_name_prefix}-models-${run_suffix}"
           fi
 
@@ -582,7 +566,7 @@ jobs:
           echo "publish_dbfs_prefix=${publish_dbfs_prefix}" >> "$GITHUB_OUTPUT"
           echo "publish_dry_run=${publish_dry_run}" >> "$GITHUB_OUTPUT"
           echo "models_distribution_mode=${models_distribution_mode}" >> "$GITHUB_OUTPUT"
-          echo "include_models_cache=${include_models_cache}" >> "$GITHUB_OUTPUT"
+          echo "publish_models_archive=${publish_models_archive}" >> "$GITHUB_OUTPUT"
           echo "include_models_in_bootstrap=${include_models_in_bootstrap}" >> "$GITHUB_OUTPUT"
           echo "dbt_env_json=${dbt_env_json}" >> "$GITHUB_OUTPUT"
           echo "dbt_secret_env_map_json=${dbt_secret_env_map_json}" >> "$GITHUB_OUTPUT"
@@ -604,7 +588,7 @@ jobs:
             echo "- publish_targets: \`${{ steps.resolve.outputs.publish_targets }}\`"
             echo "- publish_dry_run: \`${{ steps.resolve.outputs.publish_dry_run }}\`"
             echo "- models_distribution_mode: \`${{ steps.resolve.outputs.models_distribution_mode }}\`"
-            echo "- include_models_cache: \`${{ steps.resolve.outputs.include_models_cache }}\`"
+            echo "- publish_models_archive: \`${{ steps.resolve.outputs.publish_models_archive }}\`"
             echo "- include_models_in_bootstrap: \`${{ steps.resolve.outputs.include_models_in_bootstrap }}\`"
             echo "- dbt_env_json: \`${{ steps.resolve.outputs.dbt_env_json }}\`"
             echo "- dbt_secret_env_map_json: \`${{ steps.resolve.outputs.dbt_secret_env_map_json }}\`"
@@ -852,7 +836,7 @@ jobs:
         env:
           INPUT_MANIFEST_PATH: ${{ needs.prepare.outputs.manifest_path }}
           INPUT_MANIFEST_URI: ${{ needs.prepare.outputs.manifest_uri }}
-          INPUT_INCLUDE_MODELS_CACHE: ${{ needs.prepare.outputs.include_models_cache }}
+          INPUT_PUBLISH_MODELS_ARCHIVE: ${{ needs.prepare.outputs.publish_models_archive }}
           INPUT_ARTIFACT_NAME_STORAGE: ${{ needs.prepare.outputs.artifact_name_storage }}
           INPUT_ARTIFACT_NAME_MODELS: ${{ needs.prepare.outputs.artifact_name_models }}
         run: |
@@ -893,7 +877,7 @@ jobs:
 
           artifact_name_storage="${INPUT_ARTIFACT_NAME_STORAGE}-${hash_short}"
           artifact_name_models=""
-          if [[ "${INPUT_INCLUDE_MODELS_CACHE}" == "true" ]]; then
+          if [[ "${INPUT_PUBLISH_MODELS_ARCHIVE}" == "true" ]]; then
             artifact_name_models="${INPUT_ARTIFACT_NAME_MODELS}-${hash_short}"
           fi
           artifact_name_metadata="${artifact_name_storage}-metadata"
@@ -1034,7 +1018,7 @@ jobs:
           if-no-files-found: error
 
       - name: Package models directory
-        if: ${{ needs.prepare.outputs.include_models_cache == 'true' }}
+        if: ${{ needs.prepare.outputs.publish_models_archive == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -1048,7 +1032,7 @@ jobs:
             "$(basename "${DBT_NOVA_EMBEDDINGS_CACHE_DIR}")"
 
       - name: Validate models archive entry types
-        if: ${{ needs.prepare.outputs.include_models_cache == 'true' }}
+        if: ${{ needs.prepare.outputs.publish_models_archive == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -1071,7 +1055,7 @@ jobs:
           '
 
       - name: Upload models artifact
-        if: ${{ needs.prepare.outputs.include_models_cache == 'true' }}
+        if: ${{ needs.prepare.outputs.publish_models_archive == 'true' }}
         uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
         with:
           name: ${{ steps.collect.outputs.artifact_name_models }}
@@ -1083,7 +1067,7 @@ jobs:
         id: publish
         shell: bash
         env:
-          INPUT_INCLUDE_MODELS_CACHE: ${{ needs.prepare.outputs.include_models_cache }}
+          INPUT_PUBLISH_MODELS_ARCHIVE: ${{ needs.prepare.outputs.publish_models_archive }}
           INPUT_INCLUDE_MODELS_IN_BOOTSTRAP: ${{ needs.prepare.outputs.include_models_in_bootstrap }}
         run: |
           set -euo pipefail
@@ -1106,7 +1090,7 @@ jobs:
           cp "${metadata_source}" "${metadata_publish_path}"
 
           models_archive=""
-          if [[ "${INPUT_INCLUDE_MODELS_CACHE}" == "true" ]]; then
+          if [[ "${INPUT_PUBLISH_MODELS_ARCHIVE}" == "true" ]]; then
             models_archive="${{ steps.collect.outputs.artifact_name_models }}.tar.gz"
           fi
           include_models_in_bootstrap="${INPUT_INCLUDE_MODELS_IN_BOOTSTRAP}"
