@@ -8,8 +8,8 @@ use moka::sync::Cache as MokaCache;
 use serde_json::Value as JsonValue;
 use tokio::sync::{Notify, RwLock};
 
-use crate::config::DbtNovaConfig;
 use crate::config::core::LayerRule;
+use crate::config::{ArtifactFetchPolicy, DbtNovaConfig};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::bootstrap::prepare_runtime_config;
 use crate::manifest::entity::{ArchivedEntity, Entity};
@@ -756,10 +756,7 @@ impl ManifestSearchHandle {
             explicit_storage_instance_id,
         );
 
-        // Force bootstrap re-evaluation on reload so updates to the remote
-        // bootstrap contract are visible without restarting the process.
-        next.bootstrap_status = None;
-        let bootstrap_resolution = prepare_runtime_config(&mut next)?;
+        let bootstrap_resolution = prepare_runtime_config_for_reload(&mut next)?;
 
         {
             let mut guard = self.config.write().await;
@@ -1051,6 +1048,27 @@ fn auto_instance_id(config: &DbtNovaConfig) -> String {
     temp.storage_instance_id
 }
 
+fn bootstrap_reload_fetch_policy(config: &DbtNovaConfig) -> ArtifactFetchPolicy {
+    if config.bootstrap_uri.trim().is_empty() {
+        config.artifact_fetch_policy
+    } else {
+        ArtifactFetchPolicy::Always
+    }
+}
+
+fn prepare_runtime_config_for_reload(
+    config: &mut DbtNovaConfig,
+) -> Result<crate::manifest::bootstrap::BootstrapResolution> {
+    // Force bootstrap re-evaluation on reload so updates to the remote
+    // bootstrap contract are visible without restarting the process.
+    config.bootstrap_status = None;
+    let original_fetch_policy = config.artifact_fetch_policy;
+    config.artifact_fetch_policy = bootstrap_reload_fetch_policy(config);
+    let runtime_config_result = prepare_runtime_config(config);
+    config.artifact_fetch_policy = original_fetch_policy;
+    runtime_config_result
+}
+
 fn reset_bootstrap_applied_fields_for_reload(
     next: &mut DbtNovaConfig,
     bootstrap_status: Option<&JsonValue>,
@@ -1094,8 +1112,8 @@ fn reset_bootstrap_applied_fields_for_reload(
 mod tests {
     use serde_json::json;
 
-    use super::reset_bootstrap_applied_fields_for_reload;
-    use crate::config::DbtNovaConfig;
+    use super::{bootstrap_reload_fetch_policy, reset_bootstrap_applied_fields_for_reload};
+    use crate::config::{ArtifactFetchPolicy, DbtNovaConfig};
 
     #[test]
     fn reset_bootstrap_fields_clears_previously_applied_values() {
@@ -1153,5 +1171,33 @@ mod tests {
         assert!(config.storage_artifact_uri.is_empty());
         assert!(config.metadata_artifact_uri.is_empty());
         assert!(config.models_artifact_uri.is_empty());
+    }
+
+    #[test]
+    fn bootstrap_reload_fetch_policy_uses_always_when_bootstrap_uri_is_set() {
+        let config = DbtNovaConfig {
+            bootstrap_uri: "dbfs:/FileStore/nova/prod/nova-bootstrap.json".to_string(),
+            artifact_fetch_policy: ArtifactFetchPolicy::IfMissing,
+            ..DbtNovaConfig::default()
+        };
+
+        assert_eq!(
+            bootstrap_reload_fetch_policy(&config),
+            ArtifactFetchPolicy::Always
+        );
+    }
+
+    #[test]
+    fn bootstrap_reload_fetch_policy_preserves_runtime_policy_without_bootstrap() {
+        let config = DbtNovaConfig {
+            bootstrap_uri: String::new(),
+            artifact_fetch_policy: ArtifactFetchPolicy::Never,
+            ..DbtNovaConfig::default()
+        };
+
+        assert_eq!(
+            bootstrap_reload_fetch_policy(&config),
+            ArtifactFetchPolicy::Never
+        );
     }
 }
