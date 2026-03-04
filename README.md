@@ -192,7 +192,7 @@ jobs:
       manifest_path: target/manifest.json
       storage_instance_id: analytics-prod
       installer_ref: v0.0.2
-      installer_install_mode: release
+      installer_install_mode: auto
       artifact_name_prefix: analytics-prod
 ```
 
@@ -212,9 +212,11 @@ export DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing
 Optional: publish artifacts directly to cloud targets from the reusable
 workflow with `publish_targets` plus per-target prefixes
 (`publish_s3_prefix`, `publish_gcs_prefix`, `publish_dbfs_prefix`).
-For faster CI in downstream repos, set `installer_install_mode=release` with a
+For faster CI in downstream repos, use `installer_install_mode=release` with a
 tagged `installer_ref` so the workflow downloads a prebuilt `dbt-nova` binary
-instead of compiling from source.
+instead of compiling from source. Keep `installer_install_mode=auto` as the
+safe default, and use `installer_install_mode=source` for older runner images
+or unreleased installer commits.
 
 If you generate manifests in the reusable workflow (`dbt_generate_manifest: true`),
 use `dbt_env_json` and `dbt_secret_env_map_json` to pass profile-specific env/secret
@@ -222,6 +224,10 @@ variables generically (Databricks, BigQuery, DuckDB, etc.). For cross-owner
 reusable workflow calls, pass one declared secret
 `DBT_NOVA_SECRET_BUNDLE_JSON` (JSON object of key->value) and reference those keys
 in `dbt_secret_env_map_json`.
+
+Most teams keep a repo-local `workflow_dispatch` wrapper around this reusable
+workflow, then add release/tag triggers later after validating publish paths
+and credentials.
 
 Legacy fallback: if you manually extract artifacts locally, you can omit
 `DBT_NOVA_*_ARTIFACT_URI` vars and keep only
