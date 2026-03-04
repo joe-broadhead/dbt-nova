@@ -848,15 +848,22 @@ jobs:
 
           manifest_export_path="out/manifest.json"
           if [[ -n "${manifest_uri}" ]]; then
-            manifest_cache_dir="${DBT_NOVA_STORAGE_DIR%/}/manifests"
-            if [[ ! -d "${manifest_cache_dir}" ]]; then
-              echo "manifest cache directory not found: ${manifest_cache_dir}"
-              exit 1
+            if [[ "${manifest_uri}" == file://* ]]; then
+              resolved_manifest="$(python -c $'import os, sys, urllib.parse, urllib.request\nuri = sys.argv[1]\nparsed = urllib.parse.urlparse(uri)\nif parsed.scheme != \"file\":\n    sys.exit(1)\npath = urllib.request.url2pathname(urllib.parse.unquote(parsed.path))\nif parsed.netloc and parsed.netloc not in (\"\", \"localhost\"):\n    path = f\"//{parsed.netloc}{path}\"\nif not os.path.isfile(path):\n    sys.exit(1)\nprint(path)' "${manifest_uri}")" || {
+                echo "failed to resolve local manifest for URI: ${manifest_uri}"
+                exit 1
+              }
+            else
+              manifest_cache_dir="${DBT_NOVA_STORAGE_DIR%/}/manifests"
+              if [[ ! -d "${manifest_cache_dir}" ]]; then
+                echo "manifest cache directory not found: ${manifest_cache_dir}"
+                exit 1
+              fi
+              resolved_manifest="$(python -c $'import glob, json, os, sys\nmanifest_uri, cache_dir = sys.argv[1], sys.argv[2]\nfor meta_path in sorted(glob.glob(os.path.join(cache_dir, \"*.meta.json\"))):\n    try:\n        with open(meta_path, \"r\", encoding=\"utf-8\") as handle:\n            meta = json.load(handle)\n    except Exception:\n        continue\n    if str(meta.get(\"source_uri\", \"\")).strip() != manifest_uri:\n        continue\n    candidate = f\"{meta_path[:-10]}.json\"\n    if os.path.isfile(candidate):\n        print(candidate)\n        sys.exit(0)\nsys.exit(1)' "${manifest_uri}" "${manifest_cache_dir}")" || {
+                echo "failed to resolve cached manifest for URI: ${manifest_uri}"
+                exit 1
+              }
             fi
-            resolved_manifest="$(python -c $'import glob, json, os, sys\nmanifest_uri, cache_dir = sys.argv[1], sys.argv[2]\nfor meta_path in sorted(glob.glob(os.path.join(cache_dir, \"*.meta.json\"))):\n    try:\n        with open(meta_path, \"r\", encoding=\"utf-8\") as handle:\n            meta = json.load(handle)\n    except Exception:\n        continue\n    if str(meta.get(\"source_uri\", \"\")).strip() != manifest_uri:\n        continue\n    candidate = f\"{meta_path[:-10]}.json\"\n    if os.path.isfile(candidate):\n        print(candidate)\n        sys.exit(0)\nsys.exit(1)' "${manifest_uri}" "${manifest_cache_dir}")" || {
-              echo "failed to resolve cached manifest for URI: ${manifest_uri}"
-              exit 1
-            }
             cp "${resolved_manifest}" "${manifest_export_path}"
           else
             if [[ ! -f "${manifest_path}" ]]; then
