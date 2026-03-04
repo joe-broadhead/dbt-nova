@@ -1,6 +1,9 @@
 # MCP Client Configs
 
-All MCP clients should set either `DBT_MANIFEST_PATH` or `DBT_NOVA_MANIFEST_URI`.
+All MCP clients should set one of:
+- `DBT_MANIFEST_PATH`
+- `DBT_NOVA_MANIFEST_URI`
+- `DBT_NOVA_BOOTSTRAP_URI` (bootstrap can populate `manifest_uri`)
 Databricks variables are required only if you use the `execute_sql` tool with
 `DBT_NOVA_SQL_PROVIDER=databricks` (default).
 BigQuery variables are required only if you use `DBT_NOVA_SQL_PROVIDER=bigquery`.
@@ -28,12 +31,16 @@ If you consume prebuilt Nova storage artifacts (built by the reusable producer
 workflow), set these env vars in your MCP client:
 
 - `DBT_NOVA_STORAGE_DIR` (local Nova storage root)
-- `DBT_NOVA_STORAGE_INSTANCE_ID` (must match producer workflow input)
 - `DBT_NOVA_STORAGE_READ_ONLY=true`
+- `DBT_NOVA_BOOTSTRAP_URI` (recommended one-URI setup)
+- `DBT_NOVA_ARTIFACT_FETCH_POLICY` (recommended: `if_missing`)
+
+Optional explicit mode (if you do not use bootstrap URI):
+
+- `DBT_NOVA_STORAGE_INSTANCE_ID` (must match producer workflow input)
 - `DBT_NOVA_STORAGE_ARTIFACT_URI`
 - `DBT_NOVA_METADATA_ARTIFACT_URI`
 - `DBT_NOVA_MODELS_ARTIFACT_URI` (optional)
-- `DBT_NOVA_ARTIFACT_FETCH_POLICY` (recommended: `if_missing`)
 
 Recommended with prebuilt artifacts:
 
@@ -50,13 +57,9 @@ command = "/path/to/dbt-nova"
 startup_timeout_sec = 60
 
 [mcp_servers.dbt-nova.env]
-DBT_MANIFEST_PATH = "/path/to/manifest.json"
 DBT_NOVA_STORAGE_DIR = "/path/to/.dbt-nova"
-DBT_NOVA_STORAGE_INSTANCE_ID = "analytics-prod"
 DBT_NOVA_STORAGE_READ_ONLY = "true"
-DBT_NOVA_STORAGE_ARTIFACT_URI = "s3://my-bucket/nova-assets/prod/storage-asset.tar.gz"
-DBT_NOVA_METADATA_ARTIFACT_URI = "s3://my-bucket/nova-assets/prod/nova-build-metadata.json"
-DBT_NOVA_MODELS_ARTIFACT_URI = "s3://my-bucket/nova-assets/prod/models-asset.tar.gz"
+DBT_NOVA_BOOTSTRAP_URI = "s3://my-bucket/nova-assets/prod/analytics-prod-bootstrap.json"
 DBT_NOVA_ARTIFACT_FETCH_POLICY = "if_missing"
 DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/models"
 ```

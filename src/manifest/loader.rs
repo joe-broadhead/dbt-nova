@@ -15,6 +15,7 @@ use serde_json::Value as JsonValue;
 
 use crate::config::DbtNovaConfig;
 use crate::error::{DbtNovaError, Result};
+use crate::manifest::bootstrap::prepare_runtime_config;
 use crate::manifest::entity::Entity;
 use crate::manifest::lineage_sql::{extract_ref_calls, find_sql_aliases, sql_for_matching};
 use crate::manifest::prebuilt_assets_resolver::materialize_file_artifacts;
@@ -403,6 +404,7 @@ struct StoragePreparation {
     signature_path: PathBuf,
     build_lock: Option<File>,
     artifact_consumer_status: JsonValue,
+    bootstrap_status: JsonValue,
 }
 
 struct ReuseArtifacts {
@@ -488,8 +490,7 @@ impl ManifestSearch {
     /// Returns an error if the manifest cannot be loaded, parsed, or indexed.
     #[allow(clippy::new_ret_no_self)]
     pub fn new(mut config: DbtNovaConfig) -> Result<ManifestLoadResult> {
-        config.ensure_storage_instance_id();
-        config.ensure_embedding_cache_dir();
+        let bootstrap_resolution = prepare_runtime_config(&mut config)?;
         let load_start = Instant::now();
 
         let manifest_resolution = resolve_manifest(&config)?;
@@ -499,7 +500,8 @@ impl ManifestSearch {
             cached = manifest_resolution.cached,
             "resolved manifest source"
         );
-        let mut storage = prepare_storage(&config, &manifest_resolution)?;
+        let mut storage =
+            prepare_storage(&config, &manifest_resolution, bootstrap_resolution.status)?;
         let reused = prepare_reuse_state(&config, &storage)?;
         fs::create_dir_all(&reused.storage_dir)?;
         let in_use_locks = acquire_in_use_locks(&storage.instance_root, &reused.storage_dir)?;
@@ -579,6 +581,7 @@ impl ManifestSearch {
 fn prepare_storage(
     config: &DbtNovaConfig,
     manifest_resolution: &crate::manifest::source::ManifestResolution,
+    bootstrap_status: JsonValue,
 ) -> Result<StoragePreparation> {
     let storage_root = config.storage_instances_dir()?;
     if config.storage_max_instances > 0 {
@@ -652,6 +655,7 @@ fn prepare_storage(
         signature_path,
         build_lock,
         artifact_consumer_status,
+        bootstrap_status,
     })
 }
 
@@ -1209,6 +1213,7 @@ fn assemble_manifest_search(context: AssembleContext) -> ManifestSearch {
         manifest_metadata: accumulator.manifest_metadata,
         manifest_health: runtime.manifest_health,
         artifact_consumer: storage.artifact_consumer_status,
+        bootstrap: storage.bootstrap_status,
         entity_counts: accumulator.entity_counts,
         entity_cache: runtime.entity_cache,
         lineage_cache: runtime.lineage_cache,

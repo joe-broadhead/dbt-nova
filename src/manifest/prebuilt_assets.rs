@@ -4,6 +4,8 @@ use crate::error::{DbtNovaError, Result};
 
 /// Supported prebuilt-asset metadata contract version.
 pub const PREBUILT_ASSETS_CONTRACT_VERSION: &str = "v1";
+/// Supported bootstrap contract version.
+pub const PREBUILT_BOOTSTRAP_CONTRACT_VERSION: &str = "v1";
 
 /// Metadata contract emitted by the reusable prebuilt-assets workflow.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -17,6 +19,23 @@ pub struct PrebuiltAssetsMetadata {
     pub build_timestamp: String,
     pub artifact_name_storage: String,
     pub artifact_name_models: String,
+}
+
+/// Bootstrap contract that points Nova to manifest + artifact URIs.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct PrebuiltAssetsBootstrap {
+    pub contract_version: String,
+    #[serde(default)]
+    pub profile: String,
+    pub storage_instance_id: String,
+    pub manifest_uri: String,
+    pub storage_artifact_uri: String,
+    pub metadata_artifact_uri: String,
+    #[serde(default)]
+    pub models_artifact_uri: String,
+    pub manifest_hash: String,
+    pub dbt_nova_version: String,
+    pub build_timestamp: String,
 }
 
 impl PrebuiltAssetsMetadata {
@@ -94,6 +113,78 @@ impl PrebuiltAssetsMetadata {
     }
 }
 
+impl PrebuiltAssetsBootstrap {
+    /// Parse and validate bootstrap contract JSON.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when JSON is malformed or contract validation fails.
+    pub fn from_json_str(raw: &str) -> Result<Self> {
+        let bootstrap: Self = serde_json::from_str(raw).map_err(|err| {
+            DbtNovaError::InvalidParams(format!("invalid prebuilt bootstrap JSON: {err}"))
+        })?;
+        bootstrap.validate()?;
+        Ok(bootstrap)
+    }
+
+    /// Validate bootstrap contract values.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when required contract fields are missing/invalid.
+    pub fn validate(&self) -> Result<()> {
+        if self.contract_version != PREBUILT_BOOTSTRAP_CONTRACT_VERSION {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "unsupported prebuilt bootstrap contract_version '{}' (expected '{}')",
+                self.contract_version, PREBUILT_BOOTSTRAP_CONTRACT_VERSION
+            )));
+        }
+
+        if self.storage_instance_id.trim().is_empty() {
+            return Err(DbtNovaError::InvalidParams(
+                "prebuilt bootstrap storage_instance_id cannot be empty".to_string(),
+            ));
+        }
+        if self.manifest_uri.trim().is_empty() {
+            return Err(DbtNovaError::InvalidParams(
+                "prebuilt bootstrap manifest_uri cannot be empty".to_string(),
+            ));
+        }
+        if self.storage_artifact_uri.trim().is_empty() {
+            return Err(DbtNovaError::InvalidParams(
+                "prebuilt bootstrap storage_artifact_uri cannot be empty".to_string(),
+            ));
+        }
+        if self.metadata_artifact_uri.trim().is_empty() {
+            return Err(DbtNovaError::InvalidParams(
+                "prebuilt bootstrap metadata_artifact_uri cannot be empty".to_string(),
+            ));
+        }
+        if self.manifest_hash.trim().is_empty() {
+            return Err(DbtNovaError::InvalidParams(
+                "prebuilt bootstrap manifest_hash cannot be empty".to_string(),
+            ));
+        }
+        if self.dbt_nova_version.trim().is_empty() {
+            return Err(DbtNovaError::InvalidParams(
+                "prebuilt bootstrap dbt_nova_version cannot be empty".to_string(),
+            ));
+        }
+        if self.build_timestamp.trim().is_empty() {
+            return Err(DbtNovaError::InvalidParams(
+                "prebuilt bootstrap build_timestamp cannot be empty".to_string(),
+            ));
+        }
+        if !is_iso8601_utc_timestamp(self.build_timestamp.trim()) {
+            return Err(DbtNovaError::InvalidParams(
+                "prebuilt bootstrap build_timestamp must use UTC ISO-8601 format YYYY-MM-DDTHH:MM:SSZ"
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 fn is_iso8601_utc_timestamp(value: &str) -> bool {
     let bytes = value.as_bytes();
     if bytes.len() != 20 {
@@ -135,7 +226,10 @@ fn parse_u32(segment: &str) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PREBUILT_ASSETS_CONTRACT_VERSION, PrebuiltAssetsMetadata};
+    use super::{
+        PREBUILT_ASSETS_CONTRACT_VERSION, PREBUILT_BOOTSTRAP_CONTRACT_VERSION,
+        PrebuiltAssetsBootstrap, PrebuiltAssetsMetadata,
+    };
 
     fn valid_contract_json() -> String {
         format!(
@@ -149,6 +243,23 @@ mod tests {
   "build_timestamp": "2026-01-01T10:00:00Z",
   "artifact_name_storage": "analytics-storage-123",
   "artifact_name_models": "analytics-models-123"
+}}"#
+        )
+    }
+
+    fn valid_bootstrap_json() -> String {
+        format!(
+            r#"{{
+  "contract_version": "{PREBUILT_BOOTSTRAP_CONTRACT_VERSION}",
+  "profile": "prod",
+  "storage_instance_id": "analytics-prod",
+  "manifest_uri": "dbfs:/FileStore/manifests/prod/manifest.json",
+  "storage_artifact_uri": "dbfs:/FileStore/nova/prod/storage.tar.gz",
+  "metadata_artifact_uri": "dbfs:/FileStore/nova/prod/metadata.json",
+  "models_artifact_uri": "dbfs:/FileStore/nova/prod/models.tar.gz",
+  "manifest_hash": "abcd1234",
+  "dbt_nova_version": "0.0.2",
+  "build_timestamp": "2026-01-01T10:00:00Z"
 }}"#
         )
     }
@@ -201,5 +312,37 @@ mod tests {
         );
         let error = PrebuiltAssetsMetadata::from_json_str(&invalid).expect_err("invalid timestamp");
         assert!(error.to_string().contains("ISO-8601"));
+    }
+
+    #[test]
+    fn bootstrap_from_json_str_accepts_valid_contract() {
+        let bootstrap = PrebuiltAssetsBootstrap::from_json_str(&valid_bootstrap_json())
+            .expect("valid bootstrap contract should parse");
+        assert_eq!(
+            bootstrap.contract_version,
+            PREBUILT_BOOTSTRAP_CONTRACT_VERSION
+        );
+    }
+
+    #[test]
+    fn bootstrap_from_json_str_rejects_invalid_contract_version() {
+        let invalid = valid_bootstrap_json().replace(
+            "\"contract_version\": \"v1\"",
+            "\"contract_version\": \"v999\"",
+        );
+        let error = PrebuiltAssetsBootstrap::from_json_str(&invalid)
+            .expect_err("invalid bootstrap contract version should fail");
+        assert!(error.to_string().contains("contract_version"));
+    }
+
+    #[test]
+    fn bootstrap_from_json_str_rejects_empty_manifest_uri() {
+        let invalid = valid_bootstrap_json().replace(
+            "\"manifest_uri\": \"dbfs:/FileStore/manifests/prod/manifest.json\"",
+            "\"manifest_uri\": \"\"",
+        );
+        let error = PrebuiltAssetsBootstrap::from_json_str(&invalid)
+            .expect_err("empty manifest URI should fail");
+        assert!(error.to_string().contains("manifest_uri"));
     }
 }

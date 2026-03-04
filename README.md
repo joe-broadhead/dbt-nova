@@ -199,19 +199,29 @@ jobs:
 Consumer env (required):
 
 ```bash
-# Native remote artifact mode (recommended)
+# Bootstrap URI mode (recommended)
 export DBT_NOVA_STORAGE_DIR=/path/to/.dbt-nova
-export DBT_NOVA_STORAGE_INSTANCE_ID=analytics-prod
 export DBT_NOVA_STORAGE_READ_ONLY=true
+export DBT_NOVA_BOOTSTRAP_URI="$BOOTSTRAP_URI"
+export DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing
+
+# Optional explicit mode (still supported)
+export DBT_NOVA_STORAGE_INSTANCE_ID=analytics-prod
 export DBT_NOVA_STORAGE_ARTIFACT_URI="$STORAGE_URI"
 export DBT_NOVA_METADATA_ARTIFACT_URI="$METADATA_URI"
 export DBT_NOVA_MODELS_ARTIFACT_URI="$MODELS_URI"   # optional
-export DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing
 ```
 
 Optional: publish artifacts directly to cloud targets from the reusable
 workflow with `publish_targets` plus per-target prefixes
 (`publish_s3_prefix`, `publish_gcs_prefix`, `publish_dbfs_prefix`).
+When publish targets are enabled, the workflow publishes:
+- storage archive URI
+- manifest URI
+- metadata URI
+- bootstrap URI
+- optional models URI
+
 For faster CI in downstream repos, use `installer_install_mode=release` with a
 tagged `installer_ref` so the workflow downloads a prebuilt `dbt-nova` binary
 instead of compiling from source. Keep `installer_install_mode=auto` as the

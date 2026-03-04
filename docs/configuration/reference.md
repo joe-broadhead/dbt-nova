@@ -21,6 +21,7 @@ that file and ensure this page stays in sync.
 - `DBT_NOVA_STORAGE_ARTIFACT_URI` – optional URI to prebuilt storage archive (`file://`, `s3://`, `gs://`, `dbfs://`, `http(s)://`)
 - `DBT_NOVA_METADATA_ARTIFACT_URI` – optional URI to prebuilt metadata contract JSON (required with `DBT_NOVA_STORAGE_ARTIFACT_URI`)
 - `DBT_NOVA_MODELS_ARTIFACT_URI` – optional URI to prebuilt models archive
+- `DBT_NOVA_BOOTSTRAP_URI` – optional URI to a bootstrap contract JSON that can populate `manifest_uri`, `storage_instance_id`, and prebuilt artifact URIs (same supported schemes as prebuilt artifact URIs)
 - `DBT_NOVA_ARTIFACTS_CACHE_DIR` – optional cache dir for downloaded artifact archives (default: `<storage_root>/artifacts`)
 - `DBT_NOVA_ARTIFACT_FETCH_POLICY` – artifact fetch policy (`if_missing`, `always`, `never`; default: `if_missing`)
 - `DBT_NOVA_ARTIFACT_TIMEOUT_SECS` – fetch timeout for remote artifact downloads (`0` = disabled, default: `300`)
@@ -55,6 +56,7 @@ Remote manifest notes:
 - To force HTTPS for public/presigned URLs, set `DBT_NOVA_S3_MODE=https` or `DBT_NOVA_GCS_MODE=https`.
 - To allow insecure `http://` manifests (not recommended), set `DBT_NOVA_MANIFEST_ALLOW_HTTP=true`.
 - To allow insecure `http://` prebuilt artifact URIs (not recommended), set `DBT_NOVA_ARTIFACT_ALLOW_HTTP=true`.
+- Bootstrap precedence is deterministic: explicit env vars override bootstrap values, and bootstrap values override defaults.
 
 ## Storage
 

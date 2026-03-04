@@ -6,6 +6,7 @@ use crate::cli::args::{ConfigShowArgs, ConfigValidateArgs};
 use crate::cli::output::{CliEnvelope, error_envelope};
 use crate::config::DbtNovaConfig;
 use crate::error::DbtNovaError;
+use crate::manifest::bootstrap::prepare_runtime_config;
 
 use super::{DispatchError, DispatchResult};
 
@@ -104,9 +105,7 @@ fn config_for_show(args: &ConfigShowArgs) -> DbtNovaConfig {
 }
 
 fn validate_runtime_config(mut config: DbtNovaConfig) -> crate::error::Result<DbtNovaConfig> {
-    config.ensure_storage_instance_id();
-    config.ensure_embedding_cache_dir();
-    config.validate()?;
+    let _bootstrap_resolution = prepare_runtime_config(&mut config)?;
     // Mirror runtime storage-path safety checks used by manifest-loading paths so
     // `config validate` cannot report success for values that would fail later.
     let _ = config.manifest_cache_dir()?;
@@ -117,9 +116,12 @@ fn validate_runtime_config(mut config: DbtNovaConfig) -> crate::error::Result<Db
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::{config_for_show, validate_runtime_config};
     use crate::cli::args::ConfigShowArgs;
     use crate::config::DbtNovaConfig;
+    use tempfile::TempDir;
 
     #[test]
     fn config_show_defaults_matches_struct_default() {
@@ -162,5 +164,57 @@ mod tests {
         let err =
             validate_runtime_config(config).expect_err("unsafe storage_instance_id should fail");
         assert!(err.to_string().contains("storage instance id is unsafe"));
+    }
+
+    #[test]
+    fn validate_runtime_config_accepts_bootstrap_only_inputs() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let bootstrap_path = temp_dir.path().join("nova-bootstrap.json");
+        fs::write(
+            &bootstrap_path,
+            r#"{
+  "contract_version":"v1",
+  "profile":"prod",
+  "storage_instance_id":"bootstrap-instance",
+  "manifest_uri":"dbfs:/FileStore/manifests/prod/manifest.json",
+  "storage_artifact_uri":"dbfs:/FileStore/nova/prod/storage.tar.gz",
+  "metadata_artifact_uri":"dbfs:/FileStore/nova/prod/metadata.json",
+  "manifest_hash":"abc123",
+  "dbt_nova_version":"0.0.2",
+  "build_timestamp":"2026-01-01T10:00:00Z"
+}"#,
+        )
+        .expect("write bootstrap");
+
+        let config = DbtNovaConfig {
+            storage_dir: temp_dir
+                .path()
+                .join(".dbt-nova")
+                .to_string_lossy()
+                .to_string(),
+            bootstrap_uri: format!("file://{}", bootstrap_path.display()),
+            manifest_path: "manifest.json".to_string(),
+            manifest_uri: String::new(),
+            storage_instance_id: String::new(),
+            storage_artifact_uri: String::new(),
+            metadata_artifact_uri: String::new(),
+            ..DbtNovaConfig::default()
+        };
+
+        let validated =
+            validate_runtime_config(config).expect("bootstrap-only config should validate");
+        assert_eq!(validated.storage_instance_id, "bootstrap-instance");
+        assert_eq!(
+            validated.storage_artifact_uri,
+            "dbfs:/FileStore/nova/prod/storage.tar.gz"
+        );
+        assert_eq!(
+            validated.metadata_artifact_uri,
+            "dbfs:/FileStore/nova/prod/metadata.json"
+        );
+        assert_eq!(
+            validated.manifest_uri,
+            "dbfs:/FileStore/manifests/prod/manifest.json"
+        );
     }
 }

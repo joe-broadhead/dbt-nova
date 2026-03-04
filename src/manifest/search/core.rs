@@ -11,6 +11,7 @@ use tokio::sync::{Notify, RwLock};
 use crate::config::DbtNovaConfig;
 use crate::config::core::LayerRule;
 use crate::error::{DbtNovaError, Result};
+use crate::manifest::bootstrap::prepare_runtime_config;
 use crate::manifest::entity::{ArchivedEntity, Entity};
 use crate::manifest::store::EntityStore;
 use crate::manifest::tantivy_search::TantivySearcher;
@@ -59,6 +60,7 @@ pub struct ManifestSearch {
     pub(crate) manifest_metadata: JsonValue,
     pub(crate) manifest_health: JsonValue,
     pub(crate) artifact_consumer: JsonValue,
+    pub(crate) bootstrap: JsonValue,
 
     // === Stats ===
     pub(crate) entity_counts: HashMap<String, usize>,
@@ -473,6 +475,7 @@ impl ManifestSearch {
             },
             "manifest_health": self.manifest_health,
             "artifact_consumer": self.artifact_consumer,
+            "bootstrap": self.bootstrap,
             "manifest_cache": {
                 "hits": manifest_cache_hits,
                 "misses": manifest_cache_misses,
@@ -741,9 +744,10 @@ impl ManifestSearchHandle {
             }
         }
 
-        next.ensure_storage_instance_id();
-        next.ensure_embedding_cache_dir();
-        next.validate()?;
+        // Force bootstrap re-evaluation on reload so updates to the remote
+        // bootstrap contract are visible without restarting the process.
+        next.bootstrap_status = None;
+        let bootstrap_resolution = prepare_runtime_config(&mut next)?;
 
         {
             let mut guard = self.config.write().await;
@@ -782,6 +786,7 @@ impl ManifestSearchHandle {
             "manifest_uri": next.manifest_uri,
             "manifest_refresh_secs": next.manifest_refresh_secs,
             "storage_instance_id": next.storage_instance_id,
+            "bootstrap": bootstrap_resolution.status,
         });
         let build_config = next.clone();
         let state_clone = self.state.clone();
