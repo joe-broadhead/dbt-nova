@@ -69,7 +69,7 @@ impl BigQueryConfig {
 
         let access_token = resolve_gcp_access_token_async(&["DBT_NOVA_BIGQUERY_ACCESS_TOKEN"])
             .await
-            .map_err(|detail| bq_err(format!("Missing BigQuery access token. {detail}")))?;
+            .map_err(|err| bq_err(format!("Missing BigQuery access token. {err}")))?;
 
         let timeout_ms = env::var("DBT_NOVA_BIGQUERY_TIMEOUT_MS")
             .ok()

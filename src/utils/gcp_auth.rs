@@ -6,6 +6,8 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 
+use crate::error::{DbtNovaError, Result};
+
 const DEFAULT_TOKEN_URI: &str = "https://oauth2.googleapis.com/token";
 const CLOUD_PLATFORM_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform";
 const TOKEN_TIMEOUT_SECS: u64 = 15;
@@ -33,8 +35,8 @@ pub fn resolve_gcp_project_id(extra_env_keys: &[&str]) -> Option<String> {
 /// `extra_env_keys` are checked first, then shared Google defaults.
 ///
 /// # Errors
-/// Returns an error string when no credential source can produce a valid token.
-pub fn resolve_gcp_access_token(extra_env_keys: &[&str]) -> std::result::Result<String, String> {
+/// Returns an error when no credential source can produce a valid token.
+pub fn resolve_gcp_access_token(extra_env_keys: &[&str]) -> Result<String> {
     // Fast path: explicit tokens provided by caller/provider env.
     if let Some(token) =
         first_non_empty_env(extra_env_keys).or_else(|| first_non_empty_env(&GOOGLE_TOKEN_ENV_KEYS))
@@ -78,7 +80,7 @@ pub fn resolve_gcp_access_token(extra_env_keys: &[&str]) -> std::result::Result<
     if !failures.is_empty() {
         steps.push(format!("Details: {}", failures.join("; ")));
     }
-    Err(steps.join(". "))
+    Err(DbtNovaError::GcpAuthError(steps.join(". ")))
 }
 
 /// Async wrapper for resolving a Google OAuth access token.
@@ -88,10 +90,8 @@ pub fn resolve_gcp_access_token(extra_env_keys: &[&str]) -> std::result::Result<
 /// stay responsive.
 ///
 /// # Errors
-/// Returns an error string when no credential source can produce a valid token.
-pub async fn resolve_gcp_access_token_async(
-    extra_env_keys: &[&str],
-) -> std::result::Result<String, String> {
+/// Returns an error when no credential source can produce a valid token.
+pub async fn resolve_gcp_access_token_async(extra_env_keys: &[&str]) -> Result<String> {
     let keys: Vec<String> = extra_env_keys
         .iter()
         .map(|key| (*key).to_string())
@@ -101,7 +101,11 @@ pub async fn resolve_gcp_access_token_async(
         resolve_gcp_access_token(&refs)
     })
     .await
-    .map_err(|err| format!("failed to resolve GCP access token in blocking task: {err}"))?
+    .map_err(|err| {
+        DbtNovaError::GcpAuthError(format!(
+            "failed to resolve GCP access token in blocking task: {err}"
+        ))
+    })?
 }
 
 fn first_non_empty_env(keys: &[&str]) -> Option<String> {
@@ -248,6 +252,7 @@ fn token_from_service_account_file(path: &str) -> std::result::Result<String, St
 #[cfg(test)]
 mod tests {
     use super::{resolve_gcp_access_token, resolve_gcp_access_token_async, resolve_gcp_project_id};
+    use crate::error::DbtNovaError;
     use std::sync::{LazyLock, Mutex};
 
     static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -366,6 +371,24 @@ mod tests {
                     ]))
                     .expect("token should resolve");
                 assert_eq!(token, "bq-token-async");
+            },
+        );
+    }
+
+    #[test]
+    fn access_token_missing_sources_returns_structured_error() {
+        with_env(
+            &[
+                ("DBT_NOVA_BIGQUERY_ACCESS_TOKEN", None),
+                ("DBT_NOVA_GCP_ACCESS_TOKEN", None),
+                ("GCP_ACCESS_TOKEN", None),
+                ("GOOGLE_OAUTH_ACCESS_TOKEN", None),
+                ("GOOGLE_APPLICATION_CREDENTIALS", None),
+            ],
+            || {
+                let err = resolve_gcp_access_token(&["DBT_NOVA_BIGQUERY_ACCESS_TOKEN"])
+                    .expect_err("missing token sources should fail");
+                assert!(matches!(err, DbtNovaError::GcpAuthError(_)));
             },
         );
     }
