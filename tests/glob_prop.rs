@@ -13,7 +13,9 @@ proptest! {
         prop_assume!(!pattern.contains('?'));
         prop_assume!(!pattern.contains('['));
 
-        let expected = pattern == path;
+        let normalized_pattern = pattern.strip_prefix("./").unwrap_or(&pattern);
+        let normalized_path = path.strip_prefix("./").unwrap_or(&path);
+        let expected = normalized_pattern == normalized_path;
         let matched = glob_match(&pattern, &path);
         assert_eq!(matched, expected);
     }
