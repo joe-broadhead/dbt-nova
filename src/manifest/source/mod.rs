@@ -952,12 +952,20 @@ fn fetch_s3_manifest_sdk(
     config: &DbtNovaConfig,
 ) -> Result<ManifestResolution> {
     let (bucket, key) = split_bucket_key(rest)?;
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| DbtNovaError::ServerError(format!("Failed to init runtime: {e}")))?;
+    let runtime: std::sync::OnceLock<std::result::Result<tokio::runtime::Runtime, String>> =
+        std::sync::OnceLock::new();
 
     fetch_sdk_manifest_with_cache("S3", uri, config, || {
+        let rt = runtime
+            .get_or_init(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| format!("Failed to init runtime: {e}"))
+            })
+            .as_ref()
+            .map_err(|e| DbtNovaError::ServerError(e.clone()))?;
+
         rt.block_on(async {
             let fetch = async {
                 let shared = aws_config::defaults(aws_config::BehaviorVersion::latest())
@@ -1000,12 +1008,20 @@ fn fetch_gcs_manifest_sdk(
     config: &DbtNovaConfig,
 ) -> Result<ManifestResolution> {
     let (bucket, object) = split_bucket_key(rest)?;
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| DbtNovaError::ServerError(format!("Failed to init runtime: {e}")))?;
+    let runtime: std::sync::OnceLock<std::result::Result<tokio::runtime::Runtime, String>> =
+        std::sync::OnceLock::new();
 
     fetch_sdk_manifest_with_cache("GCS", uri, config, || {
+        let rt = runtime
+            .get_or_init(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| format!("Failed to init runtime: {e}"))
+            })
+            .as_ref()
+            .map_err(|e| DbtNovaError::ServerError(e.clone()))?;
+
         rt.block_on(async {
             let fetch = async {
                 let gcs_config = google_cloud_storage::client::ClientConfig::default()
