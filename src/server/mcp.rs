@@ -902,19 +902,11 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-
-    fn fixture_manifest_path() -> String {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests")
-            .join("fixtures")
-            .join("nova_manifest.json")
-            .to_string_lossy()
-            .to_string()
-    }
+    use crate::tests::common::fixture_manifest_path_string;
 
     fn test_config(storage_root: &Path) -> crate::config::DbtNovaConfig {
         let mut config = crate::config::DbtNovaConfig {
-            manifest_path: fixture_manifest_path(),
+            manifest_path: fixture_manifest_path_string(),
             manifest_refresh_secs: 0,
             storage_dir: storage_root.join(".dbt-nova").to_string_lossy().to_string(),
             storage_instance_id: "server-mcp-tests".to_string(),

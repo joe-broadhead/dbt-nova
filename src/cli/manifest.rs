@@ -335,21 +335,13 @@ mod tests {
     };
     use crate::cli::args::{ManifestLoadArgs, ManifestReloadArgs};
     use crate::config::DbtNovaConfig;
+    use crate::tests::common::fixture_manifest_path_string;
     use tempfile::TempDir;
-
-    fn fixture_manifest_path() -> String {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests")
-            .join("fixtures")
-            .join("nova_manifest.json")
-            .to_string_lossy()
-            .to_string()
-    }
 
     #[test]
     fn build_manifest_load_config_uses_cli_overrides() {
         let args = ManifestLoadArgs {
-            manifest_path: Some(fixture_manifest_path()),
+            manifest_path: Some(fixture_manifest_path_string()),
             manifest_uri: None,
             storage_instance_id: Some("test-instance".to_string()),
             cleanup_storage_on_start: true,
@@ -370,7 +362,7 @@ mod tests {
     #[test]
     fn build_manifest_reload_config_uses_refresh_override() {
         let args = ManifestReloadArgs {
-            manifest_path: Some(fixture_manifest_path()),
+            manifest_path: Some(fixture_manifest_path_string()),
             refresh_secs: Some(120),
             storage_instance_id: Some("test-instance".to_string()),
             cleanup_storage_on_start: true,
@@ -389,7 +381,7 @@ mod tests {
     #[test]
     fn build_manifest_load_config_rejects_unsafe_instance_id() {
         let args = ManifestLoadArgs {
-            manifest_path: Some(fixture_manifest_path()),
+            manifest_path: Some(fixture_manifest_path_string()),
             storage_instance_id: Some("../unsafe".to_string()),
             ..ManifestLoadArgs::default()
         };
@@ -405,7 +397,7 @@ mod tests {
     #[test]
     fn build_manifest_reload_config_rejects_unsafe_instance_id() {
         let args = ManifestReloadArgs {
-            manifest_path: Some(fixture_manifest_path()),
+            manifest_path: Some(fixture_manifest_path_string()),
             storage_instance_id: Some("../unsafe".to_string()),
             ..ManifestReloadArgs::default()
         };
@@ -421,7 +413,7 @@ mod tests {
     #[tokio::test]
     async fn execute_manifest_load_succeeds_for_fixture() {
         let args = ManifestLoadArgs {
-            manifest_path: Some(fixture_manifest_path()),
+            manifest_path: Some(fixture_manifest_path_string()),
             ..ManifestLoadArgs::default()
         };
         let mut config = build_manifest_load_config(&args).expect("config");
@@ -457,7 +449,7 @@ mod tests {
         let temp_dir = TempDir::new().expect("temp dir");
 
         let args = ManifestLoadArgs {
-            manifest_path: Some(fixture_manifest_path()),
+            manifest_path: Some(fixture_manifest_path_string()),
             storage_instance_id: Some("readonly-instance".to_string()),
             ..ManifestLoadArgs::default()
         };
@@ -509,10 +501,10 @@ mod tests {
     async fn execute_manifest_load_read_only_reuses_indexes_when_manifest_path_changes() {
         let temp_dir = TempDir::new().expect("temp dir");
         let copied_manifest_path = temp_dir.path().join("copied-manifest.json");
-        fs::copy(fixture_manifest_path(), &copied_manifest_path).expect("copy manifest");
+        fs::copy(fixture_manifest_path_string(), &copied_manifest_path).expect("copy manifest");
 
         let bootstrap_args = ManifestLoadArgs {
-            manifest_path: Some(fixture_manifest_path()),
+            manifest_path: Some(fixture_manifest_path_string()),
             storage_instance_id: Some("readonly-path-change".to_string()),
             ..ManifestLoadArgs::default()
         };
@@ -559,7 +551,7 @@ mod tests {
     async fn execute_manifest_load_read_only_without_reusable_index_fails() {
         let temp_dir = TempDir::new().expect("temp dir");
         let args = ManifestLoadArgs {
-            manifest_path: Some(fixture_manifest_path()),
+            manifest_path: Some(fixture_manifest_path_string()),
             ..ManifestLoadArgs::default()
         };
         let mut config = build_manifest_load_config(&args).expect("config");
@@ -586,7 +578,7 @@ mod tests {
     #[tokio::test]
     async fn manifest_load_success_json_has_expected_envelope_shape() {
         let args = ManifestLoadArgs {
-            manifest_path: Some(fixture_manifest_path()),
+            manifest_path: Some(fixture_manifest_path_string()),
             ..ManifestLoadArgs::default()
         };
         let mut config = build_manifest_load_config(&args).expect("config");

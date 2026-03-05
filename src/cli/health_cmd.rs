@@ -199,25 +199,15 @@ fn string_field<'a>(value: &'a JsonValue, key: &str, fallback: &'a str) -> &'a s
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use super::{build_cli_health_payload, build_health_check_config};
     use crate::cli::args::HealthCheckArgs;
     use crate::cli::manifest::execute_manifest_load;
-
-    fn fixture_manifest_path() -> String {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests")
-            .join("fixtures")
-            .join("nova_manifest.json")
-            .to_string_lossy()
-            .to_string()
-    }
+    use crate::tests::common::fixture_manifest_path_string;
 
     #[test]
     fn build_health_check_config_uses_manifest_path_override() {
         let args = HealthCheckArgs {
-            manifest_path: Some(fixture_manifest_path()),
+            manifest_path: Some(fixture_manifest_path_string()),
             manifest_uri: None,
             json: false,
         };
@@ -244,7 +234,7 @@ mod tests {
     #[test]
     fn build_health_check_config_disables_storage_maintenance() {
         let args = HealthCheckArgs {
-            manifest_path: Some(fixture_manifest_path()),
+            manifest_path: Some(fixture_manifest_path_string()),
             manifest_uri: None,
             json: false,
         };
@@ -256,7 +246,7 @@ mod tests {
     #[tokio::test]
     async fn build_cli_health_payload_reports_ready_status() {
         let args = HealthCheckArgs {
-            manifest_path: Some(fixture_manifest_path()),
+            manifest_path: Some(fixture_manifest_path_string()),
             manifest_uri: None,
             json: false,
         };

@@ -36,8 +36,12 @@ pub fn get_searcher() -> TestSearchEnv {
     get_searcher_for_manifest(&manifest_path)
 }
 
-fn fixture_manifest_path() -> PathBuf {
+pub(crate) fn fixture_manifest_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/nova_manifest.json")
+}
+
+pub(crate) fn fixture_manifest_path_string() -> String {
+    fixture_manifest_path().to_string_lossy().to_string()
 }
 
 pub fn get_searcher_with_fixture(fixture_name: &str) -> TestSearchEnv {

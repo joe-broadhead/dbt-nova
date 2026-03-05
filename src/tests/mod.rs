@@ -7,7 +7,7 @@
 mod batch_get;
 mod column_lineage;
 mod columns;
-mod common;
+pub(crate) mod common;
 mod context;
 mod coverage;
 mod deep_metadata;
