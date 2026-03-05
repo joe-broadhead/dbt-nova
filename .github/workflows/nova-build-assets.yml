@@ -878,7 +878,6 @@ jobs:
           python3 - <<'PY'
           import json
           import os
-          import shlex
           import subprocess
           import sys
 
@@ -952,8 +951,10 @@ jobs:
               )
           elif mode == "structured":
               invocation = [executable, *command_args]
-              rendered = " ".join(shlex.quote(part) for part in invocation)
-              print(f"Running structured dbt invocation: {rendered}", file=sys.stderr)
+              print(
+                  f"Running structured dbt invocation with executable '{executable}'",
+                  file=sys.stderr,
+              )
               completed = subprocess.run(invocation, env=runtime_env, check=False)
           else:
               print(
