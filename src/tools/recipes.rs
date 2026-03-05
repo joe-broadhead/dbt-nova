@@ -204,7 +204,6 @@ impl ManifestSearch {
     ///
     /// # Errors
     /// Returns an error if the recipe is not found or SQL files cannot be read.
-    #[allow(deprecated)]
     #[instrument(skip(self, params), fields(tool = "get_recipe", recipe_id = %params.recipe_id))]
     pub async fn get_recipe(&self, params: &GetRecipeParams) -> Result<JsonValue> {
         if params.recipe_id.trim().is_empty() {
@@ -260,7 +259,6 @@ impl ManifestSearch {
     /// # Errors
     /// Returns an error if the recipe cannot be resolved, query execution fails, or query selection is invalid.
     #[allow(clippy::too_many_lines)]
-    #[allow(deprecated)]
     #[instrument(
         skip(self, params),
         fields(
@@ -1479,7 +1477,6 @@ fn select_recipe_queries<'a>(
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
 
@@ -1672,6 +1669,33 @@ mod tests {
             err.to_string()
                 .contains("Missing runtime parameter for placeholder '__TARGET_TABLE__'")
         );
+    }
+
+    #[test]
+    fn test_resolve_recipe_placeholder_types_legacy_fallback_normalizes_keys() {
+        let mut legacy = HashMap::new();
+        legacy.insert("country_code".to_string(), "string".to_string());
+
+        let resolved = resolve_recipe_placeholder_types(None, Some(&legacy), "get_recipe")
+            .expect("expected successful fallback resolution")
+            .expect("expected merged fallback map");
+
+        assert_eq!(resolved.get("country_code"), Some(&"string".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_recipe_placeholder_types_rejects_conflicting_hints() {
+        let mut primary = HashMap::new();
+        primary.insert("COUNTRY_CODE".to_string(), "identifier".to_string());
+        let mut legacy = HashMap::new();
+        legacy.insert("country_code".to_string(), "string".to_string());
+
+        let err = resolve_recipe_placeholder_types(Some(&primary), Some(&legacy), "run_recipe")
+            .expect_err("expected conflicting hint error");
+        let message = err.to_string();
+        assert!(message.contains("conflicting type hints"));
+        assert!(message.contains("placeholder_types"));
+        assert!(message.contains("parameter_types"));
     }
 
     #[test]

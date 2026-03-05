@@ -161,12 +161,8 @@ pub struct GetRecipeParams {
     /// Optional placeholder type hints (e.g. {"country_code":"string","target_table":"identifier"}).
     #[serde(default)]
     pub placeholder_types: Option<HashMap<String, String>>,
-    /// Deprecated alias for `placeholder_types`.
-    /// Use `placeholder_types` instead.
-    #[deprecated(
-        since = "0.0.2",
-        note = "Use placeholder_types instead of parameter_types."
-    )]
+    /// Legacy compatibility alias for `placeholder_types`.
+    /// Prefer `placeholder_types` for new clients.
     #[serde(default)]
     pub parameter_types: Option<HashMap<String, String>>,
 }
@@ -214,14 +210,10 @@ pub struct RunRecipeParams {
     /// (e.g., {"as_of_date":"DATE"}).
     #[serde(default)]
     pub sql_parameter_types: Option<HashMap<String, String>>,
-    /// Deprecated alias fallback for both `placeholder_types` and
+    /// Legacy compatibility alias fallback for both `placeholder_types` and
     /// `sql_parameter_types`.
-    /// Use `placeholder_types` for placeholder coercion and
-    /// `sql_parameter_types` for warehouse bind parameter hints.
-    #[deprecated(
-        since = "0.0.2",
-        note = "Use placeholder_types and sql_parameter_types instead of parameter_types."
-    )]
+    /// Prefer `placeholder_types` for placeholder coercion and
+    /// `sql_parameter_types` for warehouse bind parameter hints in new clients.
     #[serde(default)]
     pub parameter_types: Option<HashMap<String, String>>,
     /// Fetch all result chunks for each query (default true in client)
