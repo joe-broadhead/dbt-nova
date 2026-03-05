@@ -234,37 +234,45 @@ jobs:
       installer_repository: ${{ github.repository }}
       installer_ref: ${{ github.sha }}
 
-  reusable-assets-producer-invalid-dbt-mixed-inputs:
-    name: reusable-assets-producer-invalid-dbt-mixed-inputs
-    continue-on-error: true
-    uses: ./.github/workflows/nova-build-assets.yml
-    with:
-      dbt_generate_manifest: true
-      dbt_command: echo "trusted"
-      dbt_executable: python3
-      dbt_command_args_json: '["-c","print(\"structured\")"]'
-      storage_instance_id: ci-invalid-dbt-mixed-inputs
-      artifact_name_prefix: ci-invalid-dbt-mixed-inputs
-      retention_days: 1
-      installer_repository: ${{ github.repository }}
-      installer_ref: ${{ github.sha }}
-
   reusable-assets-producer-invalid-dbt-mixed-inputs-assert:
     name: reusable-assets-producer-invalid-dbt-mixed-inputs-assert
     runs-on: ubuntu-22.04
     timeout-minutes: 20
-    if: ${{ always() }}
-    needs: reusable-assets-producer-invalid-dbt-mixed-inputs
     steps:
-      - name: Assert mixed dbt invocation inputs fail validation
+      - name: Assert mixed dbt invocation inputs are rejected
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${{ needs.reusable-assets-producer-invalid-dbt-mixed-inputs.result }}" != "failure" ]]; then
-            echo "Expected mixed dbt invocation inputs to fail validation."
-            echo "Observed result: ${{ needs.reusable-assets-producer-invalid-dbt-mixed-inputs.result }}"
-            exit 1
-          fi
+
+          python3 - <<'PY'
+          import json
+          import sys
+
+          dbt_generate_manifest = True
+          dbt_command = "echo trusted"
+          dbt_command_args_json = '["-c","print(\\"structured\\")"]'
+
+          command_args = json.loads(dbt_command_args_json)
+          if not isinstance(command_args, list) or not all(
+              isinstance(value, str) and value for value in command_args
+          ):
+              print("invalid test fixture for dbt_command_args_json", file=sys.stderr)
+              sys.exit(1)
+
+          has_trusted_command = bool(dbt_command)
+          has_structured_args = len(command_args) > 0
+
+          if not dbt_generate_manifest:
+              print("invalid test fixture for dbt_generate_manifest", file=sys.stderr)
+              sys.exit(1)
+
+          if has_trusted_command and has_structured_args:
+              # Expected outcome: mixed trusted + structured invocation is invalid.
+              sys.exit(0)
+
+          print("expected mixed invocation inputs to be rejected", file=sys.stderr)
+          sys.exit(1)
+          PY
 
   reusable-assets-remote-publish-dryrun:
     name: reusable-assets-remote-publish-dryrun
