@@ -206,6 +206,66 @@ jobs:
       installer_repository: ${{ github.repository }}
       installer_ref: ${{ github.sha }}
 
+  reusable-assets-producer-structured-dbt:
+    name: reusable-assets-producer-structured-dbt
+    uses: ./.github/workflows/nova-build-assets.yml
+    with:
+      dbt_generate_manifest: true
+      dbt_executable: python3
+      dbt_command_args_json: '["-c","from pathlib import Path; Path(\"target\").mkdir(exist_ok=True); Path(\"target/manifest.json\").write_text(Path(\"tests/fixtures/nova_manifest.json\").read_text(encoding=\"utf-8\"), encoding=\"utf-8\")"]'
+      storage_instance_id: ci-structured-dbt-smoke
+      artifact_name_prefix: ci-structured-dbt-smoke
+      retention_days: 1
+      installer_repository: ${{ github.repository }}
+      installer_ref: ${{ github.sha }}
+
+  reusable-assets-producer-trusted-dbt:
+    name: reusable-assets-producer-trusted-dbt
+    uses: ./.github/workflows/nova-build-assets.yml
+    with:
+      dbt_generate_manifest: true
+      dbt_command: |
+        set -euo pipefail
+        mkdir -p target
+        cp tests/fixtures/nova_manifest.json target/manifest.json
+      storage_instance_id: ci-trusted-dbt-smoke
+      artifact_name_prefix: ci-trusted-dbt-smoke
+      retention_days: 1
+      installer_repository: ${{ github.repository }}
+      installer_ref: ${{ github.sha }}
+
+  reusable-assets-producer-invalid-dbt-mixed-inputs:
+    name: reusable-assets-producer-invalid-dbt-mixed-inputs
+    continue-on-error: true
+    uses: ./.github/workflows/nova-build-assets.yml
+    with:
+      dbt_generate_manifest: true
+      dbt_command: echo "trusted"
+      dbt_executable: python3
+      dbt_command_args_json: '["-c","print(\"structured\")"]'
+      storage_instance_id: ci-invalid-dbt-mixed-inputs
+      artifact_name_prefix: ci-invalid-dbt-mixed-inputs
+      retention_days: 1
+      installer_repository: ${{ github.repository }}
+      installer_ref: ${{ github.sha }}
+
+  reusable-assets-producer-invalid-dbt-mixed-inputs-assert:
+    name: reusable-assets-producer-invalid-dbt-mixed-inputs-assert
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    if: ${{ always() }}
+    needs: reusable-assets-producer-invalid-dbt-mixed-inputs
+    steps:
+      - name: Assert mixed dbt invocation inputs fail validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ needs.reusable-assets-producer-invalid-dbt-mixed-inputs.result }}" != "failure" ]]; then
+            echo "Expected mixed dbt invocation inputs to fail validation."
+            echo "Observed result: ${{ needs.reusable-assets-producer-invalid-dbt-mixed-inputs.result }}"
+            exit 1
+          fi
+
   reusable-assets-remote-publish-dryrun:
     name: reusable-assets-remote-publish-dryrun
     uses: ./.github/workflows/nova-build-assets.yml

@@ -33,15 +33,20 @@ Operational defaults:
 - **File:** `.github/workflows/nova-build-assets.yml`
 - **Use:** reusable workflow invoked by CI and downstream repos
 - **Inputs:** `manifest_path` or `manifest_uri`, `storage_instance_id`,
-  optional dbt manifest generation (`dbt_command`, `dbt_env_json`,
-  `dbt_secret_env_map_json`), optional workflow_call secret bundle
+  optional dbt manifest generation with structured invocation
+  (`dbt_command_args_json`, optional `dbt_executable`) or trusted shell
+  invocation (`dbt_command`), plus `dbt_env_json`,
+  `dbt_secret_env_map_json`, optional workflow_call secret bundle
   (`DBT_NOVA_SECRET_BUNDLE_JSON`), optional installer source override
   (`installer_repository`, `installer_ref`, `installer_install_mode`), optional models artifact, optional remote publish
   targets (`s3`, `gcs`, `dbfs`) and `publish_dry_run`; models behavior is
   configured via `models_distribution_mode` (`none|publish_only|publish_and_bootstrap`)
-- **Trust boundary:** when `dbt_generate_manifest=true`, `dbt_command` is
-  executed via `bash -lc` in the caller repository context and must be treated
-  as trusted caller input
+- **Invocation safety:** structured mode runs
+  `[dbt_executable, *dbt_command_args_json]` without shell interpolation and is
+  the recommended default. `dbt_command` remains available for trusted callers
+  that require shell semantics.
+- **Validation:** `dbt_command` and `dbt_command_args_json` are mutually
+  exclusive when `dbt_generate_manifest=true`
 - **Outputs:** manifest metadata (`manifest_hash`, `manifest_version`,
   `entity_count`), artifact names (including manifest/bootstrap), and optional
   published URI JSON objects (`storage`, `manifest`, `metadata`, `bootstrap`,

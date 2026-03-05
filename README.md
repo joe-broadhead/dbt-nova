@@ -229,9 +229,14 @@ safe default, and use `installer_install_mode=source` for older runner images
 or unreleased installer commits.
 
 If you generate manifests in the reusable workflow (`dbt_generate_manifest: true`),
-use `dbt_env_json` and `dbt_secret_env_map_json` to pass profile-specific env/secret
-variables generically (Databricks, BigQuery, DuckDB, etc.). For cross-owner
-reusable workflow calls, pass one declared secret
+prefer structured invocation with `dbt_command_args_json` (and optional
+`dbt_executable`) to avoid shell interpolation. Keep `dbt_command` only for
+trusted advanced shell cases. `dbt_command` and `dbt_command_args_json` are
+mutually exclusive.
+
+Use `dbt_env_json` and `dbt_secret_env_map_json` to pass profile-specific
+env/secret variables generically (Databricks, BigQuery, DuckDB, etc.). For
+cross-owner reusable workflow calls, pass one declared secret
 `DBT_NOVA_SECRET_BUNDLE_JSON` (JSON object of key->value) and reference those keys
 in `dbt_secret_env_map_json`.
 

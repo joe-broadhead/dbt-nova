@@ -42,8 +42,18 @@ on:
         required: false
         type: string
         default: ""
+      dbt_command_args_json:
+        description: "Structured dbt invocation args as JSON array (e.g. [\"compile\",\"--target\",\"prod\"])"
+        required: false
+        type: string
+        default: "[]"
+      dbt_executable:
+        description: "Executable used for structured dbt invocation when dbt_command_args_json is set"
+        required: false
+        type: string
+        default: "dbt"
       dbt_env_json:
-        description: "JSON object of non-secret env vars exported before dbt_command (e.g. {\"DBT_TARGET\":\"prod\"})"
+        description: "JSON object of non-secret env vars exported before dbt invocation (e.g. {\"DBT_TARGET\":\"prod\"})"
         required: false
         type: string
         default: "{}"
@@ -183,8 +193,18 @@ on:
         required: false
         type: string
         default: ""
+      dbt_command_args_json:
+        description: "Structured dbt invocation args as JSON array (e.g. [\"compile\",\"--target\",\"prod\"])"
+        required: false
+        type: string
+        default: "[]"
+      dbt_executable:
+        description: "Executable used for structured dbt invocation when dbt_command_args_json is set"
+        required: false
+        type: string
+        default: "dbt"
       dbt_env_json:
-        description: "JSON object of non-secret env vars exported before dbt_command (e.g. {\"DBT_TARGET\":\"prod\"})"
+        description: "JSON object of non-secret env vars exported before dbt invocation (e.g. {\"DBT_TARGET\":\"prod\"})"
         required: false
         type: string
         default: "{}"
@@ -263,6 +283,9 @@ jobs:
       include_models_in_bootstrap: ${{ steps.resolve.outputs.include_models_in_bootstrap }}
       dbt_env_json: ${{ steps.resolve.outputs.dbt_env_json }}
       dbt_secret_env_map_json: ${{ steps.resolve.outputs.dbt_secret_env_map_json }}
+      dbt_invocation_mode: ${{ steps.resolve.outputs.dbt_invocation_mode }}
+      dbt_command_args_json: ${{ steps.resolve.outputs.dbt_command_args_json }}
+      dbt_executable: ${{ steps.resolve.outputs.dbt_executable }}
     steps:
       - name: Validate inputs and set deterministic paths
         id: resolve
@@ -276,6 +299,8 @@ jobs:
           INPUT_INSTALLER_INSTALL_MODE: ${{ inputs.installer_install_mode }}
           INPUT_DBT_GENERATE_MANIFEST: ${{ inputs.dbt_generate_manifest }}
           INPUT_DBT_COMMAND: ${{ inputs.dbt_command }}
+          INPUT_DBT_COMMAND_ARGS_JSON: ${{ inputs.dbt_command_args_json }}
+          INPUT_DBT_EXECUTABLE: ${{ inputs.dbt_executable }}
           INPUT_DBT_ENV_JSON: ${{ inputs.dbt_env_json }}
           INPUT_DBT_SECRET_ENV_MAP_JSON: ${{ inputs.dbt_secret_env_map_json }}
           INPUT_MODELS_DISTRIBUTION_MODE: ${{ inputs.models_distribution_mode }}
@@ -303,6 +328,8 @@ jobs:
           installer_install_mode="${INPUT_INSTALLER_INSTALL_MODE}"
           dbt_generate_manifest="${INPUT_DBT_GENERATE_MANIFEST}"
           dbt_command="${INPUT_DBT_COMMAND}"
+          dbt_command_args_json="${INPUT_DBT_COMMAND_ARGS_JSON}"
+          dbt_executable="${INPUT_DBT_EXECUTABLE}"
           dbt_env_json="${INPUT_DBT_ENV_JSON}"
           dbt_secret_env_map_json="${INPUT_DBT_SECRET_ENV_MAP_JSON}"
           models_distribution_mode="${INPUT_MODELS_DISTRIBUTION_MODE}"
@@ -342,8 +369,87 @@ jobs:
             echo "Provide only one of manifest_path or manifest_uri."
             exit 1
           fi
-          if [[ "${dbt_generate_manifest}" == "true" && -z "${dbt_command}" ]]; then
-            echo "dbt_generate_manifest=true requires dbt_command."
+          dbt_command_args_json="$(
+            DBT_COMMAND_ARGS_JSON_INPUT="${dbt_command_args_json}" python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          raw = os.environ.get("DBT_COMMAND_ARGS_JSON_INPUT", "[]")
+          try:
+              payload = json.loads(raw)
+          except json.JSONDecodeError:
+              print("dbt_command_args_json must be valid JSON.", file=sys.stderr)
+              sys.exit(1)
+
+          if not isinstance(payload, list):
+              print("dbt_command_args_json must be a JSON array.", file=sys.stderr)
+              sys.exit(1)
+
+          for value in payload:
+              if not isinstance(value, str):
+                  print(
+                      "dbt_command_args_json values must all be strings.",
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
+              if value == "":
+                  print(
+                      "dbt_command_args_json values must not be empty strings.",
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
+
+          print(json.dumps(payload, separators=(",", ":")))
+          PY
+          )"
+          dbt_command_args_count="$(
+            DBT_COMMAND_ARGS_JSON_INPUT="${dbt_command_args_json}" python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          payload = json.loads(os.environ.get("DBT_COMMAND_ARGS_JSON_INPUT", "[]"))
+          if not isinstance(payload, list):
+              sys.exit(1)
+          print(len(payload))
+          PY
+          )"
+
+          if [[ -z "${dbt_executable}" ]]; then
+            dbt_executable="dbt"
+          fi
+          if [[ "${dbt_executable}" =~ [[:space:]] ]]; then
+            echo "dbt_executable must not contain whitespace."
+            exit 1
+          fi
+
+          dbt_invocation_mode="none"
+          if [[ "${dbt_generate_manifest}" == "true" ]]; then
+            has_trusted_command="false"
+            if [[ -n "${dbt_command}" ]]; then
+              has_trusted_command="true"
+            fi
+            has_structured_args="false"
+            if (( dbt_command_args_count > 0 )); then
+              has_structured_args="true"
+            fi
+
+            if [[ "${has_trusted_command}" == "true" && "${has_structured_args}" == "true" ]]; then
+              echo "Provide only one of dbt_command or dbt_command_args_json."
+              exit 1
+            fi
+            if [[ "${has_trusted_command}" == "false" && "${has_structured_args}" == "false" ]]; then
+              echo "dbt_generate_manifest=true requires dbt_command or dbt_command_args_json."
+              exit 1
+            fi
+            if [[ "${has_structured_args}" == "true" ]]; then
+              dbt_invocation_mode="structured"
+            else
+              dbt_invocation_mode="trusted_shell"
+            fi
+          elif [[ -n "${dbt_command}" || "${dbt_command_args_count}" != "0" ]]; then
+            echo "dbt_command/dbt_command_args_json require dbt_generate_manifest=true."
             exit 1
           fi
 
@@ -570,6 +676,9 @@ jobs:
           echo "include_models_in_bootstrap=${include_models_in_bootstrap}" >> "$GITHUB_OUTPUT"
           echo "dbt_env_json=${dbt_env_json}" >> "$GITHUB_OUTPUT"
           echo "dbt_secret_env_map_json=${dbt_secret_env_map_json}" >> "$GITHUB_OUTPUT"
+          echo "dbt_invocation_mode=${dbt_invocation_mode}" >> "$GITHUB_OUTPUT"
+          echo "dbt_command_args_json=${dbt_command_args_json}" >> "$GITHUB_OUTPUT"
+          echo "dbt_executable=${dbt_executable}" >> "$GITHUB_OUTPUT"
 
       - name: Summarize contract
         shell: bash
@@ -592,6 +701,9 @@ jobs:
             echo "- include_models_in_bootstrap: \`${{ steps.resolve.outputs.include_models_in_bootstrap }}\`"
             echo "- dbt_env_json: \`${{ steps.resolve.outputs.dbt_env_json }}\`"
             echo "- dbt_secret_env_map_json: \`${{ steps.resolve.outputs.dbt_secret_env_map_json }}\`"
+            echo "- dbt_invocation_mode: \`${{ steps.resolve.outputs.dbt_invocation_mode }}\`"
+            echo "- dbt_executable: \`${{ steps.resolve.outputs.dbt_executable }}\`"
+            echo "- dbt_command_args_json: \`${{ steps.resolve.outputs.dbt_command_args_json }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   build:
@@ -753,6 +865,9 @@ jobs:
         shell: bash
         env:
           INPUT_DBT_COMMAND: ${{ inputs.dbt_command }}
+          INPUT_DBT_INVOCATION_MODE: ${{ needs.prepare.outputs.dbt_invocation_mode }}
+          INPUT_DBT_COMMAND_ARGS_JSON: ${{ needs.prepare.outputs.dbt_command_args_json }}
+          INPUT_DBT_EXECUTABLE: ${{ needs.prepare.outputs.dbt_executable }}
           INPUT_DBT_ENV_JSON: ${{ needs.prepare.outputs.dbt_env_json }}
           INPUT_DBT_SECRET_ENV_MAP_JSON: ${{ needs.prepare.outputs.dbt_secret_env_map_json }}
           INHERITED_SECRETS_JSON: ${{ toJSON(secrets) }}
@@ -763,10 +878,14 @@ jobs:
           python3 - <<'PY'
           import json
           import os
+          import shlex
           import subprocess
           import sys
 
+          mode = os.environ["INPUT_DBT_INVOCATION_MODE"]
           command = os.environ["INPUT_DBT_COMMAND"]
+          command_args = json.loads(os.environ["INPUT_DBT_COMMAND_ARGS_JSON"])
+          executable = os.environ["INPUT_DBT_EXECUTABLE"]
           plain_env = json.loads(os.environ["INPUT_DBT_ENV_JSON"])
           secret_env_map = json.loads(os.environ["INPUT_DBT_SECRET_ENV_MAP_JSON"])
           inherited_secrets = json.loads(os.environ["INHERITED_SECRETS_JSON"])
@@ -825,8 +944,24 @@ jobs:
               # Preserve exact secret bytes (including trailing newlines).
               runtime_env[env_name] = secret_value
 
-          # Trust boundary: callers control INPUT_DBT_COMMAND in their own repository.
-          completed = subprocess.run(["bash", "-lc", command], env=runtime_env, check=False)
+          if mode == "trusted_shell":
+              # Trust boundary: callers control INPUT_DBT_COMMAND in their own repository.
+              print("Running trusted dbt command via bash -lc", file=sys.stderr)
+              completed = subprocess.run(
+                  ["bash", "-lc", command], env=runtime_env, check=False
+              )
+          elif mode == "structured":
+              invocation = [executable, *command_args]
+              rendered = " ".join(shlex.quote(part) for part in invocation)
+              print(f"Running structured dbt invocation: {rendered}", file=sys.stderr)
+              completed = subprocess.run(invocation, env=runtime_env, check=False)
+          else:
+              print(
+                  f"unsupported dbt invocation mode '{mode}'",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
           sys.exit(completed.returncode)
           PY
 
