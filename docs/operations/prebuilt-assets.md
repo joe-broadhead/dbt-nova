@@ -105,6 +105,14 @@ Models distribution modes:
 - `publish_only`: package/publish models artifact, but bootstrap still omits `models_artifact_uri`.
 - `publish_and_bootstrap`: package/publish models artifact and include `models_artifact_uri` in bootstrap.
 
+Consumer impact by mode:
+
+| `models_distribution_mode` | Models archive published | Bootstrap includes models URI | Consumer expectation |
+|---|---|---|---|
+| `none` | No | No | Use local model cache (`DBT_NOVA_EMBEDDINGS_CACHE_DIR`) or on-demand model download |
+| `publish_only` | Yes | No | Optional manual consumer opt-in via `DBT_NOVA_MODELS_ARTIFACT_URI` |
+| `publish_and_bootstrap` | Yes | Yes | Bootstrap-native remote model hydration |
+
 ## Optional remote publish targets
 
 Use this when consumers should pull artifacts from cloud storage instead of
@@ -294,5 +302,6 @@ tar -xzf <artifact_name_storage>.tar.gz
 ## Related docs
 
 - [MCP Client Configs](../getting-started/mcp-clients.md)
+- [Modes & Combinations](../getting-started/modes-and-combinations.md)
 - [Troubleshooting](troubleshooting.md)
 - [CI & Automation](../development/ci.md)

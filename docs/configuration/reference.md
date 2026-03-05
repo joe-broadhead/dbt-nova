@@ -7,6 +7,9 @@ search on real‑world manifests.
 `src/config/` via `scripts/update_config_reference.sh`. When defaults change, regenerate
 that file and ensure this page stays in sync.
 
+For end-to-end install/runtime composition patterns (binary + manifest + artifacts + models + SQL provider),
+see [Modes & Combinations](../getting-started/modes-and-combinations.md).
+
 ## Core
 
 - `DBT_MANIFEST_PATH` – path to `manifest.json` (default: `manifest.json`)
@@ -74,6 +77,12 @@ Remote manifest notes:
 - `DBT_NOVA_STORAGE_READ_ONLY` – do not build indexes (`true`|`false`, default: `false`)
 - `DBT_NOVA_ENTITY_CACHE_SIZE` – max entities cached in memory (`0` disables, default: `1000`)
 - `DBT_NOVA_EMBEDDINGS_CACHE_DIR` – embeddings cache directory (default: `models/` next to executable if present, else `<storage_root>/.fastembed_cache`)
+
+Embeddings cache resolution order when `DBT_NOVA_EMBEDDINGS_CACHE_DIR` is unset:
+
+1. `models/` next to the active executable
+2. `~/.local/bin/models` (if present)
+3. `<storage_root>/.fastembed_cache`
 
 Notes:
 - The entity cache backend is currently fixed to `moka` (no env override).
