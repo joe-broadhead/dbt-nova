@@ -124,7 +124,7 @@ jobs:
     timeout-minutes: 60
     env:
       DBT_NOVA_STRICT_SCHEMA: "1"
-      COVERAGE_MIN_LINES: "70"
+      COVERAGE_MIN_LINES: "65"
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5

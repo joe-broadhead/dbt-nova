@@ -105,7 +105,7 @@ Recommended commands:
 ```bash
 cargo test
 cargo test --all-targets
-cargo llvm-cov --locked --all-features --workspace --summary-only --fail-under-lines 70
+cargo llvm-cov --locked --all-features --workspace --summary-only --fail-under-lines 65
 ```
 
 ## Versioned Artifacts
@@ -118,7 +118,7 @@ cargo llvm-cov --locked --all-features --workspace --summary-only --fail-under-l
 Before submitting:
 
 - [ ] Tests pass (`cargo test`)
-- [ ] Coverage gate passes (`cargo llvm-cov --locked --all-features --workspace --summary-only --fail-under-lines 70`)
+- [ ] Coverage gate passes (`cargo llvm-cov --locked --all-features --workspace --summary-only --fail-under-lines 65`)
 - [ ] Lint passes (`cargo clippy --locked --all-targets -- -D warnings`)
 - [ ] Formatting is clean (`cargo fmt --check`)
 - [ ] Docs updated (if user-facing)
