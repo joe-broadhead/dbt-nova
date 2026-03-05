@@ -827,14 +827,16 @@ fn split_bucket_key(rest: &str) -> Result<(String, String)> {
     Ok((bucket.to_string(), key.to_string()))
 }
 
-#[cfg(feature = "s3")]
-#[allow(clippy::too_many_lines)]
-fn fetch_s3_manifest_sdk(
-    rest: &str,
+#[cfg(any(feature = "s3", feature = "gcs"))]
+fn fetch_sdk_manifest_with_cache<F>(
+    provider: &'static str,
     uri: &str,
     config: &DbtNovaConfig,
-) -> Result<ManifestResolution> {
-    let (bucket, key) = split_bucket_key(rest)?;
+    fetch_once: F,
+) -> Result<ManifestResolution>
+where
+    F: Fn() -> Result<Vec<u8>>,
+{
     let (cache_path, meta_path) = cache_paths(config, uri)?;
     let mut meta = read_cache_meta(&meta_path).unwrap_or_default();
     let deadline = FetchDeadline::new(config.manifest_fetch_timeout_secs);
@@ -848,11 +850,6 @@ fn fetch_s3_manifest_sdk(
         });
     }
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| DbtNovaError::ServerError(format!("Failed to init runtime: {e}")))?;
-
     record_cache_miss();
     let mut bytes = None;
     let mut last_err = None;
@@ -861,8 +858,8 @@ fn fetch_s3_manifest_sdk(
             if cache_path.exists() {
                 record_cache_hit();
                 warn!(
-                    timeout_secs,
-                    "S3 download timed out; falling back to cached copy"
+                    provider = provider,
+                    timeout_secs, "{provider} download timed out; falling back to cached copy"
                 );
                 return Ok(ManifestResolution {
                     local_path: cache_path,
@@ -871,10 +868,105 @@ fn fetch_s3_manifest_sdk(
                 });
             }
             return Err(DbtNovaError::ServerError(format!(
-                "S3 download timed out after {timeout_secs}s"
+                "{provider} download timed out after {timeout_secs}s"
             )));
         }
-        match rt.block_on(async {
+
+        match fetch_once() {
+            Ok(data) => {
+                bytes = Some(data);
+                break;
+            }
+            Err(err) => {
+                last_err = Some(err);
+                if attempt < REMOTE_FETCH_MAX_ATTEMPTS {
+                    std::thread::sleep(retry_backoff(attempt));
+                }
+            }
+        }
+    }
+
+    let Some(bytes) = bytes else {
+        if cache_path.exists() {
+            record_cache_hit();
+            if let Some(err) = &last_err {
+                warn!(
+                    provider = provider,
+                    error = %err,
+                    "{provider} download failed; falling back to cached copy"
+                );
+            } else {
+                warn!(
+                    provider = provider,
+                    "{provider} download failed; falling back to cached copy"
+                );
+            }
+            return Ok(ManifestResolution {
+                local_path: cache_path,
+                source_uri: uri.to_string(),
+                cached: true,
+            });
+        }
+        return Err(last_err.unwrap_or_else(|| {
+            DbtNovaError::ServerError(format!("{provider} download failed: unknown error"))
+        }));
+    };
+
+    if config.manifest_max_bytes > 0 && bytes.len() as u64 > config.manifest_max_bytes {
+        if cache_path.exists() {
+            record_cache_hit();
+            warn!(
+                provider = provider,
+                size = bytes.len(),
+                max_bytes = config.manifest_max_bytes,
+                "{provider} manifest exceeded size limit; falling back to cached copy"
+            );
+            return Ok(ManifestResolution {
+                local_path: cache_path,
+                source_uri: uri.to_string(),
+                cached: true,
+            });
+        }
+        return Err(DbtNovaError::ServerError(format!(
+            "{provider} manifest exceeded size limit (> {} bytes)",
+            config.manifest_max_bytes
+        )));
+    }
+
+    write_atomic(&cache_path, &bytes)?;
+    meta.source_uri = uri.to_string();
+    meta.fetched_at_ms = now_ms();
+    write_cache_meta(&meta_path, &meta)?;
+
+    Ok(ManifestResolution {
+        local_path: cache_path,
+        source_uri: uri.to_string(),
+        cached: false,
+    })
+}
+
+#[cfg(feature = "s3")]
+fn fetch_s3_manifest_sdk(
+    rest: &str,
+    uri: &str,
+    config: &DbtNovaConfig,
+) -> Result<ManifestResolution> {
+    let (bucket, key) = split_bucket_key(rest)?;
+    let runtime: std::sync::OnceLock<std::result::Result<tokio::runtime::Runtime, String>> =
+        std::sync::OnceLock::new();
+
+    fetch_sdk_manifest_with_cache("S3", uri, config, || {
+        let rt = runtime
+            .get_or_init(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| format!("Failed to init runtime: {e}"))
+            })
+            .as_ref()
+            .map_err(|e| DbtNovaError::ServerError(e.clone()))?;
+
+        rt.block_on(async {
             let fetch = async {
                 let shared = aws_config::defaults(aws_config::BehaviorVersion::latest())
                     .load()
@@ -893,7 +985,7 @@ fn fetch_s3_manifest_sdk(
                     .await
                     .map_err(|e| DbtNovaError::ServerError(format!("S3 read failed: {e}")))?
                     .into_bytes();
-                Ok::<_, DbtNovaError>(data)
+                Ok::<_, DbtNovaError>(data.to_vec())
             };
             if config.manifest_http_timeout_secs > 0 {
                 tokio::time::timeout(
@@ -905,137 +997,50 @@ fn fetch_s3_manifest_sdk(
             } else {
                 fetch.await
             }
-        }) {
-            Ok(data) => {
-                bytes = Some(data);
-                break;
-            }
-            Err(err) => {
-                last_err = Some(err);
-                if attempt < REMOTE_FETCH_MAX_ATTEMPTS {
-                    std::thread::sleep(retry_backoff(attempt));
-                }
-            }
-        }
-    }
-    let Some(bytes) = bytes else {
-        if cache_path.exists() {
-            record_cache_hit();
-            if let Some(err) = &last_err {
-                warn!(error = %err, "S3 download failed; falling back to cached copy");
-            } else {
-                warn!("S3 download failed; falling back to cached copy");
-            }
-            return Ok(ManifestResolution {
-                local_path: cache_path,
-                source_uri: uri.to_string(),
-                cached: true,
-            });
-        }
-        return Err(last_err.unwrap_or_else(|| {
-            DbtNovaError::ServerError("S3 download failed: unknown error".to_string())
-        }));
-    };
-
-    if config.manifest_max_bytes > 0 && bytes.len() as u64 > config.manifest_max_bytes {
-        if cache_path.exists() {
-            record_cache_hit();
-            warn!(
-                size = bytes.len(),
-                max_bytes = config.manifest_max_bytes,
-                "S3 manifest exceeded size limit; falling back to cached copy"
-            );
-            return Ok(ManifestResolution {
-                local_path: cache_path,
-                source_uri: uri.to_string(),
-                cached: true,
-            });
-        }
-        return Err(DbtNovaError::ServerError(format!(
-            "S3 manifest exceeded size limit (> {} bytes)",
-            config.manifest_max_bytes
-        )));
-    }
-
-    write_atomic(&cache_path, &bytes)?;
-    meta.source_uri = uri.to_string();
-    meta.fetched_at_ms = now_ms();
-    write_cache_meta(&meta_path, &meta)?;
-
-    Ok(ManifestResolution {
-        local_path: cache_path,
-        source_uri: uri.to_string(),
-        cached: false,
+        })
     })
 }
 
 #[cfg(feature = "gcs")]
-#[allow(clippy::too_many_lines)]
 fn fetch_gcs_manifest_sdk(
     rest: &str,
     uri: &str,
     config: &DbtNovaConfig,
 ) -> Result<ManifestResolution> {
     let (bucket, object) = split_bucket_key(rest)?;
-    let (cache_path, meta_path) = cache_paths(config, uri)?;
-    let mut meta = read_cache_meta(&meta_path).unwrap_or_default();
-    let deadline = FetchDeadline::new(config.manifest_fetch_timeout_secs);
+    let runtime: std::sync::OnceLock<std::result::Result<tokio::runtime::Runtime, String>> =
+        std::sync::OnceLock::new();
 
-    if cache_path.exists() && is_cache_fresh(&meta, config.manifest_refresh_secs) {
-        record_cache_hit();
-        return Ok(ManifestResolution {
-            local_path: cache_path,
-            source_uri: uri.to_string(),
-            cached: true,
-        });
-    }
+    fetch_sdk_manifest_with_cache("GCS", uri, config, || {
+        let rt = runtime
+            .get_or_init(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| format!("Failed to init runtime: {e}"))
+            })
+            .as_ref()
+            .map_err(|e| DbtNovaError::ServerError(e.clone()))?;
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| DbtNovaError::ServerError(format!("Failed to init runtime: {e}")))?;
-
-    record_cache_miss();
-    let mut bytes = None;
-    let mut last_err = None;
-    for attempt in 1..=REMOTE_FETCH_MAX_ATTEMPTS {
-        if let Some(timeout_secs) = deadline_expired(deadline.as_ref()) {
-            if cache_path.exists() {
-                record_cache_hit();
-                warn!(
-                    timeout_secs,
-                    "GCS download timed out; falling back to cached copy"
-                );
-                return Ok(ManifestResolution {
-                    local_path: cache_path,
-                    source_uri: uri.to_string(),
-                    cached: true,
-                });
-            }
-            return Err(DbtNovaError::ServerError(format!(
-                "GCS download timed out after {timeout_secs}s"
-            )));
-        }
-        match rt.block_on(async {
+        rt.block_on(async {
             let fetch = async {
-                let config = google_cloud_storage::client::ClientConfig::default()
+                let gcs_config = google_cloud_storage::client::ClientConfig::default()
                     .with_auth()
                     .await
                     .map_err(|e| DbtNovaError::ServerError(format!("GCS auth failed: {e}")))?;
-                let client = google_cloud_storage::client::Client::new(config);
+                let client = google_cloud_storage::client::Client::new(gcs_config);
                 let req = google_cloud_storage::http::objects::get::GetObjectRequest {
                     bucket: bucket.clone(),
                     object: object.clone(),
                     ..Default::default()
                 };
-                let data = client
+                client
                     .download_object(
                         &req,
                         &google_cloud_storage::http::objects::download::Range::default(),
                     )
                     .await
-                    .map_err(|e| DbtNovaError::ServerError(format!("GCS download failed: {e}")))?;
-                Ok::<_, DbtNovaError>(data)
+                    .map_err(|e| DbtNovaError::ServerError(format!("GCS download failed: {e}")))
             };
             if config.manifest_http_timeout_secs > 0 {
                 tokio::time::timeout(
@@ -1047,88 +1052,9 @@ fn fetch_gcs_manifest_sdk(
             } else {
                 fetch.await
             }
-        }) {
-            Ok(data) => {
-                bytes = Some(data);
-                break;
-            }
-            Err(err) => {
-                last_err = Some(err);
-                if attempt < REMOTE_FETCH_MAX_ATTEMPTS {
-                    std::thread::sleep(retry_backoff(attempt));
-                }
-            }
-        }
-    }
-    let Some(bytes) = bytes else {
-        if cache_path.exists() {
-            record_cache_hit();
-            if let Some(err) = &last_err {
-                warn!(error = %err, "GCS download failed; falling back to cached copy");
-            } else {
-                warn!("GCS download failed; falling back to cached copy");
-            }
-            return Ok(ManifestResolution {
-                local_path: cache_path,
-                source_uri: uri.to_string(),
-                cached: true,
-            });
-        }
-        return Err(last_err.unwrap_or_else(|| {
-            DbtNovaError::ServerError("GCS download failed: unknown error".to_string())
-        }));
-    };
-
-    if config.manifest_max_bytes > 0 && bytes.len() as u64 > config.manifest_max_bytes {
-        if cache_path.exists() {
-            record_cache_hit();
-            warn!(
-                size = bytes.len(),
-                max_bytes = config.manifest_max_bytes,
-                "GCS manifest exceeded size limit; falling back to cached copy"
-            );
-            return Ok(ManifestResolution {
-                local_path: cache_path,
-                source_uri: uri.to_string(),
-                cached: true,
-            });
-        }
-        return Err(DbtNovaError::ServerError(format!(
-            "GCS manifest exceeded size limit (> {} bytes)",
-            config.manifest_max_bytes
-        )));
-    }
-
-    write_atomic(&cache_path, &bytes)?;
-    meta.source_uri = uri.to_string();
-    meta.fetched_at_ms = now_ms();
-    write_cache_meta(&meta_path, &meta)?;
-
-    Ok(ManifestResolution {
-        local_path: cache_path,
-        source_uri: uri.to_string(),
-        cached: false,
+        })
     })
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn dbfs_read_field_helpers_default_missing_values() {
-        let body = serde_json::json!({});
-        assert_eq!(dbfs_read_data_field(&body, 7), "");
-        assert_eq!(dbfs_read_bytes_read_field(&body, 7), 0);
-    }
-
-    #[test]
-    fn dbfs_read_field_helpers_use_present_values() {
-        let body = serde_json::json!({
-            "data": "YWJj",
-            "bytes_read": 3
-        });
-        assert_eq!(dbfs_read_data_field(&body, 0), "YWJj");
-        assert_eq!(dbfs_read_bytes_read_field(&body, 0), 3);
-    }
-}
+mod tests;
