@@ -230,9 +230,11 @@ or unreleased installer commits.
 
 If you generate manifests in the reusable workflow (`dbt_generate_manifest: true`),
 prefer structured invocation with `dbt_command_args_json` (and optional
-`dbt_executable`) to avoid shell interpolation. Keep `dbt_command` only for
-trusted advanced shell cases. `dbt_command` and `dbt_command_args_json` are
-mutually exclusive.
+`dbt_executable`) to avoid shell interpolation. By default `dbt_executable`
+must resolve to `dbt`/`dbt.exe`; set `dbt_allow_unsafe_executable=true` only
+for trusted advanced cases (for example internal CI fixtures). Keep
+`dbt_command` for trusted advanced shell cases. `dbt_command` and
+`dbt_command_args_json` are mutually exclusive.
 
 Use `dbt_env_json` and `dbt_secret_env_map_json` to pass profile-specific
 env/secret variables generically (Databricks, BigQuery, DuckDB, etc.). For

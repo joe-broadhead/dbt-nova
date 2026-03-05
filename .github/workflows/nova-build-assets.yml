@@ -52,6 +52,11 @@ on:
         required: false
         type: string
         default: "dbt"
+      dbt_allow_unsafe_executable:
+        description: "Allow non-dbt dbt_executable values (trusted callers only)"
+        required: false
+        type: boolean
+        default: false
       dbt_env_json:
         description: "JSON object of non-secret env vars exported before dbt invocation (e.g. {\"DBT_TARGET\":\"prod\"})"
         required: false
@@ -203,6 +208,11 @@ on:
         required: false
         type: string
         default: "dbt"
+      dbt_allow_unsafe_executable:
+        description: "Allow non-dbt dbt_executable values (trusted callers only)"
+        required: false
+        type: boolean
+        default: false
       dbt_env_json:
         description: "JSON object of non-secret env vars exported before dbt invocation (e.g. {\"DBT_TARGET\":\"prod\"})"
         required: false
@@ -301,6 +311,7 @@ jobs:
           INPUT_DBT_COMMAND: ${{ inputs.dbt_command }}
           INPUT_DBT_COMMAND_ARGS_JSON: ${{ inputs.dbt_command_args_json }}
           INPUT_DBT_EXECUTABLE: ${{ inputs.dbt_executable }}
+          INPUT_DBT_ALLOW_UNSAFE_EXECUTABLE: ${{ inputs.dbt_allow_unsafe_executable }}
           INPUT_DBT_ENV_JSON: ${{ inputs.dbt_env_json }}
           INPUT_DBT_SECRET_ENV_MAP_JSON: ${{ inputs.dbt_secret_env_map_json }}
           INPUT_MODELS_DISTRIBUTION_MODE: ${{ inputs.models_distribution_mode }}
@@ -330,6 +341,7 @@ jobs:
           dbt_command="${INPUT_DBT_COMMAND}"
           dbt_command_args_json="${INPUT_DBT_COMMAND_ARGS_JSON}"
           dbt_executable="${INPUT_DBT_EXECUTABLE}"
+          dbt_allow_unsafe_executable="${INPUT_DBT_ALLOW_UNSAFE_EXECUTABLE}"
           dbt_env_json="${INPUT_DBT_ENV_JSON}"
           dbt_secret_env_map_json="${INPUT_DBT_SECRET_ENV_MAP_JSON}"
           models_distribution_mode="${INPUT_MODELS_DISTRIBUTION_MODE}"
@@ -422,6 +434,15 @@ jobs:
           if [[ "${dbt_executable}" =~ [[:space:]] ]]; then
             echo "dbt_executable must not contain whitespace."
             exit 1
+          fi
+          if [[ "${dbt_allow_unsafe_executable}" != "true" ]]; then
+            case "${dbt_executable}" in
+              dbt|dbt.exe|*/dbt|*/dbt.exe) ;;
+              *)
+                echo "dbt_executable must resolve to dbt/dbt.exe unless dbt_allow_unsafe_executable=true."
+                exit 1
+                ;;
+            esac
           fi
 
           dbt_invocation_mode="none"
@@ -703,7 +724,7 @@ jobs:
           - dbt_secret_env_map_json: `${{ steps.resolve.outputs.dbt_secret_env_map_json }}`
           - dbt_invocation_mode: `${{ steps.resolve.outputs.dbt_invocation_mode }}`
           - dbt_executable: `${{ steps.resolve.outputs.dbt_executable }}`
-          - dbt_command_args_json: `${{ steps.resolve.outputs.dbt_command_args_json }}`
+          - dbt_command_args_json: `(redacted; see workflow inputs)`
           EOF
 
   build:

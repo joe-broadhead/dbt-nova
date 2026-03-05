@@ -34,7 +34,8 @@ Operational defaults:
 - **Use:** reusable workflow invoked by CI and downstream repos
 - **Inputs:** `manifest_path` or `manifest_uri`, `storage_instance_id`,
   optional dbt manifest generation with structured invocation
-  (`dbt_command_args_json`, optional `dbt_executable`) or trusted shell
+  (`dbt_command_args_json`, optional `dbt_executable`,
+  optional `dbt_allow_unsafe_executable`) or trusted shell
   invocation (`dbt_command`), plus `dbt_env_json`,
   `dbt_secret_env_map_json`, optional workflow_call secret bundle
   (`DBT_NOVA_SECRET_BUNDLE_JSON`), optional installer source override
@@ -43,8 +44,10 @@ Operational defaults:
   configured via `models_distribution_mode` (`none|publish_only|publish_and_bootstrap`)
 - **Invocation safety:** structured mode runs
   `[dbt_executable, *dbt_command_args_json]` without shell interpolation and is
-  the recommended default. `dbt_command` remains available for trusted callers
-  that require shell semantics.
+  the recommended default. By default `dbt_executable` is constrained to
+  `dbt`/`dbt.exe`; setting `dbt_allow_unsafe_executable=true` is a trusted-only
+  escape hatch. `dbt_command` remains available for trusted callers that require
+  shell semantics.
 - **Validation:** `dbt_command` and `dbt_command_args_json` are mutually
   exclusive when `dbt_generate_manifest=true`
 - **Outputs:** manifest metadata (`manifest_hash`, `manifest_version`,

@@ -212,6 +212,7 @@ jobs:
     with:
       dbt_generate_manifest: true
       dbt_executable: python3
+      dbt_allow_unsafe_executable: true
       dbt_command_args_json: >-
         ["-c","from pathlib import Path; Path('target').mkdir(exist_ok=True); Path('target/manifest.json').write_text(Path('tests/fixtures/nova_manifest.json').read_text(encoding='utf-8'), encoding='utf-8')"]
       storage_instance_id: ci-structured-dbt-smoke

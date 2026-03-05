@@ -44,7 +44,7 @@ jobs:
 Alternative producer inputs:
 
 - `manifest_uri` (instead of `manifest_path`)
-- `dbt_generate_manifest: true` + structured invocation (`dbt_command_args_json`, optional `dbt_executable`)
+- `dbt_generate_manifest: true` + structured invocation (`dbt_command_args_json`, optional `dbt_executable`, optional `dbt_allow_unsafe_executable`)
 - `dbt_generate_manifest: true` + trusted shell invocation (`dbt_command`)
 - `dbt_env_json` (JSON object of non-secret env vars exported before dbt invocation)
 - `dbt_secret_env_map_json` (JSON object mapping env var names to secret names)
@@ -57,6 +57,8 @@ Structured mode is the recommended default:
 - `dbt_command_args_json` must be a JSON array of strings.
 - The workflow executes `[dbt_executable, *dbt_command_args_json]` with no shell interpolation.
 - `dbt_executable` defaults to `dbt`.
+- By default `dbt_executable` must resolve to `dbt`/`dbt.exe`; set
+  `dbt_allow_unsafe_executable: true` only in trusted contexts.
 
 Trusted shell mode is still available for advanced cases:
 
