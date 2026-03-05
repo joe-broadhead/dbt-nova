@@ -1,6 +1,4 @@
 //! Tests for recipe discovery and retrieval tools.
-#![allow(deprecated)]
-
 use super::common::*;
 use std::collections::HashMap;
 
