@@ -41,6 +41,12 @@ pub enum DbtNovaError {
         body: Option<String>,
     },
 
+    #[error("Search index error ({kind}): {message}")]
+    TantivyError { kind: &'static str, message: String },
+
+    #[error("GCP auth error: {0}")]
+    GcpAuthError(String),
+
     #[error("Manifest indexing in progress (elapsed_ms: {elapsed_ms})")]
     IndexBuildInProgress { elapsed_ms: u128 },
 }
@@ -56,7 +62,10 @@ impl DbtNovaError {
                 "INVALID_PARAMS"
             }
             DbtNovaError::ManifestError(_) => "INITIALIZATION_ERROR",
-            DbtNovaError::ServerError(_) | DbtNovaError::DatabricksError { .. } => "SERVER_ERROR",
+            DbtNovaError::ServerError(_)
+            | DbtNovaError::DatabricksError { .. }
+            | DbtNovaError::TantivyError { .. }
+            | DbtNovaError::GcpAuthError(_) => "SERVER_ERROR",
             DbtNovaError::IndexBuildInProgress { .. } => "INDEX_BUILDING",
         }
     }
@@ -120,6 +129,18 @@ impl DbtNovaError {
                 "status": status,
                 "body": body,
             }),
+            DbtNovaError::TantivyError { kind, message: _ } => json!({
+                "success": false,
+                "error": self.to_string(),
+                "error_code": self.error_code(),
+                "kind": kind,
+            }),
+            DbtNovaError::GcpAuthError(_) => json!({
+                "success": false,
+                "error": self.to_string(),
+                "error_code": self.error_code(),
+                "provider": "gcp",
+            }),
             DbtNovaError::InvalidParamsDetailed {
                 message: _,
                 details,
@@ -152,6 +173,74 @@ impl From<serde_json::Error> for DbtNovaError {
 
 impl From<TantivyError> for DbtNovaError {
     fn from(err: TantivyError) -> Self {
-        DbtNovaError::ServerError(err.to_string())
+        DbtNovaError::TantivyError {
+            kind: tantivy_error_kind(&err),
+            message: err.to_string(),
+        }
+    }
+}
+
+fn tantivy_error_kind(err: &TantivyError) -> &'static str {
+    match err {
+        TantivyError::AggregationError(_) => "aggregation",
+        TantivyError::OpenDirectoryError(_) => "open_directory",
+        TantivyError::OpenReadError(_) => "open_read",
+        TantivyError::OpenWriteError(_) => "open_write",
+        TantivyError::IndexAlreadyExists => "index_exists",
+        TantivyError::LockFailure(_, _) => "lock_failure",
+        TantivyError::IoError(_) => "io",
+        TantivyError::DataCorruption(_) => "data_corruption",
+        TantivyError::Poisoned => "poisoned_lock",
+        TantivyError::FieldNotFound(_) => "field_not_found",
+        TantivyError::InvalidArgument(_) => "invalid_argument",
+        TantivyError::ErrorInThread(_) => "thread_error",
+        TantivyError::IndexBuilderMissingArgument(_) => "index_builder_missing_argument",
+        TantivyError::SchemaError(_) => "schema",
+        TantivyError::SystemError(_) => "system",
+        TantivyError::IncompatibleIndex(_) => "incompatible_index",
+        TantivyError::InternalError(_) => "internal",
+        TantivyError::DeserializeError(_) => "deserialize",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DbtNovaError;
+    use tantivy::TantivyError;
+
+    #[test]
+    fn tantivy_error_conversion_preserves_category() {
+        let err = DbtNovaError::from(TantivyError::InvalidArgument("bad query".to_string()));
+        assert!(matches!(
+            err,
+            DbtNovaError::TantivyError {
+                kind: "invalid_argument",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn tantivy_error_response_includes_kind() {
+        let err = DbtNovaError::from(TantivyError::SchemaError("missing field".to_string()));
+        let response = err.to_response();
+        assert_eq!(
+            response.get("error_code").and_then(|v| v.as_str()),
+            Some("SERVER_ERROR")
+        );
+        assert_eq!(
+            response.get("kind").and_then(|v| v.as_str()),
+            Some("schema")
+        );
+    }
+
+    #[test]
+    fn gcp_auth_error_response_includes_provider() {
+        let err = DbtNovaError::GcpAuthError("missing ADC".to_string());
+        let response = err.to_response();
+        assert_eq!(
+            response.get("provider").and_then(|v| v.as_str()),
+            Some("gcp")
+        );
     }
 }

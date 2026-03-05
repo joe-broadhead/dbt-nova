@@ -124,6 +124,7 @@ jobs:
     timeout-minutes: 60
     env:
       DBT_NOVA_STRICT_SCHEMA: "1"
+      COVERAGE_MIN_LINES: "65"
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -142,7 +143,13 @@ jobs:
           tool: cargo-llvm-cov
 
       - name: Coverage Summary
-        run: cargo llvm-cov --locked --all-features --workspace --summary-only
+        run: |
+          cargo llvm-cov \
+            --locked \
+            --all-features \
+            --workspace \
+            --summary-only \
+            --fail-under-lines "${COVERAGE_MIN_LINES}"
 
   docs:
     runs-on: ubuntu-22.04
