@@ -683,28 +683,28 @@ jobs:
       - name: Summarize contract
         shell: bash
         run: |
-          {
-            echo "### Reusable Workflow Contract"
-            echo ""
-            echo "- storage_dir: \`${{ steps.resolve.outputs.storage_dir }}\`"
-            echo "- models_dir: \`${{ steps.resolve.outputs.models_dir }}\`"
-            echo "- artifact_name_storage: \`${{ steps.resolve.outputs.artifact_name_storage }}\`"
-            echo "- artifact_name_models: \`${{ steps.resolve.outputs.artifact_name_models }}\`"
-            echo "- storage_instance_id: \`${{ steps.resolve.outputs.storage_instance_id }}\`"
-            echo "- installer_repository: \`${{ steps.resolve.outputs.installer_repository }}\`"
-            echo "- installer_ref: \`${{ steps.resolve.outputs.installer_ref }}\`"
-            echo "- installer_install_mode: \`${{ steps.resolve.outputs.installer_install_mode }}\`"
-            echo "- publish_targets: \`${{ steps.resolve.outputs.publish_targets }}\`"
-            echo "- publish_dry_run: \`${{ steps.resolve.outputs.publish_dry_run }}\`"
-            echo "- models_distribution_mode: \`${{ steps.resolve.outputs.models_distribution_mode }}\`"
-            echo "- publish_models_archive: \`${{ steps.resolve.outputs.publish_models_archive }}\`"
-            echo "- include_models_in_bootstrap: \`${{ steps.resolve.outputs.include_models_in_bootstrap }}\`"
-            echo "- dbt_env_json: \`${{ steps.resolve.outputs.dbt_env_json }}\`"
-            echo "- dbt_secret_env_map_json: \`${{ steps.resolve.outputs.dbt_secret_env_map_json }}\`"
-            echo "- dbt_invocation_mode: \`${{ steps.resolve.outputs.dbt_invocation_mode }}\`"
-            echo "- dbt_executable: \`${{ steps.resolve.outputs.dbt_executable }}\`"
-            echo "- dbt_command_args_json: \`${{ steps.resolve.outputs.dbt_command_args_json }}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+          cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          ### Reusable Workflow Contract
+
+          - storage_dir: `${{ steps.resolve.outputs.storage_dir }}`
+          - models_dir: `${{ steps.resolve.outputs.models_dir }}`
+          - artifact_name_storage: `${{ steps.resolve.outputs.artifact_name_storage }}`
+          - artifact_name_models: `${{ steps.resolve.outputs.artifact_name_models }}`
+          - storage_instance_id: `${{ steps.resolve.outputs.storage_instance_id }}`
+          - installer_repository: `${{ steps.resolve.outputs.installer_repository }}`
+          - installer_ref: `${{ steps.resolve.outputs.installer_ref }}`
+          - installer_install_mode: `${{ steps.resolve.outputs.installer_install_mode }}`
+          - publish_targets: `${{ steps.resolve.outputs.publish_targets }}`
+          - publish_dry_run: `${{ steps.resolve.outputs.publish_dry_run }}`
+          - models_distribution_mode: `${{ steps.resolve.outputs.models_distribution_mode }}`
+          - publish_models_archive: `${{ steps.resolve.outputs.publish_models_archive }}`
+          - include_models_in_bootstrap: `${{ steps.resolve.outputs.include_models_in_bootstrap }}`
+          - dbt_env_json: `${{ steps.resolve.outputs.dbt_env_json }}`
+          - dbt_secret_env_map_json: `${{ steps.resolve.outputs.dbt_secret_env_map_json }}`
+          - dbt_invocation_mode: `${{ steps.resolve.outputs.dbt_invocation_mode }}`
+          - dbt_executable: `${{ steps.resolve.outputs.dbt_executable }}`
+          - dbt_command_args_json: `${{ steps.resolve.outputs.dbt_command_args_json }}`
+          EOF
 
   build:
     name: Build, validate, and publish storage artifact
