@@ -12,7 +12,7 @@ reuse them across jobs/repos in read-only mode.
 ## v1 boundaries
 
 - Producer workflow + GitHub Artifacts are supported.
-- Optional models cache artifact is supported via `include_models_cache`.
+- Optional models distribution is controlled by `models_distribution_mode`.
 - Consumers are read-only (`DBT_NOVA_STORAGE_READ_ONLY=true`) and do **not**
   fall back to rebuilding.
 - Optional S3/GCS/DBFS publish targets are supported and disabled by default.
@@ -37,7 +37,7 @@ jobs:
       installer_install_mode: auto
       artifact_name_prefix: analytics-prod
       retention_days: 14
-      include_models_cache: false
+      models_distribution_mode: none
       publish_targets: ""
 ```
 
@@ -47,6 +47,7 @@ Alternative producer inputs:
 - `dbt_generate_manifest: true` + `dbt_command` (build manifest in workflow)
 - `dbt_env_json` (JSON object of non-secret env vars exported before `dbt_command`)
 - `dbt_secret_env_map_json` (JSON object mapping env var names to secret names)
+- `models_distribution_mode` (`none`, `publish_only`, `publish_and_bootstrap`)
 - workflow_call secret `DBT_NOVA_SECRET_BUNDLE_JSON` (optional JSON object of
   `secret-name -> secret-value` entries for cross-owner reusable workflow calls)
 
@@ -94,9 +95,15 @@ The producer emits:
 - storage artifact (required)
 - manifest artifact (`manifest.json`, always exported)
 - metadata contract artifact (`nova-build-metadata.json`, required)
-- models artifact (optional when `include_models_cache=true`)
+- models artifact (optional when `models_distribution_mode != none`)
 - bootstrap contract artifact(s) when remote publish is configured
 - publish summary artifact (`artifact_name_publish_summary`) with published URIs by target
+
+Models distribution modes:
+
+- `none`: do not package or publish models artifact; bootstrap omits `models_artifact_uri`.
+- `publish_only`: package/publish models artifact, but bootstrap still omits `models_artifact_uri`.
+- `publish_and_bootstrap`: package/publish models artifact and include `models_artifact_uri` in bootstrap.
 
 ## Optional remote publish targets
 
