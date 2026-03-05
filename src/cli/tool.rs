@@ -590,7 +590,6 @@ fn dispatch_reload_manifest(_searcher: &ManifestSearch, _params: JsonValue) -> T
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
     use std::time::Duration;
 
     use tempfile::NamedTempFile;
@@ -602,19 +601,11 @@ mod tests {
     use crate::cli::args::{ManifestLoadArgs, ToolCallArgs};
     use crate::cli::manifest::{build_manifest_load_config, execute_manifest_load};
     use crate::params::ReloadManifestParams;
-
-    fn fixture_manifest_path() -> String {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests")
-            .join("fixtures")
-            .join("nova_manifest.json")
-            .to_string_lossy()
-            .to_string()
-    }
+    use crate::tests::common::fixture_manifest_path_string;
 
     async fn fixture_searcher() -> crate::manifest::search::ManifestSearch {
         let args = ManifestLoadArgs {
-            manifest_path: Some(fixture_manifest_path()),
+            manifest_path: Some(fixture_manifest_path_string()),
             ..ManifestLoadArgs::default()
         };
         let mut config = build_manifest_load_config(&args).expect("config");

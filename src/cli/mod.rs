@@ -167,19 +167,11 @@ mod tests {
 
     use super::{cleanup_storage_dir, dispatch, prepare_storage, prune_storage_instances};
     use crate::config::DbtNovaConfig;
-
-    fn fixture_manifest_path() -> String {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests")
-            .join("fixtures")
-            .join("nova_manifest.json")
-            .to_string_lossy()
-            .to_string()
-    }
+    use crate::tests::common::fixture_manifest_path_string;
 
     fn test_config(storage_root: &Path, instance_id: &str) -> DbtNovaConfig {
         DbtNovaConfig {
-            manifest_path: fixture_manifest_path(),
+            manifest_path: fixture_manifest_path_string(),
             manifest_refresh_secs: 0,
             storage_dir: storage_root.join(".dbt-nova").to_string_lossy().to_string(),
             storage_instance_id: instance_id.to_string(),
@@ -250,7 +242,7 @@ mod tests {
     async fn dispatch_manifest_reload_succeeds_with_fixture_path() {
         let result = dispatch(super::args::Command::Manifest(super::args::ManifestArgs {
             command: super::args::ManifestCommand::Reload(super::args::ManifestReloadArgs {
-                manifest_path: Some(fixture_manifest_path()),
+                manifest_path: Some(fixture_manifest_path_string()),
                 json: true,
                 ..super::args::ManifestReloadArgs::default()
             }),
