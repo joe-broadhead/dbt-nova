@@ -12,6 +12,10 @@ For all SQL providers, object-level preflight checks (`preflight_catalog`,
 `preflight_schema`, `preflight_relation`) pass only when the probe returns at
 least one row.
 
+For full installation/runtime combination guidance (manifest vs bootstrap vs
+remote artifacts vs model cache strategies), see
+[Modes & Combinations](modes-and-combinations.md).
+
 For slim installs, set a stable `DBT_NOVA_EMBEDDINGS_CACHE_DIR` (recommended:
 `~/.dbt-nova/models`) so model downloads are reused across sessions/clients.
 If you installed with:
@@ -48,6 +52,12 @@ Recommended with prebuilt artifacts:
   manifest content used by the producer build.
 - Use the same Nova release on producer and consumer.
 - Keep artifact URIs stable and allow Nova to cache them locally.
+
+Bootstrap precedence reminder:
+
+- Explicit env vars win.
+- Bootstrap only fills missing fields.
+- `manifest_uri` from bootstrap is skipped when `DBT_MANIFEST_PATH` was explicitly set.
 
 Codex TOML example:
 

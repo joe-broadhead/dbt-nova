@@ -58,6 +58,9 @@ curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
 The installer places `dbt-nova` in `~/.local/bin`. For bundled installs, it also
 places `models/` next to the binary so Nova auto-discovers it.
 
+Need to decide between local builds, bootstrap contracts, remote prebuilt artifacts,
+or remote model hydration? See [Modes & Combinations](modes-and-combinations.md).
+
 ### Optional: Install + Pre-Warm Models
 
 If you want users to avoid first-run model downloads, pre-warm during install:
@@ -158,6 +161,9 @@ cargo install --path . --features embeddings --locked
 
 Published release assets are **slim** (binary only). Models download on first run
 or can be pre-warmed with `scripts/warm_models.sh`.
+
+If you request `--bundled` and no bundled artifact exists for that release/target,
+the installer automatically falls back to slim.
 
 Published targets:
 
