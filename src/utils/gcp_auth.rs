@@ -257,34 +257,60 @@ mod tests {
 
     static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
+    struct EnvRestore {
+        old_values: Vec<(String, Option<String>)>,
+    }
+
+    impl EnvRestore {
+        fn apply(vars: &[(&str, Option<&str>)]) -> Self {
+            let mut old_values = Vec::with_capacity(vars.len());
+            for (key, value) in vars {
+                let old = std::env::var(key).ok();
+                old_values.push(((*key).to_string(), old));
+                // SAFETY: Tests hold `ENV_LOCK` while mutating process env.
+                unsafe {
+                    match value {
+                        Some(v) => std::env::set_var(key, v),
+                        None => std::env::remove_var(key),
+                    }
+                }
+            }
+            Self { old_values }
+        }
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            for (key, old) in self.old_values.iter().rev() {
+                // SAFETY: Tests hold `ENV_LOCK` while restoring process env.
+                unsafe {
+                    if let Some(value) = old {
+                        std::env::set_var(key, value);
+                    } else {
+                        std::env::remove_var(key);
+                    }
+                }
+            }
+        }
+    }
+
     fn with_env<F>(vars: &[(&str, Option<&str>)], f: F)
     where
         F: FnOnce(),
     {
-        let _guard = ENV_LOCK.lock().expect("env lock");
-        let mut old_values = Vec::with_capacity(vars.len());
-        for (key, value) in vars {
-            let old = std::env::var(key).ok();
-            old_values.push((*key, old));
-            unsafe {
-                match value {
-                    Some(v) => std::env::set_var(key, v),
-                    None => std::env::remove_var(key),
-                }
-            }
-        }
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        // Keep tests hermetic by preventing `gcloud` fallback from discovering
+        // host credentials on developer machines.
+        let mut merged_vars = Vec::with_capacity(vars.len() + 1);
+        merged_vars.push(("PATH", Some("/nonexistent")));
+        merged_vars.extend_from_slice(vars);
+
+        let _restore = EnvRestore::apply(&merged_vars);
 
         f();
-
-        for (key, old) in old_values {
-            unsafe {
-                if let Some(v) = old {
-                    std::env::set_var(key, v);
-                } else {
-                    std::env::remove_var(key);
-                }
-            }
-        }
     }
 
     #[test]
