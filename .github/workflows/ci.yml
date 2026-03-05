@@ -14,9 +14,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint-test:
+  lint:
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 45
     env:
       DBT_NOVA_STRICT_SCHEMA: "1"
       CARGO_BUILD_JOBS: "1"
@@ -39,8 +39,42 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked --all-targets -- -D warnings
 
+  test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      DBT_NOVA_STRICT_SCHEMA: "1"
+      CARGO_BUILD_JOBS: "1"
+      RUSTFLAGS: "-C debuginfo=0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
       - name: Test
         run: cargo test --locked
+
+  search-eval-smoke:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      DBT_NOVA_STRICT_SCHEMA: "1"
+      CARGO_BUILD_JOBS: "1"
+      RUSTFLAGS: "-C debuginfo=0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
       - name: Search Eval Smoke
         run: |
@@ -48,6 +82,23 @@ jobs:
           DBT_NOVA_EVAL_ALLOW_EMBEDDING_DOWNLOAD=0 \
           DBT_NOVA_EVAL_ENABLE_LIFECYCLE=0 \
           cargo test --locked --test search_eval compare_lexical_vs_hybrid_search_quality -- --ignored
+
+  check-no-default:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      DBT_NOVA_STRICT_SCHEMA: "1"
+      CARGO_BUILD_JOBS: "1"
+      RUSTFLAGS: "-C debuginfo=0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
 
       - name: Check (no default features)
         run: cargo check --locked --no-default-features --all-targets
