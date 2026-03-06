@@ -52,8 +52,10 @@ Operational defaults:
   exclusive when `dbt_generate_manifest=true`
 - **Outputs:** manifest metadata (`manifest_hash`, `manifest_version`,
   `entity_count`), artifact names (including manifest/bootstrap), and optional
-  published URI JSON objects (`storage`, `manifest`, `metadata`, `bootstrap`,
-  optional `models`)
+  remote publish metadata (`published_targets`,
+  `artifact_name_publish_summary`). Legacy `published_*_uris` outputs remain
+  for compatibility and currently return `{}`; consumers should read the
+  publish-summary artifact JSON.
 
 ### Prepare Release
 
