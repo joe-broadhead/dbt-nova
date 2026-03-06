@@ -191,7 +191,7 @@ jobs:
     with:
       manifest_path: target/manifest.json
       storage_instance_id: analytics-prod
-      installer_ref: v0.0.2
+      installer_ref: <release-tag>
       installer_install_mode: auto
       artifact_name_prefix: analytics-prod
 ```

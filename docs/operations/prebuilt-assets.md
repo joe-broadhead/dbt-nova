@@ -33,7 +33,7 @@ jobs:
     with:
       manifest_path: target/manifest.json
       storage_instance_id: analytics-prod
-      installer_ref: v0.0.2
+      installer_ref: <release-tag>
       installer_install_mode: auto
       artifact_name_prefix: analytics-prod
       retention_days: 14
@@ -152,7 +152,7 @@ Installer mode guidance:
 
 - Keep `installer_install_mode: auto` as the default.
 - Use `installer_install_mode: release` with a release tag ref (for example
-  `installer_ref: v0.0.2`) to minimize runtime on compatible runners.
+  `installer_ref: v0.0.2` or newer) to minimize runtime on compatible runners.
 - Use `installer_install_mode: source` when you need an unreleased commit SHA
   or your runner image is incompatible with the prebuilt binary (for example
   older glibc environments).
