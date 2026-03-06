@@ -3,6 +3,21 @@
 Use this workflow when you want to build Nova storage assets once in CI and
 reuse them across jobs/repos in read-only mode.
 
+## Quick setup checklist
+
+1. Pin the reusable workflow to a release tag or commit SHA (do not use `@master` in production).
+2. Pick one producer source:
+   - existing `manifest.json` (`manifest_path` or `manifest_uri`), or
+   - generate manifest in workflow (`dbt_generate_manifest: true`).
+3. Choose a stable `storage_instance_id` (same value must be used by consumers).
+4. Choose `models_distribution_mode`:
+   - `none` for local/pre-warmed models,
+   - `publish_only` for optional consumer opt-in,
+   - `publish_and_bootstrap` for bootstrap-driven model hydration.
+5. If publishing remotely, set `publish_targets` and matching auth secrets.
+6. Trigger the workflow and confirm success.
+7. Use the produced bootstrap URI in consumer env (`DBT_NOVA_BOOTSTRAP_URI`).
+
 ## What this solves
 
 - Removes repeated index builds on consumer jobs.
@@ -29,11 +44,12 @@ on:
 
 jobs:
   build_nova_assets:
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@master
+    # Pin to a release tag or commit SHA
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.2
     with:
       manifest_path: target/manifest.json
       storage_instance_id: analytics-prod
-      installer_ref: <release-tag>
+      installer_ref: v0.0.2
       installer_install_mode: auto
       artifact_name_prefix: analytics-prod
       retention_days: 14
@@ -72,7 +88,7 @@ workflow works across Databricks, BigQuery, DuckDB, and mixed profiles:
 ```yaml
 jobs:
   build_nova_assets:
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@master
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.2
     with:
       dbt_generate_manifest: true
       dbt_command_args_json: >-
@@ -86,6 +102,27 @@ jobs:
       DBT_NOVA_SECRET_BUNDLE_JSON: ${{ secrets.DBT_NOVA_SECRET_BUNDLE_JSON }}
 ```
 
+DBFS publish wrapper example:
+
+```yaml
+jobs:
+  build_nova_assets:
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.2
+    with:
+      dbt_generate_manifest: true
+      dbt_command_args_json: >-
+        ["compile","--target","prod"]
+      storage_instance_id: analytics-prod
+      installer_ref: v0.0.2
+      installer_install_mode: release
+      publish_targets: dbfs
+      publish_dbfs_prefix: dbfs:/FileStore/projects/my-project/nova-assets/prod
+      publish_dry_run: false
+      models_distribution_mode: none
+    secrets:
+      DBT_NOVA_SECRET_BUNDLE_JSON: ${{ secrets.DBT_NOVA_SECRET_BUNDLE_JSON }}
+```
+
 Notes:
 
 - `dbt_env_json` values are plain strings.
@@ -94,6 +131,22 @@ Notes:
   2) inherited workflow secrets (`secrets: inherit`, same-owner/org calls).
 - Missing mapped secrets fail fast before dbt invocation.
 - Use trusted `dbt_command` only when you explicitly need shell semantics.
+
+Secret setup patterns:
+
+| Call pattern | How secrets are resolved |
+|---|---|
+| Same org/user, reusable workflow call | `secrets: inherit` can expose caller secrets directly |
+| Cross-owner call or strict least-privilege | Pass one `DBT_NOVA_SECRET_BUNDLE_JSON` secret and map keys via `dbt_secret_env_map_json` |
+| No dbt manifest generation | `dbt_secret_env_map_json` is not required |
+
+Publish target auth requirements:
+
+| Target | Required credentials |
+|---|---|
+| `s3` | Standard AWS auth env (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / session token or OIDC role) |
+| `gcs` | Token via one of `DBT_NOVA_GCP_ACCESS_TOKEN`, `DBT_NOVA_BIGQUERY_ACCESS_TOKEN`, `GCP_ACCESS_TOKEN`, `GOOGLE_OAUTH_ACCESS_TOKEN` |
+| `dbfs` | `DATABRICKS_HOST` and `DATABRICKS_ACCESS_TOKEN` |
 
 Common downstream pattern: keep a repo-local `workflow_dispatch` wrapper and
 call this reusable workflow from it. This lets each repo set its own target
@@ -179,6 +232,33 @@ gh run download "$GITHUB_RUN_ID" --name "$ARTIFACT_NAME_PUBLISH_SUMMARY" --dir "
 PUBLISH_SUMMARY_JSON="$(find "$PUBLISH_SUMMARY_DIR" -type f -name '*.json' | head -n 1)"
 BOOTSTRAP_URI="$(jq -r '.published_bootstrap_uris.dbfs' "$PUBLISH_SUMMARY_JSON")"
 ```
+
+Example `publish-summary` JSON shape:
+
+```json
+{
+  "published_storage_uris": {
+    "dbfs": "dbfs:/FileStore/projects/my-project/nova-assets/prod/analytics-storage-<run>-<manifest>.tar.gz"
+  },
+  "published_manifest_uris": {
+    "dbfs": "dbfs:/FileStore/projects/my-project/nova-assets/prod/analytics-manifest-<run>-<manifest>.json"
+  },
+  "published_metadata_uris": {
+    "dbfs": "dbfs:/FileStore/projects/my-project/nova-assets/prod/analytics-storage-<run>-<manifest>-metadata.json"
+  },
+  "published_bootstrap_uris": {
+    "dbfs": "dbfs:/FileStore/projects/my-project/nova-assets/prod/analytics-prod-bootstrap.json"
+  },
+  "published_models_uris": {}
+}
+```
+
+Post-run verification checklist:
+
+1. Check workflow summary for resolved artifact names and publish targets.
+2. Download `artifact_name_publish_summary` and confirm expected target URI keys.
+3. Set `DBT_NOVA_BOOTSTRAP_URI` on a consumer and run `dbt-nova health check --json`.
+4. Confirm health reports `bootstrap.loaded=true` and `artifact_consumer.storage_materialized=true`.
 
 ## Consumer (reuse in read-only mode)
 

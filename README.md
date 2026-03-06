@@ -187,11 +187,12 @@ Producer (reusable workflow):
 ```yaml
 jobs:
   build_nova_assets:
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@master
+    # Pin to a release tag or commit SHA
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.2
     with:
       manifest_path: target/manifest.json
       storage_instance_id: analytics-prod
-      installer_ref: <release-tag>
+      installer_ref: v0.0.2
       installer_install_mode: auto
       artifact_name_prefix: analytics-prod
 ```
@@ -246,12 +247,13 @@ Most teams keep a repo-local `workflow_dispatch` wrapper around this reusable
 workflow, then add release/tag triggers later after validating publish paths
 and credentials.
 
+For a complete setup guide (pinning strategy, secrets mapping, publish targets,
+bootstrap consumption, and verification checklist), see:
+**[Prebuilt Asset Workflow](docs/operations/prebuilt-assets.md)**.
+
 Legacy fallback: if you manually extract artifacts locally, you can omit
 `DBT_NOVA_*_ARTIFACT_URI` vars and keep only
 `DBT_NOVA_STORAGE_DIR` + `DBT_NOVA_STORAGE_INSTANCE_ID` + `DBT_NOVA_STORAGE_READ_ONLY=true`.
-
-Full guide:
-**[Prebuilt Asset Workflow](docs/operations/prebuilt-assets.md)**.
 
 ## CLI Command Mode
 
