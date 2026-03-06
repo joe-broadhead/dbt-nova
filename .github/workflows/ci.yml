@@ -206,6 +206,36 @@ jobs:
       installer_repository: ${{ github.repository }}
       installer_ref: ${{ github.sha }}
 
+  reusable-assets-producer-structured-dbt:
+    name: reusable-assets-producer-structured-dbt
+    uses: ./.github/workflows/nova-build-assets.yml
+    with:
+      dbt_generate_manifest: true
+      dbt_executable: python3
+      dbt_allow_unsafe_executable: true
+      dbt_command_args_json: >-
+        ["-c","from pathlib import Path; Path('target').mkdir(exist_ok=True); Path('target/manifest.json').write_text(Path('tests/fixtures/nova_manifest.json').read_text(encoding='utf-8'), encoding='utf-8')"]
+      storage_instance_id: ci-structured-dbt-smoke
+      artifact_name_prefix: ci-structured-dbt-smoke
+      retention_days: 1
+      installer_repository: ${{ github.repository }}
+      installer_ref: ${{ github.sha }}
+
+  reusable-assets-producer-trusted-dbt:
+    name: reusable-assets-producer-trusted-dbt
+    uses: ./.github/workflows/nova-build-assets.yml
+    with:
+      dbt_generate_manifest: true
+      dbt_command: |
+        set -euo pipefail
+        mkdir -p target
+        cp tests/fixtures/nova_manifest.json target/manifest.json
+      storage_instance_id: ci-trusted-dbt-smoke
+      artifact_name_prefix: ci-trusted-dbt-smoke
+      retention_days: 1
+      installer_repository: ${{ github.repository }}
+      installer_ref: ${{ github.sha }}
+
   reusable-assets-remote-publish-dryrun:
     name: reusable-assets-remote-publish-dryrun
     uses: ./.github/workflows/nova-build-assets.yml

@@ -44,18 +44,29 @@ jobs:
 Alternative producer inputs:
 
 - `manifest_uri` (instead of `manifest_path`)
-- `dbt_generate_manifest: true` + `dbt_command` (build manifest in workflow)
-- `dbt_env_json` (JSON object of non-secret env vars exported before `dbt_command`)
+- `dbt_generate_manifest: true` + structured invocation (`dbt_command_args_json`, optional `dbt_executable`, optional `dbt_allow_unsafe_executable`)
+- `dbt_generate_manifest: true` + trusted shell invocation (`dbt_command`)
+- `dbt_env_json` (JSON object of non-secret env vars exported before dbt invocation)
 - `dbt_secret_env_map_json` (JSON object mapping env var names to secret names)
 - `models_distribution_mode` (`none`, `publish_only`, `publish_and_bootstrap`)
 - workflow_call secret `DBT_NOVA_SECRET_BUNDLE_JSON` (optional JSON object of
   `secret-name -> secret-value` entries for cross-owner reusable workflow calls)
 
-`dbt_command` is executed as `bash -lc "<command>"` inside the caller
-repository checkout. Treat it as a trusted command surface and only use this
-mode in repositories/branches where workflow callers are trusted.
+Structured mode is the recommended default:
 
-When using `dbt_generate_manifest: true`, prefer this generic pattern so the
+- `dbt_command_args_json` must be a JSON array of strings.
+- The workflow executes `[dbt_executable, *dbt_command_args_json]` with no shell interpolation.
+- `dbt_executable` defaults to `dbt`.
+- By default `dbt_executable` must resolve to `dbt`/`dbt.exe`; set
+  `dbt_allow_unsafe_executable: true` only in trusted contexts.
+
+Trusted shell mode is still available for advanced cases:
+
+- `dbt_command` is executed as `bash -lc "<command>"` inside the caller repository checkout.
+- Treat it as a trusted command surface and only use it in trusted repos/branches.
+- `dbt_command` and `dbt_command_args_json` are mutually exclusive.
+
+When using `dbt_generate_manifest: true`, prefer this structured pattern so the
 workflow works across Databricks, BigQuery, DuckDB, and mixed profiles:
 
 ```yaml
@@ -64,10 +75,8 @@ jobs:
     uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@master
     with:
       dbt_generate_manifest: true
-      dbt_command: |
-        set -euo pipefail
-        dbt deps
-        dbt compile -t "$DBT_TARGET"
+      dbt_command_args_json: >-
+        ["compile","--target","prod"]
       dbt_env_json: >-
         {"DBT_TARGET":"prod","DBT_PROFILES_DIR":"./"}
       dbt_secret_env_map_json: >-
@@ -83,7 +92,8 @@ Notes:
 - `dbt_secret_env_map_json` values are looked up in this order:
   1) keys in `DBT_NOVA_SECRET_BUNDLE_JSON` (when provided),
   2) inherited workflow secrets (`secrets: inherit`, same-owner/org calls).
-- Missing mapped secrets fail fast before `dbt_command` runs.
+- Missing mapped secrets fail fast before dbt invocation.
+- Use trusted `dbt_command` only when you explicitly need shell semantics.
 
 Common downstream pattern: keep a repo-local `workflow_dispatch` wrapper and
 call this reusable workflow from it. This lets each repo set its own target
