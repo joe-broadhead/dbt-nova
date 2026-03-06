@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   execution of `dbt_command` in the reusable asset workflow docs.
 - Manifest loader initialization was decomposed into staged helpers, and MCP
   concurrency-permit error handling is now centralized.
+- Internal module layout was further decomposed for maintainability:
+  - `manifest/loader.rs` now delegates parsing/runtime/storage helpers to
+    `manifest/loader/{parse,runtime,storage}.rs`.
+  - `manifest/search/summary.rs` now delegates persona/Nova response shaping to
+    `manifest/search/summary/{persona,nova}.rs`.
 
 ### Fixed
 
@@ -60,6 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - re-downloads on hash mismatch
   - preserves usable cache files for non-mismatch verification errors
   - handles CRLF checksum-manifest lines correctly.
+- GCP auth environment tests are now hermetic and no longer rely on ambient
+  shell/session variables.
 
 ## [0.0.2] - 2026-02-28
 

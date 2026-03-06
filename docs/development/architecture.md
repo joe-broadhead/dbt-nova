@@ -27,7 +27,7 @@ flowchart TD
 
 ## Architecture Overview (Detailed)
 
-### Tool Map (26 total)
+### Tool Map (26 MCP tools)
 
 <div class="diagram-large diagram-vertical" markdown>
 
@@ -85,7 +85,7 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-  M1["manifest.json"] --> L["ManifestLoader<br/>manifest/loader.rs"]
+  M1["manifest.json"] --> L["ManifestLoader<br/>manifest/loader.rs + loader/{parse,runtime,storage}.rs"]
   M2["manifest URI"] --> P["Manifest Providers"]
   P --> PF[Local Files]
   P --> PH[HTTP]
@@ -98,7 +98,7 @@ flowchart TD
   PG --> L
   PD --> L
 
-  L --> S["ManifestSearch<br/>manifest/search.rs"]
+  L --> S["ManifestSearch<br/>manifest/search/core.rs + search/summary/*.rs"]
   S --> IDX["Indexes<br/>rkyv cache"]
   S --> TANT["Tantivy BM25 + n-gram + fuzzy"]
   S --> VEC["Vector Search<br/>dense + sparse + rerank"]
@@ -114,6 +114,13 @@ flowchart TD
 ```
 
 </div>
+
+Implementation note:
+- `manifest/loader.rs` orchestrates the load flow and delegates parsing, runtime
+  helpers, and storage lifecycle functions to `manifest/loader/`.
+- persona and Nova metadata summary builders live under
+  `manifest/search/summary/` (`persona.rs`, `nova.rs`) to keep search response
+  shaping isolated from core query orchestration.
 
 ### Tool → Runtime Dependencies
 
