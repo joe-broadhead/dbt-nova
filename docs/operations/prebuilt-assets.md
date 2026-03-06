@@ -112,6 +112,10 @@ jobs:
       dbt_generate_manifest: true
       dbt_command_args_json: >-
         ["compile","--target","prod"]
+      dbt_env_json: >-
+        {"DBT_TARGET":"prod","DBT_PROFILES_DIR":"./","DATABRICKS_HOST":"https://<workspace>.cloud.databricks.com"}
+      dbt_secret_env_map_json: >-
+        {"DBT_ACCESS_TOKEN":"DBT_ACCESS_TOKEN","DATABRICKS_ACCESS_TOKEN":"DBT_ACCESS_TOKEN"}
       storage_instance_id: analytics-prod
       installer_ref: v0.0.2
       installer_install_mode: release
@@ -122,6 +126,10 @@ jobs:
     secrets:
       DBT_NOVA_SECRET_BUNDLE_JSON: ${{ secrets.DBT_NOVA_SECRET_BUNDLE_JSON }}
 ```
+
+For DBFS publish with `publish_dry_run: false`, `DATABRICKS_HOST` and
+`DATABRICKS_ACCESS_TOKEN` must be present at publish time. The example above
+wires both through `dbt_env_json` + `dbt_secret_env_map_json`.
 
 Notes:
 
