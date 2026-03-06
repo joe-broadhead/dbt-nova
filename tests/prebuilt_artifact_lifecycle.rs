@@ -37,6 +37,9 @@ fn build_config(storage_dir: &Path) -> DbtNovaConfig {
         manifest_path: fixture_manifest_path().to_string_lossy().to_string(),
         storage_dir: storage_dir.to_string_lossy().to_string(),
         storage_instance_id: "analytics-prod".to_string(),
+        // Keep lifecycle tests deterministic: the archive source snapshot should not
+        // be mutated by background refresh while it is being packaged.
+        manifest_refresh_secs: 0,
         search,
         ..DbtNovaConfig::default()
     }
@@ -98,12 +101,28 @@ fn create_archive_from_dir(source_dir: &Path, archive_path: &Path) {
             }
 
             if file_type.is_file() {
-                let mut input = match File::open(&entry_abs) {
-                    Ok(file) => file,
+                let file_name = entry_rel
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                if file_name.ends_with(".lock")
+                    || file_name.ends_with(".tmp")
+                    || file_name.contains(".tmp.")
+                {
+                    continue;
+                }
+
+                let bytes = match fs::read(&entry_abs) {
+                    Ok(bytes) => bytes,
                     Err(error) if error.kind() == ErrorKind::NotFound => continue,
-                    Err(error) => panic!("open entry file {}: {error}", entry_abs.display()),
+                    Err(error) => panic!("read entry file {}: {error}", entry_abs.display()),
                 };
-                tar.append_file(&entry_rel, &mut input)
+                let mut header = tar::Header::new_gnu();
+                header.set_size(u64::try_from(bytes.len()).expect("archive entry size fits u64"));
+                header.set_mode(0o644);
+                header.set_entry_type(tar::EntryType::Regular);
+                header.set_cksum();
+                tar.append_data(&mut header, &entry_rel, bytes.as_slice())
                     .unwrap_or_else(|error| panic!("append file {}: {error}", entry_abs.display()));
             }
         }
