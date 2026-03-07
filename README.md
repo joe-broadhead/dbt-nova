@@ -220,7 +220,8 @@ When publish targets are enabled, the workflow publishes:
 - storage archive URI
 - manifest URI
 - metadata URI
-- bootstrap URI
+- versioned bootstrap URI
+- stable bootstrap alias URI (`<storage_instance_id>-latest-bootstrap.json`)
 - optional models URI
 
 For faster CI in downstream repos, use `installer_install_mode=release` with a
@@ -250,6 +251,12 @@ and credentials.
 For a complete setup guide (pinning strategy, secrets mapping, publish targets,
 bootstrap consumption, and verification checklist), see:
 **[Prebuilt Asset Workflow](docs/operations/prebuilt-assets.md)**.
+
+Recommended consumer setup:
+
+- configure `DBT_NOVA_BOOTSTRAP_URI` to the stable bootstrap alias
+- keep versioned bootstrap URIs only for rollback/debugging
+- after a producer publishes new assets, run `reload_manifest` to adopt the new asset set without editing MCP config
 
 Legacy fallback: if you manually extract artifacts locally, you can omit
 `DBT_NOVA_*_ARTIFACT_URI` vars and keep only
