@@ -1325,7 +1325,34 @@ jobs:
           download_from_s3() {
             local remote_uri="$1"
             local local_path="$2"
-            aws s3 cp --only-show-errors "${remote_uri}" "${local_path}"
+            local bucket object stderr_path
+
+            if [[ "${remote_uri}" != s3://* ]]; then
+              echo "invalid S3 URI: ${remote_uri}"
+              return 1
+            fi
+            bucket="${remote_uri#s3://}"
+            bucket="${bucket%%/*}"
+            object="${remote_uri#s3://${bucket}/}"
+            if [[ -z "${bucket}" || -z "${object}" || "${object}" == "${remote_uri}" ]]; then
+              echo "invalid S3 URI: ${remote_uri}"
+              return 1
+            fi
+
+            stderr_path="$(mktemp)"
+            if aws s3api get-object --bucket "${bucket}" --key "${object}" "${local_path}" >/dev/null 2>"${stderr_path}"; then
+              rm -f "${stderr_path}"
+              return 0
+            fi
+
+            if grep -Eqi '(NoSuchKey|Not Found|404)' "${stderr_path}"; then
+              rm -f "${stderr_path}" "${local_path}"
+              return 10
+            fi
+
+            cat "${stderr_path}" >&2
+            rm -f "${stderr_path}" "${local_path}"
+            return 1
           }
 
           publish_to_gcs() {
@@ -1359,7 +1386,7 @@ jobs:
           download_from_gcs() {
             local remote_uri="$1"
             local local_path="$2"
-            local bucket object object_encoded
+            local bucket object object_encoded http_code
 
             if [[ "${remote_uri}" != gs://* ]]; then
               echo "invalid GCS URI: ${remote_uri}"
@@ -1375,10 +1402,29 @@ jobs:
 
             object_encoded="$(python -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "${object}")"
 
-            curl -fsS \
+            http_code="$(curl -sS \
               -H "Authorization: Bearer ${GCS_ACCESS_TOKEN}" \
               -o "${local_path}" \
-              "https://storage.googleapis.com/storage/v1/b/${bucket}/o/${object_encoded}?alt=media"
+              -w "%{http_code}" \
+              "https://storage.googleapis.com/storage/v1/b/${bucket}/o/${object_encoded}?alt=media")" || {
+              rm -f "${local_path}"
+              return 1
+            }
+
+            case "${http_code}" in
+              200)
+                return 0
+                ;;
+              404)
+                rm -f "${local_path}"
+                return 10
+                ;;
+              *)
+                echo "unexpected GCS read status ${http_code} for ${remote_uri}" >&2
+                rm -f "${local_path}"
+                return 1
+                ;;
+            esac
           }
 
           publish_to_dbfs() {
@@ -1480,7 +1526,7 @@ jobs:
                 call_dbfs("get-status", {"path": remote_path})
             except urllib.error.HTTPError as err:
                 if err.code == 404:
-                    sys.exit(1)
+                    sys.exit(10)
                 raise
 
             offset = 0
@@ -1545,21 +1591,43 @@ jobs:
             local local_path="$2"
             local remote_uri="$3"
             local existing_path="$4"
+            local download_rc=0
 
             rm -f "${existing_path}"
             case "${target}" in
               s3)
-                download_from_s3 "${remote_uri}" "${existing_path}" >/dev/null 2>&1 || true
+                if download_from_s3 "${remote_uri}" "${existing_path}"; then
+                  download_rc=0
+                else
+                  download_rc=$?
+                fi
                 ;;
               gcs)
-                download_from_gcs "${remote_uri}" "${existing_path}" >/dev/null 2>&1 || true
+                if download_from_gcs "${remote_uri}" "${existing_path}"; then
+                  download_rc=0
+                else
+                  download_rc=$?
+                fi
                 ;;
               dbfs)
-                download_from_dbfs "${remote_uri}" "${existing_path}" >/dev/null 2>&1 || true
+                if download_from_dbfs "${remote_uri}" "${existing_path}"; then
+                  download_rc=0
+                else
+                  download_rc=$?
+                fi
                 ;;
               *)
                 echo "unsupported publish target for bootstrap alias: ${target}"
                 return 1
+                ;;
+            esac
+
+            case "${download_rc}" in
+              0|10)
+                ;;
+              *)
+                echo "failed to read current stable bootstrap alias for ${target}: ${remote_uri}" >&2
+                return "${download_rc}"
                 ;;
             esac
 
