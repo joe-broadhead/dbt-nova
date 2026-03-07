@@ -735,9 +735,6 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 120
     needs: prepare
-    concurrency:
-      group: nova-assets-${{ github.repository }}-${{ needs.prepare.outputs.storage_instance_id }}
-      cancel-in-progress: false
     outputs:
       manifest_hash: ${{ steps.collect.outputs.manifest_hash }}
       manifest_version: ${{ steps.collect.outputs.manifest_version }}
