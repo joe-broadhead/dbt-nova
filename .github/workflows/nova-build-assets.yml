@@ -154,6 +154,9 @@ on:
       published_bootstrap_uris:
         description: "Deprecated: always {}. Use artifact_name_publish_summary artifact instead."
         value: ${{ jobs.build.outputs.published_bootstrap_uris }}
+      published_bootstrap_latest_uris:
+        description: "Stable bootstrap alias URIs keyed by publish target."
+        value: ${{ jobs.build.outputs.published_bootstrap_latest_uris }}
       published_models_uris:
         description: "Deprecated: always {}. Use artifact_name_publish_summary artifact instead."
         value: ${{ jobs.build.outputs.published_models_uris }}
@@ -747,6 +750,7 @@ jobs:
       published_metadata_uris: ${{ steps.publish.outputs.published_metadata_uris_legacy || '{}' }}
       published_manifest_uris: ${{ steps.publish.outputs.published_manifest_uris_legacy || '{}' }}
       published_bootstrap_uris: ${{ steps.publish.outputs.published_bootstrap_uris_legacy || '{}' }}
+      published_bootstrap_latest_uris: ${{ steps.publish.outputs.published_bootstrap_latest_uris || '{}' }}
       published_models_uris: ${{ steps.publish.outputs.published_models_uris_legacy || '{}' }}
     env:
       DBT_NOVA_STORAGE_DIR: ${{ needs.prepare.outputs.storage_dir }}
@@ -1239,6 +1243,7 @@ jobs:
           metadata_filename="${{ steps.collect.outputs.artifact_name_metadata }}.json"
           metadata_publish_path="out/${metadata_filename}"
           bootstrap_filename="${{ steps.collect.outputs.artifact_name_bootstrap }}.json"
+          bootstrap_latest_filename="${DBT_NOVA_STORAGE_INSTANCE_ID}-latest-bootstrap.json"
           publish_summary_filename="${{ steps.collect.outputs.artifact_name_publish_summary }}.json"
           publish_summary_path="out/${publish_summary_filename}"
           bootstrap_dir="out/bootstrap"
@@ -1260,6 +1265,7 @@ jobs:
               --argjson published_manifest_uris '{}' \
               --argjson published_metadata_uris '{}' \
               --argjson published_bootstrap_uris '{}' \
+              --argjson published_bootstrap_latest_uris '{}' \
               --argjson published_models_uris '{}' \
               '{
                 published_targets: $published_targets,
@@ -1267,11 +1273,13 @@ jobs:
                 published_manifest_uris: $published_manifest_uris,
                 published_metadata_uris: $published_metadata_uris,
                 published_bootstrap_uris: $published_bootstrap_uris,
+                published_bootstrap_latest_uris: $published_bootstrap_latest_uris,
                 published_models_uris: $published_models_uris
               }' > "${publish_summary_path}"
             {
               echo "published_targets="
               echo "publish_summary_path=${publish_summary_path}"
+              echo 'published_bootstrap_latest_uris={}'
               echo 'published_storage_uris_legacy={}'
               echo 'published_metadata_uris_legacy={}'
               echo 'published_manifest_uris_legacy={}'
@@ -1464,16 +1472,19 @@ jobs:
           s3_manifest_uri=""
           s3_metadata_uri=""
           s3_bootstrap_uri=""
+          s3_bootstrap_latest_uri=""
           s3_models_uri=""
           gcs_storage_uri=""
           gcs_manifest_uri=""
           gcs_metadata_uri=""
           gcs_bootstrap_uri=""
+          gcs_bootstrap_latest_uri=""
           gcs_models_uri=""
           dbfs_storage_uri=""
           dbfs_manifest_uri=""
           dbfs_metadata_uri=""
           dbfs_bootstrap_uri=""
+          dbfs_bootstrap_latest_uri=""
           dbfs_models_uri=""
           published_targets_success=""
 
@@ -1485,6 +1496,7 @@ jobs:
                 s3_manifest_uri="${DBT_NOVA_PUBLISH_S3_PREFIX}/${manifest_filename}"
                 s3_metadata_uri="${DBT_NOVA_PUBLISH_S3_PREFIX}/${metadata_filename}"
                 s3_bootstrap_uri="${DBT_NOVA_PUBLISH_S3_PREFIX}/${bootstrap_filename}"
+                s3_bootstrap_latest_uri="${DBT_NOVA_PUBLISH_S3_PREFIX}/${bootstrap_latest_filename}"
                 if [[ -n "${models_archive}" ]]; then
                   s3_models_uri="${DBT_NOVA_PUBLISH_S3_PREFIX}/${models_archive}"
                 fi
@@ -1493,6 +1505,7 @@ jobs:
                   s3_bootstrap_models_uri="${s3_models_uri}"
                 fi
                 s3_bootstrap_path="${bootstrap_dir}/s3-${bootstrap_filename}"
+                s3_bootstrap_latest_path="${bootstrap_dir}/s3-${bootstrap_latest_filename}"
                 write_bootstrap_contract \
                   "${s3_bootstrap_path}" \
                   "s3" \
@@ -1500,6 +1513,7 @@ jobs:
                   "${s3_storage_uri}" \
                   "${s3_metadata_uri}" \
                   "${s3_bootstrap_models_uri}"
+                cp "${s3_bootstrap_path}" "${s3_bootstrap_latest_path}"
                 if [[ "${publish_dry_run}" != "true" ]]; then
                   if ! command -v aws >/dev/null 2>&1; then
                     echo "publish target s3 requires aws CLI."
@@ -1527,6 +1541,10 @@ jobs:
                     echo "failed uploading bootstrap contract to s3 after retries"
                     exit 1
                   }
+                  retry_with_backoff 4 publish_to_s3 "${s3_bootstrap_latest_path}" "${s3_bootstrap_latest_uri}" || {
+                    echo "failed uploading stable bootstrap alias to s3 after retries"
+                    exit 1
+                  }
                 fi
                 ;;
               gcs)
@@ -1534,6 +1552,7 @@ jobs:
                 gcs_manifest_uri="${DBT_NOVA_PUBLISH_GCS_PREFIX}/${manifest_filename}"
                 gcs_metadata_uri="${DBT_NOVA_PUBLISH_GCS_PREFIX}/${metadata_filename}"
                 gcs_bootstrap_uri="${DBT_NOVA_PUBLISH_GCS_PREFIX}/${bootstrap_filename}"
+                gcs_bootstrap_latest_uri="${DBT_NOVA_PUBLISH_GCS_PREFIX}/${bootstrap_latest_filename}"
                 if [[ -n "${models_archive}" ]]; then
                   gcs_models_uri="${DBT_NOVA_PUBLISH_GCS_PREFIX}/${models_archive}"
                 fi
@@ -1542,6 +1561,7 @@ jobs:
                   gcs_bootstrap_models_uri="${gcs_models_uri}"
                 fi
                 gcs_bootstrap_path="${bootstrap_dir}/gcs-${bootstrap_filename}"
+                gcs_bootstrap_latest_path="${bootstrap_dir}/gcs-${bootstrap_latest_filename}"
                 write_bootstrap_contract \
                   "${gcs_bootstrap_path}" \
                   "gcs" \
@@ -1549,6 +1569,7 @@ jobs:
                   "${gcs_storage_uri}" \
                   "${gcs_metadata_uri}" \
                   "${gcs_bootstrap_models_uri}"
+                cp "${gcs_bootstrap_path}" "${gcs_bootstrap_latest_path}"
                 if [[ "${publish_dry_run}" != "true" ]]; then
                   GCS_ACCESS_TOKEN="$(resolve_gcs_access_token)" || {
                     echo "publish target gcs requires a Google access token (DBT_NOVA_GCP_ACCESS_TOKEN, DBT_NOVA_BIGQUERY_ACCESS_TOKEN, GCP_ACCESS_TOKEN, GOOGLE_OAUTH_ACCESS_TOKEN, or gcloud ADC)."
@@ -1576,6 +1597,10 @@ jobs:
                     echo "failed uploading bootstrap contract to gcs after retries"
                     exit 1
                   }
+                  retry_with_backoff 4 publish_to_gcs "${gcs_bootstrap_latest_path}" "${gcs_bootstrap_latest_uri}" || {
+                    echo "failed uploading stable bootstrap alias to gcs after retries"
+                    exit 1
+                  }
                 fi
                 ;;
               dbfs)
@@ -1583,6 +1608,7 @@ jobs:
                 dbfs_manifest_uri="${DBT_NOVA_PUBLISH_DBFS_PREFIX}/${manifest_filename}"
                 dbfs_metadata_uri="${DBT_NOVA_PUBLISH_DBFS_PREFIX}/${metadata_filename}"
                 dbfs_bootstrap_uri="${DBT_NOVA_PUBLISH_DBFS_PREFIX}/${bootstrap_filename}"
+                dbfs_bootstrap_latest_uri="${DBT_NOVA_PUBLISH_DBFS_PREFIX}/${bootstrap_latest_filename}"
                 if [[ -n "${models_archive}" ]]; then
                   dbfs_models_uri="${DBT_NOVA_PUBLISH_DBFS_PREFIX}/${models_archive}"
                 fi
@@ -1591,6 +1617,7 @@ jobs:
                   dbfs_bootstrap_models_uri="${dbfs_models_uri}"
                 fi
                 dbfs_bootstrap_path="${bootstrap_dir}/dbfs-${bootstrap_filename}"
+                dbfs_bootstrap_latest_path="${bootstrap_dir}/dbfs-${bootstrap_latest_filename}"
                 write_bootstrap_contract \
                   "${dbfs_bootstrap_path}" \
                   "dbfs" \
@@ -1598,6 +1625,7 @@ jobs:
                   "${dbfs_storage_uri}" \
                   "${dbfs_metadata_uri}" \
                   "${dbfs_bootstrap_models_uri}"
+                cp "${dbfs_bootstrap_path}" "${dbfs_bootstrap_latest_path}"
                 if [[ "${publish_dry_run}" != "true" ]]; then
                   if [[ -z "${DATABRICKS_HOST:-}" || -z "${DATABRICKS_ACCESS_TOKEN:-}" ]]; then
                     echo "publish target dbfs requires DATABRICKS_HOST and DATABRICKS_ACCESS_TOKEN."
@@ -1623,6 +1651,10 @@ jobs:
                   fi
                   retry_with_backoff 4 publish_to_dbfs "${dbfs_bootstrap_path}" "${dbfs_bootstrap_uri}" || {
                     echo "failed uploading bootstrap contract to dbfs after retries"
+                    exit 1
+                  }
+                  retry_with_backoff 4 publish_to_dbfs "${dbfs_bootstrap_latest_path}" "${dbfs_bootstrap_latest_uri}" || {
+                    echo "failed uploading stable bootstrap alias to dbfs after retries"
                     exit 1
                   }
                 fi
@@ -1668,6 +1700,13 @@ jobs:
             '{} | if $s3 != "" then . + {s3: $s3} else . end
             | if $gcs != "" then . + {gcs: $gcs} else . end
             | if $dbfs != "" then . + {dbfs: $dbfs} else . end')"
+          published_bootstrap_latest_uris="$(jq -cn \
+            --arg s3 "${s3_bootstrap_latest_uri}" \
+            --arg gcs "${gcs_bootstrap_latest_uri}" \
+            --arg dbfs "${dbfs_bootstrap_latest_uri}" \
+            '{} | if $s3 != "" then . + {s3: $s3} else . end
+            | if $gcs != "" then . + {gcs: $gcs} else . end
+            | if $dbfs != "" then . + {dbfs: $dbfs} else . end')"
           published_models_uris="$(jq -cn \
             --arg s3 "${s3_models_uri}" \
             --arg gcs "${gcs_models_uri}" \
@@ -1682,6 +1721,7 @@ jobs:
             --argjson published_manifest_uris "${published_manifest_uris}" \
             --argjson published_metadata_uris "${published_metadata_uris}" \
             --argjson published_bootstrap_uris "${published_bootstrap_uris}" \
+            --argjson published_bootstrap_latest_uris "${published_bootstrap_latest_uris}" \
             --argjson published_models_uris "${published_models_uris}" \
             '{
               published_targets: $published_targets,
@@ -1689,12 +1729,14 @@ jobs:
               published_manifest_uris: $published_manifest_uris,
               published_metadata_uris: $published_metadata_uris,
               published_bootstrap_uris: $published_bootstrap_uris,
+              published_bootstrap_latest_uris: $published_bootstrap_latest_uris,
               published_models_uris: $published_models_uris
             }' > "${publish_summary_path}"
 
           {
             echo "published_targets=${published_targets_success}"
             echo "publish_summary_path=${publish_summary_path}"
+            echo "published_bootstrap_latest_uris=${published_bootstrap_latest_uris}"
             echo 'published_storage_uris_legacy={}'
             echo 'published_manifest_uris_legacy={}'
             echo 'published_metadata_uris_legacy={}'

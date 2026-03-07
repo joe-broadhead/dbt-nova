@@ -16,7 +16,7 @@ reuse them across jobs/repos in read-only mode.
    - `publish_and_bootstrap` for bootstrap-driven model hydration.
 5. If publishing remotely, set `publish_targets` and matching auth secrets.
 6. Trigger the workflow and confirm success.
-7. Use the produced bootstrap URI in consumer env (`DBT_NOVA_BOOTSTRAP_URI`).
+7. Use the produced stable bootstrap alias in consumer env (`DBT_NOVA_BOOTSTRAP_URI`).
 
 ## What this solves
 
@@ -170,6 +170,11 @@ The producer emits:
 - bootstrap contract artifact(s) when remote publish is configured
 - publish summary artifact (`artifact_name_publish_summary`) with published URIs by target
 
+When remote publish is enabled, Nova produces two bootstrap paths per target:
+
+- versioned bootstrap: immutable, manifest-hash-specific, useful for rollback/debugging
+- stable bootstrap alias: mutable latest pointer derived from `storage_instance_id`, recommended for consumers
+
 Models distribution modes:
 
 - `none`: do not package or publish models artifact; bootstrap omits `models_artifact_uri`.
@@ -223,22 +228,24 @@ Published object naming is deterministic:
 - storage: `<prefix>/<artifact_name_storage>.tar.gz`
 - manifest: `<prefix>/<artifact_name_manifest>.json`
 - metadata: `<prefix>/<artifact_name_metadata>.json`
-- bootstrap: `<prefix>/<artifact_name_bootstrap>.json`
+- bootstrap (versioned): `<prefix>/<artifact_name_bootstrap>.json`
+- bootstrap (stable alias): `<prefix>/<storage_instance_id>-latest-bootstrap.json`
 - models (optional): `<prefix>/<artifact_name_models>.tar.gz`
 
 Producer outputs include:
 
 - `published_targets` (comma-separated successful targets)
+- `published_bootstrap_latest_uris` (stable alias URIs keyed by target)
 - `artifact_name_publish_summary` (artifact containing `published_*_uris` JSON payloads)
 - legacy `published_*_uris` outputs are deprecated and return `{}` for compatibility
 
-Example (extract DBFS bootstrap URI from publish summary artifact):
+Example (extract DBFS stable bootstrap alias from publish summary artifact):
 
 ```bash
 PUBLISH_SUMMARY_DIR="$(mktemp -d)"
 gh run download "$GITHUB_RUN_ID" --name "$ARTIFACT_NAME_PUBLISH_SUMMARY" --dir "$PUBLISH_SUMMARY_DIR"
 PUBLISH_SUMMARY_JSON="$(find "$PUBLISH_SUMMARY_DIR" -type f -name '*.json' | head -n 1)"
-BOOTSTRAP_URI="$(jq -r '.published_bootstrap_uris.dbfs' "$PUBLISH_SUMMARY_JSON")"
+BOOTSTRAP_URI="$(jq -r '.published_bootstrap_latest_uris.dbfs' "$PUBLISH_SUMMARY_JSON")"
 ```
 
 Example `publish-summary` JSON shape:
@@ -255,7 +262,10 @@ Example `publish-summary` JSON shape:
     "dbfs": "dbfs:/FileStore/projects/my-project/nova-assets/prod/analytics-storage-<run>-<manifest>-metadata.json"
   },
   "published_bootstrap_uris": {
-    "dbfs": "dbfs:/FileStore/projects/my-project/nova-assets/prod/analytics-prod-bootstrap.json"
+    "dbfs": "dbfs:/FileStore/projects/my-project/nova-assets/prod/analytics-prod-storage-<run>-<manifest>-bootstrap.json"
+  },
+  "published_bootstrap_latest_uris": {
+    "dbfs": "dbfs:/FileStore/projects/my-project/nova-assets/prod/analytics-prod-latest-bootstrap.json"
   },
   "published_models_uris": {}
 }
@@ -265,8 +275,9 @@ Post-run verification checklist:
 
 1. Check workflow summary for resolved artifact names and publish targets.
 2. Download `artifact_name_publish_summary` and confirm expected target URI keys.
-3. Set `DBT_NOVA_BOOTSTRAP_URI` on a consumer and run `dbt-nova health check --json`.
+3. Set `DBT_NOVA_BOOTSTRAP_URI` to the stable bootstrap alias and run `dbt-nova health check --json`.
 4. Confirm health reports `bootstrap.loaded=true` and `artifact_consumer.storage_materialized=true`.
+5. After a later publish, run `reload_manifest` to adopt the newer assets without editing MCP config.
 
 ## Consumer (reuse in read-only mode)
 
@@ -294,7 +305,7 @@ Local shell example:
 export DBT_MANIFEST_PATH="$PWD/manifest.json"
 export DBT_NOVA_STORAGE_DIR="$PWD/.dbt-nova"
 export DBT_NOVA_STORAGE_READ_ONLY="true"
-export DBT_NOVA_BOOTSTRAP_URI="s3://my-bucket/nova-assets/prod/analytics-prod-bootstrap.json"
+export DBT_NOVA_BOOTSTRAP_URI="s3://my-bucket/nova-assets/prod/analytics-prod-latest-bootstrap.json"
 export DBT_NOVA_ARTIFACT_FETCH_POLICY="if_missing"
 
 dbt-nova health check --json
@@ -321,13 +332,19 @@ MCP client env example:
       "env": {
         "DBT_NOVA_STORAGE_DIR": "/path/to/.dbt-nova",
         "DBT_NOVA_STORAGE_READ_ONLY": "true",
-        "DBT_NOVA_BOOTSTRAP_URI": "s3://my-bucket/nova-assets/prod/analytics-prod-bootstrap.json",
+        "DBT_NOVA_BOOTSTRAP_URI": "s3://my-bucket/nova-assets/prod/analytics-prod-latest-bootstrap.json",
         "DBT_NOVA_ARTIFACT_FETCH_POLICY": "if_missing"
       }
     }
   }
 }
 ```
+
+Recommended consumer pattern:
+
+- Point `DBT_NOVA_BOOTSTRAP_URI` at the stable alias (`<storage_instance_id>-latest-bootstrap.json`).
+- Keep the versioned bootstrap URIs for rollback/debugging only.
+- After producers publish a newer asset set, run `reload_manifest` so Nova re-fetches the stable bootstrap alias and adopts the new artifacts.
 
 Use `health` to verify runtime decisions:
 

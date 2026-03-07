@@ -51,7 +51,8 @@ Recommended with prebuilt artifacts:
 - Keep `DBT_MANIFEST_PATH` or `DBT_NOVA_MANIFEST_URI` pointed at the same
   manifest content used by the producer build.
 - Use the same Nova release on producer and consumer.
-- Keep artifact URIs stable and allow Nova to cache them locally.
+- Prefer the stable bootstrap alias (`<storage_instance_id>-latest-bootstrap.json`) and allow Nova to cache fetched artifacts locally.
+- After a producer publishes new assets, run `reload_manifest` to pick up the newer bootstrap via the same URI.
 
 Bootstrap precedence reminder:
 
@@ -69,7 +70,7 @@ startup_timeout_sec = 60
 [mcp_servers.dbt-nova.env]
 DBT_NOVA_STORAGE_DIR = "/path/to/.dbt-nova"
 DBT_NOVA_STORAGE_READ_ONLY = "true"
-DBT_NOVA_BOOTSTRAP_URI = "s3://my-bucket/nova-assets/prod/analytics-prod-bootstrap.json"
+DBT_NOVA_BOOTSTRAP_URI = "s3://my-bucket/nova-assets/prod/analytics-prod-latest-bootstrap.json"
 DBT_NOVA_ARTIFACT_FETCH_POLICY = "if_missing"
 DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/models"
 ```
