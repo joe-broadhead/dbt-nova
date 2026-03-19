@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-03-19
+
 ### Added
 
 - Full one-shot CLI command surface:
@@ -20,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   consumer smoke tests and negative-path contract checks.
 - Optional remote publish targets (`s3`, `gcs`, `dbfs`) for reusable assets,
   including `publish_dry_run` contract coverage.
+- Stable bootstrap alias publishing for reusable asset workflows
+  (`<storage_instance_id>-latest-bootstrap.json`) so consumers can keep a
+  fixed `DBT_NOVA_BOOTSTRAP_URI` across asset refreshes.
 - Warm-model integrity controls for direct Hugging Face fallback downloads:
   `DBT_NOVA_WARMUP_CHECKSUM_MODE=off|warn|required` and
   `DBT_NOVA_WARMUP_CHECKSUM_FILE=/path/to/checksums.txt`.
