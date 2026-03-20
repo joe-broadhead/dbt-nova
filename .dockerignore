@@ -6,7 +6,6 @@ target
 
 docs
 tests
-benches
 fuzz
 
 .env
