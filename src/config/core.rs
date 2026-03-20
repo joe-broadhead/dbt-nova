@@ -777,14 +777,17 @@ impl DbtNovaConfig {
         explicit_http_port: bool,
         platform_port: Option<u16>,
     ) {
-        if self.server_transport != ServerTransport::StreamableHttp || explicit_http_port {
+        if self.server_transport != ServerTransport::StreamableHttp {
+            return;
+        }
+        if platform_port.is_some() && !explicit_http_host {
+            self.http_host = "0.0.0.0".to_string();
+        }
+        if explicit_http_port {
             return;
         }
         if let Some(port) = platform_port {
             self.http_port = port;
-            if !explicit_http_host {
-                self.http_host = "0.0.0.0".to_string();
-            }
         }
     }
 
@@ -1194,6 +1197,49 @@ mod tests {
 
         assert_eq!(config.server_transport, ServerTransport::StreamableHttp);
         assert_eq!(config.http_port, 9090);
+        assert_eq!(config.http_host, "0.0.0.0");
+    }
+
+    #[test]
+    fn from_env_uses_platform_host_fallback_with_explicit_http_port() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [
+            ("DBT_NOVA_SERVER_TRANSPORT", Some("streamable_http")),
+            ("DBT_NOVA_HTTP_HOST", None),
+            ("DBT_NOVA_HTTP_PORT", Some("8080")),
+            ("PORT", Some("9090")),
+        ];
+        let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let config = DbtNovaConfig::from_env();
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        assert_eq!(config.server_transport, ServerTransport::StreamableHttp);
+        assert_eq!(config.http_port, 8080);
         assert_eq!(config.http_host, "0.0.0.0");
     }
 }

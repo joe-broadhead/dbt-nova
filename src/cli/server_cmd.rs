@@ -387,6 +387,55 @@ mod tests {
         assert_eq!(config.http_host, "0.0.0.0");
     }
 
+    #[test]
+    fn build_start_config_uses_platform_host_fallback_with_explicit_http_port() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [
+            ("DBT_NOVA_SERVER_TRANSPORT", Some("stdio")),
+            ("DBT_NOVA_HTTP_HOST", None),
+            ("DBT_NOVA_HTTP_PORT", None),
+            ("PORT", Some("9090")),
+        ];
+        let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let config = build_start_config(&ServerStartArgs {
+            transport: Some(ServerTransportArg::StreamableHttp),
+            http_host: None,
+            http_port: Some(8080),
+            http_path: None,
+            http_stateful_mode: None,
+        });
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        assert_eq!(config.server_transport, ServerTransport::StreamableHttp);
+        assert_eq!(config.http_port, 8080);
+        assert_eq!(config.http_host, "0.0.0.0");
+    }
+
     #[tokio::test]
     async fn http_transport_serves_initialize_requests() {
         let temp_dir = TempDir::new().expect("temp dir");
