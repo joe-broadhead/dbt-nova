@@ -16,7 +16,7 @@ pub mod warehouse;
 pub use column_lineage::{
     ColumnLineageConfig, ColumnMatchingConfig, ConfidenceTier, MatchingStrategy,
 };
-pub use core::{ArtifactFetchPolicy, DbtNovaConfig, GovernanceGateConfig};
+pub use core::{ArtifactFetchPolicy, DbtNovaConfig, GovernanceGateConfig, ServerTransport};
 pub use metadata_score::{
     MetadataCategoryWeights, MetadataScoreConfig, MetadataScoreWeightProfiles,
 };
@@ -49,6 +49,10 @@ pub(crate) fn parse_usize(name: &str) -> Option<usize> {
 }
 
 pub(crate) fn parse_u64(name: &str) -> Option<u64> {
+    env_string(name).and_then(|v| v.parse().ok())
+}
+
+pub(crate) fn parse_u16(name: &str) -> Option<u16> {
     env_string(name).and_then(|v| v.parse().ok())
 }
 

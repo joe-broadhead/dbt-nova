@@ -36,7 +36,9 @@ pub type DispatchResult = std::result::Result<(), DispatchError>;
 pub async fn dispatch(command: args::Command) -> DispatchResult {
     match command {
         args::Command::Server(server) => match server.command {
-            args::ServerCommand::Start => server_cmd::start_from_env().await.map_err(Into::into),
+            args::ServerCommand::Start(args) => {
+                server_cmd::start_from_args(&args).await.map_err(Into::into)
+            }
         },
         args::Command::Manifest(manifest_args) => match manifest_args.command {
             args::ManifestCommand::Load(load_args) => manifest::run_load_command(&load_args).await,

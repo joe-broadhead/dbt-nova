@@ -9,7 +9,7 @@ Use `dbt-nova` in two modes:
 
 ```text
 dbt-nova
-├── server start
+├── server start [--transport] [--http-host] [--http-port] [--http-path] [--http-stateful-mode]
 ├── manifest load [--manifest-path|--manifest-uri] [--storage-instance-id] [--cleanup-storage-on-start] [--read-only] [--json]
 ├── manifest reload [--manifest-path|--manifest-uri] [--refresh-secs] [--storage-instance-id] [--cleanup-storage-on-start] [--read-only] [--json]
 ├── tool call <tool_name> [--params-json|--params-file|--params-stdin] [--manifest-path|--manifest-uri] [--storage-instance-id] [--cleanup-storage-on-start] [--read-only] [--json]
@@ -33,6 +33,14 @@ Equivalent explicit form:
 
 ```bash
 dbt-nova server start
+```
+
+Hosted HTTP form:
+
+```bash
+PORT=8080 \
+DBT_NOVA_SERVER_TRANSPORT=streamable_http \
+dbt-nova server start --http-host 0.0.0.0 --http-path /mcp
 ```
 
 ## Common Examples

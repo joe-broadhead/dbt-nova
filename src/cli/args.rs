@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
 #[command(name = "dbt-nova", version, about = "dbt-nova CLI")]
@@ -25,7 +25,27 @@ pub struct ServerArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum ServerCommand {
-    Start,
+    Start(ServerStartArgs),
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum ServerTransportArg {
+    Stdio,
+    StreamableHttp,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct ServerStartArgs {
+    #[arg(long, value_enum)]
+    pub transport: Option<ServerTransportArg>,
+    #[arg(long, value_name = "HOST")]
+    pub http_host: Option<String>,
+    #[arg(long, value_name = "PORT")]
+    pub http_port: Option<u16>,
+    #[arg(long, value_name = "PATH")]
+    pub http_path: Option<String>,
+    #[arg(long, value_name = "BOOL")]
+    pub http_stateful_mode: Option<bool>,
 }
 
 #[derive(Debug, Args)]
@@ -203,8 +223,8 @@ mod tests {
     use clap::Parser;
 
     use super::{
-        Cli, Command, ConfigCommand, HealthCommand, ManifestCommand, ServerCommand, StorageCommand,
-        ToolCommand,
+        Cli, Command, ConfigCommand, HealthCommand, ManifestCommand, ServerCommand,
+        ServerTransportArg, StorageCommand, ToolCommand,
     };
 
     #[test]
@@ -215,11 +235,30 @@ mod tests {
 
     #[test]
     fn cli_parses_server_start() {
-        let cli = Cli::parse_from(["dbt-nova", "server", "start"]);
+        let cli = Cli::parse_from([
+            "dbt-nova",
+            "server",
+            "start",
+            "--transport",
+            "streamable-http",
+            "--http-host",
+            "0.0.0.0",
+            "--http-port",
+            "8080",
+            "--http-path",
+            "/mcp",
+            "--http-stateful-mode",
+            "false",
+        ]);
         let command = cli.command.expect("command");
         match command {
             Command::Server(server) => {
-                assert!(matches!(server.command, ServerCommand::Start));
+                let ServerCommand::Start(args) = server.command;
+                assert_eq!(args.transport, Some(ServerTransportArg::StreamableHttp));
+                assert_eq!(args.http_host.as_deref(), Some("0.0.0.0"));
+                assert_eq!(args.http_port, Some(8080));
+                assert_eq!(args.http_path.as_deref(), Some("/mcp"));
+                assert_eq!(args.http_stateful_mode, Some(false));
             }
             _ => panic!("expected server command"),
         }

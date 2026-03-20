@@ -11,7 +11,7 @@ use super::column_lineage::ColumnLineageConfig;
 use super::metadata_score::MetadataScoreConfig;
 use super::search::SearchConfig;
 use super::warehouse::DEFAULT_SQL_PROVIDER;
-use super::{env_string, parse_bool, parse_f64, parse_u64, parse_usize, set_string};
+use super::{env_string, parse_bool, parse_f64, parse_u16, parse_u64, parse_usize, set_string};
 use tracing::warn;
 
 /// Rule for mapping entities into logical layers (e.g., staging, mart, core).
@@ -109,6 +109,28 @@ impl ArtifactFetchPolicy {
     }
 }
 
+/// MCP server transport mode.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ServerTransport {
+    /// Use stdio transport for local MCP clients.
+    #[default]
+    Stdio,
+    /// Use streamable HTTP transport for hosted/server deployments.
+    StreamableHttp,
+}
+
+impl ServerTransport {
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "stdio" => Some(Self::Stdio),
+            "streamable_http" | "streamable-http" | "http" => Some(Self::StreamableHttp),
+            _ => None,
+        }
+    }
+}
+
 /// Configuration for the dbt-nova server.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
@@ -169,6 +191,20 @@ pub struct DbtNovaConfig {
     pub artifact_timeout_secs: u64,
     /// Allow non-TLS remote artifact URIs (`http://`)
     pub artifact_allow_http: bool,
+    /// Server transport mode (`stdio` or `streamable_http`)
+    pub server_transport: ServerTransport,
+    /// Bind host for hosted HTTP mode
+    pub http_host: String,
+    /// Bind port for hosted HTTP mode
+    pub http_port: u16,
+    /// HTTP mount path for MCP requests
+    pub http_path: String,
+    /// Whether hosted HTTP mode should use stateful sessions
+    pub http_stateful_mode: bool,
+    /// SSE keepalive interval in seconds for hosted HTTP mode (0 = disable)
+    pub http_sse_keep_alive_secs: u64,
+    /// SSE retry hint in seconds for hosted HTTP mode (0 = disable)
+    pub http_sse_retry_secs: u64,
     /// Per-tool rate limits (comma-separated, e.g. "`search=60,execute_sql=30,default=120`")
     pub tool_rate_limits: String,
     /// Rate limit window size in seconds
@@ -246,6 +282,13 @@ impl Default for DbtNovaConfig {
             artifact_fetch_policy: ArtifactFetchPolicy::IfMissing,
             artifact_timeout_secs: 300,
             artifact_allow_http: false,
+            server_transport: ServerTransport::Stdio,
+            http_host: "127.0.0.1".to_string(),
+            http_port: 8000,
+            http_path: "/mcp".to_string(),
+            http_stateful_mode: true,
+            http_sse_keep_alive_secs: 15,
+            http_sse_retry_secs: 3,
             tool_rate_limits: "search=60,execute_sql=20,default=120".to_string(),
             tool_rate_limit_window_secs: 60,
             sql_provider: DEFAULT_SQL_PROVIDER.to_string(),
@@ -456,6 +499,19 @@ impl DbtNovaConfig {
             )?;
         }
 
+        if self.server_transport == ServerTransport::StreamableHttp {
+            if self.http_host.trim().is_empty() {
+                return Err(DbtNovaError::InvalidParams(
+                    "streamable HTTP transport requires a non-empty http_host".to_string(),
+                ));
+            }
+            if self.http_path.trim().is_empty() || !self.http_path.starts_with('/') {
+                return Err(DbtNovaError::InvalidParams(
+                    "streamable HTTP transport requires http_path to start with '/'".to_string(),
+                ));
+            }
+        }
+
         Ok(())
     }
 
@@ -569,6 +625,7 @@ impl DbtNovaConfig {
         config.apply_manifest_env();
         config.apply_artifact_env();
         config.apply_storage_env();
+        config.apply_server_env();
         config.apply_runtime_limits_env();
         config.apply_lineage_and_cache_env();
         config.apply_recipe_env();
@@ -669,6 +726,48 @@ impl DbtNovaConfig {
         }
         if let Some(value) = parse_bool("DBT_NOVA_STORAGE_READ_ONLY") {
             self.storage_read_only = value;
+        }
+    }
+
+    fn apply_server_env(&mut self) {
+        if let Some(value) = env_string("DBT_NOVA_SERVER_TRANSPORT") {
+            if let Some(transport) = ServerTransport::parse(&value) {
+                self.server_transport = transport;
+            } else {
+                warn!(
+                    "Invalid DBT_NOVA_SERVER_TRANSPORT value '{}'; expected stdio|streamable_http",
+                    value
+                );
+            }
+        }
+
+        let explicit_http_host =
+            env_string("DBT_NOVA_HTTP_HOST").filter(|value| !value.trim().is_empty());
+        if let Some(host) = explicit_http_host.as_ref() {
+            self.http_host = host.clone();
+        }
+        if let Some(port) = parse_u16("DBT_NOVA_HTTP_PORT") {
+            self.http_port = port;
+        }
+        set_string("DBT_NOVA_HTTP_PATH", &mut self.http_path);
+        if let Some(value) = parse_bool("DBT_NOVA_HTTP_STATEFUL_MODE") {
+            self.http_stateful_mode = value;
+        }
+        if let Some(value) = parse_u64("DBT_NOVA_HTTP_SSE_KEEP_ALIVE_SECS") {
+            self.http_sse_keep_alive_secs = value;
+        }
+        if let Some(value) = parse_u64("DBT_NOVA_HTTP_SSE_RETRY_SECS") {
+            self.http_sse_retry_secs = value;
+        }
+
+        if self.server_transport == ServerTransport::StreamableHttp
+            && env_string("DBT_NOVA_HTTP_PORT").is_none()
+            && let Some(port) = parse_u16("PORT")
+        {
+            self.http_port = port;
+            if explicit_http_host.is_none() {
+                self.http_host = "0.0.0.0".to_string();
+            }
         }
     }
 
@@ -854,7 +953,11 @@ fn validate_artifact_uri(name: &str, uri: &str, allow_http: bool) -> Result<()> 
 
 #[cfg(test)]
 mod tests {
-    use super::{ArtifactFetchPolicy, DbtNovaConfig};
+    use std::sync::{LazyLock, Mutex};
+
+    use super::{ArtifactFetchPolicy, DbtNovaConfig, ServerTransport};
+
+    static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     fn base_config() -> DbtNovaConfig {
         DbtNovaConfig {
@@ -878,6 +981,27 @@ mod tests {
             Some(ArtifactFetchPolicy::Never)
         );
         assert_eq!(ArtifactFetchPolicy::parse("unknown"), None);
+    }
+
+    #[test]
+    fn server_transport_parse_is_case_insensitive() {
+        assert_eq!(
+            ServerTransport::parse("stdio"),
+            Some(ServerTransport::Stdio)
+        );
+        assert_eq!(
+            ServerTransport::parse("streamable_http"),
+            Some(ServerTransport::StreamableHttp)
+        );
+        assert_eq!(
+            ServerTransport::parse("streamable-http"),
+            Some(ServerTransport::StreamableHttp)
+        );
+        assert_eq!(
+            ServerTransport::parse("http"),
+            Some(ServerTransport::StreamableHttp)
+        );
+        assert_eq!(ServerTransport::parse("unknown"), None);
     }
 
     #[test]
@@ -977,5 +1101,60 @@ mod tests {
             "unexpected artifacts cache path: {}",
             path.display()
         );
+    }
+
+    #[test]
+    fn validate_rejects_http_transport_without_rooted_path() {
+        let mut config = base_config();
+        config.server_transport = ServerTransport::StreamableHttp;
+        config.http_path = "mcp".to_string();
+
+        let error = config
+            .validate()
+            .expect_err("non-rooted HTTP path should fail validation");
+        assert!(error.to_string().contains("http_path"));
+    }
+
+    #[test]
+    fn from_env_uses_platform_port_for_http_transport() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [
+            ("DBT_NOVA_SERVER_TRANSPORT", Some("streamable_http")),
+            ("DBT_NOVA_HTTP_HOST", None),
+            ("DBT_NOVA_HTTP_PORT", None),
+            ("PORT", Some("9090")),
+        ];
+        let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let config = DbtNovaConfig::from_env();
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        assert_eq!(config.server_transport, ServerTransport::StreamableHttp);
+        assert_eq!(config.http_port, 9090);
+        assert_eq!(config.http_host, "0.0.0.0");
     }
 }
