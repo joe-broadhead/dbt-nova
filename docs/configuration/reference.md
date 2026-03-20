@@ -29,6 +29,13 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_ARTIFACT_FETCH_POLICY` – artifact fetch policy (`if_missing`, `always`, `never`; default: `if_missing`)
 - `DBT_NOVA_ARTIFACT_TIMEOUT_SECS` – fetch timeout for remote artifact downloads (`0` = disabled, default: `300`)
 - `DBT_NOVA_ARTIFACT_ALLOW_HTTP` – allow `http://` artifact URIs (`true`|`false`, default: `false`)
+- `DBT_NOVA_SERVER_TRANSPORT` – MCP server transport (`stdio` or `streamable_http`, default: `stdio`)
+- `DBT_NOVA_HTTP_HOST` – bind host for streamable HTTP mode (default: `127.0.0.1`; falls back to `0.0.0.0` when `PORT` is set and `DBT_NOVA_SERVER_TRANSPORT=streamable_http`)
+- `DBT_NOVA_HTTP_PORT` – bind port for streamable HTTP mode (default: `8000`; falls back to `PORT` when unset)
+- `DBT_NOVA_HTTP_PATH` – HTTP mount path for MCP requests in streamable HTTP mode (default: `/mcp`)
+- `DBT_NOVA_HTTP_STATEFUL_MODE` – enable stateful streamable HTTP sessions (`true`|`false`, default: `true`)
+- `DBT_NOVA_HTTP_SSE_KEEP_ALIVE_SECS` – SSE keepalive interval for streamable HTTP mode (`0` disables keepalives, default: `15`)
+- `DBT_NOVA_HTTP_SSE_RETRY_SECS` – SSE retry hint for streamable HTTP mode (`0` disables retry hints, default: `3`)
 - `DBT_NOVA_STRICT_SCHEMA` – fail build if schema files are missing or invalid (`true`|`false`, default: `false`; forced `true` in CI)
 - `DBT_NOVA_S3_MODE` – S3 fetch mode (`https` or `sdk`, default: `https`)
 - `DBT_NOVA_GCS_MODE` – GCS fetch mode (`https` or `sdk`, default: `https`)
@@ -60,6 +67,7 @@ Remote manifest notes:
 - To allow insecure `http://` manifests (not recommended), set `DBT_NOVA_MANIFEST_ALLOW_HTTP=true`.
 - To allow insecure `http://` prebuilt artifact URIs (not recommended), set `DBT_NOVA_ARTIFACT_ALLOW_HTTP=true`.
 - Bootstrap precedence is deterministic: explicit env vars override bootstrap values, and bootstrap values override defaults.
+- Streamable HTTP mode is intended for hosted deployments. The MCP endpoint is mounted at `DBT_NOVA_HTTP_PATH`, while liveness/readiness endpoints are planned separately.
 
 ## Storage
 
