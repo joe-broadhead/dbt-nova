@@ -203,11 +203,14 @@ async fn serve_streamable_http(
         Router::new().nest_service(settings.path.as_str(), service)
     };
 
-    let bind_addr = format!("{}:{}", settings.host, settings.port);
-    let listener = TcpListener::bind(bind_addr.as_str())
+    let bind_host = settings.host.clone();
+    let bind_port = settings.port;
+    let listener = TcpListener::bind((bind_host.as_str(), bind_port))
         .await
         .map_err(|error| {
-            DbtNovaError::ServerError(format!("HTTP bind failed on {bind_addr}: {error}"))
+            DbtNovaError::ServerError(format!(
+                "HTTP bind failed on {bind_host}:{bind_port}: {error}"
+            ))
         })?;
     let local_addr = listener
         .local_addr()

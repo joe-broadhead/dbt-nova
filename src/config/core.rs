@@ -505,9 +505,9 @@ impl DbtNovaConfig {
                     "streamable HTTP transport requires a non-empty http_host".to_string(),
                 ));
             }
-            if self.http_path.trim().is_empty() || !self.http_path.starts_with('/') {
+            if !http_path_is_literal_mount(self.http_path.trim()) {
                 return Err(DbtNovaError::InvalidParams(
-                    "streamable HTTP transport requires http_path to start with '/'".to_string(),
+                    "streamable HTTP transport requires http_path to start with '/' and contain only literal path segments".to_string(),
                 ));
             }
         }
@@ -968,6 +968,16 @@ fn validate_artifact_uri(name: &str, uri: &str, allow_http: bool) -> Result<()> 
     Ok(())
 }
 
+fn http_path_is_literal_mount(path: &str) -> bool {
+    if path.is_empty() || !path.starts_with('/') {
+        return false;
+    }
+    if path == "/" {
+        return true;
+    }
+    !path.contains('{') && !path.contains('}') && !path.contains('*') && !path.contains(':')
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{LazyLock, Mutex};
@@ -1130,6 +1140,18 @@ mod tests {
             .validate()
             .expect_err("non-rooted HTTP path should fail validation");
         assert!(error.to_string().contains("http_path"));
+    }
+
+    #[test]
+    fn validate_rejects_http_transport_with_wildcard_path() {
+        let mut config = base_config();
+        config.server_transport = ServerTransport::StreamableHttp;
+        config.http_path = "/{*rest}".to_string();
+
+        let error = config
+            .validate()
+            .expect_err("wildcard HTTP path should fail validation");
+        assert!(error.to_string().contains("literal path segments"));
     }
 
     #[test]
