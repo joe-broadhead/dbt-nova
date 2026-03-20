@@ -71,6 +71,10 @@ pub async fn start_with_config(config: DbtNovaConfig) -> Result<()> {
 
 fn build_start_config(args: &ServerStartArgs) -> DbtNovaConfig {
     let mut config = DbtNovaConfig::from_env();
+    let explicit_env_http_host = std::env::var("DBT_NOVA_HTTP_HOST")
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty());
+    let explicit_env_http_port = std::env::var("DBT_NOVA_HTTP_PORT").is_ok();
     if let Some(transport) = args.transport {
         config.server_transport = match transport {
             ServerTransportArg::Stdio => ServerTransport::Stdio,
@@ -80,7 +84,7 @@ fn build_start_config(args: &ServerStartArgs) -> DbtNovaConfig {
     if let Some(host) = args.http_host.as_ref()
         && !host.trim().is_empty()
     {
-        config.http_host = host.clone();
+        config.http_host.clone_from(host);
     }
     if let Some(port) = args.http_port {
         config.http_port = port;
@@ -88,11 +92,24 @@ fn build_start_config(args: &ServerStartArgs) -> DbtNovaConfig {
     if let Some(path) = args.http_path.as_ref()
         && !path.trim().is_empty()
     {
-        config.http_path = path.clone();
+        config.http_path.clone_from(path);
     }
     if let Some(stateful_mode) = args.http_stateful_mode {
         config.http_stateful_mode = stateful_mode;
     }
+    let explicit_http_host = args
+        .http_host
+        .as_ref()
+        .is_some_and(|host| !host.trim().is_empty())
+        || explicit_env_http_host;
+    let explicit_http_port = args.http_port.is_some() || explicit_env_http_port;
+    config.apply_http_platform_port_fallback(
+        explicit_http_host,
+        explicit_http_port,
+        std::env::var("PORT")
+            .ok()
+            .and_then(|value| value.parse().ok()),
+    );
     config
 }
 
@@ -171,7 +188,7 @@ async fn serve_streamable_http(
     let service: StreamableHttpService<DbtNovaServer, LocalSessionManager> =
         StreamableHttpService::new(
             move || Ok::<DbtNovaServer, io::Error>(server.clone()),
-            Default::default(),
+            std::sync::Arc::default(),
             StreamableHttpServerConfig {
                 stateful_mode: settings.stateful_mode,
                 sse_keep_alive: secs_to_option(settings.sse_keep_alive_secs),
@@ -316,6 +333,55 @@ mod tests {
         assert_eq!(config.http_port, 9090);
         assert_eq!(config.http_path, "/mcp");
         assert!(!config.http_stateful_mode);
+    }
+
+    #[test]
+    fn build_start_config_uses_platform_port_after_cli_transport_override() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [
+            ("DBT_NOVA_SERVER_TRANSPORT", Some("stdio")),
+            ("DBT_NOVA_HTTP_HOST", None),
+            ("DBT_NOVA_HTTP_PORT", None),
+            ("PORT", Some("9090")),
+        ];
+        let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let config = build_start_config(&ServerStartArgs {
+            transport: Some(ServerTransportArg::StreamableHttp),
+            http_host: None,
+            http_port: None,
+            http_path: None,
+            http_stateful_mode: None,
+        });
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        assert_eq!(config.server_transport, ServerTransport::StreamableHttp);
+        assert_eq!(config.http_port, 9090);
+        assert_eq!(config.http_host, "0.0.0.0");
     }
 
     #[tokio::test]

@@ -744,9 +744,13 @@ impl DbtNovaConfig {
         let explicit_http_host =
             env_string("DBT_NOVA_HTTP_HOST").filter(|value| !value.trim().is_empty());
         if let Some(host) = explicit_http_host.as_ref() {
-            self.http_host = host.clone();
+            self.http_host.clone_from(host);
         }
-        if let Some(port) = parse_u16("DBT_NOVA_HTTP_PORT") {
+        let explicit_http_port = env_string("DBT_NOVA_HTTP_PORT");
+        if let Some(port) = explicit_http_port
+            .as_ref()
+            .and_then(|value| value.parse().ok())
+        {
             self.http_port = port;
         }
         set_string("DBT_NOVA_HTTP_PATH", &mut self.http_path);
@@ -760,12 +764,25 @@ impl DbtNovaConfig {
             self.http_sse_retry_secs = value;
         }
 
-        if self.server_transport == ServerTransport::StreamableHttp
-            && env_string("DBT_NOVA_HTTP_PORT").is_none()
-            && let Some(port) = parse_u16("PORT")
-        {
+        self.apply_http_platform_port_fallback(
+            explicit_http_host.is_some(),
+            explicit_http_port.is_some(),
+            parse_u16("PORT"),
+        );
+    }
+
+    pub(crate) fn apply_http_platform_port_fallback(
+        &mut self,
+        explicit_http_host: bool,
+        explicit_http_port: bool,
+        platform_port: Option<u16>,
+    ) {
+        if self.server_transport != ServerTransport::StreamableHttp || explicit_http_port {
+            return;
+        }
+        if let Some(port) = platform_port {
             self.http_port = port;
-            if explicit_http_host.is_none() {
+            if !explicit_http_host {
                 self.http_host = "0.0.0.0".to_string();
             }
         }
