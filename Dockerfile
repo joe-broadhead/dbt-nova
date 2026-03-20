@@ -16,6 +16,7 @@ RUN apt-get update && \
 WORKDIR /app
 
 COPY Cargo.toml Cargo.lock build.rs ./
+COPY benches ./benches
 COPY schemas ./schemas
 COPY src ./src
 
