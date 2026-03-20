@@ -505,9 +505,15 @@ impl DbtNovaConfig {
                     "streamable HTTP transport requires a non-empty http_host".to_string(),
                 ));
             }
-            if !http_path_is_literal_mount(self.http_path.trim()) {
+            let http_path = self.http_path.trim();
+            if !http_path_is_literal_mount(http_path) {
                 return Err(DbtNovaError::InvalidParams(
                     "streamable HTTP transport requires http_path to start with '/' and contain only literal path segments".to_string(),
+                ));
+            }
+            if http_path_conflicts_with_probe_route(http_path) {
+                return Err(DbtNovaError::InvalidParams(
+                    "streamable HTTP transport reserves /healthz and /readyz for probe endpoints; choose a different http_path".to_string(),
                 ));
             }
         }
@@ -986,6 +992,10 @@ fn http_path_is_literal_mount(path: &str) -> bool {
     !path.contains('{') && !path.contains('}') && !path.contains('*') && !path.contains(':')
 }
 
+fn http_path_conflicts_with_probe_route(path: &str) -> bool {
+    matches!(path, "/healthz" | "/readyz")
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{LazyLock, Mutex};
@@ -1160,6 +1170,18 @@ mod tests {
             .validate()
             .expect_err("wildcard HTTP path should fail validation");
         assert!(error.to_string().contains("literal path segments"));
+    }
+
+    #[test]
+    fn validate_rejects_http_transport_with_probe_path_collision() {
+        let mut config = base_config();
+        config.server_transport = ServerTransport::StreamableHttp;
+        config.http_path = "/healthz".to_string();
+
+        let error = config
+            .validate()
+            .expect_err("probe path collisions should fail validation");
+        assert!(error.to_string().contains("reserves /healthz and /readyz"));
     }
 
     #[test]

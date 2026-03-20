@@ -1,0 +1,13 @@
+.git
+.dbt-nova
+.fastembed_cache
+site
+target
+
+docs
+tests
+fuzz
+
+.env
+.env.*
+*.log

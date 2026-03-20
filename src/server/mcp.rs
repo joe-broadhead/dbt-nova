@@ -14,7 +14,6 @@ use rmcp::{
 use tracing::instrument;
 
 use crate::error::DbtNovaError;
-use crate::manifest::search::ManifestStatus;
 use crate::manifest::search::{ManifestSearch, ManifestSearchHandle};
 use crate::params::{
     BatchGetParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams, GetColumnLineageParams,
@@ -24,6 +23,7 @@ use crate::params::{
     SearchRecipesParams, ValidateDagParams,
 };
 use crate::responses::SuccessResponse;
+use crate::server::health::build_manifest_health_payload;
 use crate::utils::{ToolMetricsStore, ToolRateLimiter};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
@@ -553,46 +553,7 @@ impl DbtNovaServer {
     )]
     #[instrument(level = "info", skip(self))]
     async fn health(&self) -> String {
-        let status = self.searcher.status().await;
-        let is_ready = matches!(status, ManifestStatus::Ready { .. });
-        let mut payload = match &status {
-            ManifestStatus::Loading { elapsed_ms } => serde_json::json!({
-                "status": "loading",
-                "elapsed_ms": elapsed_ms,
-            }),
-            ManifestStatus::Ready { entity_count } => serde_json::json!({
-                "status": "ready",
-                "entity_count": entity_count,
-            }),
-            ManifestStatus::Refreshing {
-                elapsed_ms,
-                entity_count,
-            } => serde_json::json!({
-                "status": "refreshing",
-                "elapsed_ms": elapsed_ms,
-                "entity_count": entity_count,
-            }),
-            ManifestStatus::Failed { error } => serde_json::json!({
-                "status": "failed",
-                "error": error,
-            }),
-        };
-        if (is_ready || matches!(status, ManifestStatus::Refreshing { .. }))
-            && let Ok(searcher) = self.searcher.get().await
-        {
-            let details = searcher.health_snapshot().await;
-            if let (Some(base), Some(extra)) = (payload.as_object_mut(), details.as_object()) {
-                for (key, value) in extra {
-                    base.insert(key.clone(), value.clone());
-                }
-            }
-        }
-        let refresh_stats = self.searcher.refresh_stats_snapshot().await;
-        if let (Some(base), Some(extra)) = (payload.as_object_mut(), refresh_stats.as_object()) {
-            for (key, value) in extra {
-                base.insert(key.clone(), value.clone());
-            }
-        }
+        let mut payload = build_manifest_health_payload(&self.searcher).await.payload;
         if let Some(base) = payload.as_object_mut() {
             if let Ok(searcher) = self.searcher.get().await {
                 let concurrency = self.search_concurrency.get_or_init(|| {

@@ -104,6 +104,7 @@ dbt-nova tool call execute_sql \
 | Local dev (simple) | local path | local build | on-demand | `DBT_MANIFEST_PATH` |
 | Local dev (stable) | local path | local build | pre-warmed local cache | `DBT_MANIFEST_PATH`, `DBT_NOVA_EMBEDDINGS_CACHE_DIR` |
 | Remote manifest, local index | `DBT_NOVA_MANIFEST_URI` | local build | pre-warmed local cache | `DBT_NOVA_MANIFEST_URI`, `DBT_NOVA_EMBEDDINGS_CACHE_DIR` |
+| Hosted bootstrap consumer | bootstrap | prebuilt artifacts hydrated locally | remote models artifact or pre-warmed cache | `DBT_NOVA_SERVER_TRANSPORT=streamable_http`, `PORT`, `DBT_NOVA_STORAGE_DIR=/tmp/dbt-nova`, `DBT_NOVA_EMBEDDINGS_CACHE_DIR=/tmp/dbt-nova/models`, `DBT_NOVA_BOOTSTRAP_URI`, `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing` |
 | Prebuilt read-only (no remote models) | bootstrap or explicit artifact URIs | prebuilt artifacts | local pre-warmed cache | `DBT_NOVA_STORAGE_READ_ONLY=true`, bootstrap/artifact vars, `DBT_NOVA_EMBEDDINGS_CACHE_DIR` |
 | Prebuilt read-only (full remote) | bootstrap | prebuilt artifacts | remote models artifact | `DBT_NOVA_STORAGE_READ_ONLY=true`, `DBT_NOVA_BOOTSTRAP_URI`, fetch policy |
 
