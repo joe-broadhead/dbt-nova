@@ -35,7 +35,7 @@ impl HttpServerSettings {
         Self {
             host: config.http_host.clone(),
             port: config.http_port,
-            path: config.http_path.clone(),
+            path: config.http_path.trim().to_string(),
             stateful_mode: config.http_stateful_mode,
             sse_keep_alive_secs: config.http_sse_keep_alive_secs,
             sse_retry_secs: config.http_sse_retry_secs,
@@ -94,7 +94,7 @@ fn build_start_config(args: &ServerStartArgs) -> DbtNovaConfig {
     if let Some(path) = args.http_path.as_ref()
         && !path.trim().is_empty()
     {
-        config.http_path.clone_from(path);
+        config.http_path = path.trim().to_string();
     }
     if let Some(stateful_mode) = args.http_stateful_mode {
         config.http_stateful_mode = stateful_mode;
@@ -485,6 +485,19 @@ mod tests {
         assert_eq!(config.server_transport, ServerTransport::StreamableHttp);
         assert_eq!(config.http_port, 9090);
         assert_eq!(config.http_host, "0.0.0.0");
+    }
+
+    #[test]
+    fn build_start_config_trims_http_path() {
+        let config = build_start_config(&ServerStartArgs {
+            transport: Some(ServerTransportArg::StreamableHttp),
+            http_host: None,
+            http_port: None,
+            http_path: Some(" /mcp ".to_string()),
+            http_stateful_mode: None,
+        });
+
+        assert_eq!(config.http_path, "/mcp");
     }
 
     #[tokio::test]

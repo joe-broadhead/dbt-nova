@@ -753,7 +753,12 @@ impl DbtNovaConfig {
         if let Some(port) = parsed_http_port {
             self.http_port = port;
         }
-        set_string("DBT_NOVA_HTTP_PATH", &mut self.http_path);
+        if let Some(path) = env_string("DBT_NOVA_HTTP_PATH") {
+            let trimmed = path.trim();
+            if !trimmed.is_empty() {
+                self.http_path = trimmed.to_string();
+            }
+        }
         if let Some(value) = parse_bool("DBT_NOVA_HTTP_STATEFUL_MODE") {
             self.http_stateful_mode = value;
         }
@@ -1155,6 +1160,42 @@ mod tests {
             .validate()
             .expect_err("wildcard HTTP path should fail validation");
         assert!(error.to_string().contains("literal path segments"));
+    }
+
+    #[test]
+    fn from_env_trims_http_path() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [("DBT_NOVA_HTTP_PATH", Some(" /mcp "))];
+        let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let config = DbtNovaConfig::from_env();
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        assert_eq!(config.http_path, "/mcp");
     }
 
     #[test]
