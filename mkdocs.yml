@@ -132,6 +132,7 @@ nav:
     - Nova Meta (Metrics): features/nova-meta-metrics.md
   - Operations:
     - Ops & Troubleshooting: operations/ops.md
+    - Hosted Deployment: operations/hosted-deployment.md
     - Prebuilt Asset Workflow: operations/prebuilt-assets.md
     - Performance: operations/performance.md
     - Limitations: operations/limitations.md

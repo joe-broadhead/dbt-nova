@@ -43,6 +43,13 @@ DBT_NOVA_SERVER_TRANSPORT=streamable_http \
 dbt-nova server start --http-host 0.0.0.0 --http-path /mcp
 ```
 
+Hosted probe endpoints:
+
+```bash
+curl -fsS http://127.0.0.1:8080/healthz
+curl -fsS http://127.0.0.1:8080/readyz
+```
+
 ## Common Examples
 
 ### Build and inspect manifest indexes

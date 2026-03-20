@@ -1,11 +1,12 @@
 use std::io;
 use std::time::Duration;
 
-use axum::Router;
+use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use rmcp::transport::{
     StreamableHttpServerConfig, StreamableHttpService,
     streamable_http_server::session::local::LocalSessionManager,
 };
+use serde_json::json;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
@@ -15,6 +16,7 @@ use crate::config::{DbtNovaConfig, ServerTransport};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::bootstrap::prepare_runtime_config;
 use crate::manifest::search::ManifestSearchHandle;
+use crate::server::health::build_manifest_health_payload;
 use crate::server::mcp::DbtNovaServer;
 use crate::utils::sanitize_uri;
 
@@ -28,6 +30,11 @@ struct HttpServerSettings {
     stateful_mode: bool,
     sse_keep_alive_secs: u64,
     sse_retry_secs: u64,
+}
+
+#[derive(Clone)]
+struct HostedProbeState {
+    searcher: ManifestSearchHandle,
 }
 
 impl HttpServerSettings {
@@ -147,11 +154,11 @@ async fn start_with_config_and_shutdown(
         }
     });
 
-    let server = DbtNovaServer::new(searcher);
+    let server = DbtNovaServer::new(searcher.clone());
     match transport {
         ServerTransport::Stdio => serve_stdio(server, shutdown).await,
         ServerTransport::StreamableHttp => {
-            serve_streamable_http(server, http_settings, shutdown).await
+            serve_streamable_http(server, searcher, http_settings, shutdown).await
         }
     }
 }
@@ -184,6 +191,7 @@ async fn serve_stdio(server: DbtNovaServer, shutdown: CancellationToken) -> Resu
 
 async fn serve_streamable_http(
     server: DbtNovaServer,
+    searcher: ManifestSearchHandle,
     settings: HttpServerSettings,
     shutdown: CancellationToken,
 ) -> Result<()> {
@@ -199,10 +207,15 @@ async fn serve_streamable_http(
             },
         );
 
+    let base_app = Router::new()
+        .route("/healthz", get(http_liveness))
+        .route("/readyz", get(http_readiness))
+        .with_state(HostedProbeState { searcher });
+
     let app = if settings.path == "/" {
-        Router::new().fallback_service(service)
+        base_app.fallback_service(service)
     } else {
-        Router::new().nest_service(settings.path.as_str(), service)
+        base_app.nest_service(settings.path.as_str(), service)
     };
 
     let bind_host = settings.host.clone();
@@ -232,6 +245,28 @@ async fn serve_streamable_http(
         .await
         .map_err(|error| DbtNovaError::ServerError(format!("HTTP server failed: {error}")))?;
     Ok(())
+}
+
+async fn http_liveness() -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::OK,
+        Json(json!({
+            "status": "ok",
+            "version": env!("CARGO_PKG_VERSION"),
+        })),
+    )
+}
+
+async fn http_readiness(
+    State(state): State<HostedProbeState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let snapshot = build_manifest_health_payload(&state.searcher).await;
+    let status = if snapshot.ready_for_traffic {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    (status, Json(snapshot.payload))
 }
 
 fn secs_to_option(value: u64) -> Option<Duration> {
@@ -275,7 +310,7 @@ mod tests {
     use std::time::Duration;
 
     use reqwest::Client;
-    use serde_json::json;
+    use serde_json::{Value, json};
     use tempfile::TempDir;
     use tokio::net::TcpListener;
     use tokio_util::sync::CancellationToken;
@@ -500,16 +535,9 @@ mod tests {
         assert_eq!(config.http_path, "/mcp");
     }
 
-    #[tokio::test]
-    async fn http_transport_serves_initialize_requests() {
-        let temp_dir = TempDir::new().expect("temp dir");
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
-        let port = listener.local_addr().expect("local addr").port();
-        drop(listener);
-
-        let shutdown = CancellationToken::new();
-        let config = DbtNovaConfig {
-            manifest_path: fixture_manifest_path_string(),
+    fn http_test_config(temp_dir: &TempDir, manifest_path: String, port: u16) -> DbtNovaConfig {
+        DbtNovaConfig {
+            manifest_path,
             manifest_refresh_secs: 0,
             storage_dir: temp_dir
                 .path()
@@ -528,12 +556,68 @@ mod tests {
                 ..Default::default()
             },
             ..Default::default()
-        };
+        }
+    }
+
+    async fn next_test_port() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("local addr").port();
+        drop(listener);
+        port
+    }
+
+    async fn wait_for_http_status(
+        client: &Client,
+        url: &str,
+        expected_status: reqwest::StatusCode,
+    ) -> Value {
+        for _ in 0..20 {
+            if let Ok(response) = client.get(url).send().await
+                && response.status() == expected_status
+            {
+                return response.json().await.expect("valid JSON probe response");
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("timed out waiting for {url} to return {expected_status}");
+    }
+
+    #[tokio::test]
+    async fn http_transport_serves_initialize_requests() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let port = next_test_port().await;
+        let shutdown = CancellationToken::new();
+        let config = http_test_config(&temp_dir, fixture_manifest_path_string(), port);
 
         let server_task = tokio::spawn(start_with_config_and_shutdown(config, shutdown.clone()));
         tokio::time::sleep(Duration::from_millis(300)).await;
+        let client = Client::new();
 
-        let response = Client::new()
+        let liveness = client
+            .get(format!("http://127.0.0.1:{port}/healthz"))
+            .send()
+            .await
+            .expect("liveness request should succeed");
+        assert_eq!(liveness.status(), reqwest::StatusCode::OK);
+        let liveness_body = liveness.json::<Value>().await.expect("liveness JSON");
+        assert_eq!(liveness_body["status"], "ok");
+        assert_eq!(liveness_body["version"], env!("CARGO_PKG_VERSION"));
+
+        let readiness = wait_for_http_status(
+            &client,
+            &format!("http://127.0.0.1:{port}/readyz"),
+            reqwest::StatusCode::OK,
+        )
+        .await;
+        assert_eq!(readiness["status"], "ready");
+        assert!(
+            readiness["entity_count"]
+                .as_u64()
+                .is_some_and(|value| value > 0),
+            "unexpected readiness payload: {readiness}"
+        );
+
+        let response = client
             .post(format!("http://127.0.0.1:{port}/mcp"))
             .header("Content-Type", "application/json")
             .header("Accept", "application/json, text/event-stream")
@@ -570,5 +654,45 @@ mod tests {
             "unexpected body: {body}"
         );
         assert!(body.contains(r#""id":1"#), "unexpected body: {body}");
+    }
+
+    #[tokio::test]
+    async fn http_transport_readyz_reports_failed_state() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let port = next_test_port().await;
+        let shutdown = CancellationToken::new();
+        let config = http_test_config(
+            &temp_dir,
+            temp_dir
+                .path()
+                .join("missing-manifest.json")
+                .display()
+                .to_string(),
+            port,
+        );
+
+        let server_task = tokio::spawn(start_with_config_and_shutdown(config, shutdown.clone()));
+        let client = Client::new();
+        let readiness = wait_for_http_status(
+            &client,
+            &format!("http://127.0.0.1:{port}/readyz"),
+            reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        )
+        .await;
+
+        shutdown.cancel();
+        let join_result = server_task.await.expect("server task");
+        assert!(
+            join_result.is_ok(),
+            "server should shut down cleanly: {join_result:?}"
+        );
+
+        assert_eq!(readiness["status"], "failed");
+        assert!(
+            readiness["error"]
+                .as_str()
+                .is_some_and(|value| value.contains("missing-manifest.json")),
+            "unexpected readiness payload: {readiness}"
+        );
     }
 }

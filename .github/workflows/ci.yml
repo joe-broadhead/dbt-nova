@@ -171,6 +171,19 @@ jobs:
       - name: Build Docs
         run: mkdocs build --strict
 
+  container:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Build container image
+        run: docker build -t dbt-nova:ci .
+
+      - name: Smoke container binary
+        run: docker run --rm --entrypoint /usr/local/bin/dbt-nova dbt-nova:ci --version
+
   deny:
     runs-on: ubuntu-22.04
     timeout-minutes: 20

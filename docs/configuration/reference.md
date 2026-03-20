@@ -67,7 +67,7 @@ Remote manifest notes:
 - To allow insecure `http://` manifests (not recommended), set `DBT_NOVA_MANIFEST_ALLOW_HTTP=true`.
 - To allow insecure `http://` prebuilt artifact URIs (not recommended), set `DBT_NOVA_ARTIFACT_ALLOW_HTTP=true`.
 - Bootstrap precedence is deterministic: explicit env vars override bootstrap values, and bootstrap values override defaults.
-- Streamable HTTP mode is intended for hosted deployments. The MCP endpoint is mounted at `DBT_NOVA_HTTP_PATH`, while liveness/readiness endpoints are planned separately.
+- Streamable HTTP mode is intended for hosted deployments. The MCP endpoint is mounted at `DBT_NOVA_HTTP_PATH`; plain probe endpoints are always available at `/healthz` and `/readyz`.
 
 ## Storage
 
