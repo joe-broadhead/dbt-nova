@@ -74,7 +74,9 @@ fn build_start_config(args: &ServerStartArgs) -> DbtNovaConfig {
     let explicit_env_http_host = std::env::var("DBT_NOVA_HTTP_HOST")
         .ok()
         .is_some_and(|value| !value.trim().is_empty());
-    let explicit_env_http_port = std::env::var("DBT_NOVA_HTTP_PORT").is_ok();
+    let explicit_env_http_port = std::env::var("DBT_NOVA_HTTP_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok());
     if let Some(transport) = args.transport {
         config.server_transport = match transport {
             ServerTransportArg::Stdio => ServerTransport::Stdio,
@@ -102,7 +104,7 @@ fn build_start_config(args: &ServerStartArgs) -> DbtNovaConfig {
         .as_ref()
         .is_some_and(|host| !host.trim().is_empty())
         || explicit_env_http_host;
-    let explicit_http_port = args.http_port.is_some() || explicit_env_http_port;
+    let explicit_http_port = args.http_port.is_some() || explicit_env_http_port.is_some();
     config.apply_http_platform_port_fallback(
         explicit_http_host,
         explicit_http_port,
@@ -433,6 +435,55 @@ mod tests {
 
         assert_eq!(config.server_transport, ServerTransport::StreamableHttp);
         assert_eq!(config.http_port, 8080);
+        assert_eq!(config.http_host, "0.0.0.0");
+    }
+
+    #[test]
+    fn build_start_config_ignores_invalid_env_http_port_for_platform_fallback() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [
+            ("DBT_NOVA_SERVER_TRANSPORT", Some("stdio")),
+            ("DBT_NOVA_HTTP_HOST", None),
+            ("DBT_NOVA_HTTP_PORT", Some("not-a-port")),
+            ("PORT", Some("9090")),
+        ];
+        let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let config = build_start_config(&ServerStartArgs {
+            transport: Some(ServerTransportArg::StreamableHttp),
+            http_host: None,
+            http_port: None,
+            http_path: None,
+            http_stateful_mode: None,
+        });
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        assert_eq!(config.server_transport, ServerTransport::StreamableHttp);
+        assert_eq!(config.http_port, 9090);
         assert_eq!(config.http_host, "0.0.0.0");
     }
 

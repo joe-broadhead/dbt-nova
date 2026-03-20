@@ -747,10 +747,10 @@ impl DbtNovaConfig {
             self.http_host.clone_from(host);
         }
         let explicit_http_port = env_string("DBT_NOVA_HTTP_PORT");
-        if let Some(port) = explicit_http_port
+        let parsed_http_port = explicit_http_port
             .as_ref()
-            .and_then(|value| value.parse().ok())
-        {
+            .and_then(|value| value.parse().ok());
+        if let Some(port) = parsed_http_port {
             self.http_port = port;
         }
         set_string("DBT_NOVA_HTTP_PATH", &mut self.http_path);
@@ -766,7 +766,7 @@ impl DbtNovaConfig {
 
         self.apply_http_platform_port_fallback(
             explicit_http_host.is_some(),
-            explicit_http_port.is_some(),
+            parsed_http_port.is_some(),
             parse_u16("PORT"),
         );
     }
@@ -1240,6 +1240,49 @@ mod tests {
 
         assert_eq!(config.server_transport, ServerTransport::StreamableHttp);
         assert_eq!(config.http_port, 8080);
+        assert_eq!(config.http_host, "0.0.0.0");
+    }
+
+    #[test]
+    fn from_env_ignores_invalid_http_port_for_platform_fallback() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [
+            ("DBT_NOVA_SERVER_TRANSPORT", Some("streamable_http")),
+            ("DBT_NOVA_HTTP_HOST", None),
+            ("DBT_NOVA_HTTP_PORT", Some("not-a-port")),
+            ("PORT", Some("9090")),
+        ];
+        let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let config = DbtNovaConfig::from_env();
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        assert_eq!(config.server_transport, ServerTransport::StreamableHttp);
+        assert_eq!(config.http_port, 9090);
         assert_eq!(config.http_host, "0.0.0.0");
     }
 }
