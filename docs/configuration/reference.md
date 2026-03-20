@@ -32,7 +32,7 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_SERVER_TRANSPORT` – MCP server transport (`stdio` or `streamable_http`, default: `stdio`)
 - `DBT_NOVA_HTTP_HOST` – bind host for streamable HTTP mode (default: `127.0.0.1`; falls back to `0.0.0.0` when `PORT` is set and `DBT_NOVA_SERVER_TRANSPORT=streamable_http`)
 - `DBT_NOVA_HTTP_PORT` – bind port for streamable HTTP mode (default: `8000`; falls back to `PORT` when unset)
-- `DBT_NOVA_HTTP_PATH` – HTTP mount path for MCP requests in streamable HTTP mode (default: `/mcp`)
+- `DBT_NOVA_HTTP_PATH` – HTTP mount path for MCP requests in streamable HTTP mode (default: `/mcp`; reserved probe paths `/healthz` and `/readyz` are not allowed)
 - `DBT_NOVA_HTTP_STATEFUL_MODE` – enable stateful streamable HTTP sessions (`true`|`false`, default: `true`)
 - `DBT_NOVA_HTTP_SSE_KEEP_ALIVE_SECS` – SSE keepalive interval for streamable HTTP mode (`0` disables keepalives, default: `15`)
 - `DBT_NOVA_HTTP_SSE_RETRY_SECS` – SSE retry hint for streamable HTTP mode (`0` disables retry hints, default: `3`)
