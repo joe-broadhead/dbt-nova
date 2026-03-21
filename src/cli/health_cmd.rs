@@ -188,6 +188,12 @@ fn print_human_summary(payload: &JsonValue) {
         println!("  manifest_cache_hits: {hits}");
         println!("  manifest_cache_misses: {misses}");
     }
+
+    if let Some(search) = payload.get("search") {
+        print_search_warning(search, "vector");
+        print_search_warning(search, "sparse");
+        print_search_warning(search, "reranker");
+    }
 }
 
 fn string_field<'a>(value: &'a JsonValue, key: &str, fallback: &'a str) -> &'a str {
@@ -195,6 +201,17 @@ fn string_field<'a>(value: &'a JsonValue, key: &str, fallback: &'a str) -> &'a s
         .get(key)
         .and_then(JsonValue::as_str)
         .unwrap_or(fallback)
+}
+
+fn print_search_warning(payload: &JsonValue, component: &str) {
+    let Some(warning) = payload
+        .get(component)
+        .and_then(|value| value.get("warning"))
+        .and_then(JsonValue::as_str)
+    else {
+        return;
+    };
+    println!("  {component}_warning: {warning}");
 }
 
 #[cfg(test)]
@@ -263,5 +280,32 @@ mod tests {
         assert!(payload["manifest_cache"].is_object());
         assert!(payload["search_concurrency"].is_object());
         assert!(payload["sql_concurrency"].is_object());
+    }
+
+    #[tokio::test]
+    async fn build_cli_health_payload_includes_search_warnings() {
+        let args = HealthCheckArgs {
+            manifest_path: Some(fixture_manifest_path_string()),
+            manifest_uri: None,
+            json: false,
+        };
+        let mut config = build_health_check_config(&args).expect("config");
+        config.search.enable_vector_search = false;
+        config.search.enable_sparse_search = false;
+        config.search.enable_reranker = false;
+        let mut loaded = execute_manifest_load(config).await.expect("load");
+        loaded.search.search_init_warnings.insert(
+            "vector".to_string(),
+            "Vector search initialization failed".to_string(),
+        );
+
+        let payload = build_cli_health_payload(&loaded.search).await;
+        assert_eq!(
+            payload["search"]["vector"]["warning"]
+                .as_str()
+                .unwrap_or(""),
+            "Vector search initialization failed"
+        );
+        assert!(payload["search"]["vector"]["ready"].is_boolean());
     }
 }

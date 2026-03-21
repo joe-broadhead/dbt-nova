@@ -2,6 +2,7 @@ use crate::config::SearchConfig;
 use crate::error::Result;
 use crate::manifest::entity::{ArchivedEntity, Entity};
 use crate::manifest::store::EntityStore;
+use crate::manifest::vector_search::SearchComponentBuild;
 use serde_json::Value as JsonValue;
 use tracing::warn;
 
@@ -10,13 +11,20 @@ pub struct SparseSearcher;
 pub struct Reranker;
 
 impl VectorSearcher {
-    pub fn build(_store: &EntityStore, _config: &SearchConfig) -> Result<Option<Self>> {
+    pub fn build(
+        _store: &EntityStore,
+        _config: &SearchConfig,
+    ) -> Result<SearchComponentBuild<Self>> {
         if _config.enable_vector_search {
+            let warning =
+                "Vector search requested but embeddings feature is disabled; rebuild with --features embeddings"
+                    .to_string();
             warn!(
                 "Vector search requested but embeddings feature is disabled; rebuild with --features embeddings"
             );
+            return Ok(SearchComponentBuild::disabled(warning));
         }
-        Ok(None)
+        Ok(SearchComponentBuild::unavailable())
     }
 
     pub fn search(&self, _query: &str, _top_k: usize) -> Result<Vec<(String, f32)>> {
@@ -25,13 +33,20 @@ impl VectorSearcher {
 }
 
 impl SparseSearcher {
-    pub fn build(_store: &EntityStore, _config: &SearchConfig) -> Result<Option<Self>> {
+    pub fn build(
+        _store: &EntityStore,
+        _config: &SearchConfig,
+    ) -> Result<SearchComponentBuild<Self>> {
         if _config.enable_sparse_search {
+            let warning =
+                "Sparse search requested but embeddings feature is disabled; rebuild with --features embeddings"
+                    .to_string();
             warn!(
                 "Sparse search requested but embeddings feature is disabled; rebuild with --features embeddings"
             );
+            return Ok(SearchComponentBuild::disabled(warning));
         }
-        Ok(None)
+        Ok(SearchComponentBuild::unavailable())
     }
 
     pub fn search(&self, _query: &str, _top_k: usize) -> Result<Vec<(String, f32)>> {
@@ -40,13 +55,17 @@ impl SparseSearcher {
 }
 
 impl Reranker {
-    pub fn build(_config: &SearchConfig) -> Result<Option<Self>> {
+    pub fn build(_config: &SearchConfig) -> Result<SearchComponentBuild<Self>> {
         if _config.enable_reranker {
+            let warning =
+                "Reranker requested but embeddings feature is disabled; rebuild with --features embeddings"
+                    .to_string();
             warn!(
                 "Reranker requested but embeddings feature is disabled; rebuild with --features embeddings"
             );
+            return Ok(SearchComponentBuild::disabled(warning));
         }
-        Ok(None)
+        Ok(SearchComponentBuild::unavailable())
     }
 
     pub fn rerank(

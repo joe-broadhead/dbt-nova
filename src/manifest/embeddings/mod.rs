@@ -2,6 +2,8 @@ mod cache;
 mod text;
 
 use std::collections::{HashMap, HashSet};
+use std::fmt::Display;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use fastembed::{
     EmbeddingModel, InitOptions, RerankInitOptions, RerankerModel, SparseEmbedding,
@@ -15,6 +17,8 @@ use crate::manifest::rkyv_sparse_embeddings;
 use crate::manifest::rkyv_types::{CachedEmbeddings, CachedSparseEmbeddings};
 use crate::manifest::store::EntityStore;
 use tracing::warn;
+
+use super::SearchComponentBuild;
 
 const PROXY_KEYS: [&str; 6] = [
     "HTTP_PROXY",
@@ -45,6 +49,92 @@ pub struct SparseSearcher {
 
 pub struct Reranker {
     model: TextRerank,
+}
+
+fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "unknown panic".to_string()
+    }
+}
+
+fn model_guidance(disable_env: &str) -> String {
+    format!(
+        "Ensure model files are available in DBT_NOVA_EMBEDDINGS_CACHE_DIR, pre-warm them with --warm-models, or publish a models artifact. If you do not need this component, set {disable_env}=false."
+    )
+}
+
+fn component_init_warning(component_label: &str, disable_env: &str, cause: &str) -> String {
+    format!(
+        "{component_label} initialization failed; disabling {component_label} for this run. {} Cause: {cause}",
+        model_guidance(disable_env)
+    )
+}
+
+fn component_runtime_error(
+    component_label: &str,
+    action_label: &str,
+    disable_env: &str,
+    cause: &str,
+) -> DbtNovaError {
+    DbtNovaError::ServerError(format!(
+        "{component_label} {action_label} failed. {} Cause: {cause}",
+        model_guidance(disable_env)
+    ))
+}
+
+fn build_optional_component<T, E, F>(
+    component_label: &str,
+    disable_env: &str,
+    build: F,
+) -> SearchComponentBuild<T>
+where
+    E: Display,
+    F: FnOnce() -> std::result::Result<T, E>,
+{
+    match catch_unwind(AssertUnwindSafe(build)) {
+        Ok(Ok(component)) => SearchComponentBuild::ready(component),
+        Ok(Err(err)) => SearchComponentBuild::disabled(component_init_warning(
+            component_label,
+            disable_env,
+            &err.to_string(),
+        )),
+        Err(payload) => SearchComponentBuild::disabled(component_init_warning(
+            component_label,
+            disable_env,
+            &panic_payload_message(payload.as_ref()),
+        )),
+    }
+}
+
+fn run_component_operation<T, E, F>(
+    component_label: &str,
+    action_label: &str,
+    disable_env: &str,
+    operation: F,
+) -> Result<T>
+where
+    E: Display,
+    F: FnOnce() -> std::result::Result<T, E>,
+{
+    match catch_unwind(AssertUnwindSafe(operation)) {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(err)) => Err(component_runtime_error(
+            component_label,
+            action_label,
+            disable_env,
+            &err.to_string(),
+        )),
+        Err(payload) => Err(component_runtime_error(
+            component_label,
+            action_label,
+            disable_env,
+            &panic_payload_message(payload.as_ref()),
+        )),
+    }
 }
 
 enum DenseEmbeddings {
@@ -234,28 +324,30 @@ impl VectorSearcher {
     /// # Errors
     /// Returns an error if embeddings cannot be generated or cached.
     #[allow(clippy::too_many_lines)]
-    pub fn build(store: &EntityStore, config: &SearchConfig) -> Result<Option<Self>> {
+    pub fn build(store: &EntityStore, config: &SearchConfig) -> Result<SearchComponentBuild<Self>> {
         if !config.enable_vector_search {
-            return Ok(None);
+            return Ok(SearchComponentBuild::unavailable());
         }
 
         validate_proxy_env_vars()?;
         let cache_dir = embeddings_cache_dir(config);
 
-        let model = match TextEmbedding::try_new(InitOptions {
-            model_name: resolve_embedding_model(&config.embedding_model),
-            cache_dir: cache_dir.clone(),
-            show_download_progress: false,
-            ..Default::default()
-        }) {
-            Ok(model) => model,
-            Err(err) => {
-                warn!(
-                    error = %err,
-                    "Vector model init failed; disabling vector search for this run"
-                );
-                return Ok(None);
+        let (model, warning) =
+            build_optional_component("vector search", "DBT_NOVA_SEARCH_ENABLE_VECTOR", || {
+                TextEmbedding::try_new(InitOptions {
+                    model_name: resolve_embedding_model(&config.embedding_model),
+                    cache_dir: cache_dir.clone(),
+                    show_download_progress: false,
+                    ..Default::default()
+                })
+            })
+            .into_parts();
+        let Some(model) = model else {
+            if let Some(warning) = warning {
+                warn!(warning = %warning, "Vector search unavailable during startup");
+                return Ok(SearchComponentBuild::disabled(warning));
             }
+            return Ok(SearchComponentBuild::unavailable());
         };
 
         let batch_size = config.embedding_batch_size.max(1);
@@ -295,7 +387,7 @@ impl VectorSearcher {
                 DenseEmbeddings::Quantized(values) => AnnIndex::build_quantized(values, config),
             };
 
-            return Ok(Some(Self {
+            return Ok(SearchComponentBuild::ready(Self {
                 model,
                 embeddings,
                 ann,
@@ -315,7 +407,12 @@ impl VectorSearcher {
                 let texts = std::mem::take(batch_texts);
                 let ids = std::mem::take(batch_ids);
 
-                let mut vecs = match model.embed(texts, Some(batch_size)) {
+                let mut vecs = match run_component_operation(
+                    "vector search",
+                    "embedding batch generation",
+                    "DBT_NOVA_SEARCH_ENABLE_VECTOR",
+                    || model.embed(texts, Some(batch_size)),
+                ) {
                     Ok(vecs) => vecs,
                     Err(err) => {
                         warn!(error = %err, "Vector embedding batch failed; skipping batch");
@@ -414,7 +511,7 @@ impl VectorSearcher {
             warn!(error = %err, "failed to save embeddings cache");
         }
 
-        Ok(Some(Self {
+        Ok(SearchComponentBuild::ready(Self {
             model,
             embeddings,
             ann,
@@ -429,10 +526,12 @@ impl VectorSearcher {
         if query.trim().is_empty() {
             return Ok(vec![]);
         }
-        let mut vecs = self
-            .model
-            .embed(vec![query.to_string()], None)
-            .map_err(|e| DbtNovaError::ServerError(format!("Embedding failed: {e}")))?;
+        let mut vecs = run_component_operation(
+            "vector search",
+            "embedding generation",
+            "DBT_NOVA_SEARCH_ENABLE_VECTOR",
+            || self.model.embed(vec![query.to_string()], None),
+        )?;
         let mut query_vec = vecs.pop().unwrap_or_default();
         if query_vec.is_empty() {
             return Ok(vec![]);
@@ -519,27 +618,28 @@ impl SparseSearcher {
     /// # Errors
     /// Returns an error if sparse embeddings cannot be generated or cached.
     #[allow(clippy::too_many_lines)]
-    pub fn build(store: &EntityStore, config: &SearchConfig) -> Result<Option<Self>> {
+    pub fn build(store: &EntityStore, config: &SearchConfig) -> Result<SearchComponentBuild<Self>> {
         if !config.enable_sparse_search {
-            return Ok(None);
+            return Ok(SearchComponentBuild::unavailable());
         }
 
         validate_proxy_env_vars()?;
         let cache_dir = embeddings_cache_dir(config);
-
-        let model = match SparseTextEmbedding::try_new(SparseInitOptions {
-            cache_dir: cache_dir.clone(),
-            show_download_progress: false,
-            ..Default::default()
-        }) {
-            Ok(model) => model,
-            Err(err) => {
-                warn!(
-                    error = %err,
-                    "Sparse model init failed; disabling sparse search for this run"
-                );
-                return Ok(None);
+        let (model, warning) =
+            build_optional_component("sparse search", "DBT_NOVA_SEARCH_ENABLE_SPARSE", || {
+                SparseTextEmbedding::try_new(SparseInitOptions {
+                    cache_dir: cache_dir.clone(),
+                    show_download_progress: false,
+                    ..Default::default()
+                })
+            })
+            .into_parts();
+        let Some(model) = model else {
+            if let Some(warning) = warning {
+                warn!(warning = %warning, "Sparse search unavailable during startup");
+                return Ok(SearchComponentBuild::disabled(warning));
             }
+            return Ok(SearchComponentBuild::unavailable());
         };
 
         let batch_size = config.embedding_batch_size.max(1);
@@ -558,7 +658,7 @@ impl SparseSearcher {
                 .zip(cached.sparse_indices.into_iter().zip(cached.sparse_values))
                 .map(|(id, (indices, values))| (id, SparseEmbedding { indices, values }))
                 .collect::<Vec<_>>();
-            return Ok(Some(Self { model, embeddings }));
+            return Ok(SearchComponentBuild::ready(Self { model, embeddings }));
         }
         let mut embeddings: Vec<(String, SparseEmbedding)> = Vec::new();
         let mut batch_ids: Vec<String> = Vec::with_capacity(batch_size);
@@ -573,7 +673,12 @@ impl SparseSearcher {
                 let texts = std::mem::take(batch_texts);
                 let ids = std::mem::take(batch_ids);
 
-                let mut vecs = match model.embed(texts, Some(batch_size)) {
+                let mut vecs = match run_component_operation(
+                    "sparse search",
+                    "embedding batch generation",
+                    "DBT_NOVA_SEARCH_ENABLE_SPARSE",
+                    || model.embed(texts, Some(batch_size)),
+                ) {
                     Ok(vecs) => vecs,
                     Err(err) => {
                         warn!(error = %err, "Sparse embedding batch failed; skipping batch");
@@ -637,7 +742,7 @@ impl SparseSearcher {
             warn!(error = %err, "failed to save sparse embeddings cache");
         }
 
-        Ok(Some(Self { model, embeddings }))
+        Ok(SearchComponentBuild::ready(Self { model, embeddings }))
     }
 
     /// Search the sparse embeddings for the nearest neighbors.
@@ -648,10 +753,12 @@ impl SparseSearcher {
         if query.trim().is_empty() {
             return Ok(vec![]);
         }
-        let mut vecs = self
-            .model
-            .embed(vec![query.to_string()], None)
-            .map_err(|e| DbtNovaError::ServerError(format!("Sparse embedding failed: {e}")))?;
+        let mut vecs = run_component_operation(
+            "sparse search",
+            "embedding generation",
+            "DBT_NOVA_SEARCH_ENABLE_SPARSE",
+            || self.model.embed(vec![query.to_string()], None),
+        )?;
         let query_vec = vecs.pop().ok_or_else(|| {
             DbtNovaError::ServerError("Sparse embedding returned empty vector".to_string())
         })?;
@@ -679,31 +786,31 @@ impl Reranker {
     ///
     /// # Errors
     /// Returns an error if the reranker model cannot be initialized.
-    pub fn build(config: &SearchConfig) -> Result<Option<Self>> {
+    pub fn build(config: &SearchConfig) -> Result<SearchComponentBuild<Self>> {
         if !config.enable_reranker {
-            return Ok(None);
+            return Ok(SearchComponentBuild::unavailable());
         }
         validate_proxy_env_vars()?;
         let cache_dir = embeddings_cache_dir(config);
         let model_name = resolve_reranker_model(&config.reranker_model);
-        let model = TextRerank::try_new(RerankInitOptions {
-            model_name,
-            cache_dir,
-            show_download_progress: false,
-            ..Default::default()
-        })
-        .map_err(|err| DbtNovaError::ServerError(format!("Rerank failed: {err}")));
-        let model = match model {
-            Ok(model) => model,
-            Err(err) => {
-                warn!(
-                    error = %err,
-                    "Reranker init failed; disabling reranker for this run"
-                );
-                return Ok(None);
+        let (model, warning) =
+            build_optional_component("reranker", "DBT_NOVA_SEARCH_ENABLE_RERANKER", || {
+                TextRerank::try_new(RerankInitOptions {
+                    model_name,
+                    cache_dir,
+                    show_download_progress: false,
+                    ..Default::default()
+                })
+            })
+            .into_parts();
+        let Some(model) = model else {
+            if let Some(warning) = warning {
+                warn!(warning = %warning, "Reranker unavailable during startup");
+                return Ok(SearchComponentBuild::disabled(warning));
             }
+            return Ok(SearchComponentBuild::unavailable());
         };
-        Ok(Some(Self { model }))
+        Ok(SearchComponentBuild::ready(Self { model }))
     }
 
     /// Rerank candidate documents using the configured model.
@@ -720,10 +827,12 @@ impl Reranker {
             return Ok(vec![]);
         }
         let docs: Vec<&str> = documents.iter().map(String::as_str).collect();
-        let results = self
-            .model
-            .rerank(query, docs, false, None)
-            .map_err(|e| DbtNovaError::ServerError(format!("Rerank failed: {e}")))?;
+        let results = run_component_operation(
+            "reranker",
+            "document scoring",
+            "DBT_NOVA_SEARCH_ENABLE_RERANKER",
+            || self.model.rerank(query, docs, false, None),
+        )?;
 
         let mut scored: Vec<(usize, f32)> =
             results.into_iter().map(|r| (r.index, r.score)).collect();
@@ -1084,7 +1193,7 @@ fn sparse_dot(query: &SparseEmbedding, doc: &SparseEmbedding) -> f32 {
 mod tests {
     use std::sync::{LazyLock, Mutex};
 
-    use super::validate_proxy_env_vars;
+    use super::{build_optional_component, run_component_operation, validate_proxy_env_vars};
 
     static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -1127,5 +1236,37 @@ mod tests {
                 .to_string();
             assert!(error_text.contains("Invalid proxy environment variable 'HTTPS_PROXY'"));
         });
+    }
+
+    #[test]
+    fn build_optional_component_converts_panics_into_disabled_warnings() {
+        let result = build_optional_component::<(), String, _>(
+            "vector search",
+            "DBT_NOVA_SEARCH_ENABLE_VECTOR",
+            || panic!("missing onnx/model.onnx"),
+        );
+        let (component, warning) = result.into_parts();
+        assert!(component.is_none());
+        let warning = warning.expect("panic should produce warning");
+        assert!(warning.contains("vector search initialization failed"));
+        assert!(warning.contains("DBT_NOVA_EMBEDDINGS_CACHE_DIR"));
+        assert!(warning.contains("DBT_NOVA_SEARCH_ENABLE_VECTOR=false"));
+        assert!(warning.contains("missing onnx/model.onnx"));
+    }
+
+    #[test]
+    fn run_component_operation_converts_panics_into_server_errors() {
+        let error = run_component_operation::<(), String, _>(
+            "sparse search",
+            "embedding generation",
+            "DBT_NOVA_SEARCH_ENABLE_SPARSE",
+            || panic!("failed to retrieve model.onnx"),
+        )
+        .expect_err("panic should surface as server error");
+        let message = error.to_string();
+        assert!(message.contains("sparse search embedding generation failed"));
+        assert!(message.contains("DBT_NOVA_EMBEDDINGS_CACHE_DIR"));
+        assert!(message.contains("DBT_NOVA_SEARCH_ENABLE_SPARSE=false"));
+        assert!(message.contains("failed to retrieve model.onnx"));
     }
 }

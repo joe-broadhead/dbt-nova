@@ -7,6 +7,7 @@ use crate::config::DbtNovaConfig;
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::lineage_sql::{extract_ref_calls, find_sql_aliases, sql_for_matching};
 use crate::manifest::store::EntityStore;
+use crate::manifest::vector_search::SearchComponentBuild;
 
 pub(super) fn panic_message(err: &Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = err.downcast_ref::<&str>() {
@@ -20,9 +21,9 @@ pub(super) fn panic_message(err: &Box<dyn std::any::Any + Send>) -> String {
 
 pub(super) fn combine_index_build_results<T, V, S>(
     tantivy_result: Result<T>,
-    vector_result: Result<Option<V>>,
-    sparse_result: Result<Option<S>>,
-) -> Result<(T, Option<V>, Option<S>)> {
+    vector_result: Result<SearchComponentBuild<V>>,
+    sparse_result: Result<SearchComponentBuild<S>>,
+) -> Result<(T, SearchComponentBuild<V>, SearchComponentBuild<S>)> {
     let mut failures = Vec::new();
     if let Err(err) = &tantivy_result {
         failures.push(format!("tantivy: {err}"));

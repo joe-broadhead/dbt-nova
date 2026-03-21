@@ -24,6 +24,7 @@ pub struct ManifestLoadData {
     pub elapsed_ms: u128,
     pub reused: ReuseInfo,
     pub search_ready: SearchReadyInfo,
+    pub search_warnings: BTreeMap<String, String>,
     pub entity_counts: BTreeMap<String, usize>,
 }
 
@@ -134,6 +135,12 @@ fn print_human_summary(payload: &ManifestLoadData) {
         ready_label(payload.search_ready.sparse)
     );
     println!("  reranker: {}", ready_label(payload.search_ready.reranker));
+    if !payload.search_warnings.is_empty() {
+        println!("  search_warnings:");
+        for (component, warning) in &payload.search_warnings {
+            println!("    {component}: {warning}");
+        }
+    }
     println!("  entity_counts:");
     for (resource_type, count) in &payload.entity_counts {
         println!("    {resource_type}: {count}");
@@ -163,6 +170,10 @@ fn payload_from_result(
     for (resource_type, count) in &search.entity_counts {
         entity_counts.insert(resource_type.clone(), *count);
     }
+    let mut search_warnings = BTreeMap::new();
+    for (component, warning) in &search.search_init_warnings {
+        search_warnings.insert(component.clone(), warning.clone());
+    }
 
     Ok(ManifestLoadData {
         source: sanitize_uri(&search.manifest_source_uri),
@@ -181,6 +192,7 @@ fn payload_from_result(
             sparse: search.sparse_search_ready(),
             reranker: search.reranker_ready(),
         },
+        search_warnings,
         entity_counts,
     })
 }

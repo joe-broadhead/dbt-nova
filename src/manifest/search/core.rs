@@ -61,6 +61,7 @@ pub struct ManifestSearch {
     pub(crate) manifest_health: JsonValue,
     pub(crate) artifact_consumer: JsonValue,
     pub(crate) bootstrap: JsonValue,
+    pub(crate) search_init_warnings: HashMap<String, String>,
 
     // === Stats ===
     pub(crate) entity_counts: HashMap<String, usize>,
@@ -479,6 +480,23 @@ impl ManifestSearch {
             "manifest_cache": {
                 "hits": manifest_cache_hits,
                 "misses": manifest_cache_misses,
+            },
+            "search": {
+                "vector": {
+                    "enabled": self.config.search.enable_vector_search,
+                    "ready": self.vector_search_ready(),
+                    "warning": self.search_init_warnings.get("vector"),
+                },
+                "sparse": {
+                    "enabled": self.config.search.enable_sparse_search,
+                    "ready": self.sparse_search_ready(),
+                    "warning": self.search_init_warnings.get("sparse"),
+                },
+                "reranker": {
+                    "enabled": self.config.search.enable_reranker,
+                    "ready": self.reranker_ready(),
+                    "warning": self.search_init_warnings.get("reranker"),
+                },
             },
             "circuit_breakers": {
                 "vector": {
