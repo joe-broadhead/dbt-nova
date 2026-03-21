@@ -26,7 +26,7 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_MODELS_ARTIFACT_URI` – optional URI to prebuilt models archive
 - `DBT_NOVA_BOOTSTRAP_URI` – optional URI to a bootstrap contract JSON that can populate `manifest_uri`, `storage_instance_id`, and prebuilt artifact URIs (same supported schemes as prebuilt artifact URIs)
 - `DBT_NOVA_ARTIFACTS_CACHE_DIR` – optional cache dir for downloaded artifact archives (default: `<storage_root>/artifacts`)
-- `DBT_NOVA_ARTIFACT_FETCH_POLICY` – artifact fetch policy (`if_missing`, `always`, `never`; default: `if_missing`)
+- `DBT_NOVA_ARTIFACT_FETCH_POLICY` – artifact fetch policy (`if_missing`, `always`, `never`; default: `if_missing`; use `never` with `DBT_NOVA_STORAGE_READ_ONLY=true`, use `if_missing|always` for writable first-run hydration)
 - `DBT_NOVA_ARTIFACT_TIMEOUT_SECS` – fetch timeout for remote artifact downloads (`0` = disabled, default: `300`)
 - `DBT_NOVA_ARTIFACT_ALLOW_HTTP` – allow `http://` artifact URIs (`true`|`false`, default: `false`)
 - `DBT_NOVA_SERVER_TRANSPORT` – MCP server transport (`stdio` or `streamable_http`, default: `stdio`)
@@ -82,7 +82,7 @@ Remote manifest notes:
 - `DBT_NOVA_STORAGE_MIN_VERSIONS` – minimum manifest versions retained per instance (default: `2`)
 - `DBT_NOVA_STORAGE_MAX_BYTES` – max total bytes across instances (`0` = unlimited, default: `5368709120`)
 - `DBT_NOVA_STORAGE_BUILD_LOCK_WAIT_SECS` – max seconds to wait for another process to finish building (default: `300`)
-- `DBT_NOVA_STORAGE_READ_ONLY` – do not build indexes (`true`|`false`, default: `false`)
+- `DBT_NOVA_STORAGE_READ_ONLY` – do not build indexes or materialize prebuilt artifacts locally (`true`|`false`, default: `false`; incompatible with cold-start bootstrap/artifact hydration)
 - `DBT_NOVA_ENTITY_CACHE_SIZE` – max entities cached in memory (`0` disables, default: `1000`)
 - `DBT_NOVA_EMBEDDINGS_CACHE_DIR` – embeddings cache directory (default: `models/` next to executable if present, else `<storage_root>/.fastembed_cache`)
 

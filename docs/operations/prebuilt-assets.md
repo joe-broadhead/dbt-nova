@@ -1,7 +1,8 @@
 # Prebuilt Asset Workflow
 
 Use this workflow when you want to build Nova storage assets once in CI and
-reuse them across jobs/repos in read-only mode.
+reuse them across jobs/repos with writable first-run hydration or strict
+read-only reuse after local materialization.
 
 ## Quick setup checklist
 
@@ -17,6 +18,8 @@ reuse them across jobs/repos in read-only mode.
 5. If publishing remotely, set `publish_targets` and matching auth secrets.
 6. Trigger the workflow and confirm success.
 7. Use the produced stable bootstrap alias in consumer env (`DBT_NOVA_BOOTSTRAP_URI`).
+8. On first consumer run, keep `DBT_NOVA_STORAGE_READ_ONLY` unset and hydrate locally with `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing`.
+9. Switch to strict read-only only after local artifacts already exist (`DBT_NOVA_STORAGE_READ_ONLY=true`, `DBT_NOVA_ARTIFACT_FETCH_POLICY=never`).
 
 ## What this solves
 
@@ -28,8 +31,10 @@ reuse them across jobs/repos in read-only mode.
 
 - Producer workflow + GitHub Artifacts are supported.
 - Optional models distribution is controlled by `models_distribution_mode`.
-- Consumers are read-only (`DBT_NOVA_STORAGE_READ_ONLY=true`) and do **not**
-  fall back to rebuilding.
+- Consumers can hydrate artifacts locally on first run, then optionally switch
+  to strict read-only reuse.
+- Strict read-only consumers (`DBT_NOVA_STORAGE_READ_ONLY=true`) do **not**
+  fall back to rebuilding or re-materializing missing artifacts.
 - Optional S3/GCS/DBFS publish targets are supported and disabled by default.
 
 ## Producer (build once)
@@ -45,11 +50,11 @@ on:
 jobs:
   build_nova_assets:
     # Pin to a release tag or commit SHA
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.2
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.3
     with:
       manifest_path: target/manifest.json
       storage_instance_id: analytics-prod
-      installer_ref: v0.0.2
+      installer_ref: v0.0.3
       installer_install_mode: auto
       artifact_name_prefix: analytics-prod
       retention_days: 14
@@ -88,7 +93,7 @@ workflow works across Databricks, BigQuery, DuckDB, and mixed profiles:
 ```yaml
 jobs:
   build_nova_assets:
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.2
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.3
     with:
       dbt_generate_manifest: true
       dbt_command_args_json: >-
@@ -107,7 +112,7 @@ DBFS publish wrapper example:
 ```yaml
 jobs:
   build_nova_assets:
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.2
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.3
     with:
       dbt_generate_manifest: true
       dbt_command_args_json: >-
@@ -117,7 +122,7 @@ jobs:
       dbt_secret_env_map_json: >-
         {"DBT_ACCESS_TOKEN":"DBT_ACCESS_TOKEN","DATABRICKS_ACCESS_TOKEN":"DBT_ACCESS_TOKEN"}
       storage_instance_id: analytics-prod
-      installer_ref: v0.0.2
+      installer_ref: v0.0.3
       installer_install_mode: release
       publish_targets: dbfs
       publish_dbfs_prefix: dbfs:/FileStore/projects/my-project/nova-assets/prod
@@ -218,7 +223,7 @@ Installer mode guidance:
 
 - Keep `installer_install_mode: auto` as the default.
 - Use `installer_install_mode: release` with a release tag ref (for example
-  `installer_ref: v0.0.2` or newer) to minimize runtime on compatible runners.
+  `installer_ref: v0.0.3` or newer) to minimize runtime on compatible runners.
 - Use `installer_install_mode: source` when you need an unreleased commit SHA
   or your runner image is incompatible with the prebuilt binary (for example
   older glibc environments).
@@ -279,17 +284,17 @@ Post-run verification checklist:
 4. Confirm health reports `bootstrap.loaded=true` and `artifact_consumer.storage_materialized=true`.
 5. After a later publish, run `reload_manifest` to adopt the newer assets without editing MCP config.
 
-## Consumer (reuse in read-only mode)
+## Consumer
 
 Nova now supports **native remote artifact consumption**. Manual download/extract is optional.
 
-### Option A (recommended): native remote artifact mode
+### Option A (recommended): writable first-run hydration
 
 Set these env vars:
 
-- `DBT_NOVA_STORAGE_READ_ONLY=true`
 - `DBT_NOVA_BOOTSTRAP_URI` (recommended one-URI setup)
-- `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing|always|never` (default `if_missing`)
+- `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing` (or `always` when you intentionally want to re-materialize)
+- `DBT_NOVA_STORAGE_READ_ONLY` unset or `false`
 
 Optional:
 
@@ -304,9 +309,9 @@ Local shell example:
 ```bash
 export DBT_MANIFEST_PATH="$PWD/manifest.json"
 export DBT_NOVA_STORAGE_DIR="$PWD/.dbt-nova"
-export DBT_NOVA_STORAGE_READ_ONLY="true"
 export DBT_NOVA_BOOTSTRAP_URI="s3://my-bucket/nova-assets/prod/analytics-prod-latest-bootstrap.json"
 export DBT_NOVA_ARTIFACT_FETCH_POLICY="if_missing"
+unset DBT_NOVA_STORAGE_READ_ONLY
 
 dbt-nova health check --json
 ```
@@ -315,9 +320,9 @@ CI shell example:
 
 ```bash
 export DBT_NOVA_STORAGE_DIR="$RUNNER_TEMP/.dbt-nova"
-export DBT_NOVA_STORAGE_READ_ONLY="true"
 export DBT_NOVA_BOOTSTRAP_URI="$BOOTSTRAP_URI"
 export DBT_NOVA_ARTIFACT_FETCH_POLICY="if_missing"
+unset DBT_NOVA_STORAGE_READ_ONLY
 
 dbt-nova health check --json
 ```
@@ -331,7 +336,6 @@ MCP client env example:
       "command": "/path/to/dbt-nova",
       "env": {
         "DBT_NOVA_STORAGE_DIR": "/path/to/.dbt-nova",
-        "DBT_NOVA_STORAGE_READ_ONLY": "true",
         "DBT_NOVA_BOOTSTRAP_URI": "s3://my-bucket/nova-assets/prod/analytics-prod-latest-bootstrap.json",
         "DBT_NOVA_ARTIFACT_FETCH_POLICY": "if_missing"
       }
@@ -345,10 +349,14 @@ Recommended consumer pattern:
 - Point `DBT_NOVA_BOOTSTRAP_URI` at the stable alias (`<storage_instance_id>-latest-bootstrap.json`).
 - Keep the versioned bootstrap URIs for rollback/debugging only.
 - After producers publish a newer asset set, run `reload_manifest` so Nova re-fetches the stable bootstrap alias and adopts the new artifacts.
+- Do not combine `DBT_NOVA_STORAGE_READ_ONLY=true` with `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing|always` on a cold machine.
 
 Use `health` to verify runtime decisions:
 
 - `artifact_consumer.enabled`
+- `artifact_consumer.storage_read_only`
+- `artifact_consumer.consumer_mode_hint`
+- `artifact_consumer.guidance`
 - `artifact_consumer.fetch_policy`
 - `artifact_consumer.metadata_validated`
 - `artifact_consumer.storage_materialized`
@@ -363,7 +371,29 @@ Use `health` to verify runtime decisions:
 - `bootstrap.applied_fields`
 - `bootstrap.last_evaluated_at_ms`
 
-### Option B: manual extraction fallback
+### Option B: strict read-only reuse after pre-materialization
+
+Use this only after local artifacts already exist from a previous writable run
+or from manual extraction.
+
+Set:
+
+- `DBT_NOVA_STORAGE_READ_ONLY=true`
+- `DBT_NOVA_ARTIFACT_FETCH_POLICY=never`
+- `DBT_NOVA_BOOTSTRAP_URI` (or explicit artifact URIs)
+
+Example:
+
+```bash
+export DBT_NOVA_STORAGE_DIR="$PWD/.dbt-nova"
+export DBT_NOVA_STORAGE_READ_ONLY="true"
+export DBT_NOVA_BOOTSTRAP_URI="s3://my-bucket/nova-assets/prod/analytics-prod-latest-bootstrap.json"
+export DBT_NOVA_ARTIFACT_FETCH_POLICY="never"
+
+dbt-nova health check --json
+```
+
+### Option C: manual extraction fallback
 
 If you prefer manual extraction, keep using pre-extracted artifacts with:
 
@@ -410,6 +440,7 @@ tar -xzf <artifact_name_storage>.tar.gz
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
+| `Storage is read-only; cannot materialize storage artifacts on first-run hydration` | Cold machine is configured with `DBT_NOVA_STORAGE_READ_ONLY=true` and `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing|always` | First hydrate with writable storage (`DBT_NOVA_STORAGE_READ_ONLY=false` or unset), then switch to `DBT_NOVA_STORAGE_READ_ONLY=true` with `DBT_NOVA_ARTIFACT_FETCH_POLICY=never` after assets exist locally |
 | `Storage is read-only and no reusable index is available` | Missing storage files, mismatched `storage_instance_id`, or manifest content mismatch | Re-download artifacts, verify instance id, verify manifest is identical to producer input |
 | Metadata contract validation fails | Missing/corrupt `nova-build-metadata.json` or unsupported contract version | Re-run producer and consume both storage + metadata artifacts together |
 | Health passes but embeddings are missing | Models artifact not provided in consumer setup | Native mode: set `DBT_NOVA_MODELS_ARTIFACT_URI` to the producer models artifact URI. Manual mode: extract models artifact and set `DBT_NOVA_EMBEDDINGS_CACHE_DIR`. |

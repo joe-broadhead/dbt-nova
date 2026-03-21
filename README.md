@@ -179,8 +179,9 @@ For recurring analysis topics, start with:
 
 ## Build Once, Reuse Many
 
-For CI/distributed consumers, build Nova assets once and run consumers in
-read-only mode from prebuilt artifacts.
+For CI/distributed consumers, build Nova assets once and let consumers hydrate
+those artifacts locally on first run. After local assets exist, consumers can
+switch to strict read-only reuse.
 
 Producer (reusable workflow):
 
@@ -188,11 +189,11 @@ Producer (reusable workflow):
 jobs:
   build_nova_assets:
     # Pin to a release tag or commit SHA
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.2
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.3
     with:
       manifest_path: target/manifest.json
       storage_instance_id: analytics-prod
-      installer_ref: v0.0.2
+      installer_ref: v0.0.3
       installer_install_mode: auto
       artifact_name_prefix: analytics-prod
 ```
@@ -200,11 +201,15 @@ jobs:
 Consumer env (required):
 
 ```bash
-# Bootstrap URI mode (recommended)
+# Bootstrap URI mode (recommended first run)
 export DBT_NOVA_STORAGE_DIR=/path/to/.dbt-nova
-export DBT_NOVA_STORAGE_READ_ONLY=true
 export DBT_NOVA_BOOTSTRAP_URI="$BOOTSTRAP_URI"
 export DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing
+unset DBT_NOVA_STORAGE_READ_ONLY
+
+# Optional strict read-only mode after local artifacts are materialized
+export DBT_NOVA_STORAGE_READ_ONLY=true
+export DBT_NOVA_ARTIFACT_FETCH_POLICY=never
 
 # Optional explicit mode (still supported)
 export DBT_NOVA_STORAGE_INSTANCE_ID=analytics-prod
@@ -255,6 +260,8 @@ bootstrap consumption, and verification checklist), see:
 Recommended consumer setup:
 
 - configure `DBT_NOVA_BOOTSTRAP_URI` to the stable bootstrap alias
+- keep `DBT_NOVA_STORAGE_READ_ONLY` unset for first-run hydration and use `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing`
+- switch to `DBT_NOVA_STORAGE_READ_ONLY=true` plus `DBT_NOVA_ARTIFACT_FETCH_POLICY=never` only after assets already exist locally
 - keep versioned bootstrap URIs only for rollback/debugging
 - after a producer publishes new assets, run `reload_manifest` to adopt the new asset set without editing MCP config
 

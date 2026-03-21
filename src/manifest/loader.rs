@@ -900,6 +900,17 @@ fn build_artifact_consumer_status(
 
     serde_json::json!({
         "enabled": config.remote_artifact_mode_enabled(),
+        "storage_read_only": config.storage_read_only,
+        "consumer_mode_hint": if config.storage_read_only {
+            "strict_read_only_reuse"
+        } else {
+            "writable_hydration"
+        },
+        "guidance": if config.storage_read_only {
+            "Strict read-only mode requires local artifacts to already exist; use DBT_NOVA_ARTIFACT_FETCH_POLICY=never after pre-materialization."
+        } else {
+            "Writable mode supports first-run bootstrap/artifact hydration with DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing or always."
+        },
         "fetch_policy": artifact_fetch_policy_label(config.artifact_fetch_policy),
         "allow_http": config.artifact_allow_http,
         "timeout_secs": config.artifact_timeout_secs,
@@ -993,6 +1004,27 @@ mod tests {
         assert!(sparse.is_none());
         assert_eq!(vector_warning.as_deref(), Some("vector warning"));
         assert_eq!(sparse_warning.as_deref(), Some("sparse warning"));
+    }
+
+    #[test]
+    fn artifact_consumer_status_exposes_mode_guidance() {
+        let mut config = DbtNovaConfig::default();
+        config.storage_read_only = true;
+        config.storage_artifact_uri = "s3://bucket/storage.tar.gz".to_string();
+        config.metadata_artifact_uri = "s3://bucket/metadata.json".to_string();
+
+        let payload = build_artifact_consumer_status(&config, None, None);
+        assert_eq!(
+            payload["consumer_mode_hint"].as_str(),
+            Some("strict_read_only_reuse")
+        );
+        assert_eq!(payload["storage_read_only"].as_bool(), Some(true));
+        assert!(
+            payload["guidance"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("DBT_NOVA_ARTIFACT_FETCH_POLICY=never")
+        );
     }
 
     #[test]
