@@ -50,6 +50,12 @@ Build the generic container image:
 docker build -t dbt-nova:latest .
 ```
 
+Pull the published release image instead:
+
+```bash
+docker pull ghcr.io/joe-broadhead/dbt-nova:v<version>
+```
+
 Run it locally:
 
 ```bash
@@ -71,6 +77,15 @@ The MCP endpoint remains mounted at `DBT_NOVA_HTTP_PATH`:
 ```text
 http://127.0.0.1:8080/mcp
 ```
+
+Release OCI images are published to GitHub Container Registry on every release tag.
+Use one of these tags:
+
+- `ghcr.io/joe-broadhead/dbt-nova:vX.Y.Z`
+- `ghcr.io/joe-broadhead/dbt-nova:sha-<git-sha>`
+
+Pin `vX.Y.Z` for downstream deployments. Use the `sha-...` tag when you need an
+immutable rollback target tied to a specific release commit.
 
 ## Cloud Run Notes
 

@@ -15,6 +15,7 @@ permissions:
   contents: write
   id-token: write
   attestations: write
+  packages: write
 
 jobs:
   validate:
@@ -151,3 +152,109 @@ jobs:
             dbt-nova-${{ matrix.asset }}.tar.gz.crt
             dbt-nova-${{ matrix.asset }}.sha256.sig
             dbt-nova-${{ matrix.asset }}.sha256.crt
+
+  container:
+    name: Publish OCI image
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    needs:
+      - validate
+      - build
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ needs.validate.outputs.release_tag }}
+
+      - name: Resolve image metadata
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf
+        with:
+          images: ${{ steps.image.outputs.image }}
+          tags: |
+            type=raw,value=${{ needs.validate.outputs.release_tag }}
+            type=raw,value=sha-${{ steps.image.outputs.commit_sha }}
+          labels: |
+            org.opencontainers.image.title=dbt-nova
+            org.opencontainers.image.description=dbt-nova streamable HTTP MCP server image
+            org.opencontainers.image.version=${{ needs.validate.outputs.release_tag }}
+
+      - name: Build exact release image
+        shell: bash
+        env:
+          IMAGE_LABELS: ${{ steps.meta.outputs.labels }}
+        run: |
+          set -euo pipefail
+          label_args=()
+          while IFS= read -r label; do
+            if [ -n "${label}" ]; then
+              label_args+=(--label "${label}")
+            fi
+          done <<< "${IMAGE_LABELS}"
+          docker build "${label_args[@]}" -t dbt-nova:release-smoke .
+
+      - name: Smoke HTTP container
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker rm -f dbt-nova-release-smoke >/dev/null 2>&1 || true
+          trap 'docker logs dbt-nova-release-smoke || true; docker rm -f dbt-nova-release-smoke >/dev/null 2>&1 || true' EXIT
+          docker run -d --rm \
+            --name dbt-nova-release-smoke \
+            -p 8080:8080 \
+            -v "$PWD/tests/fixtures:/fixtures:ro" \
+            -e DBT_MANIFEST_PATH=/fixtures/nova_manifest.json \
+            -e DBT_NOVA_SEARCH_ENABLE_VECTOR=false \
+            -e DBT_NOVA_SEARCH_ENABLE_SPARSE=false \
+            -e DBT_NOVA_SEARCH_ENABLE_RERANKER=false \
+            dbt-nova:release-smoke
+
+          health_ok=0
+          ready_ok=0
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8080/healthz > /tmp/dbt-nova-healthz.json; then
+              health_ok=1
+            fi
+            if curl -fsS http://127.0.0.1:8080/readyz > /tmp/dbt-nova-readyz.json; then
+              if grep -q '"status":"ready"' /tmp/dbt-nova-readyz.json; then
+                ready_ok=1
+                break
+              fi
+            fi
+            sleep 1
+          done
+
+          test "$health_ok" -eq 1
+          test "$ready_ok" -eq 1
+
+      - name: Push exact smoke-tested image
+        shell: bash
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r tag; do
+            if [ -z "${tag}" ]; then
+              continue
+            fi
+            docker tag dbt-nova:release-smoke "${tag}"
+            docker push "${tag}"
+          done <<< "${IMAGE_TAGS}"
