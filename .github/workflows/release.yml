@@ -177,8 +177,39 @@ jobs:
           echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
           echo "commit_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Build local smoke image
-        run: docker build -t dbt-nova:release-smoke .
+      - name: Log in to GHCR
+        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf
+        with:
+          images: ${{ steps.image.outputs.image }}
+          tags: |
+            type=raw,value=${{ needs.validate.outputs.release_tag }}
+            type=raw,value=sha-${{ steps.image.outputs.commit_sha }}
+          labels: |
+            org.opencontainers.image.title=dbt-nova
+            org.opencontainers.image.description=dbt-nova streamable HTTP MCP server image
+            org.opencontainers.image.version=${{ needs.validate.outputs.release_tag }}
+
+      - name: Build exact release image
+        shell: bash
+        env:
+          IMAGE_LABELS: ${{ steps.meta.outputs.labels }}
+        run: |
+          set -euo pipefail
+          label_args=()
+          while IFS= read -r label; do
+            if [ -n "${label}" ]; then
+              label_args+=(--label "${label}")
+            fi
+          done <<< "${IMAGE_LABELS}"
+          docker build "${label_args[@]}" -t dbt-nova:release-smoke .
 
       - name: Smoke HTTP container
         shell: bash
@@ -214,34 +245,16 @@ jobs:
           test "$health_ok" -eq 1
           test "$ready_ok" -eq 1
 
-      - name: Log in to GHCR
-        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
-
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf
-        with:
-          images: ${{ steps.image.outputs.image }}
-          tags: |
-            type=raw,value=${{ needs.validate.outputs.release_tag }}
-            type=raw,value=sha-${{ steps.image.outputs.commit_sha }}
-          labels: |
-            org.opencontainers.image.title=dbt-nova
-            org.opencontainers.image.description=dbt-nova streamable HTTP MCP server image
-            org.opencontainers.image.version=${{ needs.validate.outputs.release_tag }}
-
-      - name: Build and push OCI image
-        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294
-        with:
-          context: .
-          push: true
-          platforms: linux/amd64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+      - name: Push exact smoke-tested image
+        shell: bash
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r tag; do
+            if [ -z "${tag}" ]; then
+              continue
+            fi
+            docker tag dbt-nova:release-smoke "${tag}"
+            docker push "${tag}"
+          done <<< "${IMAGE_TAGS}"
