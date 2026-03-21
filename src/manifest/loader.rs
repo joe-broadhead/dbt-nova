@@ -1008,10 +1008,12 @@ mod tests {
 
     #[test]
     fn artifact_consumer_status_exposes_mode_guidance() {
-        let mut config = DbtNovaConfig::default();
-        config.storage_read_only = true;
-        config.storage_artifact_uri = "s3://bucket/storage.tar.gz".to_string();
-        config.metadata_artifact_uri = "s3://bucket/metadata.json".to_string();
+        let config = DbtNovaConfig {
+            storage_read_only: true,
+            storage_artifact_uri: "s3://bucket/storage.tar.gz".to_string(),
+            metadata_artifact_uri: "s3://bucket/metadata.json".to_string(),
+            ..DbtNovaConfig::default()
+        };
 
         let payload = build_artifact_consumer_status(&config, None, None);
         assert_eq!(
