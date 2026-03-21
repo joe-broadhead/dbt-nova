@@ -570,16 +570,28 @@ mod tests {
         client: &Client,
         url: &str,
         expected_status: reqwest::StatusCode,
+        expected_body_status: Option<&str>,
     ) -> Value {
-        for _ in 0..20 {
+        // Hosted readiness can lag behind the listener coming up on slower CI runners.
+        for _ in 0..120 {
             if let Ok(response) = client.get(url).send().await
                 && response.status() == expected_status
             {
-                return response.json().await.expect("valid JSON probe response");
+                let body: Value = response.json().await.expect("valid JSON probe response");
+                if expected_body_status.is_none_or(|status| body["status"] == status) {
+                    return body;
+                }
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        panic!("timed out waiting for {url} to return {expected_status}");
+        match expected_body_status {
+            Some(status) => {
+                panic!(
+                    "timed out waiting for {url} to return {expected_status} with status={status}"
+                )
+            }
+            None => panic!("timed out waiting for {url} to return {expected_status}"),
+        }
     }
 
     #[tokio::test]
@@ -607,6 +619,7 @@ mod tests {
             &client,
             &format!("http://127.0.0.1:{port}/readyz"),
             reqwest::StatusCode::OK,
+            Some("ready"),
         )
         .await;
         assert_eq!(readiness["status"], "ready");
@@ -677,6 +690,7 @@ mod tests {
             &client,
             &format!("http://127.0.0.1:{port}/readyz"),
             reqwest::StatusCode::SERVICE_UNAVAILABLE,
+            Some("failed"),
         )
         .await;
 

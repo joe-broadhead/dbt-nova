@@ -87,6 +87,7 @@ struct SearchBackends {
     tantivy: TantivySearcher,
     vector_search: Option<Arc<VectorSearcher>>,
     sparse_search: Option<Arc<SparseSearcher>>,
+    search_init_warnings: HashMap<String, String>,
 }
 
 struct RuntimeComponents {
@@ -102,6 +103,7 @@ struct RuntimeComponents {
     parent_map: HashMap<String, Vec<String>>,
     child_map: HashMap<String, Vec<String>>,
     resource_type_by_id: HashMap<String, String>,
+    search_init_warnings: HashMap<String, String>,
 }
 
 struct PreparedManifestData {
@@ -197,8 +199,7 @@ impl ManifestSearch {
             load_start,
             &entities,
             &accumulator,
-            search_backends.vector_search.as_ref(),
-            search_backends.sparse_search.as_ref(),
+            &search_backends,
         )?;
         let persist_context = PersistContext {
             signature_path: &signature_path,
@@ -670,11 +671,21 @@ fn build_search_indexes(
 
         let (tantivy, vector_search, sparse_search) =
             combine_index_build_results(tantivy_result, vector_result, sparse_result)?;
+        let (vector_search, vector_warning) = vector_search.into_parts();
+        let (sparse_search, sparse_warning) = sparse_search.into_parts();
+        let mut search_init_warnings = HashMap::new();
+        if let Some(warning) = vector_warning {
+            search_init_warnings.insert("vector".to_string(), warning);
+        }
+        if let Some(warning) = sparse_warning {
+            search_init_warnings.insert("sparse".to_string(), warning);
+        }
 
         Ok(SearchBackends {
             tantivy,
             vector_search: vector_search.map(Arc::new),
             sparse_search: sparse_search.map(Arc::new),
+            search_init_warnings,
         })
     })
 }
@@ -702,8 +713,7 @@ fn build_runtime_components(
     load_start: Instant,
     entities: &EntityStore,
     accumulator: &ManifestAccumulator,
-    vector_search: Option<&Arc<VectorSearcher>>,
-    sparse_search: Option<&Arc<SparseSearcher>>,
+    search_backends: &SearchBackends,
 ) -> Result<RuntimeComponents> {
     let entity_cache = EntityCache::build(config.entity_cache_size);
     let lineage_cache = if config.search.lineage_cache_size > 0 {
@@ -723,21 +733,25 @@ fn build_runtime_components(
     let sparse_breaker = CircuitBreaker::new(breaker_threshold, breaker_duration);
     let reranker_breaker = CircuitBreaker::new(breaker_threshold, breaker_duration);
 
-    if vector_search.is_some() {
+    if search_backends.vector_search.is_some() {
         info!(
             elapsed_ms = load_start.elapsed().as_millis(),
             "vector index built"
         );
     }
 
-    if sparse_search.is_some() {
+    if search_backends.sparse_search.is_some() {
         info!(
             elapsed_ms = load_start.elapsed().as_millis(),
             "sparse index built"
         );
     }
 
-    let reranker = Reranker::build(&config.search)?.map(Arc::new);
+    let mut search_init_warnings = search_backends.search_init_warnings.clone();
+    let (reranker, reranker_warning) = Reranker::build(&config.search)?.into_parts();
+    if let Some(warning) = reranker_warning {
+        search_init_warnings.insert("reranker".to_string(), warning);
+    }
     let compiled_layer_rules = compile_layer_rules(&config.layer_rules);
     let manifest_health = build_manifest_health(
         entities,
@@ -752,12 +766,13 @@ fn build_runtime_components(
         vector_breaker,
         sparse_breaker,
         reranker_breaker,
-        reranker,
+        reranker: reranker.map(Arc::new),
         compiled_layer_rules,
         manifest_health,
         parent_map: map_set_to_vec(accumulator.parent_map.clone()),
         child_map: map_set_to_vec(accumulator.child_map.clone()),
         resource_type_by_id: accumulator.unique_id_to_resource_type.clone(),
+        search_init_warnings,
     })
 }
 
@@ -847,6 +862,7 @@ fn assemble_manifest_search(context: AssembleContext) -> ManifestSearch {
         entity_counts: accumulator.entity_counts,
         entity_cache: runtime.entity_cache,
         lineage_cache: runtime.lineage_cache,
+        search_init_warnings: runtime.search_init_warnings,
         entity_cache_hits: AtomicU64::new(0),
         entity_cache_misses: AtomicU64::new(0),
         lineage_cache_hits: AtomicU64::new(0),
@@ -917,7 +933,7 @@ mod tests {
         let result = combine_index_build_results::<u8, u8, u8>(
             Err(DbtNovaError::ServerError("tantivy panic".to_string())),
             Err(DbtNovaError::ServerError("vector panic".to_string())),
-            Ok(None),
+            Ok(crate::manifest::vector_search::SearchComponentBuild::unavailable()),
         );
 
         match result {
@@ -933,15 +949,50 @@ mod tests {
 
     #[test]
     fn combine_index_build_results_returns_values() {
-        let result = combine_index_build_results(Ok(1u8), Ok(Some(2u8)), Ok(None::<u8>));
+        let result = combine_index_build_results(
+            Ok(1u8),
+            Ok(crate::manifest::vector_search::SearchComponentBuild::ready(
+                2u8,
+            )),
+            Ok(crate::manifest::vector_search::SearchComponentBuild::<u8>::unavailable()),
+        );
         match result {
             Ok((tantivy, vector, sparse)) => {
+                let (vector, vector_warning) = vector.into_parts();
+                let (sparse, sparse_warning) = sparse.into_parts();
                 assert_eq!(tantivy, 1);
                 assert_eq!(vector, Some(2));
+                assert_eq!(vector_warning, None);
                 assert_eq!(sparse, None);
+                assert_eq!(sparse_warning, None);
             }
             Err(err) => panic!("unexpected error: {err}"),
         }
+    }
+
+    #[test]
+    fn combine_index_build_results_preserves_component_warnings() {
+        let result = combine_index_build_results(
+            Ok(1u8),
+            Ok(
+                crate::manifest::vector_search::SearchComponentBuild::<u8>::disabled(
+                    "vector warning".to_string(),
+                ),
+            ),
+            Ok(
+                crate::manifest::vector_search::SearchComponentBuild::<u8>::disabled(
+                    "sparse warning".to_string(),
+                ),
+            ),
+        )
+        .expect("warnings should not fail aggregate build");
+        let (_, vector, sparse) = result;
+        let (vector, vector_warning) = vector.into_parts();
+        let (sparse, sparse_warning) = sparse.into_parts();
+        assert!(vector.is_none());
+        assert!(sparse.is_none());
+        assert_eq!(vector_warning.as_deref(), Some("vector warning"));
+        assert_eq!(sparse_warning.as_deref(), Some("sparse warning"));
     }
 
     #[test]
