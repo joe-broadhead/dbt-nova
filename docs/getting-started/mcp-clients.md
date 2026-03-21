@@ -29,15 +29,22 @@ curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scrip
 
 use that exact same `DBT_NOVA_EMBEDDINGS_CACHE_DIR` path in your MCP client env.
 
-## Prebuilt Read-Only Consumer Setup
+## Prebuilt Consumer Setup
 
 If you consume prebuilt Nova storage artifacts (built by the reusable producer
 workflow), set these env vars in your MCP client:
 
 - `DBT_NOVA_STORAGE_DIR` (local Nova storage root)
-- `DBT_NOVA_STORAGE_READ_ONLY=true`
 - `DBT_NOVA_BOOTSTRAP_URI` (recommended one-URI setup)
-- `DBT_NOVA_ARTIFACT_FETCH_POLICY` (recommended: `if_missing`)
+- `DBT_NOVA_ARTIFACT_FETCH_POLICY` (recommended first run: `if_missing`)
+
+For first-run bootstrap/artifact hydration, leave `DBT_NOVA_STORAGE_READ_ONLY`
+unset or set it to `false`.
+
+Use strict read-only mode only after local artifacts already exist:
+
+- `DBT_NOVA_STORAGE_READ_ONLY=true`
+- `DBT_NOVA_ARTIFACT_FETCH_POLICY=never`
 
 Optional explicit mode (if you do not use bootstrap URI):
 
@@ -53,6 +60,7 @@ Recommended with prebuilt artifacts:
 - Use the same Nova release on producer and consumer.
 - Prefer the stable bootstrap alias (`<storage_instance_id>-latest-bootstrap.json`) and allow Nova to cache fetched artifacts locally.
 - After a producer publishes new assets, run `reload_manifest` to pick up the newer bootstrap via the same URI.
+- Do not combine `DBT_NOVA_STORAGE_READ_ONLY=true` with `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing|always` on a cold machine.
 
 Bootstrap precedence reminder:
 
@@ -69,9 +77,23 @@ startup_timeout_sec = 60
 
 [mcp_servers.dbt-nova.env]
 DBT_NOVA_STORAGE_DIR = "/path/to/.dbt-nova"
-DBT_NOVA_STORAGE_READ_ONLY = "true"
 DBT_NOVA_BOOTSTRAP_URI = "s3://my-bucket/nova-assets/prod/analytics-prod-latest-bootstrap.json"
 DBT_NOVA_ARTIFACT_FETCH_POLICY = "if_missing"
+DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/models"
+```
+
+Strict read-only variant after local materialization:
+
+```toml
+[mcp_servers.dbt-nova]
+command = "/path/to/dbt-nova"
+startup_timeout_sec = 60
+
+[mcp_servers.dbt-nova.env]
+DBT_NOVA_STORAGE_DIR = "/path/to/.dbt-nova"
+DBT_NOVA_STORAGE_READ_ONLY = "true"
+DBT_NOVA_BOOTSTRAP_URI = "s3://my-bucket/nova-assets/prod/analytics-prod-latest-bootstrap.json"
+DBT_NOVA_ARTIFACT_FETCH_POLICY = "never"
 DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/models"
 ```
 

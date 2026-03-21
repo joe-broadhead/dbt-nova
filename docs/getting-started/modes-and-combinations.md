@@ -56,7 +56,7 @@ Artifact controls:
 - `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing|always|never`
 - `DBT_NOVA_ARTIFACTS_CACHE_DIR`
 - `DBT_NOVA_ARTIFACT_TIMEOUT_SECS`
-- `DBT_NOVA_STORAGE_READ_ONLY=true` (recommended for consumers)
+- `DBT_NOVA_STORAGE_READ_ONLY=true` only after local artifacts are already materialized
 
 Rule: remote artifact mode is valid only when **both** storage + metadata artifact URIs are present.
 
@@ -104,9 +104,9 @@ dbt-nova tool call execute_sql \
 | Local dev (simple) | local path | local build | on-demand | `DBT_MANIFEST_PATH` |
 | Local dev (stable) | local path | local build | pre-warmed local cache | `DBT_MANIFEST_PATH`, `DBT_NOVA_EMBEDDINGS_CACHE_DIR` |
 | Remote manifest, local index | `DBT_NOVA_MANIFEST_URI` | local build | pre-warmed local cache | `DBT_NOVA_MANIFEST_URI`, `DBT_NOVA_EMBEDDINGS_CACHE_DIR` |
-| Hosted bootstrap consumer | bootstrap | prebuilt artifacts hydrated locally | remote models artifact or pre-warmed cache | `DBT_NOVA_SERVER_TRANSPORT=streamable_http`, `PORT`, `DBT_NOVA_STORAGE_DIR=/tmp/dbt-nova`, `DBT_NOVA_EMBEDDINGS_CACHE_DIR=/tmp/dbt-nova/models`, `DBT_NOVA_BOOTSTRAP_URI`, `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing` |
-| Prebuilt read-only (no remote models) | bootstrap or explicit artifact URIs | prebuilt artifacts | local pre-warmed cache | `DBT_NOVA_STORAGE_READ_ONLY=true`, bootstrap/artifact vars, `DBT_NOVA_EMBEDDINGS_CACHE_DIR` |
-| Prebuilt read-only (full remote) | bootstrap | prebuilt artifacts | remote models artifact | `DBT_NOVA_STORAGE_READ_ONLY=true`, `DBT_NOVA_BOOTSTRAP_URI`, fetch policy |
+| Hosted bootstrap consumer | bootstrap | prebuilt artifacts hydrated locally | remote models artifact or pre-warmed cache | `DBT_NOVA_SERVER_TRANSPORT=streamable_http`, `PORT`, `DBT_NOVA_STORAGE_DIR=/tmp/dbt-nova`, `DBT_NOVA_EMBEDDINGS_CACHE_DIR=/tmp/dbt-nova/models`, `DBT_NOVA_BOOTSTRAP_URI`, `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing`, `DBT_NOVA_STORAGE_READ_ONLY=false` |
+| Prebuilt writable first-run consumer | bootstrap or explicit artifact URIs | prebuilt artifacts hydrated locally | local pre-warmed cache or remote models artifact | `DBT_NOVA_BOOTSTRAP_URI` or artifact URIs, `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing`, `DBT_NOVA_STORAGE_READ_ONLY=false` |
+| Prebuilt strict read-only consumer | bootstrap or explicit artifact URIs | pre-materialized local storage | pre-materialized local models or pre-warmed cache | `DBT_NOVA_STORAGE_READ_ONLY=true`, `DBT_NOVA_ARTIFACT_FETCH_POLICY=never`, bootstrap/artifact vars, `DBT_NOVA_EMBEDDINGS_CACHE_DIR` |
 
 ## Producer/Consumer Alignment (Prebuilt Assets)
 

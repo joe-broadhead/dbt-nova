@@ -83,17 +83,27 @@ Use the same `DBT_NOVA_EMBEDDINGS_CACHE_DIR` value in your MCP client config.
 !!! tip "Pro Tip"
     Add this to your shell profile (`~/.bashrc`, `~/.zshrc`) to persist across sessions.
 
-### Optional: Consume Prebuilt Artifacts (Read-Only)
+### Optional: Consume Prebuilt Artifacts
 
 If you build assets in CI with the reusable workflow, consumers can start
 without manual extraction by setting:
 
-- `DBT_NOVA_STORAGE_INSTANCE_ID`
+- `DBT_NOVA_BOOTSTRAP_URI`
+- `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing`
+- `DBT_NOVA_STORAGE_READ_ONLY` unset or `false` on first run
+- `DBT_NOVA_STORAGE_DIR`
+
+Strict read-only mode is only for reuse after artifacts already exist locally:
+
 - `DBT_NOVA_STORAGE_READ_ONLY=true`
+- `DBT_NOVA_ARTIFACT_FETCH_POLICY=never`
+
+Optional explicit mode:
+
+- `DBT_NOVA_STORAGE_INSTANCE_ID`
 - `DBT_NOVA_STORAGE_ARTIFACT_URI`
 - `DBT_NOVA_METADATA_ARTIFACT_URI`
 - optional `DBT_NOVA_MODELS_ARTIFACT_URI`
-- optional `DBT_NOVA_ARTIFACT_FETCH_POLICY` (recommended `if_missing`)
 
 See [Prebuilt Asset Workflow](../operations/prebuilt-assets.md) for full producer/consumer setup.
 

@@ -63,6 +63,9 @@ Cache stats:
 Artifact consumer stats (when prebuilt artifact mode is configured):
 
 - `artifact_consumer.enabled`: whether remote artifact mode is active
+- `artifact_consumer.storage_read_only`: whether runtime is in strict read-only mode
+- `artifact_consumer.consumer_mode_hint`: `writable_hydration` or `strict_read_only_reuse`
+- `artifact_consumer.guidance`: operator hint for the active consumer mode
 - `artifact_consumer.fetch_policy`: `if_missing` | `always` | `never`
 - `artifact_consumer.metadata_validated`: metadata contract was parsed and validated
 - `artifact_consumer.storage_materialized`: storage archive was materialized in this load cycle

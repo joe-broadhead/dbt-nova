@@ -348,7 +348,7 @@ fn ensure_materialization_allowed(
 ) -> Result<()> {
     if config.storage_read_only && should_materialize {
         return Err(DbtNovaError::ServerError(format!(
-            "Storage is read-only; cannot materialize {label} (set DBT_NOVA_ARTIFACT_FETCH_POLICY=never and pre-materialize assets)"
+            "Storage is read-only; cannot materialize {label} on first-run hydration. Supported flows: either unset DBT_NOVA_STORAGE_READ_ONLY and use DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing|always to hydrate locally, or keep DBT_NOVA_STORAGE_READ_ONLY=true with DBT_NOVA_ARTIFACT_FETCH_POLICY=never after assets are already materialized locally."
         )));
     }
     Ok(())

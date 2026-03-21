@@ -289,9 +289,10 @@ fn manifest_load_read_only_rejects_artifact_materialization_when_missing() {
         Ok(_) => panic!("read-only mode should reject required materialization"),
         Err(error) => error,
     };
-    assert!(
-        error
-            .to_string()
-            .contains("Storage is read-only; cannot materialize storage artifacts")
-    );
+    assert!(error.to_string().contains(
+        "Storage is read-only; cannot materialize storage artifacts on first-run hydration"
+    ));
+    assert!(error.to_string().contains(
+        "unset DBT_NOVA_STORAGE_READ_ONLY and use DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing|always"
+    ));
 }
