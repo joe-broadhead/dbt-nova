@@ -86,6 +86,26 @@ fn component_runtime_error(
     ))
 }
 
+fn disable_on_total_batch_failure<T>(
+    component_label: &str,
+    disable_env: &str,
+    attempted_batches: usize,
+    produced_items: usize,
+    last_failure: Option<&str>,
+) -> Option<SearchComponentBuild<T>> {
+    if attempted_batches == 0 || produced_items > 0 {
+        return None;
+    }
+    let last_failure = last_failure?;
+    Some(SearchComponentBuild::disabled(component_init_warning(
+        component_label,
+        disable_env,
+        &format!(
+            "startup embedding generation failed for all batches. Last failure: {last_failure}"
+        ),
+    )))
+}
+
 fn build_optional_component<T, E, F>(
     component_label: &str,
     disable_env: &str,
@@ -397,12 +417,15 @@ impl VectorSearcher {
         let mut embeddings_i8: Vec<QuantizedEmbedding> = Vec::new();
         let mut batch_ids: Vec<String> = Vec::with_capacity(batch_size);
         let mut batch_texts: Vec<String> = Vec::with_capacity(batch_size);
+        let mut attempted_batches = 0usize;
+        let mut last_batch_failure: Option<String> = None;
 
         let mut flush_batch =
             |batch_ids: &mut Vec<String>, batch_texts: &mut Vec<String>| -> Result<()> {
                 if batch_texts.is_empty() {
                     return Ok(());
                 }
+                attempted_batches += 1;
 
                 let texts = std::mem::take(batch_texts);
                 let ids = std::mem::take(batch_ids);
@@ -415,12 +438,18 @@ impl VectorSearcher {
                 ) {
                     Ok(vecs) => vecs,
                     Err(err) => {
+                        last_batch_failure = Some(err.to_string());
                         warn!(error = %err, "Vector embedding batch failed; skipping batch");
                         return Ok(());
                     }
                 };
 
                 if vecs.len() != ids.len() {
+                    last_batch_failure = Some(format!(
+                        "embedding batch returned unexpected size; expected {}, actual {}",
+                        ids.len(),
+                        vecs.len()
+                    ));
                     warn!(
                         expected = ids.len(),
                         actual = vecs.len(),
@@ -460,6 +489,24 @@ impl VectorSearcher {
         }
 
         flush_batch(&mut batch_ids, &mut batch_texts)?;
+
+        let produced_items = if use_quant {
+            embeddings_i8.len()
+        } else {
+            embeddings_f32.len()
+        };
+        if let Some(disabled) = disable_on_total_batch_failure(
+            "vector search",
+            "DBT_NOVA_SEARCH_ENABLE_VECTOR",
+            attempted_batches,
+            produced_items,
+            last_batch_failure.as_deref(),
+        ) {
+            if let Some(warning) = disabled.warning.as_ref() {
+                warn!(warning = %warning, "Vector search unavailable during startup");
+            }
+            return Ok(disabled);
+        }
 
         let (embeddings, ann) = if use_quant {
             let ann = AnnIndex::build_quantized(&embeddings_i8, config);
@@ -663,12 +710,15 @@ impl SparseSearcher {
         let mut embeddings: Vec<(String, SparseEmbedding)> = Vec::new();
         let mut batch_ids: Vec<String> = Vec::with_capacity(batch_size);
         let mut batch_texts: Vec<String> = Vec::with_capacity(batch_size);
+        let mut attempted_batches = 0usize;
+        let mut last_batch_failure: Option<String> = None;
 
         let mut flush_batch =
             |batch_ids: &mut Vec<String>, batch_texts: &mut Vec<String>| -> Result<()> {
                 if batch_texts.is_empty() {
                     return Ok(());
                 }
+                attempted_batches += 1;
 
                 let texts = std::mem::take(batch_texts);
                 let ids = std::mem::take(batch_ids);
@@ -681,12 +731,18 @@ impl SparseSearcher {
                 ) {
                     Ok(vecs) => vecs,
                     Err(err) => {
+                        last_batch_failure = Some(err.to_string());
                         warn!(error = %err, "Sparse embedding batch failed; skipping batch");
                         return Ok(());
                     }
                 };
 
                 if vecs.len() != ids.len() {
+                    last_batch_failure = Some(format!(
+                        "embedding batch returned unexpected size; expected {}, actual {}",
+                        ids.len(),
+                        vecs.len()
+                    ));
                     warn!(
                         expected = ids.len(),
                         actual = vecs.len(),
@@ -720,6 +776,19 @@ impl SparseSearcher {
         }
 
         flush_batch(&mut batch_ids, &mut batch_texts)?;
+
+        if let Some(disabled) = disable_on_total_batch_failure(
+            "sparse search",
+            "DBT_NOVA_SEARCH_ENABLE_SPARSE",
+            attempted_batches,
+            embeddings.len(),
+            last_batch_failure.as_deref(),
+        ) {
+            if let Some(warning) = disabled.warning.as_ref() {
+                warn!(warning = %warning, "Sparse search unavailable during startup");
+            }
+            return Ok(disabled);
+        }
 
         let mut cache_ids = Vec::with_capacity(embeddings.len());
         let mut cache_indices = Vec::with_capacity(embeddings.len());
@@ -1193,7 +1262,10 @@ fn sparse_dot(query: &SparseEmbedding, doc: &SparseEmbedding) -> f32 {
 mod tests {
     use std::sync::{LazyLock, Mutex};
 
-    use super::{build_optional_component, run_component_operation, validate_proxy_env_vars};
+    use super::{
+        build_optional_component, disable_on_total_batch_failure, run_component_operation,
+        validate_proxy_env_vars,
+    };
 
     static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -1268,5 +1340,34 @@ mod tests {
         assert!(message.contains("DBT_NOVA_EMBEDDINGS_CACHE_DIR"));
         assert!(message.contains("DBT_NOVA_SEARCH_ENABLE_SPARSE=false"));
         assert!(message.contains("failed to retrieve model.onnx"));
+    }
+
+    #[test]
+    fn disable_on_total_batch_failure_returns_warning_when_all_batches_fail() {
+        let disabled = disable_on_total_batch_failure::<()>(
+            "vector search",
+            "DBT_NOVA_SEARCH_ENABLE_VECTOR",
+            2,
+            0,
+            Some("missing onnx/model.onnx"),
+        )
+        .expect("all failed batches should disable component");
+        let (component, warning) = disabled.into_parts();
+        assert!(component.is_none());
+        let warning = warning.expect("warning");
+        assert!(warning.contains("startup embedding generation failed for all batches"));
+        assert!(warning.contains("missing onnx/model.onnx"));
+    }
+
+    #[test]
+    fn disable_on_total_batch_failure_keeps_component_ready_after_partial_success() {
+        let disabled = disable_on_total_batch_failure::<()>(
+            "sparse search",
+            "DBT_NOVA_SEARCH_ENABLE_SPARSE",
+            2,
+            1,
+            Some("failed to retrieve model.onnx"),
+        );
+        assert!(disabled.is_none());
     }
 }
