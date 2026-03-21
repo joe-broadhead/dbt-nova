@@ -60,13 +60,15 @@ This repo uses four GitHub Actions workflows for releases and documentation:
      - runs one all-features test gate on Linux before packaging
      - builds and publishes slim assets for `linux-x86_64` (Cloud Run)
        and `macos-arm64` (standard Apple Silicon macOS)
+     - builds, smokes, and publishes a `linux/amd64` OCI image to GHCR
 
 4. **Docs Deploy** (`.github/workflows/docs.yml`)
    - Trigger: `v*` tag push
    - Actions: builds MkDocs and publishes to GitHub Pages
 
 Release jobs now generate and publish checksum and cosign artifacts for every released platform,
-and emit GitHub artifact provenance attestations for release files.
+emit GitHub artifact provenance attestations for release files, and publish an
+OCI image to `ghcr.io/joe-broadhead/dbt-nova`.
 
 Note: GitHub provenance attestations are only emitted when supported by the repository plan/type.
 For user-owned private repositories, the attestation step is skipped.
@@ -112,6 +114,19 @@ gh attestation verify dbt-nova-linux-x86_64.tar.gz \
 ## Release Type
 
 - **Slim**: binary only (downloads models on first run)
+- **OCI image**: hosted/server runtime image for streamable HTTP deployments
+
+Pull a released container image with:
+
+```bash
+docker pull ghcr.io/joe-broadhead/dbt-nova:v<version>
+```
+
+Every release also publishes an immutable commit tag:
+
+```text
+ghcr.io/joe-broadhead/dbt-nova:sha-<git-sha>
+```
 
 By default, releases include S3/GCS SDK support. If you need a minimal binary,
 build with `--no-default-features` and enable only the features you need.

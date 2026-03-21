@@ -81,6 +81,8 @@ Operational defaults:
   - validates tag is on `master`
   - runs one all-features Linux test gate
   - builds and publishes **slim** assets for `linux-x86_64` and `macos-arm64`
+  - builds, smokes, and publishes a `linux/amd64` OCI image to
+    `ghcr.io/joe-broadhead/dbt-nova`
 
 ### Docs Deploy
 
@@ -96,6 +98,7 @@ These workflows use `GITHUB_TOKEN` with:
 - `pull-requests: write` for release PR creation
 - `pages: write` and `id-token: write` for docs deploy
 - `attestations: write` for provenance attestations when supported
+- `packages: write` for OCI image publishing to GHCR
 
 Additional secret required:
 
