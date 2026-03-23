@@ -1291,6 +1291,12 @@ jobs:
           access_token_lifetime: 3600s
           access_token_scopes: https://www.googleapis.com/auth/cloud-platform
 
+      - name: Set up gcloud for GCS publish
+        if: ${{ contains(needs.prepare.outputs.publish_targets, 'gcs') && needs.prepare.outputs.gcp_workload_identity_provider != '' && needs.prepare.outputs.gcp_service_account != '' }}
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ needs.prepare.outputs.gcp_project_id }}
+
       - name: Prepare remote publish helper script
         shell: bash
         run: |
@@ -1420,6 +1426,13 @@ jobs:
             local local_path="$1"
             local remote_uri="$2"
             local bucket object object_encoded access_token
+
+            if command -v gcloud >/dev/null 2>&1; then
+              if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" || -n "${GOOGLE_GHA_CREDS_PATH:-}" || -n "${CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE:-}" ]]; then
+                gcloud storage cp --quiet "${local_path}" "${remote_uri}" >/dev/null
+                return
+              fi
+            fi
           
             if [[ "${remote_uri}" != gs://* ]]; then
               echo "invalid GCS URI: ${remote_uri}"
@@ -1452,6 +1465,20 @@ jobs:
             local remote_uri="$1"
             local local_path="$2"
             local bucket object object_encoded http_code access_token
+
+            if command -v gcloud >/dev/null 2>&1; then
+              if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" || -n "${GOOGLE_GHA_CREDS_PATH:-}" || -n "${CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE:-}" ]]; then
+                if ! gcloud storage ls "${remote_uri}" >/dev/null 2>&1; then
+                  rm -f "${local_path}"
+                  return 10
+                fi
+                gcloud storage cp --quiet "${remote_uri}" "${local_path}" >/dev/null || {
+                  rm -f "${local_path}"
+                  return 1
+                }
+                return 0
+              fi
+            fi
           
             if [[ "${remote_uri}" != gs://* ]]; then
               echo "invalid GCS URI: ${remote_uri}"
