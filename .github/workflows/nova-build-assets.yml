@@ -785,7 +785,7 @@ jobs:
   build:
     name: Build, validate, and publish storage artifact
     runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    timeout-minutes: 240
     needs: prepare
     concurrency:
       group: nova-assets-${{ github.repository }}-${{ needs.prepare.outputs.storage_instance_id }}
