@@ -1419,7 +1419,7 @@ jobs:
           publish_to_gcs() {
             local local_path="$1"
             local remote_uri="$2"
-            local bucket object object_encoded
+            local bucket object object_encoded access_token
           
             if [[ "${remote_uri}" != gs://* ]]; then
               echo "invalid GCS URI: ${remote_uri}"
@@ -1434,10 +1434,14 @@ jobs:
             fi
           
             object_encoded="$(python -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "${object}")"
+            access_token="$(resolve_gcs_access_token)" || {
+              echo "publish target gcs requires a Google access token (DBT_NOVA_GCP_ACCESS_TOKEN, DBT_NOVA_BIGQUERY_ACCESS_TOKEN, GCP_ACCESS_TOKEN, GOOGLE_OAUTH_ACCESS_TOKEN, or gcloud ADC)." >&2
+              return 1
+            }
           
             curl -fsS \
               -X POST \
-              -H "Authorization: Bearer ${GCS_ACCESS_TOKEN}" \
+              -H "Authorization: Bearer ${access_token}" \
               -H "Content-Type: application/octet-stream" \
               --data-binary "@${local_path}" \
               "https://storage.googleapis.com/upload/storage/v1/b/${bucket}/o?uploadType=media&name=${object_encoded}" \
@@ -1447,7 +1451,7 @@ jobs:
           download_from_gcs() {
             local remote_uri="$1"
             local local_path="$2"
-            local bucket object object_encoded http_code
+            local bucket object object_encoded http_code access_token
           
             if [[ "${remote_uri}" != gs://* ]]; then
               echo "invalid GCS URI: ${remote_uri}"
@@ -1462,9 +1466,13 @@ jobs:
             fi
           
             object_encoded="$(python -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "${object}")"
+            access_token="$(resolve_gcs_access_token)" || {
+              echo "publish target gcs requires a Google access token (DBT_NOVA_GCP_ACCESS_TOKEN, DBT_NOVA_BIGQUERY_ACCESS_TOKEN, GCP_ACCESS_TOKEN, GOOGLE_OAUTH_ACCESS_TOKEN, or gcloud ADC)." >&2
+              return 1
+            }
           
             http_code="$(curl -sS \
-              -H "Authorization: Bearer ${GCS_ACCESS_TOKEN}" \
+              -H "Authorization: Bearer ${access_token}" \
               -o "${local_path}" \
               -w "%{http_code}" \
               "https://storage.googleapis.com/storage/v1/b/${bucket}/o/${object_encoded}?alt=media")" || {
@@ -1712,6 +1720,16 @@ jobs:
           
           resolve_gcs_access_token() {
             local token=""
+            if command -v gcloud >/dev/null 2>&1; then
+              if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" || -n "${GOOGLE_GHA_CREDS_PATH:-}" || -n "${CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE:-}" ]]; then
+                token="$(gcloud auth application-default print-access-token 2>/dev/null || true)"
+                if [[ -n "${token}" ]]; then
+                  printf '%s' "${token}"
+                  return 0
+                fi
+              fi
+            fi
+
             for var_name in \
               DBT_NOVA_GCP_ACCESS_TOKEN \
               DBT_NOVA_BIGQUERY_ACCESS_TOKEN \
@@ -1880,10 +1898,6 @@ jobs:
                   "${gcs_bootstrap_models_uri}"
                 cp "${gcs_bootstrap_path}" "${gcs_bootstrap_latest_path}"
                 if [[ "${publish_dry_run}" != "true" ]]; then
-                  GCS_ACCESS_TOKEN="$(resolve_gcs_access_token)" || {
-                    echo "publish target gcs requires a Google access token (DBT_NOVA_GCP_ACCESS_TOKEN, DBT_NOVA_BIGQUERY_ACCESS_TOKEN, GCP_ACCESS_TOKEN, GOOGLE_OAUTH_ACCESS_TOKEN, or gcloud ADC)."
-                    exit 1
-                  }
                   retry_with_backoff 4 publish_to_gcs "${storage_archive}" "${gcs_storage_uri}" || {
                     echo "failed uploading storage archive to gcs after retries"
                     exit 1
