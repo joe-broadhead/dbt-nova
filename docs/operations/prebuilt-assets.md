@@ -158,7 +158,7 @@ Publish target auth requirements:
 | Target | Required credentials |
 |---|---|
 | `s3` | Standard AWS auth env (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / session token or OIDC role) |
-| `gcs` | Token via one of `DBT_NOVA_GCP_ACCESS_TOKEN`, `DBT_NOVA_BIGQUERY_ACCESS_TOKEN`, `GCP_ACCESS_TOKEN`, `GOOGLE_OAUTH_ACCESS_TOKEN` |
+| `gcs` | Token via one of `DBT_NOVA_GCP_ACCESS_TOKEN`, `DBT_NOVA_BIGQUERY_ACCESS_TOKEN`, `GCP_ACCESS_TOKEN`, `GOOGLE_OAUTH_ACCESS_TOKEN`, or GitHub OIDC via `gcp_workload_identity_provider` + `gcp_service_account` |
 | `dbfs` | `DATABRICKS_HOST` and `DATABRICKS_ACCESS_TOKEN` |
 
 Common downstream pattern: keep a repo-local `workflow_dispatch` wrapper and
@@ -204,6 +204,9 @@ Workflow inputs:
 - `publish_targets`: comma-separated list from `s3,gcs,dbfs`
 - `publish_s3_prefix`: e.g. `s3://my-bucket/nova-assets/prod`
 - `publish_gcs_prefix`: e.g. `gs://my-bucket/nova-assets/prod`
+- `gcp_workload_identity_provider`: optional Google workload identity provider resource for OIDC-backed GCS publish
+- `gcp_service_account`: optional Google service account email used with workload identity federation for GCS publish
+- `gcp_project_id`: optional Google project id passed to `google-github-actions/auth`
 - `publish_dbfs_prefix`: e.g. `dbfs:/FileStore/projects/my-project/nova-assets/prod`
 - `publish_dry_run`: `true` to compute publish URIs without network uploads
 - `installer_repository` / `installer_ref` (advanced override for which repo/ref
@@ -216,8 +219,16 @@ Auth per target:
 
 - `s3`: standard AWS env credentials used by `aws` CLI
 - `gcs`: one of `DBT_NOVA_GCP_ACCESS_TOKEN`, `DBT_NOVA_BIGQUERY_ACCESS_TOKEN`,
-  `GCP_ACCESS_TOKEN`, `GOOGLE_OAUTH_ACCESS_TOKEN` (or gcloud ADC token)
+  `GCP_ACCESS_TOKEN`, `GOOGLE_OAUTH_ACCESS_TOKEN`, or GitHub OIDC-backed
+  federation via `gcp_workload_identity_provider` + `gcp_service_account`
 - `dbfs`: `DATABRICKS_HOST` and `DATABRICKS_ACCESS_TOKEN`
+
+GitHub OIDC notes for GCS:
+
+- grant the caller workflow `permissions: id-token: write`
+- pass `gcp_workload_identity_provider` and `gcp_service_account`
+- optional `gcp_project_id` is forwarded to `google-github-actions/auth`
+- if OIDC is configured, you do not need a static `DBT_NOVA_GCP_ACCESS_TOKEN`
 
 Installer mode guidance:
 

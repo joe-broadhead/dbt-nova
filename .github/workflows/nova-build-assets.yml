@@ -97,6 +97,21 @@ on:
         required: false
         type: string
         default: ""
+      gcp_workload_identity_provider:
+        description: "Optional Google Workload Identity Provider resource for OIDC-backed GCS publish"
+        required: false
+        type: string
+        default: ""
+      gcp_service_account:
+        description: "Optional Google service account email used with workload identity federation for GCS publish"
+        required: false
+        type: string
+        default: ""
+      gcp_project_id:
+        description: "Optional Google project id passed to google-github-actions/auth"
+        required: false
+        type: string
+        default: ""
       publish_dbfs_prefix:
         description: "DBFS path prefix for remote publish (e.g. dbfs:/mnt/prefix)"
         required: false
@@ -256,6 +271,21 @@ on:
         required: false
         type: string
         default: ""
+      gcp_workload_identity_provider:
+        description: "Optional Google Workload Identity Provider resource for OIDC-backed GCS publish"
+        required: false
+        type: string
+        default: ""
+      gcp_service_account:
+        description: "Optional Google service account email used with workload identity federation for GCS publish"
+        required: false
+        type: string
+        default: ""
+      gcp_project_id:
+        description: "Optional Google project id passed to google-github-actions/auth"
+        required: false
+        type: string
+        default: ""
       publish_dbfs_prefix:
         description: "DBFS path prefix for remote publish (e.g. dbfs:/mnt/prefix)"
         required: false
@@ -269,6 +299,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   prepare:
@@ -289,6 +320,9 @@ jobs:
       publish_targets: ${{ steps.resolve.outputs.publish_targets }}
       publish_s3_prefix: ${{ steps.resolve.outputs.publish_s3_prefix }}
       publish_gcs_prefix: ${{ steps.resolve.outputs.publish_gcs_prefix }}
+      gcp_workload_identity_provider: ${{ steps.resolve.outputs.gcp_workload_identity_provider }}
+      gcp_service_account: ${{ steps.resolve.outputs.gcp_service_account }}
+      gcp_project_id: ${{ steps.resolve.outputs.gcp_project_id }}
       publish_dbfs_prefix: ${{ steps.resolve.outputs.publish_dbfs_prefix }}
       publish_dry_run: ${{ steps.resolve.outputs.publish_dry_run }}
       models_distribution_mode: ${{ steps.resolve.outputs.models_distribution_mode }}
@@ -323,6 +357,9 @@ jobs:
           INPUT_PUBLISH_TARGETS: ${{ inputs.publish_targets }}
           INPUT_PUBLISH_S3_PREFIX: ${{ inputs.publish_s3_prefix }}
           INPUT_PUBLISH_GCS_PREFIX: ${{ inputs.publish_gcs_prefix }}
+          INPUT_GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ inputs.gcp_workload_identity_provider }}
+          INPUT_GCP_SERVICE_ACCOUNT: ${{ inputs.gcp_service_account }}
+          INPUT_GCP_PROJECT_ID: ${{ inputs.gcp_project_id }}
           INPUT_PUBLISH_DBFS_PREFIX: ${{ inputs.publish_dbfs_prefix }}
           INPUT_PUBLISH_DRY_RUN: ${{ inputs.publish_dry_run }}
           JOB_WORKFLOW_REF: ${{ github.job_workflow_ref }}
@@ -353,6 +390,9 @@ jobs:
           publish_targets_raw="${INPUT_PUBLISH_TARGETS}"
           publish_s3_prefix="${INPUT_PUBLISH_S3_PREFIX}"
           publish_gcs_prefix="${INPUT_PUBLISH_GCS_PREFIX}"
+          gcp_workload_identity_provider="${INPUT_GCP_WORKLOAD_IDENTITY_PROVIDER}"
+          gcp_service_account="${INPUT_GCP_SERVICE_ACCOUNT}"
+          gcp_project_id="${INPUT_GCP_PROJECT_ID}"
           publish_dbfs_prefix="${INPUT_PUBLISH_DBFS_PREFIX}"
           publish_dry_run="${INPUT_PUBLISH_DRY_RUN}"
 
@@ -612,6 +652,12 @@ jobs:
               echo "publish_gcs_prefix is required for gcs target and must start with gs://"
               exit 1
             fi
+            if [[ -n "${gcp_workload_identity_provider}" || -n "${gcp_service_account}" ]]; then
+              if [[ -z "${gcp_workload_identity_provider}" || -z "${gcp_service_account}" ]]; then
+                echo "gcp_workload_identity_provider and gcp_service_account must both be set when using OIDC-backed GCS publish."
+                exit 1
+              fi
+            fi
           fi
           if [[ ",${publish_targets_normalized}," == *,dbfs,* ]]; then
             if [[ -z "${publish_dbfs_prefix}" || "${publish_dbfs_prefix}" != dbfs:/* ]]; then
@@ -693,6 +739,9 @@ jobs:
           echo "publish_targets=${publish_targets_normalized}" >> "$GITHUB_OUTPUT"
           echo "publish_s3_prefix=${publish_s3_prefix}" >> "$GITHUB_OUTPUT"
           echo "publish_gcs_prefix=${publish_gcs_prefix}" >> "$GITHUB_OUTPUT"
+          echo "gcp_workload_identity_provider=${gcp_workload_identity_provider}" >> "$GITHUB_OUTPUT"
+          echo "gcp_service_account=${gcp_service_account}" >> "$GITHUB_OUTPUT"
+          echo "gcp_project_id=${gcp_project_id}" >> "$GITHUB_OUTPUT"
           echo "publish_dbfs_prefix=${publish_dbfs_prefix}" >> "$GITHUB_OUTPUT"
           echo "publish_dry_run=${publish_dry_run}" >> "$GITHUB_OUTPUT"
           echo "models_distribution_mode=${models_distribution_mode}" >> "$GITHUB_OUTPUT"
@@ -720,6 +769,9 @@ jobs:
           - installer_install_mode: `${{ steps.resolve.outputs.installer_install_mode }}`
           - publish_targets: `${{ steps.resolve.outputs.publish_targets }}`
           - publish_dry_run: `${{ steps.resolve.outputs.publish_dry_run }}`
+          - gcp_workload_identity_provider: `${{ steps.resolve.outputs.gcp_workload_identity_provider }}`
+          - gcp_service_account: `${{ steps.resolve.outputs.gcp_service_account }}`
+          - gcp_project_id: `${{ steps.resolve.outputs.gcp_project_id }}`
           - models_distribution_mode: `${{ steps.resolve.outputs.models_distribution_mode }}`
           - publish_models_archive: `${{ steps.resolve.outputs.publish_models_archive }}`
           - include_models_in_bootstrap: `${{ steps.resolve.outputs.include_models_in_bootstrap }}`
@@ -1226,6 +1278,18 @@ jobs:
           path: ${{ steps.collect.outputs.artifact_name_models }}.tar.gz
           retention-days: ${{ inputs.retention_days }}
           if-no-files-found: error
+
+      - name: Authenticate to Google Cloud for GCS publish
+        id: gcp_auth
+        if: ${{ contains(needs.prepare.outputs.publish_targets, 'gcs') && needs.prepare.outputs.gcp_workload_identity_provider != '' && needs.prepare.outputs.gcp_service_account != '' }}
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ needs.prepare.outputs.gcp_workload_identity_provider }}
+          service_account: ${{ needs.prepare.outputs.gcp_service_account }}
+          project_id: ${{ needs.prepare.outputs.gcp_project_id }}
+          token_format: access_token
+          access_token_lifetime: 3600s
+          access_token_scopes: https://www.googleapis.com/auth/cloud-platform
 
       - name: Prepare remote publish helper script
         shell: bash
@@ -2010,6 +2074,7 @@ jobs:
         id: publish
         shell: bash
         env:
+          DBT_NOVA_GCP_ACCESS_TOKEN: ${{ steps.gcp_auth.outputs.access_token || '' }}
           INPUT_PUBLISH_MODELS_ARCHIVE: ${{ needs.prepare.outputs.publish_models_archive }}
           INPUT_INCLUDE_MODELS_IN_BOOTSTRAP: ${{ needs.prepare.outputs.include_models_in_bootstrap }}
           STORAGE_ARCHIVE_NAME: ${{ steps.collect.outputs.artifact_name_storage }}.tar.gz
