@@ -2115,7 +2115,6 @@ jobs:
         id: publish
         shell: bash
         env:
-          DBT_NOVA_GCP_ACCESS_TOKEN: ${{ steps.gcp_auth.outputs.access_token || '' }}
           INPUT_PUBLISH_MODELS_ARCHIVE: ${{ needs.prepare.outputs.publish_models_archive }}
           INPUT_INCLUDE_MODELS_IN_BOOTSTRAP: ${{ needs.prepare.outputs.include_models_in_bootstrap }}
           STORAGE_ARCHIVE_NAME: ${{ steps.collect.outputs.artifact_name_storage }}.tar.gz
