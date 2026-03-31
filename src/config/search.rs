@@ -274,6 +274,12 @@ pub struct SearchConfig {
     pub analyst_semantic: AnalystSemanticConfig,
     /// Multiplier applied to staging model scores (e.g., 0.6 = de-boost)
     pub staging_deboost_factor: f32,
+    /// Multiplier applied when analyst candidate metadata is explicitly false
+    pub analyst_candidate_false_deboost_factor: f32,
+    /// Multiplier applied when engineer candidate metadata is explicitly false
+    pub engineer_candidate_false_deboost_factor: f32,
+    /// Multiplier applied when governance candidate metadata is explicitly false
+    pub governance_candidate_false_deboost_factor: f32,
     /// Multiplier applied when query tokens match nova measures
     pub nova_measure_match_multiplier: f32,
     /// Multiplier applied when query tokens match nova metrics
@@ -375,6 +381,9 @@ impl Default for SearchConfig {
             persona_weights: PersonaProfile::default(),
             analyst_semantic: AnalystSemanticConfig::default(),
             staging_deboost_factor: 0.6,
+            analyst_candidate_false_deboost_factor: 0.45,
+            engineer_candidate_false_deboost_factor: 1.0,
+            governance_candidate_false_deboost_factor: 1.0,
             nova_measure_match_multiplier: 1.15,
             nova_metric_match_multiplier: 1.2,
             nova_synonym_match_multiplier: 1.2,
@@ -911,6 +920,27 @@ fn apply_semantic_scoring_env(config: &mut SearchConfig) {
         config,
         staging_deboost_factor,
         "DBT_NOVA_SEARCH_STAGING_DEBOOST_FACTOR",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        analyst_candidate_false_deboost_factor,
+        "DBT_NOVA_SEARCH_ANALYST_CANDIDATE_FALSE_DEBOOST_FACTOR",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        engineer_candidate_false_deboost_factor,
+        "DBT_NOVA_SEARCH_ENGINEER_CANDIDATE_FALSE_DEBOOST_FACTOR",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        governance_candidate_false_deboost_factor,
+        "DBT_NOVA_SEARCH_GOVERNANCE_CANDIDATE_FALSE_DEBOOST_FACTOR",
         parse_f32,
         |v: &f32| *v >= 0.0
     );

@@ -35,6 +35,15 @@ If `persona` is provided, ranking weights are tuned for:
 
 `DBT_NOVA_SEARCH_DEFAULT_PERSONA` can set a default when `persona` is omitted.
 
+`meta.nova.search.candidates.<persona>: false` applies a persona-specific
+deboost without removing the entity from results. Default deboosts are:
+- analyst: `0.45`
+- engineer: `1.0`
+- governance: `1.0`
+
+Exact matches on entity name, alias, unique id, and file path bypass the
+candidate deboost.
+
 ### Nova Meta Boosting
 Search boosts on:
 - `meta.nova.synonyms`

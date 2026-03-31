@@ -698,6 +698,27 @@ fn build_nova_summary(nova: &NovaMeta) -> Option<JsonValue> {
     if nova.canonical {
         obj.insert("canonical".to_string(), JsonValue::from(true));
     }
+    if let Some(search) = nova.search.as_ref()
+        && let Some(candidates) = search.candidates.as_ref()
+        && candidates.has_non_default_flags()
+    {
+        let mut candidate_obj = serde_json::Map::new();
+        if !candidates.analyst {
+            candidate_obj.insert("analyst".to_string(), JsonValue::from(false));
+        }
+        if !candidates.engineer {
+            candidate_obj.insert("engineer".to_string(), JsonValue::from(false));
+        }
+        if !candidates.governance {
+            candidate_obj.insert("governance".to_string(), JsonValue::from(false));
+        }
+        if !candidate_obj.is_empty() {
+            obj.insert(
+                "search_candidates".to_string(),
+                JsonValue::Object(candidate_obj),
+            );
+        }
+    }
 
     if let Some(grain) = nova.grain.as_ref()
         && let Some(grain_obj) = build_grain_object(

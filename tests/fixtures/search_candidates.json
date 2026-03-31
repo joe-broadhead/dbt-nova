@@ -1,0 +1,86 @@
+{
+  "metadata": {
+    "dbt_version": "1.10.2",
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json"
+  },
+  "nodes": {
+    "model.pkg.curated_margin_anchor": {
+      "name": "curated_margin_anchor",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "db",
+      "schema": "analytics",
+      "description": "Shared benchmark anchor used for gross margin comparisons.",
+      "raw_code": "select 1 as benchmark_anchor",
+      "compiled_code": "select 1 as benchmark_anchor",
+      "columns": {
+        "benchmark_anchor": {
+          "name": "benchmark_anchor",
+          "data_type": "int",
+          "description": "Benchmark anchor value."
+        }
+      },
+      "meta": {
+        "nova": {
+          "synonyms": [
+            "gross margin benchmark"
+          ],
+          "use_cases": [
+            "gross margin benchmark"
+          ]
+        }
+      },
+      "tags": [
+        "finance"
+      ],
+      "original_file_path": "models/marts/curated_margin_anchor.sql"
+    },
+    "model.pkg.helper_bridge_anchor": {
+      "name": "helper_bridge_anchor",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "db",
+      "schema": "analytics",
+      "description": "Shared benchmark anchor used for gross margin comparisons.",
+      "raw_code": "select 1 as benchmark_anchor",
+      "compiled_code": "select 1 as benchmark_anchor",
+      "columns": {
+        "benchmark_anchor": {
+          "name": "benchmark_anchor",
+          "data_type": "int",
+          "description": "Benchmark anchor value."
+        }
+      },
+      "meta": {
+        "nova": {
+          "synonyms": [
+            "gross margin benchmark"
+          ],
+          "use_cases": [
+            "gross margin benchmark"
+          ],
+          "search": {
+            "candidates": {
+              "analyst": false
+            }
+          }
+        }
+      },
+      "tags": [
+        "finance"
+      ],
+      "original_file_path": "models/intermediate/helper_bridge_anchor.sql"
+    }
+  },
+  "sources": {},
+  "macros": {},
+  "docs": {},
+  "groups": {},
+  "exposures": {},
+  "metrics": {},
+  "parent_map": {
+    "model.pkg.curated_margin_anchor": [],
+    "model.pkg.helper_bridge_anchor": []
+  },
+  "child_map": {}
+}

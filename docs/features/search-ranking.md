@@ -50,6 +50,9 @@ DBT_NOVA_META_COMPLIANCE_BOOST=6.0
 DBT_NOVA_META_DOMAINS_BOOST=4.0
 DBT_NOVA_META_USE_CASES_BOOST=4.0
 DBT_NOVA_SEARCH_STAGING_DEBOOST_FACTOR=0.6
+DBT_NOVA_SEARCH_ANALYST_CANDIDATE_FALSE_DEBOOST_FACTOR=0.45
+DBT_NOVA_SEARCH_ENGINEER_CANDIDATE_FALSE_DEBOOST_FACTOR=1.0
+DBT_NOVA_SEARCH_GOVERNANCE_CANDIDATE_FALSE_DEBOOST_FACTOR=1.0
 DBT_NOVA_SEARCH_MEASURE_MATCH_MULTIPLIER=1.15
 DBT_NOVA_SEARCH_METRIC_MATCH_MULTIPLIER=1.20
 DBT_NOVA_SEARCH_SYNONYM_MATCH_MULTIPLIER=1.20
@@ -69,14 +72,37 @@ DBT_NOVA_SEARCH_ENGINEER_EXACT_MATCH_MULTIPLIER=2.0
 5) **Staging-layer models** are de‑boosted so curated models rank higher.
    This deboost is layer-rule driven (`DBT_NOVA_LAYER_RULES_JSON`) and applies
    when the resolved layer is `staging`, `stage`, or `stg`.
-6) **Nova meta re‑ranking** boosts canonical models when query tokens match
+6) **Persona candidate hints** can de‑boost models that are still useful for
+   engineering/governance discovery but should not dominate analyst discovery.
+   Set `meta.nova.search.candidates.analyst: false` to mark helper or ops models
+   as lower-signal for analysts while keeping them searchable.
+7) **Nova meta re‑ranking** boosts canonical models when query tokens match
    `meta.nova.measures`, `meta.nova.metric(s)`, or `meta.nova.synonyms`.
-7) **Governance terms** (sensitivity/pii/compliance) get elevated when present.
-8) **Analyst semantic readiness** adds a bounded multiplier for entities with metric/measure
+8) **Governance terms** (sensitivity/pii/compliance) get elevated when present.
+9) **Analyst semantic readiness** adds a bounded multiplier for entities with metric/measure
    definitions, grain/time-field metadata, and query-aligned dimensions. Non-semantic entities
    receive a slight de-boost.
-9) **Analyst near-tie hinting** emits `analysis_hints` when top candidates are within a small score
+10) **Analyst near-tie hinting** emits `analysis_hints` when top candidates are within a small score
    gap, prompting `get_entity`/`get_context` validation before SQL generation.
+
+## Persona Candidate Metadata
+
+Use `meta.nova.search.candidates` when a model should remain searchable but
+should not rank as highly for a specific persona:
+
+```yaml
+meta:
+  nova:
+    search:
+      candidates:
+        analyst: false
+```
+
+Semantics:
+- Missing candidate metadata defaults to `true`.
+- `false` is a ranking hint, not a filter.
+- Exact matches on name, alias, unique id, or file path bypass the deboost.
+- Current defaults only deboost analysts; engineer and governance defaults remain neutral.
 
 ## Scoring Pipeline (Lexical + Vector + RRF + Reranker)
 

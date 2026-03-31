@@ -59,6 +59,25 @@ pub struct NovaGovernance {
 }
 
 #[derive(Clone, Debug, Archive, Serialize, Deserialize)]
+pub struct NovaSearchCandidates {
+    pub analyst: bool,
+    pub engineer: bool,
+    pub governance: bool,
+}
+
+impl NovaSearchCandidates {
+    #[must_use]
+    pub fn has_non_default_flags(&self) -> bool {
+        !self.analyst || !self.engineer || !self.governance
+    }
+}
+
+#[derive(Clone, Debug, Archive, Serialize, Deserialize)]
+pub struct NovaSearchMeta {
+    pub candidates: Option<NovaSearchCandidates>,
+}
+
+#[derive(Clone, Debug, Archive, Serialize, Deserialize)]
 pub struct NovaMeta {
     pub role: Option<String>,
     pub semantic_type: Option<String>,
@@ -73,6 +92,7 @@ pub struct NovaMeta {
     pub metric: Option<NovaMetric>,
     pub metrics: Vec<NovaMetric>,
     pub governance: Option<NovaGovernance>,
+    pub search: Option<NovaSearchMeta>,
 }
 
 #[derive(Clone, Debug, Archive, Serialize, Deserialize)]
@@ -254,6 +274,13 @@ impl ArchivedEntity {
     }
 }
 
+impl ArchivedNovaSearchCandidates {
+    #[must_use]
+    pub fn has_non_default_flags(&self) -> bool {
+        !self.analyst || !self.engineer || !self.governance
+    }
+}
+
 fn archived_option_str(value: &ArchivedOption<ArchivedString>) -> Option<&str> {
     value.as_ref().map(ArchivedString::as_str)
 }
@@ -294,6 +321,15 @@ fn extract_string_array_from_map(
     key: &str,
 ) -> Vec<String> {
     map.get(key).map(extract_string_array).unwrap_or_default()
+}
+
+fn parse_bool_like(value: Option<&JsonValue>) -> Option<bool> {
+    match value {
+        Some(JsonValue::Bool(value)) => Some(*value),
+        Some(JsonValue::String(value)) if value.eq_ignore_ascii_case("true") => Some(true),
+        Some(JsonValue::String(value)) if value.eq_ignore_ascii_case("false") => Some(false),
+        _ => None,
+    }
 }
 
 fn get_column_names(value: &serde_json::Value) -> Vec<String> {
@@ -522,6 +558,8 @@ fn get_nova_meta(value: &serde_json::Value) -> Option<NovaMeta> {
             }
         });
 
+    let search = nova.get("search").and_then(parse_nova_search);
+
     Some(NovaMeta {
         role,
         semantic_type,
@@ -536,6 +574,29 @@ fn get_nova_meta(value: &serde_json::Value) -> Option<NovaMeta> {
         metric,
         metrics,
         governance,
+        search,
+    })
+}
+
+fn parse_nova_search(value: &JsonValue) -> Option<NovaSearchMeta> {
+    let obj = value.as_object()?;
+    let candidates = obj.get("candidates").and_then(parse_nova_search_candidates);
+    candidates.as_ref()?;
+    Some(NovaSearchMeta { candidates })
+}
+
+fn parse_nova_search_candidates(value: &JsonValue) -> Option<NovaSearchCandidates> {
+    let obj = value.as_object()?;
+    let analyst = parse_bool_like(obj.get("analyst"));
+    let engineer = parse_bool_like(obj.get("engineer"));
+    let governance = parse_bool_like(obj.get("governance"));
+    if analyst.is_none() && engineer.is_none() && governance.is_none() {
+        return None;
+    }
+    Some(NovaSearchCandidates {
+        analyst: analyst.unwrap_or(true),
+        engineer: engineer.unwrap_or(true),
+        governance: governance.unwrap_or(true),
     })
 }
 
@@ -627,5 +688,47 @@ mod tests {
         entity.payload_json = "{not-json".to_string();
 
         assert_eq!(entity.to_json_value(), JsonValue::Null);
+    }
+
+    #[test]
+    fn get_nova_meta_parses_search_candidates_with_true_defaults() {
+        let entity = serde_json::json!({
+            "meta": {
+                "nova": {
+                    "search": {
+                        "candidates": {
+                            "analyst": false
+                        }
+                    }
+                }
+            }
+        });
+
+        let meta = get_nova_meta(&entity).expect("expected nova meta");
+        let candidates = meta
+            .search
+            .and_then(|search| search.candidates)
+            .expect("expected search candidates");
+
+        assert!(!candidates.analyst);
+        assert!(candidates.engineer);
+        assert!(candidates.governance);
+        assert!(candidates.has_non_default_flags());
+    }
+
+    #[test]
+    fn get_nova_meta_ignores_empty_search_candidates_block() {
+        let entity = serde_json::json!({
+            "meta": {
+                "nova": {
+                    "search": {
+                        "candidates": {}
+                    }
+                }
+            }
+        });
+
+        let meta = get_nova_meta(&entity).expect("expected nova meta");
+        assert!(meta.search.is_none());
     }
 }
