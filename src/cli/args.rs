@@ -12,6 +12,7 @@ pub enum Command {
     Server(ServerArgs),
     Manifest(ManifestArgs),
     Tool(ToolArgs),
+    Audit(AuditArgs),
     Config(ConfigArgs),
     Storage(StorageArgs),
     Health(HealthArgs),
@@ -131,6 +132,70 @@ pub struct ToolCallArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct AuditArgs {
+    #[command(subcommand)]
+    pub command: AuditCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AuditCommand {
+    MetadataScore(MetadataAuditArgs),
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq, Default)]
+pub enum MetadataAuditSelectionModeArg {
+    #[default]
+    Project,
+    Changed,
+    Entities,
+}
+
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, Args, Default)]
+pub struct MetadataAuditArgs {
+    #[arg(long, value_enum, default_value_t = MetadataAuditSelectionModeArg::Project)]
+    pub selection_mode: MetadataAuditSelectionModeArg,
+    #[arg(long, value_name = "JSON", conflicts_with = "changed_files_file")]
+    pub changed_files_json: Option<String>,
+    #[arg(long, value_name = "PATH", conflicts_with = "changed_files_json")]
+    pub changed_files_file: Option<String>,
+    #[arg(long, value_name = "JSON", conflicts_with = "entity_ids_file")]
+    pub entity_ids_json: Option<String>,
+    #[arg(long, value_name = "PATH", conflicts_with = "entity_ids_json")]
+    pub entity_ids_file: Option<String>,
+    #[arg(long, value_name = "JSON")]
+    pub resource_types_json: Option<String>,
+    #[arg(long, value_name = "JSON")]
+    pub personas_json: Option<String>,
+    #[arg(long, value_name = "JSON", conflicts_with = "thresholds_file")]
+    pub thresholds_json: Option<String>,
+    #[arg(long, value_name = "PATH", conflicts_with = "thresholds_json")]
+    pub thresholds_file: Option<String>,
+    #[arg(long, value_name = "PATH", conflicts_with = "manifest_uri")]
+    pub manifest_path: Option<String>,
+    #[arg(long, value_name = "URI", conflicts_with = "manifest_path")]
+    pub manifest_uri: Option<String>,
+    #[arg(long, value_name = "INSTANCE_ID")]
+    pub storage_instance_id: Option<String>,
+    #[arg(long, default_value_t = false)]
+    pub cleanup_storage_on_start: bool,
+    #[arg(long, default_value_t = false)]
+    pub read_only: bool,
+    #[arg(long, value_name = "BOOL")]
+    pub include_breakdown: Option<bool>,
+    #[arg(long, value_name = "BOOL")]
+    pub include_recommendations: Option<bool>,
+    #[arg(long, value_name = "PATH")]
+    pub report_json_path: Option<String>,
+    #[arg(long, value_name = "PATH")]
+    pub report_md_path: Option<String>,
+    #[arg(long, default_value_t = false)]
+    pub fail_on_no_targets: bool,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
 pub struct ConfigArgs {
     #[command(subcommand)]
     pub command: ConfigCommand,
@@ -223,8 +288,9 @@ mod tests {
     use clap::Parser;
 
     use super::{
-        Cli, Command, ConfigCommand, HealthCommand, ManifestCommand, ServerCommand,
-        ServerTransportArg, StorageCommand, ToolCommand,
+        AuditCommand, Cli, Command, ConfigCommand, HealthCommand, ManifestCommand,
+        MetadataAuditSelectionModeArg, ServerCommand, ServerTransportArg, StorageCommand,
+        ToolCommand,
     };
 
     #[test]
@@ -266,9 +332,10 @@ mod tests {
 
     #[test]
     fn cli_parses_all_top_level_groups() {
-        let groups: [&[&str]; 5] = [
+        let groups: [&[&str]; 6] = [
             &["dbt-nova", "manifest", "load"],
             &["dbt-nova", "tool", "call", "search"],
+            &["dbt-nova", "audit", "metadata-score"],
             &["dbt-nova", "config", "show"],
             &["dbt-nova", "storage", "inspect"],
             &["dbt-nova", "health", "check"],
@@ -397,6 +464,84 @@ mod tests {
                 assert!(matches!(tool.command, ToolCommand::Call(_)));
             }
             _ => panic!("expected tool command"),
+        }
+    }
+
+    #[test]
+    fn audit_metadata_score_parses_flags() {
+        let cli = Cli::parse_from([
+            "dbt-nova",
+            "audit",
+            "metadata-score",
+            "--selection-mode",
+            "changed",
+            "--changed-files-json",
+            "[\"models/staging/orders.sql\"]",
+            "--resource-types-json",
+            "[\"model\"]",
+            "--personas-json",
+            "[\"engineer\",\"analyst\"]",
+            "--thresholds-json",
+            "{\"entity\":{\"engineer\":{\"min_score\":70,\"severity\":\"required\"}}}",
+            "--manifest-path",
+            "target/manifest.json",
+            "--report-json-path",
+            "out/report.json",
+            "--report-md-path",
+            "out/report.md",
+            "--json",
+        ]);
+        let command = cli.command.expect("command");
+        match command {
+            Command::Audit(audit) => {
+                let AuditCommand::MetadataScore(args) = audit.command;
+                assert_eq!(args.selection_mode, MetadataAuditSelectionModeArg::Changed);
+                assert_eq!(
+                    args.changed_files_json.as_deref(),
+                    Some("[\"models/staging/orders.sql\"]")
+                );
+                assert_eq!(args.manifest_path.as_deref(), Some("target/manifest.json"));
+                assert_eq!(args.report_json_path.as_deref(), Some("out/report.json"));
+                assert_eq!(args.report_md_path.as_deref(), Some("out/report.md"));
+                assert!(args.json);
+            }
+            _ => panic!("expected audit command"),
+        }
+    }
+
+    #[test]
+    fn audit_metadata_score_rejects_conflicting_changed_sources() {
+        let parsed = Cli::try_parse_from([
+            "dbt-nova",
+            "audit",
+            "metadata-score",
+            "--changed-files-json",
+            "[]",
+            "--changed-files-file",
+            "changed.json",
+        ]);
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn audit_metadata_score_parses_explicit_bool_overrides() {
+        let cli = Cli::parse_from([
+            "dbt-nova",
+            "audit",
+            "metadata-score",
+            "--include-breakdown",
+            "false",
+            "--include-recommendations",
+            "true",
+        ]);
+        let command = cli.command.expect("command");
+        match command {
+            Command::Audit(audit) => {
+                let AuditCommand::MetadataScore(args) = audit.command;
+                assert_eq!(args.include_breakdown, Some(false));
+                assert_eq!(args.include_recommendations, Some(true));
+            }
+            _ => panic!("expected audit command"),
         }
     }
 

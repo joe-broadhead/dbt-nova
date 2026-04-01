@@ -124,6 +124,7 @@ nav:
   - Features:
     - Analysis Recipes: features/recipes.md
     - Column Lineage: features/column-lineage.md
+    - Metadata Audit: features/metadata-audit.md
     - Metadata Scoring: features/metadata-scoring.md
     - Search Ranking: features/search-ranking.md
     - Persona Summaries: features/persona-summaries.md

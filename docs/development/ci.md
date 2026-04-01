@@ -57,6 +57,41 @@ Operational defaults:
   for compatibility and currently return `{}`; consumers should read the
   publish-summary artifact JSON.
 
+### Reusable Nova Metadata Audit Workflow
+
+- **File:** `.github/workflows/nova-metadata-audit.yml`
+- **Use:** reusable workflow invoked by CI and downstream repos for
+  metadata-quality gates and recurring audit reports
+- **Inputs:** follows the same installer and dbt invocation contract as
+  `.github/workflows/nova-build-assets.yml`:
+  `manifest_path` or `manifest_uri`, `storage_instance_id`, optional dbt
+  manifest generation with structured invocation
+  (`dbt_command_args_json`, optional `dbt_executable`,
+  optional `dbt_allow_unsafe_executable`) or trusted shell invocation
+  (`dbt_command`), plus `dbt_env_json`, `dbt_secret_env_map_json`, optional
+  workflow_call secret bundle (`DBT_NOVA_SECRET_BUNDLE_JSON`), and optional
+  installer source override (`installer_repository`, `installer_ref`,
+  `installer_install_mode`)
+- **Audit inputs:** `selection_mode` (`project|changed|entities`),
+  `changed_files_json`, `entity_ids_json`, `resource_types_json`,
+  `personas_json`, `thresholds_json`, `include_breakdown`,
+  `include_recommendations`, and `fail_on_no_targets`
+- **Outputs:** `gate_status`, `target_count`, `scored_count`,
+  `required_fail_count`, `advisory_fail_count`, and report artifact names
+- **Performance defaults:** disables dense vectors, sparse vectors, reranking,
+  n-grams, and column-lineage precompute so CI can run metadata-only audits
+  without paying for full search startup
+- **Artifacts:** uploads JSON and Markdown audit reports and appends the
+  Markdown report to `GITHUB_STEP_SUMMARY`
+
+### Reusable Workflow Smoke Coverage
+
+- **File:** `.github/workflows/ci.yml`
+- **Action:** smoke-tests both reusable workflows directly from the repo
+- **Metadata audit checks:** exercises `project`, `changed`, and `entities`
+  selection modes, plus both structured and trusted dbt manifest generation
+  paths
+
 ### Prepare Release
 
 - **File:** `.github/workflows/release-prepare.yml`

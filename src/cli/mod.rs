@@ -5,6 +5,7 @@ use crate::error::{DbtNovaError, Result};
 use crate::utils::{dir_in_use, prune_dirs};
 
 pub mod args;
+pub mod audit_cmd;
 pub mod config_cmd;
 pub mod health_cmd;
 pub mod manifest;
@@ -48,6 +49,11 @@ pub async fn dispatch(command: args::Command) -> DispatchResult {
         },
         args::Command::Tool(tool_args) => match tool_args.command {
             args::ToolCommand::Call(call_args) => tool::run_call_command(&call_args).await,
+        },
+        args::Command::Audit(audit_args) => match audit_args.command {
+            args::AuditCommand::MetadataScore(metadata_args) => {
+                audit_cmd::run_metadata_score_command(&metadata_args).await
+            }
         },
         args::Command::Config(config_args) => match config_args.command {
             args::ConfigCommand::Show(show_args) => config_cmd::run_show_command(&show_args),

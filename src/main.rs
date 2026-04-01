@@ -6,7 +6,7 @@ use tracing::error;
 use tracing_subscriber::fmt::format::FmtSpan;
 
 enum LaunchTarget {
-    Command(Command),
+    Command(Box<Command>),
     Server,
 }
 
@@ -16,7 +16,7 @@ async fn main() -> Result<()> {
 
     match launch_target(Cli::parse()) {
         LaunchTarget::Command(command) => {
-            if let Err(dispatch_error) = dbt_nova::cli::dispatch(command).await {
+            if let Err(dispatch_error) = dbt_nova::cli::dispatch(*command).await {
                 error!(error = %dispatch_error.error, "cli command failed");
                 if !dispatch_error.rendered {
                     eprintln!("dbt-nova CLI error: {}", dispatch_error.error);
@@ -31,7 +31,7 @@ async fn main() -> Result<()> {
 
 fn launch_target(cli: Cli) -> LaunchTarget {
     if let Some(command) = cli.command {
-        LaunchTarget::Command(command)
+        LaunchTarget::Command(Box::new(command))
     } else {
         LaunchTarget::Server
     }

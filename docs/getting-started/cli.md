@@ -13,6 +13,7 @@ dbt-nova
 ├── manifest load [--manifest-path|--manifest-uri] [--storage-instance-id] [--cleanup-storage-on-start] [--read-only] [--json]
 ├── manifest reload [--manifest-path|--manifest-uri] [--refresh-secs] [--storage-instance-id] [--cleanup-storage-on-start] [--read-only] [--json]
 ├── tool call <tool_name> [--params-json|--params-file|--params-stdin] [--manifest-path|--manifest-uri] [--storage-instance-id] [--cleanup-storage-on-start] [--read-only] [--json]
+├── audit metadata-score [--selection-mode] [--changed-files-json|--changed-files-file] [--entity-ids-json|--entity-ids-file] [--resource-types-json] [--personas-json] [--thresholds-json|--thresholds-file] [--manifest-path|--manifest-uri] [--storage-instance-id] [--report-json-path] [--report-md-path] [--fail-on-no-targets] [--json]
 ├── config show [--defaults] [--json]
 ├── config validate [--json]
 ├── storage inspect [--storage-instance-id] [--json]
@@ -74,6 +75,21 @@ dbt-nova manifest reload \
 dbt-nova tool call search \
   --params-json '{"query":"orders","limit":5}' \
   --manifest-path /path/to/target/manifest.json
+```
+
+### Metadata audit for changed models
+
+```bash
+dbt-nova audit metadata-score \
+  --selection-mode changed \
+  --changed-files-json '["models/marts/orders.sql","models/marts/orders.yml"]' \
+  --resource-types-json '["model"]' \
+  --personas-json '["engineer","analyst","governance"]' \
+  --thresholds-json '{"entity":{"engineer":{"min_score":70,"severity":"required"},"analyst":{"min_score":65,"severity":"advisory"},"governance":{"min_score":65,"severity":"advisory"}}}' \
+  --manifest-path /path/to/target/manifest.json \
+  --report-json-path out/metadata-audit.json \
+  --report-md-path out/metadata-audit.md \
+  --json
 ```
 
 ### Health diagnostics
