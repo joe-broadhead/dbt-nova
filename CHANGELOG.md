@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Streamable HTTP server transport for hosted deployments, including container packaging and built-in liveness/readiness probe endpoints.
+- Persona-specific search ranking hints via `meta.nova.search.candidates.<persona>` so helper/ops models can stay searchable while being deboosted for analyst discovery.
+- Tagged releases now publish a smoke-tested OCI image for hosted/server deployments.
+
+### Changed
+
+- Reusable asset publishing now supports GitHub OIDC for GCS targets, refreshes GCS access tokens during longer uploads, uses `gcloud storage cp` for large transfers, and applies higher publish timeout budgets.
+- Release automation now pushes the exact smoke-tested OCI image instead of rebuilding a separate image during release.
+- Monthly fuzz maintenance now uses a shared Rust cache and a larger timeout budget so nightly fuzz targets spend time fuzzing instead of recompiling.
+
+### Fixed
+
+- Hosted HTTP startup/bind fallback handling is more robust: invalid `PORT` fallback is ignored, MCP paths are normalized/validated, and reserved probe paths are rejected.
+- Cold-start search model failures now degrade safely by disabling broken empty search indexes instead of leaving startup wedged.
+- Documentation and dependency maintenance issues that broke docs or security checks were corrected (`Pygments` compatibility and `tar` advisory updates).
+
+### Documentation
+
+- Added and refreshed docs for hosted deployment, streamable HTTP mode, prebuilt bootstrap/artifact hydration, OCI release behavior, and persona-specific search candidate metadata/ranking.
+
 ## [0.0.3] - 2026-03-19
 
 ### Added
