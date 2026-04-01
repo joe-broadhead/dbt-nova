@@ -260,6 +260,9 @@ Nova meta boosts:
 
 Post‑retrieval tuning:
 - `DBT_NOVA_SEARCH_STAGING_DEBOOST_FACTOR` (default: `0.6`)
+- `DBT_NOVA_SEARCH_ANALYST_CANDIDATE_FALSE_DEBOOST_FACTOR` (default: `0.45`)
+- `DBT_NOVA_SEARCH_ENGINEER_CANDIDATE_FALSE_DEBOOST_FACTOR` (default: `1.0`)
+- `DBT_NOVA_SEARCH_GOVERNANCE_CANDIDATE_FALSE_DEBOOST_FACTOR` (default: `1.0`)
 - `DBT_NOVA_SEARCH_MEASURE_MATCH_MULTIPLIER` (default: `1.15`)
 - `DBT_NOVA_SEARCH_METRIC_MATCH_MULTIPLIER` (default: `1.2`)
 - `DBT_NOVA_SEARCH_SYNONYM_MATCH_MULTIPLIER` (default: `1.2`)
@@ -272,6 +275,13 @@ Staging deboost behavior:
 - `DBT_NOVA_SEARCH_STAGING_DEBOOST_FACTOR` applies when an entity matches a configured
   layer rule with layer name `staging`, `stage`, or `stg` (case-insensitive).
 - Configure layer mapping with `DBT_NOVA_LAYER_RULES_JSON`.
+
+Persona candidate behavior:
+- `DBT_NOVA_SEARCH_*_CANDIDATE_FALSE_DEBOOST_FACTOR` applies when
+  `meta.nova.search.candidates.<persona>` is explicitly `false`.
+- Missing candidate metadata defaults to `true`.
+- Candidate deboosts are ranking hints only; they do not hide entities.
+- Exact matches on entity name, alias, unique id, or file path bypass the deboost.
 
 ## SQL Providers
 

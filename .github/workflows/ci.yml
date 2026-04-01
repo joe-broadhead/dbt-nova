@@ -210,6 +210,9 @@ jobs:
 
   reusable-assets-producer:
     name: reusable-assets-producer
+    permissions:
+      contents: read
+      id-token: write
     uses: ./.github/workflows/nova-build-assets.yml
     with:
       manifest_path: tests/fixtures/nova_manifest.json
@@ -221,6 +224,9 @@ jobs:
 
   reusable-assets-producer-structured-dbt:
     name: reusable-assets-producer-structured-dbt
+    permissions:
+      contents: read
+      id-token: write
     uses: ./.github/workflows/nova-build-assets.yml
     with:
       dbt_generate_manifest: true
@@ -236,6 +242,9 @@ jobs:
 
   reusable-assets-producer-trusted-dbt:
     name: reusable-assets-producer-trusted-dbt
+    permissions:
+      contents: read
+      id-token: write
     uses: ./.github/workflows/nova-build-assets.yml
     with:
       dbt_generate_manifest: true
@@ -251,6 +260,9 @@ jobs:
 
   reusable-assets-remote-publish-dryrun:
     name: reusable-assets-remote-publish-dryrun
+    permissions:
+      contents: read
+      id-token: write
     uses: ./.github/workflows/nova-build-assets.yml
     with:
       manifest_path: tests/fixtures/nova_manifest.json

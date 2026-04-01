@@ -181,6 +181,9 @@ impl ManifestSearch {
         if nova.canonical {
             obj.insert("canonical".to_string(), JsonValue::from(true));
         }
+        if let Some(candidates) = Self::nova_search_candidates_summary(nova) {
+            obj.insert("search_candidates".to_string(), candidates);
+        }
         if !nova.use_cases.is_empty() {
             let use_cases: Vec<String> = nova
                 .use_cases
@@ -197,6 +200,30 @@ impl ManifestSearch {
             obj.insert("synonyms".to_string(), serde_json::json!(synonyms));
             obj.insert("synonyms_truncated".to_string(), JsonValue::from(truncated));
         }
+        if obj.is_empty() {
+            None
+        } else {
+            Some(JsonValue::Object(obj))
+        }
+    }
+
+    pub(super) fn nova_search_candidates_summary(nova: &ArchivedNovaMeta) -> Option<JsonValue> {
+        let candidates = nova.search.as_ref()?.candidates.as_ref()?;
+        if !candidates.has_non_default_flags() {
+            return None;
+        }
+
+        let mut obj = serde_json::Map::new();
+        if !candidates.analyst {
+            obj.insert("analyst".to_string(), JsonValue::from(false));
+        }
+        if !candidates.engineer {
+            obj.insert("engineer".to_string(), JsonValue::from(false));
+        }
+        if !candidates.governance {
+            obj.insert("governance".to_string(), JsonValue::from(false));
+        }
+
         if obj.is_empty() {
             None
         } else {

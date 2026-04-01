@@ -47,10 +47,42 @@ pub(crate) fn fixture_manifest_path_string() -> String {
 pub fn get_searcher_with_fixture(fixture_name: &str) -> TestSearchEnv {
     let manifest_path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/fixtures/{fixture_name}"));
-    get_searcher_for_manifest(&manifest_path)
+    get_searcher_for_manifest_with_config(
+        &manifest_path,
+        crate::config::SearchConfig {
+            enable_vector_search: false,
+            enable_sparse_search: false,
+            enable_reranker: false,
+            ..Default::default()
+        },
+    )
+}
+
+pub fn get_searcher_with_fixture_config(
+    fixture_name: &str,
+    search: crate::config::SearchConfig,
+) -> TestSearchEnv {
+    let manifest_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/fixtures/{fixture_name}"));
+    get_searcher_for_manifest_with_config(&manifest_path, search)
 }
 
 fn get_searcher_for_manifest(manifest_path: &Path) -> TestSearchEnv {
+    get_searcher_for_manifest_with_config(
+        manifest_path,
+        crate::config::SearchConfig {
+            enable_vector_search: false,
+            enable_sparse_search: false,
+            enable_reranker: false,
+            ..Default::default()
+        },
+    )
+}
+
+fn get_searcher_for_manifest_with_config(
+    manifest_path: &Path,
+    search: crate::config::SearchConfig,
+) -> TestSearchEnv {
     assert!(
         manifest_path.exists(),
         "fixture manifest not found at {}",
@@ -59,12 +91,7 @@ fn get_searcher_for_manifest(manifest_path: &Path) -> TestSearchEnv {
     let guard = TempDir::new().expect("test temp dir");
     let mut cfg = crate::DbtNovaConfig {
         manifest_path: manifest_path.to_string_lossy().to_string(),
-        search: crate::config::SearchConfig {
-            enable_vector_search: false,
-            enable_sparse_search: false,
-            enable_reranker: false,
-            ..Default::default()
-        },
+        search,
         ..Default::default()
     };
     cfg.storage_dir = guard.path().to_string_lossy().to_string();

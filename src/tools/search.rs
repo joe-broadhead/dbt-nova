@@ -4,7 +4,7 @@ use std::sync::Arc;
 use serde_json::Value as JsonValue;
 
 use crate::config::PersonaWeights;
-use crate::config::search::AnalystSemanticConfig;
+use crate::config::search::{AnalystSemanticConfig, SearchConfig};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::entity::{ArchivedEntity, ArchivedNovaGrain, ArchivedNovaMeta};
 use crate::manifest::search::ManifestSearch;
@@ -436,6 +436,7 @@ impl ManifestSearch {
         let Some(entity) = entity else {
             return adjusted;
         };
+        let exact_match = query_exact_match(query_text, unique_id, entity);
 
         let deboost = self.config.search.staging_deboost_factor;
         if deboost < 1.0
@@ -449,8 +450,7 @@ impl ManifestSearch {
             adjusted *= deboost;
         }
 
-        if persona == SearchPersona::Engineer && engineer_exact_match(query_text, unique_id, entity)
-        {
+        if persona == SearchPersona::Engineer && exact_match {
             adjusted *= self.config.search.engineer_exact_match_multiplier;
         }
 
@@ -467,6 +467,13 @@ impl ManifestSearch {
             }
             return adjusted;
         };
+
+        adjusted *= candidate_false_multiplier(
+            persona,
+            candidate_flag_for_persona(nova, persona),
+            exact_match,
+            &self.config.search,
+        );
 
         let token_set: HashSet<&str> = tokens.iter().map(String::as_str).collect();
 
@@ -1017,7 +1024,7 @@ fn resource_type_allowed_for_search(
     allowed.contains(&resource_type.trim().to_lowercase())
 }
 
-fn engineer_exact_match(query: &str, unique_id: &str, entity: &ArchivedEntity) -> bool {
+fn query_exact_match(query: &str, unique_id: &str, entity: &ArchivedEntity) -> bool {
     let q = query.trim().to_lowercase();
     if q.is_empty() {
         return false;
@@ -1039,6 +1046,34 @@ fn engineer_exact_match(query: &str, unique_id: &str, entity: &ArchivedEntity) -
     }
 
     candidates.iter().any(|c| c == &q)
+}
+
+fn candidate_flag_for_persona(nova: &ArchivedNovaMeta, persona: SearchPersona) -> Option<bool> {
+    let candidates = nova.search.as_ref()?.candidates.as_ref()?;
+    Some(match persona {
+        SearchPersona::Analyst => candidates.analyst,
+        SearchPersona::Engineer => candidates.engineer,
+        SearchPersona::Governance => candidates.governance,
+        SearchPersona::Default => true,
+    })
+}
+
+fn candidate_false_multiplier(
+    persona: SearchPersona,
+    persona_candidate: Option<bool>,
+    exact_match: bool,
+    config: &SearchConfig,
+) -> f32 {
+    if exact_match || persona_candidate.unwrap_or(true) {
+        return 1.0;
+    }
+
+    match persona {
+        SearchPersona::Analyst => config.analyst_candidate_false_deboost_factor,
+        SearchPersona::Engineer => config.engineer_candidate_false_deboost_factor,
+        SearchPersona::Governance => config.governance_candidate_false_deboost_factor,
+        SearchPersona::Default => 1.0,
+    }
 }
 
 fn suggestion_allowed(persona: SearchPersona, resource_type: Option<&str>) -> bool {
@@ -1083,6 +1118,84 @@ fn persona_resource_type_multiplier(persona: SearchPersona, resource_type: &str)
             _ => 1.0,
         },
         SearchPersona::Default => 1.0,
+    }
+}
+
+#[cfg(test)]
+mod candidate_tests {
+    use super::*;
+
+    #[test]
+    fn candidate_false_multiplier_deboosts_analyst_only_by_default() {
+        let config = SearchConfig::default();
+
+        assert!(
+            (candidate_false_multiplier(SearchPersona::Analyst, Some(false), false, &config)
+                - config.analyst_candidate_false_deboost_factor)
+                .abs()
+                < f32::EPSILON
+        );
+        assert!(
+            (candidate_false_multiplier(SearchPersona::Engineer, Some(false), false, &config)
+                - 1.0)
+                .abs()
+                < f32::EPSILON
+        );
+        assert!(
+            (candidate_false_multiplier(SearchPersona::Governance, Some(false), false, &config)
+                - 1.0)
+                .abs()
+                < f32::EPSILON
+        );
+    }
+
+    #[test]
+    fn candidate_false_multiplier_skips_deboost_for_exact_matches() {
+        let config = SearchConfig::default();
+
+        assert!(
+            (candidate_false_multiplier(SearchPersona::Analyst, Some(false), true, &config) - 1.0)
+                .abs()
+                < f32::EPSILON
+        );
+    }
+
+    #[test]
+    fn candidate_flag_for_persona_reads_archived_candidates() {
+        let nova = crate::manifest::entity::NovaMeta {
+            role: None,
+            semantic_type: None,
+            synonyms: Vec::new(),
+            domains: Vec::new(),
+            use_cases: Vec::new(),
+            example_values: Vec::new(),
+            canonical: false,
+            tier: None,
+            grain: None,
+            measures: Vec::new(),
+            metric: None,
+            metrics: Vec::new(),
+            governance: None,
+            search: Some(crate::manifest::entity::NovaSearchMeta {
+                candidates: Some(crate::manifest::entity::NovaSearchCandidates {
+                    analyst: false,
+                    engineer: true,
+                    governance: true,
+                }),
+            }),
+        };
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&nova).expect("archive nova meta");
+        let archived = rkyv::access::<ArchivedNovaMeta, rkyv::rancor::Error>(&bytes)
+            .expect("access archived nova meta");
+
+        assert_eq!(
+            candidate_flag_for_persona(archived, SearchPersona::Analyst),
+            Some(false)
+        );
+        assert_eq!(
+            candidate_flag_for_persona(archived, SearchPersona::Engineer),
+            Some(true)
+        );
     }
 }
 

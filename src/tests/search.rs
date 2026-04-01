@@ -4,6 +4,62 @@ use crate::config::{GovernanceGateConfig, SearchConfig};
 use std::path::Path;
 use tempfile::TempDir;
 
+fn search_candidates_env() -> TestSearchEnv {
+    get_searcher_with_fixture_config(
+        "search_candidates.json",
+        SearchConfig {
+            enable_vector_search: false,
+            enable_sparse_search: false,
+            enable_reranker: false,
+            ..Default::default()
+        },
+    )
+}
+
+fn search_candidates_baseline_env() -> TestSearchEnv {
+    get_searcher_with_fixture_config(
+        "search_candidates_baseline.json",
+        SearchConfig {
+            enable_vector_search: false,
+            enable_sparse_search: false,
+            enable_reranker: false,
+            ..Default::default()
+        },
+    )
+}
+
+fn search_params(query: &str, persona: Option<&str>) -> SearchParams {
+    SearchParams {
+        query: query.to_string(),
+        resource_types: vec![],
+        persona: persona.map(str::to_string),
+        detail: DetailLevel::Standard,
+        min_score: None,
+        fuzzy: false,
+        include_highlights: false,
+        include_sql: false,
+        pagination: PaginationParams {
+            limit: 10,
+            offset: 0,
+        },
+    }
+}
+
+fn result_rows(result: &JsonValue) -> Vec<&JsonValue> {
+    result
+        .get("data")
+        .and_then(JsonValue::as_array)
+        .map(|rows| rows.iter().collect())
+        .unwrap_or_default()
+}
+
+fn row_by_unique_id<'a>(rows: &'a [&JsonValue], unique_id: &str) -> &'a JsonValue {
+    rows.iter()
+        .copied()
+        .find(|row| row.get("unique_id").and_then(JsonValue::as_str) == Some(unique_id))
+        .unwrap_or_else(|| panic!("missing row for {unique_id}"))
+}
+
 // Search Tool Tests
 #[tokio::test(flavor = "multi_thread")]
 async fn test_search_by_name() {
@@ -213,6 +269,93 @@ async fn test_find_by_path_pattern_too_long() {
     assert!(
         error.contains("exceeds maximum length"),
         "Error should mention maximum length"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_search_analyst_candidate_false_deboosts_flagged_model() {
+    let searcher = search_candidates_env();
+    let result = searcher
+        .search(&search_params("gross margin benchmark", Some("analyst")))
+        .await
+        .json();
+    let rows = result_rows(&result);
+    assert_eq!(rows.len(), 2, "expected both fixture models in results");
+
+    let curated = row_by_unique_id(&rows, "model.pkg.curated_margin_anchor");
+    let helper = row_by_unique_id(&rows, "model.pkg.helper_bridge_anchor");
+    let curated_score = curated["score"].as_f64().expect("curated score");
+    let helper_score = helper["score"].as_f64().expect("helper score");
+
+    assert!(
+        curated_score > helper_score,
+        "analyst search should deboost helper model: curated={curated_score}, helper={helper_score}"
+    );
+    assert_eq!(
+        rows[0].get("unique_id").and_then(JsonValue::as_str),
+        Some("model.pkg.curated_margin_anchor")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_search_candidate_false_does_not_penalize_engineer_or_governance() {
+    let searcher = search_candidates_env();
+    let baseline = search_candidates_baseline_env();
+
+    for persona in ["engineer", "governance"] {
+        let result = searcher
+            .search(&search_params("gross margin benchmark", Some(persona)))
+            .await
+            .json();
+        let baseline_result = baseline
+            .search(&search_params("gross margin benchmark", Some(persona)))
+            .await
+            .json();
+        let rows = result_rows(&result);
+        let baseline_rows = result_rows(&baseline_result);
+
+        let helper = row_by_unique_id(&rows, "model.pkg.helper_bridge_anchor");
+        let baseline_helper = row_by_unique_id(&baseline_rows, "model.pkg.helper_bridge_anchor");
+        let helper_score = helper["score"].as_f64().expect("helper score");
+        let baseline_helper_score = baseline_helper["score"]
+            .as_f64()
+            .expect("baseline helper score");
+
+        assert!(
+            (baseline_helper_score - helper_score).abs() < 1e-9,
+            "{persona} search should not penalize the helper model: baseline={baseline_helper_score}, helper={helper_score}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_search_standard_summary_surfaces_search_candidates_hint() {
+    let searcher = search_candidates_env();
+    let result = searcher
+        .search(&search_params("gross margin benchmark", None))
+        .await
+        .json();
+    let rows = result_rows(&result);
+    let helper = row_by_unique_id(&rows, "model.pkg.helper_bridge_anchor");
+
+    assert_eq!(
+        helper["nova_search_candidates"]["analyst"].as_bool(),
+        Some(false)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_search_exact_match_keeps_flagged_model_discoverable_for_analysts() {
+    let searcher = search_candidates_env();
+    let result = searcher
+        .search(&search_params("helper_bridge_anchor", Some("analyst")))
+        .await
+        .json();
+    let rows = result_rows(&result);
+
+    assert_eq!(
+        rows[0].get("unique_id").and_then(JsonValue::as_str),
+        Some("model.pkg.helper_bridge_anchor")
     );
 }
 

@@ -210,6 +210,9 @@
       "max_multiplier": 1.35
     },
     "staging_deboost_factor": 0.6,
+    "analyst_candidate_false_deboost_factor": 0.45,
+    "engineer_candidate_false_deboost_factor": 1.0,
+    "governance_candidate_false_deboost_factor": 1.0,
     "nova_measure_match_multiplier": 1.15,
     "nova_metric_match_multiplier": 1.2,
     "nova_synonym_match_multiplier": 1.2,

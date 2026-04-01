@@ -35,6 +35,9 @@ models:
             description: "Distinct active users."
             field: user_id
             synonyms: ["dau", "active users"]
+        search:
+          candidates:
+            analyst: false
         governance:
           sensitivity: medium
           pii: possible
@@ -78,6 +81,7 @@ columns:
 | `use_cases` | array<string> | Common analyst questions |
 | `grain` | object | `primary_key`, `time_field`, `dimensions` |
 | `measures` | array<object> | Reusable aggregations |
+| `search.candidates` | object | Persona-specific ranking hints (`analyst`, `engineer`, `governance`) |
 
 `measures[]` fields:
 - `name` (required), `type` (required), `expression`, `description`, `field`, `synonyms`
@@ -107,10 +111,16 @@ If you use `pii` as a list, prefer explicit classes (`["email", "phone"]`).
 ## How Nova Uses Meta
 
 - **Search ranking**: boosts matches on `synonyms`, `domains`, `use_cases`,
-  `measures`, and `metric(s)` fields.
+  `measures`, and `metric(s)` fields, and can de-boost persona-specific helper models via
+  `search.candidates`.
 - **Metadata scoring**: evaluates coverage and quality of key Nova fields.
 - **Governance filters**: enables queries like “show restricted” or “pii”.
 - **Agent workflows**: persona skills rely on Nova meta for reliable outputs.
+
+`search.candidates` is a ranking hint:
+- Missing keys default to `true`
+- `false` lowers rank for that persona
+- entities remain searchable
 
 ## Governance Mode: Build and Validate Nova Meta
 

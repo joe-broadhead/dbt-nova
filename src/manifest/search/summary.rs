@@ -40,6 +40,7 @@ struct SummaryProfile {
     include_nova_governance: bool,
     include_nova_tier: bool,
     include_nova_canonical: bool,
+    include_nova_search_candidates: bool,
     include_has_nova_meta: bool,
     include_persona_payload: bool,
 }
@@ -76,6 +77,7 @@ impl SummaryProfile {
             include_nova_governance: false,
             include_nova_tier: false,
             include_nova_canonical: false,
+            include_nova_search_candidates: false,
             include_has_nova_meta: false,
             include_persona_payload: false,
         }
@@ -102,6 +104,7 @@ impl SummaryProfile {
             include_columns_truncated: false,
             include_nova_domains: true,
             include_nova_role: true,
+            include_nova_search_candidates: true,
             include_nova_measures: false,
             include_nova_metrics: false,
             include_persona_payload: true,
@@ -122,6 +125,7 @@ impl SummaryProfile {
             include_upstream_downstream: true,
             include_tests_summary: true,
             include_doc_coverage: true,
+            include_nova_search_candidates: true,
             include_persona_payload: true,
             ..Self::empty()
         }
@@ -139,6 +143,7 @@ impl SummaryProfile {
             include_nova_domains: true,
             include_nova_tier: true,
             include_nova_canonical: true,
+            include_nova_search_candidates: true,
             include_has_nova_meta: true,
             include_persona_payload: true,
             ..Self::empty()
@@ -153,6 +158,7 @@ impl SummaryProfile {
             include_original_file_path: true,
             include_description: true,
             description_limit: 120,
+            include_nova_search_candidates: true,
             ..Self::empty()
         }
     }
@@ -166,6 +172,7 @@ impl SummaryProfile {
             include_description: true,
             description_limit: 120,
             include_primary_key_columns: true,
+            include_nova_search_candidates: true,
             include_nova_summary: true,
             ..Self::empty()
         }
@@ -364,6 +371,7 @@ impl ManifestSearch {
             || profile.include_nova_governance
             || profile.include_nova_tier
             || profile.include_nova_canonical
+            || profile.include_nova_search_candidates
             || profile.include_nova_summary
             || profile.include_has_nova_meta;
         if has_any_nova && let Some(nova) = entity.nova_meta() {
@@ -387,6 +395,11 @@ impl ManifestSearch {
             }
             if profile.include_nova_canonical && nova.canonical {
                 obj.insert("nova_canonical".to_string(), JsonValue::from(true));
+            }
+            if profile.include_nova_search_candidates
+                && let Some(candidates) = Self::nova_search_candidates_summary(nova)
+            {
+                obj.insert("nova_search_candidates".to_string(), candidates);
             }
             if profile.include_nova_role
                 && let Some(role) = nova.role.as_ref().map(rkyv::string::ArchivedString::as_str)
