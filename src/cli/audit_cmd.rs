@@ -884,13 +884,15 @@ mod tests {
                 "[\"models/staging/traffic/stg__traffic_sessions.sql\"]".to_string(),
             ),
             manifest_path: Some(fixture_manifest_path_string()),
-            read_only: true,
+            storage_instance_id: Some("audit-changed-selection-test".to_string()),
+            cleanup_storage_on_start: true,
             ..MetadataAuditArgs::default()
         };
         let inputs = super::parse_audit_inputs(&args).expect("audit inputs");
         let load_args = crate::cli::args::ManifestLoadArgs {
             manifest_path: args.manifest_path.clone(),
-            read_only: true,
+            storage_instance_id: args.storage_instance_id.clone(),
+            cleanup_storage_on_start: args.cleanup_storage_on_start,
             ..crate::cli::args::ManifestLoadArgs::default()
         };
         let config = build_manifest_load_config(&load_args).expect("config");
@@ -980,13 +982,15 @@ mod tests {
                     .to_string(),
             ),
             manifest_path: Some(fixture_manifest_path_string()),
-            read_only: true,
+            storage_instance_id: Some("audit-project-selection-test".to_string()),
+            cleanup_storage_on_start: true,
             ..MetadataAuditArgs::default()
         };
         let inputs = super::parse_audit_inputs(&args).expect("audit inputs");
         let load_args = crate::cli::args::ManifestLoadArgs {
             manifest_path: args.manifest_path.clone(),
-            read_only: true,
+            storage_instance_id: args.storage_instance_id.clone(),
+            cleanup_storage_on_start: args.cleanup_storage_on_start,
             ..crate::cli::args::ManifestLoadArgs::default()
         };
         let config = build_manifest_load_config(&load_args).expect("config");
