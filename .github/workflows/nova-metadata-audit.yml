@@ -277,10 +277,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: nova-metadata-audit-${{ github.repository }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   prepare:
     runs-on: ubuntu-22.04
@@ -522,6 +518,9 @@ jobs:
     runs-on: ubuntu-22.04
     needs: prepare
     timeout-minutes: 60
+    concurrency:
+      group: nova-metadata-audit-${{ github.repository }}-${{ needs.prepare.outputs.storage_instance_id }}
+      cancel-in-progress: false
     outputs:
       gate_status: ${{ steps.collect.outputs.gate_status }}
       target_count: ${{ steps.collect.outputs.target_count }}

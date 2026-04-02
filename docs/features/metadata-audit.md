@@ -60,6 +60,10 @@ Rules:
 - `severity: required` fails the command
 - `severity: advisory` reports the miss without failing
 - if `min_score` and `min_grade` are both set, both must pass
+- `entity` thresholds apply to `changed` and `entities` selection modes
+- `project` thresholds apply to the aggregate project score when
+  `selection_mode=project`; the per-entity table remains informational in that
+  mode
 
 ## Reports
 

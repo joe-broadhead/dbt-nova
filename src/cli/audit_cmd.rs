@@ -42,6 +42,7 @@ struct MetadataAuditReport {
     scored_count: usize,
     gate_status: &'static str,
     summary: AuditSummary,
+    project_summary: Option<BTreeMap<String, ProjectAuditReport>>,
     entities: Vec<EntityAuditReport>,
 }
 
@@ -71,6 +72,15 @@ struct PersonaAuditReport {
     categories: JsonValue,
     breakdown: JsonValue,
     recommendations: JsonValue,
+    threshold: Option<AppliedThreshold>,
+    gate_status: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProjectAuditReport {
+    overall_score: u8,
+    grade: String,
+    quality_summary: JsonValue,
     threshold: Option<AppliedThreshold>,
     gate_status: &'static str,
 }
@@ -322,12 +332,30 @@ async fn build_metadata_audit_report(
         entities.push(report);
     }
 
-    let gate_status = if required_fail_count > 0 {
-        "fail"
-    } else if advisory_fail_count > 0 {
-        "advisory"
+    let project_summary = if inputs.selection_mode == MetadataAuditSelectionModeArg::Project {
+        let project_summary =
+            score_project_summary(search, inputs, args, selected_entity_ids.len()).await?;
+        required_fail_count = project_summary
+            .values()
+            .filter(|report| report.gate_status == "required_fail")
+            .count();
+        advisory_fail_count = project_summary
+            .values()
+            .filter(|report| report.gate_status == "advisory_fail")
+            .count();
+        pass_count = project_summary
+            .values()
+            .filter(|report| report.gate_status == "pass")
+            .count();
+        Some(project_summary)
     } else {
-        "pass"
+        None
+    };
+
+    let gate_status = match (required_fail_count, advisory_fail_count) {
+        (required, _) if required > 0 => "fail",
+        (0, advisory) if advisory > 0 => "advisory",
+        _ => "pass",
     };
 
     Ok(MetadataAuditReport {
@@ -348,6 +376,7 @@ async fn build_metadata_audit_report(
             pass_count,
             no_target: selected_entity_ids.is_empty(),
         },
+        project_summary,
         entities,
     })
 }
@@ -381,7 +410,11 @@ async fn score_entity(
         })?;
         let overall_score = json_u8(&data, "overall_score")?;
         let grade = json_string(&data, "grade")?;
-        let threshold = threshold_profile.rule_for(persona).cloned();
+        let threshold = if inputs.selection_mode == MetadataAuditSelectionModeArg::Project {
+            None
+        } else {
+            threshold_profile.rule_for(persona).cloned()
+        };
         let persona_gate = evaluate_threshold(overall_score, &grade, threshold.as_ref());
         match persona_gate {
             "required_fail" => required_fail = true,
@@ -429,6 +462,53 @@ async fn score_entity(
         gate_status,
         personas,
     })
+}
+
+async fn score_project_summary(
+    search: &ManifestSearch,
+    inputs: &AuditInputs,
+    args: &MetadataAuditArgs,
+    total_targets: usize,
+) -> Result<BTreeMap<String, ProjectAuditReport>> {
+    let mut summary = BTreeMap::new();
+    for persona in &inputs.personas {
+        let params = GetMetadataScoreParams {
+            persona: Some(persona.clone()),
+            scope: Some("project".to_string()),
+            include_breakdown: args.include_breakdown.unwrap_or(true),
+            include_recommendations: args.include_recommendations.unwrap_or(true),
+            resource_types: inputs.resource_types.clone(),
+            limit: Some(total_targets),
+            offset: Some(0),
+            ..GetMetadataScoreParams::default()
+        };
+        let result = search.get_metadata_score(&params).await?;
+        let data = result.get("data").cloned().ok_or_else(|| {
+            DbtNovaError::ServerError("metadata score response missing data".to_string())
+        })?;
+        let overall_score = json_u8(&data, "overall_score")?;
+        let grade = json_string(&data, "grade")?;
+        let threshold = inputs.thresholds.project.rule_for(persona).cloned();
+        let gate_status = evaluate_threshold(overall_score, &grade, threshold.as_ref());
+        summary.insert(
+            persona.clone(),
+            ProjectAuditReport {
+                overall_score,
+                grade,
+                quality_summary: data
+                    .get("quality_summary")
+                    .cloned()
+                    .unwrap_or(JsonValue::Null),
+                threshold: threshold.map(|rule| AppliedThreshold {
+                    min_score: rule.min_score,
+                    min_grade: rule.min_grade,
+                    severity: rule.severity,
+                }),
+                gate_status,
+            },
+        );
+    }
+    Ok(summary)
 }
 
 fn select_entity_ids(search: &ManifestSearch, inputs: &AuditInputs) -> Result<Vec<String>> {
@@ -562,6 +642,25 @@ fn render_markdown_report(report: &MetadataAuditReport) -> String {
     if report.summary.no_target {
         out.push_str("No entities matched the selection.\n");
         return out;
+    }
+
+    if let Some(project_summary) = &report.project_summary {
+        out.push_str("## Project Summary\n\n");
+        out.push_str("| Persona | Score | Grade | Gate |\n");
+        out.push_str("|---|---:|---|---|\n");
+        for persona in &report.personas {
+            if let Some(score) = project_summary.get(persona) {
+                let _ = writeln!(
+                    out,
+                    "| {} | {} | {} | `{}` |",
+                    title_case(persona),
+                    score.overall_score,
+                    score.grade,
+                    score.gate_status
+                );
+            }
+        }
+        out.push('\n');
     }
 
     out.push_str("| Entity | Type | Gate |");
@@ -843,6 +942,7 @@ mod tests {
                 pass_count: 0,
                 no_target: false,
             },
+            project_summary: None,
             entities: vec![super::EntityAuditReport {
                 unique_id: "model.pkg.orders".to_string(),
                 name: Some("orders".to_string()),
@@ -867,5 +967,41 @@ mod tests {
         let markdown = render_markdown_report(&report);
         assert!(markdown.contains("gate_status: `fail`"));
         assert!(markdown.contains("model.pkg.orders"));
+    }
+
+    #[tokio::test]
+    async fn project_selection_uses_project_thresholds_for_gate_status() {
+        let args = MetadataAuditArgs {
+            selection_mode: MetadataAuditSelectionModeArg::Project,
+            resource_types_json: Some("[\"model\"]".to_string()),
+            personas_json: Some("[\"engineer\"]".to_string()),
+            thresholds_json: Some(
+                "{\"project\":{\"engineer\":{\"min_score\":101,\"severity\":\"required\"}}}"
+                    .to_string(),
+            ),
+            manifest_path: Some(fixture_manifest_path_string()),
+            read_only: true,
+            ..MetadataAuditArgs::default()
+        };
+        let inputs = super::parse_audit_inputs(&args).expect("audit inputs");
+        let load_args = crate::cli::args::ManifestLoadArgs {
+            manifest_path: args.manifest_path.clone(),
+            read_only: true,
+            ..crate::cli::args::ManifestLoadArgs::default()
+        };
+        let config = build_manifest_load_config(&load_args).expect("config");
+        let loaded = execute_manifest_load(config).await.expect("load");
+        let report = super::build_metadata_audit_report(&loaded.search, &inputs, &args)
+            .await
+            .expect("report");
+        assert_eq!(report.gate_status, "fail");
+        assert_eq!(report.summary.required_fail_count, 1);
+        assert!(report.project_summary.is_some());
+        assert!(
+            report
+                .entities
+                .iter()
+                .all(|entity| entity.gate_status == "pass")
+        );
     }
 }
