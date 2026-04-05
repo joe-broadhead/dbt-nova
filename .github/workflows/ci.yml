@@ -258,6 +258,81 @@ jobs:
       installer_repository: ${{ github.repository }}
       installer_ref: ${{ github.sha }}
 
+  reusable-metadata-audit-project:
+    name: reusable-metadata-audit-project
+    permissions:
+      contents: read
+    uses: ./.github/workflows/nova-metadata-audit.yml
+    with:
+      manifest_path: tests/fixtures/nova_manifest.json
+      storage_instance_id: ci-metadata-audit-project
+      artifact_name_prefix: ci-metadata-audit-project
+      retention_days: 1
+      installer_repository: ${{ github.repository }}
+      installer_ref: ${{ github.sha }}
+      selection_mode: project
+      resource_types_json: '["model"]'
+      personas_json: '["engineer"]'
+      thresholds_json: '{}'
+
+  reusable-metadata-audit-changed:
+    name: reusable-metadata-audit-changed
+    permissions:
+      contents: read
+    uses: ./.github/workflows/nova-metadata-audit.yml
+    with:
+      manifest_path: tests/fixtures/nova_manifest.json
+      storage_instance_id: ci-metadata-audit-changed
+      artifact_name_prefix: ci-metadata-audit-changed
+      retention_days: 1
+      installer_repository: ${{ github.repository }}
+      installer_ref: ${{ github.sha }}
+      selection_mode: changed
+      changed_files_json: '["models/staging/traffic/stg__traffic_sessions.sql"]'
+      resource_types_json: '["model"]'
+      personas_json: '["engineer","analyst"]'
+      thresholds_json: '{"entity":{"engineer":{"min_score":0,"severity":"required"},"analyst":{"min_score":0,"severity":"advisory"}}}'
+
+  reusable-metadata-audit-structured-dbt:
+    name: reusable-metadata-audit-structured-dbt
+    permissions:
+      contents: read
+    uses: ./.github/workflows/nova-metadata-audit.yml
+    with:
+      dbt_generate_manifest: true
+      dbt_executable: python3
+      dbt_allow_unsafe_executable: true
+      dbt_command_args_json: >-
+        ["-c","from pathlib import Path; Path('target').mkdir(exist_ok=True); Path('target/manifest.json').write_text(Path('tests/fixtures/nova_manifest.json').read_text(encoding='utf-8'), encoding='utf-8')"]
+      storage_instance_id: ci-metadata-audit-structured
+      artifact_name_prefix: ci-metadata-audit-structured
+      retention_days: 1
+      installer_repository: ${{ github.repository }}
+      installer_ref: ${{ github.sha }}
+      selection_mode: changed
+      changed_files_json: '["models/staging/traffic/stg__traffic_sessions.sql"]'
+      thresholds_json: '{"entity":{"engineer":{"min_score":0,"severity":"required"}}}'
+
+  reusable-metadata-audit-trusted-dbt:
+    name: reusable-metadata-audit-trusted-dbt
+    permissions:
+      contents: read
+    uses: ./.github/workflows/nova-metadata-audit.yml
+    with:
+      dbt_generate_manifest: true
+      dbt_command: |
+        set -euo pipefail
+        mkdir -p target
+        cp tests/fixtures/nova_manifest.json target/manifest.json
+      storage_instance_id: ci-metadata-audit-trusted
+      artifact_name_prefix: ci-metadata-audit-trusted
+      retention_days: 1
+      installer_repository: ${{ github.repository }}
+      installer_ref: ${{ github.sha }}
+      selection_mode: entities
+      entity_ids_json: '["model.nova_test.stg__traffic_sessions"]'
+      thresholds_json: '{"entity":{"engineer":{"min_score":0,"severity":"required"}}}'
+
   reusable-assets-remote-publish-dryrun:
     name: reusable-assets-remote-publish-dryrun
     permissions:

@@ -1,0 +1,829 @@
+name: Nova Metadata Audit
+
+on:
+  workflow_call:
+    inputs:
+      manifest_path:
+        description: "Path to manifest.json in the caller repository"
+        required: false
+        type: string
+        default: ""
+      manifest_uri:
+        description: "Remote manifest URI (file/http(s)/s3/gs/dbfs)"
+        required: false
+        type: string
+        default: ""
+      installer_repository:
+        description: "Repository to checkout for building dbt-nova (default: joe-broadhead/dbt-nova)"
+        required: false
+        type: string
+        default: "joe-broadhead/dbt-nova"
+      installer_ref:
+        description: "Git ref to checkout for installer_repository (defaults to resolved reusable workflow ref)"
+        required: false
+        type: string
+        default: ""
+      installer_install_mode:
+        description: "How to install dbt-nova in CI: auto (try release, fallback source), release, or source"
+        required: false
+        type: string
+        default: "auto"
+      dbt_generate_manifest:
+        description: "Whether to run dbt before auditing metadata"
+        required: false
+        type: boolean
+        default: false
+      dbt_command:
+        description: "Trusted shell command executed via bash -lc when dbt_generate_manifest=true"
+        required: false
+        type: string
+        default: ""
+      dbt_command_args_json:
+        description: "Structured dbt invocation args as JSON array (e.g. [\"parse\",\"--target\",\"prod\"])"
+        required: false
+        type: string
+        default: "[]"
+      dbt_executable:
+        description: "Executable used for structured dbt invocation when dbt_command_args_json is set"
+        required: false
+        type: string
+        default: "dbt"
+      dbt_allow_unsafe_executable:
+        description: "Allow non-dbt dbt_executable values (trusted callers only)"
+        required: false
+        type: boolean
+        default: false
+      dbt_env_json:
+        description: "JSON object of non-secret env vars exported before dbt invocation"
+        required: false
+        type: string
+        default: "{}"
+      dbt_secret_env_map_json:
+        description: "JSON object mapping env var names to secret names"
+        required: false
+        type: string
+        default: "{}"
+      selection_mode:
+        description: "Entity selection mode: project, changed, or entities"
+        required: false
+        type: string
+        default: "project"
+      changed_files_json:
+        description: "Optional JSON array of changed file paths when selection_mode=changed"
+        required: false
+        type: string
+        default: "[]"
+      entity_ids_json:
+        description: "Optional JSON array of explicit entity ids/names when selection_mode=entities"
+        required: false
+        type: string
+        default: "[]"
+      resource_types_json:
+        description: "JSON array of resource types to audit (default: [\"model\"])"
+        required: false
+        type: string
+        default: "[\"model\"]"
+      personas_json:
+        description: "JSON array of personas to score (default: [\"engineer\"])"
+        required: false
+        type: string
+        default: "[\"engineer\"]"
+      thresholds_json:
+        description: "JSON object describing persona-specific pass/fail thresholds"
+        required: false
+        type: string
+        default: >-
+          {"entity":{"engineer":{"min_score":70,"severity":"required"},"analyst":{"min_score":65,"severity":"advisory"},"governance":{"min_score":65,"severity":"advisory"}}}
+      include_breakdown:
+        description: "Include per-check metadata score breakdowns"
+        required: false
+        type: boolean
+        default: true
+      include_recommendations:
+        description: "Include metadata score recommendations"
+        required: false
+        type: boolean
+        default: true
+      fail_on_no_targets:
+        description: "Fail when the selection resolves to zero entities"
+        required: false
+        type: boolean
+        default: false
+      storage_instance_id:
+        description: "Optional stable storage instance id used for CLI manifest load"
+        required: false
+        type: string
+        default: "metadata-audit"
+      artifact_name_prefix:
+        description: "Prefix used when naming output artifacts"
+        required: false
+        type: string
+        default: "dbt-nova-metadata-audit"
+      retention_days:
+        description: "Artifact retention period in days (1-90)"
+        required: false
+        type: number
+        default: 14
+    secrets:
+      DBT_NOVA_SECRET_BUNDLE_JSON:
+        description: "Optional JSON object of secret-name -> secret-value pairs used by dbt_secret_env_map_json"
+        required: false
+    outputs:
+      gate_status:
+        description: "Overall audit gate status (pass, advisory, fail)"
+        value: ${{ jobs.audit.outputs.gate_status }}
+      target_count:
+        description: "Number of selected entities"
+        value: ${{ jobs.audit.outputs.target_count }}
+      scored_count:
+        description: "Number of scored entities"
+        value: ${{ jobs.audit.outputs.scored_count }}
+      required_fail_count:
+        description: "Number of required threshold failures"
+        value: ${{ jobs.audit.outputs.required_fail_count }}
+      advisory_fail_count:
+        description: "Number of advisory threshold failures"
+        value: ${{ jobs.audit.outputs.advisory_fail_count }}
+      artifact_name_report_json:
+        description: "Uploaded JSON report artifact name"
+        value: ${{ jobs.audit.outputs.artifact_name_report_json }}
+      artifact_name_report_md:
+        description: "Uploaded Markdown report artifact name"
+        value: ${{ jobs.audit.outputs.artifact_name_report_md }}
+  workflow_dispatch:
+    inputs:
+      manifest_path:
+        description: "Path to manifest.json in the caller repository"
+        required: false
+        type: string
+        default: ""
+      manifest_uri:
+        description: "Remote manifest URI (file/http(s)/s3/gs/dbfs)"
+        required: false
+        type: string
+        default: ""
+      installer_repository:
+        description: "Repository to checkout for building dbt-nova (default: joe-broadhead/dbt-nova)"
+        required: false
+        type: string
+        default: "joe-broadhead/dbt-nova"
+      installer_ref:
+        description: "Git ref to checkout for installer_repository (defaults to resolved reusable workflow ref)"
+        required: false
+        type: string
+        default: ""
+      installer_install_mode:
+        description: "How to install dbt-nova in CI: auto (try release, fallback source), release, or source"
+        required: false
+        type: string
+        default: "auto"
+      dbt_generate_manifest:
+        description: "Whether to run dbt before auditing metadata"
+        required: false
+        type: boolean
+        default: false
+      dbt_command:
+        description: "Trusted shell command executed via bash -lc when dbt_generate_manifest=true"
+        required: false
+        type: string
+        default: ""
+      dbt_command_args_json:
+        description: "Structured dbt invocation args as JSON array (e.g. [\"parse\",\"--target\",\"prod\"])"
+        required: false
+        type: string
+        default: "[]"
+      dbt_executable:
+        description: "Executable used for structured dbt invocation when dbt_command_args_json is set"
+        required: false
+        type: string
+        default: "dbt"
+      dbt_allow_unsafe_executable:
+        description: "Allow non-dbt dbt_executable values (trusted callers only)"
+        required: false
+        type: boolean
+        default: false
+      dbt_env_json:
+        description: "JSON object of non-secret env vars exported before dbt invocation"
+        required: false
+        type: string
+        default: "{}"
+      dbt_secret_env_map_json:
+        description: "JSON object mapping env var names to secret names"
+        required: false
+        type: string
+        default: "{}"
+      selection_mode:
+        description: "Entity selection mode: project, changed, or entities"
+        required: false
+        type: string
+        default: "project"
+      changed_files_json:
+        description: "Optional JSON array of changed file paths when selection_mode=changed"
+        required: false
+        type: string
+        default: "[]"
+      entity_ids_json:
+        description: "Optional JSON array of explicit entity ids/names when selection_mode=entities"
+        required: false
+        type: string
+        default: "[]"
+      resource_types_json:
+        description: "JSON array of resource types to audit (default: [\"model\"])"
+        required: false
+        type: string
+        default: "[\"model\"]"
+      personas_json:
+        description: "JSON array of personas to score (default: [\"engineer\"])"
+        required: false
+        type: string
+        default: "[\"engineer\"]"
+      thresholds_json:
+        description: "JSON object describing persona-specific pass/fail thresholds"
+        required: false
+        type: string
+        default: >-
+          {"entity":{"engineer":{"min_score":70,"severity":"required"},"analyst":{"min_score":65,"severity":"advisory"},"governance":{"min_score":65,"severity":"advisory"}}}
+      include_breakdown:
+        description: "Include per-check metadata score breakdowns"
+        required: false
+        type: boolean
+        default: true
+      include_recommendations:
+        description: "Include metadata score recommendations"
+        required: false
+        type: boolean
+        default: true
+      fail_on_no_targets:
+        description: "Fail when the selection resolves to zero entities"
+        required: false
+        type: boolean
+        default: false
+      storage_instance_id:
+        description: "Optional stable storage instance id used for CLI manifest load"
+        required: false
+        type: string
+        default: "metadata-audit"
+      artifact_name_prefix:
+        description: "Prefix used when naming output artifacts"
+        required: false
+        type: string
+        default: "dbt-nova-metadata-audit"
+      retention_days:
+        description: "Artifact retention period in days (1-90)"
+        required: false
+        type: number
+        default: 14
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    outputs:
+      manifest_path: ${{ steps.resolve.outputs.manifest_path }}
+      manifest_uri: ${{ steps.resolve.outputs.manifest_uri }}
+      installer_repository: ${{ steps.resolve.outputs.installer_repository }}
+      installer_ref: ${{ steps.resolve.outputs.installer_ref }}
+      installer_install_mode: ${{ steps.resolve.outputs.installer_install_mode }}
+      dbt_invocation_mode: ${{ steps.resolve.outputs.dbt_invocation_mode }}
+      dbt_command_args_json: ${{ steps.resolve.outputs.dbt_command_args_json }}
+      dbt_executable: ${{ steps.resolve.outputs.dbt_executable }}
+      dbt_env_json: ${{ steps.resolve.outputs.dbt_env_json }}
+      dbt_secret_env_map_json: ${{ steps.resolve.outputs.dbt_secret_env_map_json }}
+      selection_mode: ${{ steps.resolve.outputs.selection_mode }}
+      changed_files_json: ${{ steps.resolve.outputs.changed_files_json }}
+      entity_ids_json: ${{ steps.resolve.outputs.entity_ids_json }}
+      resource_types_json: ${{ steps.resolve.outputs.resource_types_json }}
+      personas_json: ${{ steps.resolve.outputs.personas_json }}
+      thresholds_json: ${{ steps.resolve.outputs.thresholds_json }}
+      storage_instance_id: ${{ steps.resolve.outputs.storage_instance_id }}
+      artifact_name_report_json: ${{ steps.resolve.outputs.artifact_name_report_json }}
+      artifact_name_report_md: ${{ steps.resolve.outputs.artifact_name_report_md }}
+      retention_days: ${{ steps.resolve.outputs.retention_days }}
+    steps:
+      - name: Resolve contract
+        id: resolve
+        shell: bash
+        env:
+          INPUT_MANIFEST_PATH: ${{ inputs.manifest_path }}
+          INPUT_MANIFEST_URI: ${{ inputs.manifest_uri }}
+          INPUT_INSTALLER_REPOSITORY: ${{ inputs.installer_repository }}
+          INPUT_INSTALLER_REF: ${{ inputs.installer_ref }}
+          INPUT_INSTALLER_INSTALL_MODE: ${{ inputs.installer_install_mode }}
+          INPUT_DBT_GENERATE_MANIFEST: ${{ inputs.dbt_generate_manifest }}
+          INPUT_DBT_COMMAND: ${{ inputs.dbt_command }}
+          INPUT_DBT_COMMAND_ARGS_JSON: ${{ inputs.dbt_command_args_json }}
+          INPUT_DBT_EXECUTABLE: ${{ inputs.dbt_executable }}
+          INPUT_DBT_ALLOW_UNSAFE_EXECUTABLE: ${{ inputs.dbt_allow_unsafe_executable }}
+          INPUT_DBT_ENV_JSON: ${{ inputs.dbt_env_json }}
+          INPUT_DBT_SECRET_ENV_MAP_JSON: ${{ inputs.dbt_secret_env_map_json }}
+          INPUT_SELECTION_MODE: ${{ inputs.selection_mode }}
+          INPUT_CHANGED_FILES_JSON: ${{ inputs.changed_files_json }}
+          INPUT_ENTITY_IDS_JSON: ${{ inputs.entity_ids_json }}
+          INPUT_RESOURCE_TYPES_JSON: ${{ inputs.resource_types_json }}
+          INPUT_PERSONAS_JSON: ${{ inputs.personas_json }}
+          INPUT_THRESHOLDS_JSON: ${{ inputs.thresholds_json }}
+          INPUT_STORAGE_INSTANCE_ID: ${{ inputs.storage_instance_id }}
+          INPUT_ARTIFACT_NAME_PREFIX: ${{ inputs.artifact_name_prefix }}
+          INPUT_RETENTION_DAYS: ${{ inputs.retention_days }}
+          JOB_WORKFLOW_REF: ${{ github.job_workflow_ref }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          ACTION_REPOSITORY: ${{ github.action_repository }}
+          CURRENT_REPOSITORY: ${{ github.repository }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import sys
+
+          def fail(message: str) -> None:
+              print(message, file=sys.stderr)
+              sys.exit(1)
+
+          def parse_json_array(raw: str, name: str):
+              try:
+                  payload = json.loads(raw)
+              except json.JSONDecodeError as exc:
+                  fail(f"{name} must be valid JSON: {exc}")
+              if not isinstance(payload, list) or any(not isinstance(v, str) for v in payload):
+                  fail(f"{name} must be a JSON array of strings.")
+              return payload
+
+          def parse_json_object(raw: str, name: str):
+              try:
+                  payload = json.loads(raw)
+              except json.JSONDecodeError as exc:
+                  fail(f"{name} must be valid JSON: {exc}")
+              if not isinstance(payload, dict):
+                  fail(f"{name} must be a JSON object.")
+              return payload
+
+          manifest_path = os.environ["INPUT_MANIFEST_PATH"].strip()
+          manifest_uri = os.environ["INPUT_MANIFEST_URI"].strip()
+          installer_repository = os.environ["INPUT_INSTALLER_REPOSITORY"].strip()
+          installer_ref = os.environ["INPUT_INSTALLER_REF"].strip()
+          installer_install_mode = os.environ["INPUT_INSTALLER_INSTALL_MODE"].strip()
+          dbt_generate_manifest = os.environ["INPUT_DBT_GENERATE_MANIFEST"].strip().lower()
+          dbt_command = os.environ["INPUT_DBT_COMMAND"]
+          dbt_command_args_json = os.environ["INPUT_DBT_COMMAND_ARGS_JSON"]
+          dbt_executable = os.environ["INPUT_DBT_EXECUTABLE"].strip() or "dbt"
+          dbt_allow_unsafe_executable = os.environ["INPUT_DBT_ALLOW_UNSAFE_EXECUTABLE"].strip().lower()
+          dbt_env_json = os.environ["INPUT_DBT_ENV_JSON"]
+          dbt_secret_env_map_json = os.environ["INPUT_DBT_SECRET_ENV_MAP_JSON"]
+          selection_mode = os.environ["INPUT_SELECTION_MODE"].strip().lower() or "project"
+          changed_files_json = os.environ["INPUT_CHANGED_FILES_JSON"]
+          entity_ids_json = os.environ["INPUT_ENTITY_IDS_JSON"]
+          resource_types_json = os.environ["INPUT_RESOURCE_TYPES_JSON"]
+          personas_json = os.environ["INPUT_PERSONAS_JSON"]
+          thresholds_json = os.environ["INPUT_THRESHOLDS_JSON"]
+          storage_instance_id = os.environ["INPUT_STORAGE_INSTANCE_ID"].strip() or "metadata-audit"
+          artifact_name_prefix = os.environ["INPUT_ARTIFACT_NAME_PREFIX"].strip() or "dbt-nova-metadata-audit"
+          retention_days = os.environ["INPUT_RETENTION_DAYS"].strip()
+          job_workflow_ref = os.environ.get("JOB_WORKFLOW_REF", "")
+          workflow_ref = os.environ.get("WORKFLOW_REF", "")
+          action_repository = os.environ.get("ACTION_REPOSITORY", "")
+          current_repository = os.environ.get("CURRENT_REPOSITORY", "")
+          current_sha = os.environ.get("CURRENT_SHA", "")
+
+          if not manifest_path and not manifest_uri and dbt_generate_manifest != "true":
+              fail("Provide manifest_path or manifest_uri, or set dbt_generate_manifest=true.")
+          if manifest_path and manifest_uri:
+              fail("Provide only one of manifest_path or manifest_uri.")
+          if not manifest_path and not manifest_uri and dbt_generate_manifest == "true":
+              manifest_path = "target/manifest.json"
+
+          if installer_install_mode not in {"auto", "release", "source"}:
+              fail("installer_install_mode must be one of: auto, release, source.")
+
+          if installer_repository and not re.match(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", installer_repository):
+              fail("installer_repository must match owner/repo.")
+
+          parse_json_array(dbt_command_args_json, "dbt_command_args_json")
+          parse_json_object(dbt_env_json, "dbt_env_json")
+          parse_json_object(dbt_secret_env_map_json, "dbt_secret_env_map_json")
+          parse_json_array(changed_files_json, "changed_files_json")
+          parse_json_array(entity_ids_json, "entity_ids_json")
+          parse_json_array(resource_types_json, "resource_types_json")
+          parse_json_array(personas_json, "personas_json")
+          parse_json_object(thresholds_json, "thresholds_json")
+
+          if selection_mode not in {"project", "changed", "entities"}:
+              fail("selection_mode must be one of: project, changed, entities.")
+
+          dbt_invocation_mode = "none"
+          if dbt_generate_manifest == "true":
+              trusted = bool(dbt_command.strip())
+              structured = len(json.loads(dbt_command_args_json)) > 0
+              if trusted and structured:
+                  fail("Provide only one of dbt_command or dbt_command_args_json.")
+              if not trusted and not structured:
+                  fail("dbt_generate_manifest=true requires dbt_command or dbt_command_args_json.")
+              dbt_invocation_mode = "structured" if structured else "trusted_shell"
+          elif dbt_command.strip() or len(json.loads(dbt_command_args_json)) > 0:
+              fail("dbt_command/dbt_command_args_json require dbt_generate_manifest=true.")
+
+          if " " in dbt_executable:
+              fail("dbt_executable must not contain whitespace.")
+          if dbt_allow_unsafe_executable != "true":
+              if not re.match(r"(^|.*/)(dbt|dbt\\.exe)$", dbt_executable):
+                  fail("dbt_executable must resolve to dbt/dbt.exe unless dbt_allow_unsafe_executable=true.")
+
+          if not re.match(r"^[A-Za-z0-9._-]+$", storage_instance_id):
+              fail("storage_instance_id must match ^[A-Za-z0-9._-]+$.")
+          if not re.match(r"^[A-Za-z0-9._-]+$", artifact_name_prefix):
+              fail("artifact_name_prefix must match ^[A-Za-z0-9._-]+$.")
+          if not retention_days.isdigit() or not (1 <= int(retention_days) <= 90):
+              fail("retention_days must be an integer between 1 and 90.")
+
+          if (not installer_repository or not installer_ref) and job_workflow_ref and "/.github/workflows/" in job_workflow_ref and "@" in job_workflow_ref:
+              workflow_repository = job_workflow_ref.split("/.github/workflows/")[0]
+              workflow_ref_value = job_workflow_ref.rsplit("@", 1)[1]
+              if not installer_repository:
+                  installer_repository = workflow_repository
+              if not installer_ref and installer_repository == workflow_repository:
+                  installer_ref = workflow_ref_value
+          if (not installer_repository or not installer_ref) and workflow_ref and "/.github/workflows/" in workflow_ref and "@" in workflow_ref:
+              workflow_repository = workflow_ref.split("/.github/workflows/")[0]
+              workflow_ref_value = workflow_ref.rsplit("@", 1)[1]
+              if not installer_repository:
+                  installer_repository = workflow_repository
+              if not installer_ref:
+                  installer_ref = workflow_ref_value
+          if not installer_repository:
+              installer_repository = action_repository or current_repository
+          if installer_ref.startswith("refs/heads/"):
+              installer_ref = installer_ref[len("refs/heads/"):]
+          if installer_ref.startswith("refs/tags/"):
+              installer_ref = installer_ref[len("refs/tags/"):]
+          if not installer_ref and installer_repository == current_repository and current_sha:
+              installer_ref = current_sha
+          if not installer_repository or not installer_ref:
+              fail("failed to resolve installer_repository/installer_ref; set installer_ref explicitly.")
+
+          run_suffix = os.environ.get("GITHUB_RUN_ID", "local")
+          artifact_name_report_json = f"{artifact_name_prefix}-report-{run_suffix}"
+          artifact_name_report_md = f"{artifact_name_prefix}-report-md-{run_suffix}"
+
+          outputs = {
+              "manifest_path": manifest_path,
+              "manifest_uri": manifest_uri,
+              "installer_repository": installer_repository,
+              "installer_ref": installer_ref,
+              "installer_install_mode": installer_install_mode,
+              "dbt_invocation_mode": dbt_invocation_mode,
+              "dbt_command_args_json": json.dumps(json.loads(dbt_command_args_json), separators=(",", ":")),
+              "dbt_executable": dbt_executable,
+              "dbt_env_json": json.dumps(json.loads(dbt_env_json), separators=(",", ":")),
+              "dbt_secret_env_map_json": json.dumps(json.loads(dbt_secret_env_map_json), separators=(",", ":")),
+              "selection_mode": selection_mode,
+              "changed_files_json": json.dumps(json.loads(changed_files_json), separators=(",", ":")),
+              "entity_ids_json": json.dumps(json.loads(entity_ids_json), separators=(",", ":")),
+              "resource_types_json": json.dumps(json.loads(resource_types_json), separators=(",", ":")),
+              "personas_json": json.dumps(json.loads(personas_json), separators=(",", ":")),
+              "thresholds_json": json.dumps(json.loads(thresholds_json), separators=(",", ":")),
+              "storage_instance_id": storage_instance_id,
+              "artifact_name_report_json": artifact_name_report_json,
+              "artifact_name_report_md": artifact_name_report_md,
+              "retention_days": retention_days,
+          }
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              for key, value in outputs.items():
+                  fh.write(f"{key}={value}\n")
+          PY
+
+      - name: Summarize contract
+        shell: bash
+        run: |
+          {
+            echo "### Reusable Workflow Contract"
+            echo
+            echo "- installer_repository: \`${{ steps.resolve.outputs.installer_repository }}\`"
+            echo "- installer_ref: \`${{ steps.resolve.outputs.installer_ref }}\`"
+            echo "- installer_install_mode: \`${{ steps.resolve.outputs.installer_install_mode }}\`"
+            echo "- selection_mode: \`${{ steps.resolve.outputs.selection_mode }}\`"
+            echo "- resource_types_json: \`${{ steps.resolve.outputs.resource_types_json }}\`"
+            echo "- personas_json: \`${{ steps.resolve.outputs.personas_json }}\`"
+            echo "- storage_instance_id: \`${{ steps.resolve.outputs.storage_instance_id }}\`"
+            echo "- artifact_name_report_json: \`${{ steps.resolve.outputs.artifact_name_report_json }}\`"
+            echo "- artifact_name_report_md: \`${{ steps.resolve.outputs.artifact_name_report_md }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  audit:
+    runs-on: ubuntu-22.04
+    needs: prepare
+    timeout-minutes: 60
+    concurrency:
+      group: nova-metadata-audit-${{ github.repository }}-${{ needs.prepare.outputs.storage_instance_id }}
+      cancel-in-progress: false
+    outputs:
+      gate_status: ${{ steps.collect.outputs.gate_status }}
+      target_count: ${{ steps.collect.outputs.target_count }}
+      scored_count: ${{ steps.collect.outputs.scored_count }}
+      required_fail_count: ${{ steps.collect.outputs.required_fail_count }}
+      advisory_fail_count: ${{ steps.collect.outputs.advisory_fail_count }}
+      artifact_name_report_json: ${{ needs.prepare.outputs.artifact_name_report_json }}
+      artifact_name_report_md: ${{ needs.prepare.outputs.artifact_name_report_md }}
+    env:
+      DBT_NOVA_SEARCH_ENABLE_VECTOR: "false"
+      DBT_NOVA_SEARCH_ENABLE_SPARSE: "false"
+      DBT_NOVA_SEARCH_ENABLE_RERANKER: "false"
+      DBT_NOVA_SEARCH_ENABLE_NGRAM: "false"
+      DBT_NOVA_COLUMN_LINEAGE_PRECOMPUTE: "false"
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+
+      - name: Install jq
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Install dbt-nova from release assets
+        id: install_release
+        if: ${{ needs.prepare.outputs.installer_install_mode != 'source' }}
+        shell: bash
+        env:
+          INSTALLER_REPOSITORY: ${{ needs.prepare.outputs.installer_repository }}
+          INSTALLER_REF: ${{ needs.prepare.outputs.installer_ref }}
+          INSTALLER_INSTALL_MODE: ${{ needs.prepare.outputs.installer_install_mode }}
+        run: |
+          set -euo pipefail
+          base_url="https://github.com/${INSTALLER_REPOSITORY}/releases/download/${INSTALLER_REF}"
+          work_dir="${RUNNER_TEMP}/dbt-nova-release-install"
+          tarball_path="${work_dir}/dbt-nova-linux-x86_64.tar.gz"
+          checksum_path="${work_dir}/dbt-nova-linux-x86_64.sha256"
+          mkdir -p "${work_dir}"
+
+          download_asset() {
+            local asset_name="$1"
+            local destination_path="$2"
+            local asset_url="${base_url}/${asset_name}"
+            curl --fail --location --silent --show-error --output "${destination_path}" "${asset_url}"
+          }
+
+          if ! download_asset "dbt-nova-linux-x86_64.tar.gz" "${tarball_path}"; then
+            if [[ "${INSTALLER_INSTALL_MODE}" == "auto" ]]; then
+              echo "installed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            exit 1
+          fi
+          if ! download_asset "dbt-nova-linux-x86_64.sha256" "${checksum_path}"; then
+            if [[ "${INSTALLER_INSTALL_MODE}" == "auto" ]]; then
+              echo "installed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            exit 1
+          fi
+
+          expected_sha="$(awk '{print $1}' "${checksum_path}")"
+          actual_sha="$(sha256sum "${tarball_path}" | awk '{print $1}')"
+          if [[ -z "${expected_sha}" || "${expected_sha}" != "${actual_sha}" ]]; then
+            echo "release checksum mismatch"
+            exit 1
+          fi
+
+          tar -xzf "${tarball_path}" -C "${work_dir}"
+          binary_path="$(find "${work_dir}" -maxdepth 2 -type f -name dbt-nova | head -n 1)"
+          [[ -n "${binary_path}" ]]
+          mkdir -p "$HOME/.local/bin"
+          install -m 755 "${binary_path}" "$HOME/.local/bin/dbt-nova"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "installed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout installer source
+        if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          repository: ${{ needs.prepare.outputs.installer_repository }}
+          ref: ${{ needs.prepare.outputs.installer_ref }}
+          path: .nova-installer-source
+          fetch-depth: 1
+
+      - name: Install Rust toolchain
+        if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+
+      - name: Rust cache (installer source)
+        if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+        with:
+          workspaces: ".nova-installer-source -> target"
+
+      - name: Build dbt-nova from pinned workflow source
+        if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release --manifest-path .nova-installer-source/Cargo.toml
+          mkdir -p "$HOME/.local/bin"
+          install -m 755 .nova-installer-source/target/release/dbt-nova "$HOME/.local/bin/dbt-nova"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Optionally generate manifest via dbt
+        if: ${{ inputs.dbt_generate_manifest }}
+        shell: bash
+        env:
+          INPUT_DBT_COMMAND: ${{ inputs.dbt_command }}
+          INPUT_DBT_INVOCATION_MODE: ${{ needs.prepare.outputs.dbt_invocation_mode }}
+          INPUT_DBT_COMMAND_ARGS_JSON: ${{ needs.prepare.outputs.dbt_command_args_json }}
+          INPUT_DBT_EXECUTABLE: ${{ needs.prepare.outputs.dbt_executable }}
+          INPUT_DBT_ENV_JSON: ${{ needs.prepare.outputs.dbt_env_json }}
+          INPUT_DBT_SECRET_ENV_MAP_JSON: ${{ needs.prepare.outputs.dbt_secret_env_map_json }}
+          INHERITED_SECRETS_JSON: ${{ toJSON(secrets) }}
+          DBT_NOVA_SECRET_BUNDLE_JSON: ${{ secrets.DBT_NOVA_SECRET_BUNDLE_JSON || '' }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+
+          mode = os.environ["INPUT_DBT_INVOCATION_MODE"]
+          command = os.environ["INPUT_DBT_COMMAND"]
+          command_args = json.loads(os.environ["INPUT_DBT_COMMAND_ARGS_JSON"])
+          executable = os.environ["INPUT_DBT_EXECUTABLE"]
+          plain_env = json.loads(os.environ["INPUT_DBT_ENV_JSON"])
+          secret_env_map = json.loads(os.environ["INPUT_DBT_SECRET_ENV_MAP_JSON"])
+          inherited_secrets = json.loads(os.environ["INHERITED_SECRETS_JSON"])
+          secret_bundle_raw = os.environ.get("DBT_NOVA_SECRET_BUNDLE_JSON", "").strip()
+          secret_bundle = json.loads(secret_bundle_raw) if secret_bundle_raw else {}
+
+          runtime_env = os.environ.copy()
+          for helper_var in (
+              "INHERITED_SECRETS_JSON",
+              "INPUT_DBT_ENV_JSON",
+              "INPUT_DBT_SECRET_ENV_MAP_JSON",
+              "INPUT_DBT_COMMAND",
+              "DBT_NOVA_SECRET_BUNDLE_JSON",
+          ):
+              runtime_env.pop(helper_var, None)
+
+          for env_name, env_value in plain_env.items():
+              runtime_env[env_name] = env_value
+
+          def add_mask(secret_value: str) -> None:
+              escaped_value = (
+                  secret_value.replace("%", "%25")
+                  .replace("\r", "%0D")
+                  .replace("\n", "%0A")
+              )
+              print(f"::add-mask::{escaped_value}")
+
+          for env_name, secret_name in secret_env_map.items():
+              secret_value = secret_bundle.get(secret_name)
+              if not isinstance(secret_value, str) or not secret_value:
+                  secret_value = inherited_secrets.get(secret_name, "")
+              if not secret_value:
+                  print(
+                      f"missing secret '{secret_name}' requested by dbt_secret_env_map_json for env var '{env_name}'",
+                      file=sys.stderr,
+                  )
+                  sys.exit(1)
+              add_mask(secret_value)
+              runtime_env[env_name] = secret_value
+
+          if mode == "trusted_shell":
+              completed = subprocess.run(["bash", "-lc", command], env=runtime_env, check=False)
+          elif mode == "structured":
+              completed = subprocess.run([executable, *command_args], env=runtime_env, check=False)
+          else:
+              print(f"unsupported dbt invocation mode '{mode}'", file=sys.stderr)
+              sys.exit(1)
+          sys.exit(completed.returncode)
+          PY
+
+      - name: Resolve changed files when omitted
+        id: changed_files
+        shell: bash
+        env:
+          SELECTION_MODE: ${{ needs.prepare.outputs.selection_mode }}
+          INPUT_CHANGED_FILES_JSON: ${{ needs.prepare.outputs.changed_files_json }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          changed_files_json="${INPUT_CHANGED_FILES_JSON}"
+          if [[ "${SELECTION_MODE}" == "changed" && "${changed_files_json}" == "[]" && -n "${BASE_REF}" ]]; then
+            git fetch --no-tags --depth=1 origin "${BASE_REF}"
+            changed_files_json="$(
+              git diff --name-only "origin/${BASE_REF}...${GITHUB_SHA}" | \
+                jq -R -s -c 'split("\n") | map(select(length > 0))'
+            )"
+          fi
+          echo "changed_files_json=${changed_files_json}" >> "$GITHUB_OUTPUT"
+
+      - name: Run metadata audit
+        id: audit
+        shell: bash
+        env:
+          INPUT_MANIFEST_PATH: ${{ needs.prepare.outputs.manifest_path }}
+          INPUT_MANIFEST_URI: ${{ needs.prepare.outputs.manifest_uri }}
+          INPUT_STORAGE_INSTANCE_ID: ${{ needs.prepare.outputs.storage_instance_id }}
+          INPUT_SELECTION_MODE: ${{ needs.prepare.outputs.selection_mode }}
+          INPUT_CHANGED_FILES_JSON: ${{ steps.changed_files.outputs.changed_files_json }}
+          INPUT_ENTITY_IDS_JSON: ${{ needs.prepare.outputs.entity_ids_json }}
+          INPUT_RESOURCE_TYPES_JSON: ${{ needs.prepare.outputs.resource_types_json }}
+          INPUT_PERSONAS_JSON: ${{ needs.prepare.outputs.personas_json }}
+          INPUT_THRESHOLDS_JSON: ${{ needs.prepare.outputs.thresholds_json }}
+          INPUT_INCLUDE_BREAKDOWN: ${{ inputs.include_breakdown }}
+          INPUT_INCLUDE_RECOMMENDATIONS: ${{ inputs.include_recommendations }}
+          INPUT_FAIL_ON_NO_TARGETS: ${{ inputs.fail_on_no_targets }}
+          REPORT_JSON_PATH: out/metadata-audit-report.json
+          REPORT_MD_PATH: out/metadata-audit-report.md
+        run: |
+          set +e
+          mkdir -p out
+          args=(audit metadata-score
+            --selection-mode "${INPUT_SELECTION_MODE}"
+            --resource-types-json "${INPUT_RESOURCE_TYPES_JSON}"
+            --personas-json "${INPUT_PERSONAS_JSON}"
+            --thresholds-json "${INPUT_THRESHOLDS_JSON}"
+            --storage-instance-id "${INPUT_STORAGE_INSTANCE_ID}"
+            --report-json-path "${REPORT_JSON_PATH}"
+            --report-md-path "${REPORT_MD_PATH}"
+            --include-breakdown "${INPUT_INCLUDE_BREAKDOWN}"
+            --include-recommendations "${INPUT_INCLUDE_RECOMMENDATIONS}"
+            --json
+          )
+          if [[ "${INPUT_FAIL_ON_NO_TARGETS}" == "true" ]]; then
+            args+=(--fail-on-no-targets)
+          fi
+          if [[ -n "${INPUT_MANIFEST_PATH}" ]]; then
+            args+=(--manifest-path "${INPUT_MANIFEST_PATH}")
+          fi
+          if [[ -n "${INPUT_MANIFEST_URI}" ]]; then
+            args+=(--manifest-uri "${INPUT_MANIFEST_URI}")
+          fi
+          if [[ "${INPUT_SELECTION_MODE}" == "changed" ]]; then
+            args+=(--changed-files-json "${INPUT_CHANGED_FILES_JSON}")
+          fi
+          if [[ "${INPUT_SELECTION_MODE}" == "entities" ]]; then
+            args+=(--entity-ids-json "${INPUT_ENTITY_IDS_JSON}")
+          fi
+          dbt-nova "${args[@]}" | tee out/metadata-audit-cli.json
+          exit_code="${PIPESTATUS[0]}"
+          echo "exit_code=${exit_code}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Collect audit outputs
+        id: collect
+        if: ${{ always() && hashFiles('out/metadata-audit-report.json') != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          report_path="out/metadata-audit-report.json"
+          gate_status="$(jq -r '.gate_status' "${report_path}")"
+          target_count="$(jq -r '.target_count' "${report_path}")"
+          scored_count="$(jq -r '.scored_count' "${report_path}")"
+          required_fail_count="$(jq -r '.summary.required_fail_count' "${report_path}")"
+          advisory_fail_count="$(jq -r '.summary.advisory_fail_count' "${report_path}")"
+          echo "gate_status=${gate_status}" >> "$GITHUB_OUTPUT"
+          echo "target_count=${target_count}" >> "$GITHUB_OUTPUT"
+          echo "scored_count=${scored_count}" >> "$GITHUB_OUTPUT"
+          echo "required_fail_count=${required_fail_count}" >> "$GITHUB_OUTPUT"
+          echo "advisory_fail_count=${advisory_fail_count}" >> "$GITHUB_OUTPUT"
+
+      - name: Append audit summary
+        if: ${{ always() && hashFiles('out/metadata-audit-report.md') != '' }}
+        shell: bash
+        run: cat out/metadata-audit-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload JSON report artifact
+        if: ${{ always() && hashFiles('out/metadata-audit-report.json') != '' }}
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        with:
+          name: ${{ needs.prepare.outputs.artifact_name_report_json }}
+          path: out/metadata-audit-report.json
+          retention-days: ${{ fromJSON(needs.prepare.outputs.retention_days) }}
+
+      - name: Upload Markdown report artifact
+        if: ${{ always() && hashFiles('out/metadata-audit-report.md') != '' }}
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        with:
+          name: ${{ needs.prepare.outputs.artifact_name_report_md }}
+          path: out/metadata-audit-report.md
+          retention-days: ${{ fromJSON(needs.prepare.outputs.retention_days) }}
+
+      - name: Upload CLI output artifact
+        if: ${{ always() && hashFiles('out/metadata-audit-cli.json') != '' }}
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        with:
+          name: ${{ needs.prepare.outputs.artifact_name_report_json }}-cli
+          path: out/metadata-audit-cli.json
+          retention-days: ${{ fromJSON(needs.prepare.outputs.retention_days) }}
+
+      - name: Fail on audit gate
+        if: ${{ steps.audit.outputs.exit_code != '0' }}
+        shell: bash
+        run: exit "${{ steps.audit.outputs.exit_code }}"
