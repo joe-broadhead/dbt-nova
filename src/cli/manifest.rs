@@ -441,11 +441,15 @@ mod tests {
 
     #[tokio::test]
     async fn execute_manifest_load_invalid_path_fails() {
+        let temp_dir = TempDir::new().expect("temp dir");
         let args = ManifestLoadArgs {
             manifest_path: Some("tests/fixtures/missing-manifest.json".to_string()),
+            storage_instance_id: Some("missing-manifest-test".to_string()),
+            cleanup_storage_on_start: true,
             ..ManifestLoadArgs::default()
         };
         let mut config = build_manifest_load_config(&args).expect("config");
+        config.storage_dir = temp_dir.path().to_string_lossy().to_string();
         config.search.enable_vector_search = false;
         config.search.enable_sparse_search = false;
         config.search.enable_reranker = false;
@@ -453,7 +457,7 @@ mod tests {
             panic!("load should fail");
         };
 
-        assert!(err.to_string().contains("Manifest error"));
+        assert!(matches!(err, crate::error::DbtNovaError::ManifestError(_)));
     }
 
     #[tokio::test]

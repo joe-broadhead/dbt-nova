@@ -835,6 +835,7 @@ mod tests {
     use crate::tests::common::fixture_manifest_path_string;
     use serde_json::Value as JsonValue;
     use serde_json::json;
+    use tempfile::TempDir;
 
     #[test]
     fn normalize_path_strips_dot_prefix_and_backslashes() {
@@ -878,6 +879,7 @@ mod tests {
 
     #[tokio::test]
     async fn changed_selection_matches_original_file_path() {
+        let temp_dir = TempDir::new().expect("temp dir");
         let args = MetadataAuditArgs {
             selection_mode: MetadataAuditSelectionModeArg::Changed,
             changed_files_json: Some(
@@ -895,7 +897,8 @@ mod tests {
             cleanup_storage_on_start: args.cleanup_storage_on_start,
             ..crate::cli::args::ManifestLoadArgs::default()
         };
-        let config = build_manifest_load_config(&load_args).expect("config");
+        let mut config = build_manifest_load_config(&load_args).expect("config");
+        config.storage_dir = temp_dir.path().to_string_lossy().to_string();
         let loaded = execute_manifest_load(config).await.expect("load");
         let selected = super::select_entity_ids(&loaded.search, &inputs).expect("selected");
         assert!(
@@ -973,6 +976,7 @@ mod tests {
 
     #[tokio::test]
     async fn project_selection_uses_project_thresholds_for_gate_status() {
+        let temp_dir = TempDir::new().expect("temp dir");
         let args = MetadataAuditArgs {
             selection_mode: MetadataAuditSelectionModeArg::Project,
             resource_types_json: Some("[\"model\"]".to_string()),
@@ -993,7 +997,8 @@ mod tests {
             cleanup_storage_on_start: args.cleanup_storage_on_start,
             ..crate::cli::args::ManifestLoadArgs::default()
         };
-        let config = build_manifest_load_config(&load_args).expect("config");
+        let mut config = build_manifest_load_config(&load_args).expect("config");
+        config.storage_dir = temp_dir.path().to_string_lossy().to_string();
         let loaded = execute_manifest_load(config).await.expect("load");
         let report = super::build_metadata_audit_report(&loaded.search, &inputs, &args)
             .await
