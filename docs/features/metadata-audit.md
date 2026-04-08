@@ -93,3 +93,35 @@ The repository also provides a reusable workflow:
 It follows the same installer and dbt invocation standards as the reusable
 asset workflow, but disables vector, sparse, and reranker search so CI does not
 pay for full search/model startup during metadata-only audits.
+
+When using `dbt_generate_manifest: true`, prefer the same secret-bundle pattern
+as the Nova assets workflow so callers can work consistently across providers
+and across same-owner or cross-owner reusable workflow calls:
+
+```yaml
+jobs:
+  nova_metadata_audit:
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-metadata-audit.yml@acf240efbf6faa874b970ca9a73c3673c6ba072a
+    with:
+      dbt_generate_manifest: true
+      dbt_command_args_json: >-
+        ["parse","--target","prod"]
+      dbt_env_json: >-
+        {"DBT_TARGET":"prod","DBT_PROFILES_DIR":"./"}
+      dbt_secret_env_map_json: >-
+        {"DBT_ACCESS_TOKEN":"DBT_ACCESS_TOKEN","DBT_BIGQUERY_KEYFILE_JSON":"DBT_BIGQUERY_KEYFILE_JSON"}
+      selection_mode: changed
+      resource_types_json: '["model"]'
+      storage_instance_id: analytics-metadata-audit
+    secrets:
+      DBT_NOVA_SECRET_BUNDLE_JSON: ${{ secrets.DBT_NOVA_SECRET_BUNDLE_JSON }}
+```
+
+Secret resolution order for `dbt_secret_env_map_json` values:
+
+1. keys in `DBT_NOVA_SECRET_BUNDLE_JSON`
+2. inherited workflow secrets for same-owner calls
+
+Use `DBT_NOVA_SECRET_BUNDLE_JSON` as the default integration pattern for
+cross-owner reusable workflow calls or when you want one portable secret schema
+across Databricks, BigQuery, DuckDB, and mixed-profile repos.
