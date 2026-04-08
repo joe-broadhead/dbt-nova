@@ -72,6 +72,10 @@ Operational defaults:
   workflow_call secret bundle (`DBT_NOVA_SECRET_BUNDLE_JSON`), and optional
   installer source override (`installer_repository`, `installer_ref`,
   `installer_install_mode`)
+- **Secret contract:** `dbt_secret_env_map_json` resolves keys from
+  `DBT_NOVA_SECRET_BUNDLE_JSON` first, then same-owner inherited workflow
+  secrets; downstream wrappers should prefer the bundle pattern for cross-owner
+  calls and provider-neutral secret schemas
 - **Audit inputs:** `selection_mode` (`project|changed|entities`),
   `changed_files_json`, `entity_ids_json`, `resource_types_json`,
   `personas_json`, `thresholds_json`, `include_breakdown`,
