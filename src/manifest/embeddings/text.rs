@@ -93,6 +93,12 @@ impl EmbeddingSource for Entity {
             for syn in &measure.synonyms {
                 f(syn);
             }
+            if let Some(description) = measure.description.as_deref() {
+                f(description);
+            }
+            if let Some(field) = measure.field.as_deref() {
+                f(field);
+            }
             if let Some(expr) = measure.expression.as_deref() {
                 f(expr);
             }
@@ -192,6 +198,12 @@ impl EmbeddingSource for ArchivedEntity {
             f(measure.name.as_str());
             for synonym in measure.synonyms.iter() {
                 f(synonym.as_str());
+            }
+            if let Some(description) = measure.description.as_ref() {
+                f(description.as_str());
+            }
+            if let Some(field) = measure.field.as_ref() {
+                f(field.as_str());
             }
             if let Some(expr) = measure.expression.as_ref() {
                 f(expr.as_str());
@@ -332,6 +344,12 @@ fn visit_string_array(value: &JsonValue, key: &str, f: &mut dyn FnMut(&str)) {
 fn visit_measure_json(measure: &JsonValue, f: &mut dyn FnMut(&str)) {
     if let Some(name) = measure.get("name").and_then(JsonValue::as_str) {
         f(name);
+    }
+    if let Some(description) = measure.get("description").and_then(JsonValue::as_str) {
+        f(description);
+    }
+    if let Some(field) = measure.get("field").and_then(JsonValue::as_str) {
+        f(field);
     }
     if let Some(expr) = measure.get("expression").and_then(JsonValue::as_str) {
         f(expr);

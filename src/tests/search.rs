@@ -28,6 +28,18 @@ fn search_candidates_baseline_env() -> TestSearchEnv {
     )
 }
 
+fn semantic_preview_env() -> TestSearchEnv {
+    get_searcher_with_fixture_config(
+        "semantic_preview_ranking.json",
+        SearchConfig {
+            enable_vector_search: false,
+            enable_sparse_search: false,
+            enable_reranker: false,
+            ..Default::default()
+        },
+    )
+}
+
 fn search_params(query: &str, persona: Option<&str>) -> SearchParams {
     SearchParams {
         query: query.to_string(),
@@ -57,6 +69,12 @@ fn row_by_unique_id<'a>(rows: &'a [&JsonValue], unique_id: &str) -> &'a JsonValu
     rows.iter()
         .copied()
         .find(|row| row.get("unique_id").and_then(JsonValue::as_str) == Some(unique_id))
+        .unwrap_or_else(|| panic!("missing row for {unique_id}"))
+}
+
+fn row_position(rows: &[&JsonValue], unique_id: &str) -> usize {
+    rows.iter()
+        .position(|row| row.get("unique_id").and_then(JsonValue::as_str) == Some(unique_id))
         .unwrap_or_else(|| panic!("missing row for {unique_id}"))
 }
 
@@ -356,6 +374,142 @@ async fn test_search_exact_match_keeps_flagged_model_discoverable_for_analysts()
     assert_eq!(
         rows[0].get("unique_id").and_then(JsonValue::as_str),
         Some("model.pkg.helper_bridge_anchor")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_search_analyst_prefers_canonical_nova_measure_over_dbt_metric_entity() {
+    let searcher = semantic_preview_env();
+    let result = searcher
+        .search(&search_params("gmv", Some("analyst")))
+        .await
+        .json();
+    let rows = result_rows(&result);
+
+    assert!(!rows.is_empty());
+    assert_eq!(
+        rows[0].get("unique_id").and_then(JsonValue::as_str),
+        Some("model.pkg.fact_orders_canonical")
+    );
+    assert!(
+        row_position(&rows, "model.pkg.fact_orders_canonical")
+            < row_position(&rows, "metric.pkg.gmv")
+    );
+
+    let top = rows[0];
+    let preview = top
+        .get("semantic_preview")
+        .and_then(JsonValue::as_object)
+        .expect("expected semantic preview");
+    let matched_measures = preview
+        .get("matched_measures")
+        .and_then(JsonValue::as_array)
+        .expect("expected matched measures");
+    assert_eq!(
+        matched_measures[0].get("name").and_then(JsonValue::as_str),
+        Some("gmv")
+    );
+    assert_eq!(
+        matched_measures[0]
+            .get("expression")
+            .and_then(JsonValue::as_str),
+        Some("sum(gmv_amount)")
+    );
+    assert_eq!(
+        matched_measures[0]
+            .get("match_type")
+            .and_then(JsonValue::as_str),
+        Some("name")
+    );
+    assert_eq!(
+        matched_measures[0]
+            .get("canonical")
+            .and_then(JsonValue::as_bool),
+        Some(true)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_search_semantic_preview_surfaces_field_matches_and_analyst_payload() {
+    let searcher = semantic_preview_env();
+    let result = searcher
+        .search(&search_params("amount", Some("analyst")))
+        .await
+        .json();
+    let rows = result_rows(&result);
+    let top = row_by_unique_id(&rows, "model.pkg.fact_orders_canonical");
+    let preview = top
+        .get("semantic_preview")
+        .and_then(JsonValue::as_object)
+        .expect("expected semantic preview");
+    let matched_measures = preview
+        .get("matched_measures")
+        .and_then(JsonValue::as_array)
+        .expect("expected matched measures");
+
+    assert_eq!(
+        matched_measures[0]
+            .get("match_type")
+            .and_then(JsonValue::as_str),
+        Some("field")
+    );
+    assert_eq!(
+        matched_measures[0].get("field").and_then(JsonValue::as_str),
+        Some("gmv_amount")
+    );
+
+    let analyst_payload = top
+        .get("persona_payload")
+        .and_then(JsonValue::as_object)
+        .expect("expected analyst payload");
+    let analyst_preview = analyst_payload
+        .get("semantic_preview")
+        .and_then(JsonValue::as_object)
+        .expect("expected analyst semantic preview");
+    assert_eq!(
+        analyst_preview
+            .get("matched_measures")
+            .and_then(JsonValue::as_array)
+            .and_then(|items| items.first())
+            .and_then(|item| item.get("name"))
+            .and_then(JsonValue::as_str),
+        Some("gmv")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_search_metric_level_canonical_boosts_template_model() {
+    let searcher = semantic_preview_env();
+    let result = searcher
+        .search(&search_params("aov", Some("analyst")))
+        .await
+        .json();
+    let rows = result_rows(&result);
+
+    assert!(!rows.is_empty());
+    assert_eq!(
+        rows[0].get("unique_id").and_then(JsonValue::as_str),
+        Some("model.pkg.orders_semantic_templates")
+    );
+
+    let top = rows[0];
+    let preview = top
+        .get("semantic_preview")
+        .and_then(JsonValue::as_object)
+        .expect("expected semantic preview");
+    let matched_metrics = preview
+        .get("matched_metrics")
+        .and_then(JsonValue::as_array)
+        .expect("expected matched metrics");
+    assert_eq!(
+        matched_metrics[0].get("name").and_then(JsonValue::as_str),
+        Some("average_order_value")
+    );
+    assert_eq!(
+        matched_metrics[0]
+            .get("canonical")
+            .and_then(JsonValue::as_bool),
+        Some(true)
     );
 }
 

@@ -7,7 +7,7 @@ use crate::config::PersonaWeights;
 use crate::config::search::{AnalystSemanticConfig, SearchConfig};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::entity::{ArchivedEntity, ArchivedNovaGrain, ArchivedNovaMeta};
-use crate::manifest::search::ManifestSearch;
+use crate::manifest::search::{ManifestSearch, match_nova_semantics};
 use crate::manifest::tantivy_search::{SearchHit, SearchRequest, SearchScope, TantivySearcher};
 use crate::manifest::vector_search::embedding_text_from_archived;
 use crate::params::{DetailLevel, ListEntitiesParams, SearchParams};
@@ -476,40 +476,9 @@ impl ManifestSearch {
         );
 
         let token_set: HashSet<&str> = tokens.iter().map(String::as_str).collect();
-
-        let mut measure_match = false;
-        for measure in nova.measures.iter() {
-            if tokens_match(measure.name.as_str(), &token_set, min_word_len) {
-                measure_match = true;
-                break;
-            }
-            for syn in measure.synonyms.iter() {
-                if tokens_match(syn.as_str(), &token_set, min_word_len) {
-                    measure_match = true;
-                    break;
-                }
-            }
-            if measure_match {
-                break;
-            }
-        }
-
-        let mut metric_match = false;
-        for metric in nova.metric.iter().chain(nova.metrics.iter()) {
-            if tokens_match(metric.name.as_str(), &token_set, min_word_len) {
-                metric_match = true;
-                break;
-            }
-            for syn in metric.synonyms.iter() {
-                if tokens_match(syn.as_str(), &token_set, min_word_len) {
-                    metric_match = true;
-                    break;
-                }
-            }
-            if metric_match {
-                break;
-            }
-        }
+        let semantic_matches = match_nova_semantics(nova, &token_set, min_word_len);
+        let measure_match = semantic_matches.has_measure_match();
+        let metric_match = semantic_matches.has_metric_match();
 
         let mut synonym_match = false;
         for syn in nova.synonyms.iter() {
@@ -525,12 +494,20 @@ impl ManifestSearch {
         if metric_match {
             adjusted *= self.config.search.nova_metric_match_multiplier * weights.metrics;
         }
+        if let Some(match_type) = semantic_matches.strongest_match_type() {
+            adjusted *= persona_semantic_match_multiplier(persona, &self.config.search);
+            adjusted *= match_type.multiplier(&self.config.search);
+        }
         if synonym_match {
             adjusted *= self.config.search.nova_synonym_match_multiplier * weights.synonyms;
         }
         let canonical = nova.canonical;
         if canonical {
             adjusted *= self.config.search.nova_canonical_multiplier;
+        }
+        if semantic_matches.has_canonical_match() {
+            adjusted *= self.config.search.nova_semantic_canonical_match_multiplier;
+            adjusted += self.config.search.nova_semantic_canonical_match_bonus;
         }
         if canonical && (measure_match || metric_match || synonym_match) {
             adjusted *= self.config.search.nova_canonical_match_multiplier;
@@ -1089,11 +1066,9 @@ fn persona_resource_type_multiplier(persona: SearchPersona, resource_type: &str)
     let rt = resource_type.trim().to_lowercase();
     match persona {
         SearchPersona::Analyst => match rt.as_str() {
-            "metric" | "semantic_model" => 1.35,
-            "saved_query" => 1.25,
-            "model" => 1.2,
+            "semantic_model" | "saved_query" | "model" => 1.25,
+            "metric" | "exposure" => 1.1,
             "analysis" => 1.15,
-            "exposure" => 1.1,
             "source" => 1.05,
             "test" => 0.65,
             "macro" => 0.45,
@@ -1118,6 +1093,15 @@ fn persona_resource_type_multiplier(persona: SearchPersona, resource_type: &str)
             _ => 1.0,
         },
         SearchPersona::Default => 1.0,
+    }
+}
+
+fn persona_semantic_match_multiplier(persona: SearchPersona, config: &SearchConfig) -> f32 {
+    match persona {
+        SearchPersona::Analyst => config.analyst_nova_semantic_match_multiplier,
+        SearchPersona::Engineer | SearchPersona::Governance | SearchPersona::Default => {
+            config.non_analyst_nova_semantic_match_multiplier
+        }
     }
 }
 

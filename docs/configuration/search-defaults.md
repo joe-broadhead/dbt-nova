@@ -49,9 +49,13 @@ Search boosts on:
 - `meta.nova.synonyms`
 - `meta.nova.domains`
 - `meta.nova.use_cases`
-- `meta.nova.measures`
-- `meta.nova.metric(s)`
+- `meta.nova.measures` (names, synonyms, descriptions, expressions, fields)
+- `meta.nova.metric(s)` (names, synonyms, descriptions, expressions)
 - `meta.nova.governance` (sensitivity, pii, compliance)
+
+Matched Nova semantics also drive a query-aware `semantic_preview` in standard
+search results so agents can see the relevant measure or metric definition before
+calling `get_context`.
 
 ## Off by Default
 

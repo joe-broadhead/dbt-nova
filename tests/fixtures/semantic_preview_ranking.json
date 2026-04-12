@@ -1,0 +1,174 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
+    "dbt_version": "1.10.2",
+    "project_name": "pkg"
+  },
+  "nodes": {
+    "model.pkg.fact_orders_canonical": {
+      "name": "fact_orders_canonical",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "description": "Canonical orders model for business metrics and GMV reporting.",
+      "path": "models/marts/fact_orders_canonical.sql",
+      "original_file_path": "models/marts/fact_orders_canonical.sql",
+      "alias": "fact_orders_canonical",
+      "config": {"enabled": true},
+      "raw_code": "select 1 as order_id, 10 as gmv_amount",
+      "compiled_code": "select 1 as order_id, 10 as gmv_amount",
+      "columns": {
+        "order_id": {"name": "order_id", "description": "Order id."},
+        "gmv_amount": {"name": "gmv_amount", "description": "GMV amount."}
+      },
+      "meta": {
+        "nova": {
+          "canonical": true,
+          "domains": ["commerce"],
+          "use_cases": ["revenue_reporting"],
+          "synonyms": ["order revenue"],
+          "grain": {
+            "primary_key": ["order_id"],
+            "time_field": "order_date",
+            "dimensions": ["country_code", "sales_channel"]
+          },
+          "measures": [
+            {
+              "name": "gmv",
+              "canonical": true,
+              "description": "Gross merchandise value before cancellations and returns.",
+              "expression": "sum(gmv_amount)",
+              "type": "sum",
+              "field": "gmv_amount",
+              "synonyms": ["gross merchandise value"]
+            }
+          ]
+        }
+      }
+    },
+    "model.pkg.fact_orders_channel": {
+      "name": "fact_orders_channel",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "description": "Channel-specific orders rollup with GMV for operational breakdowns.",
+      "path": "models/intermediate/fact_orders_channel.sql",
+      "original_file_path": "models/intermediate/fact_orders_channel.sql",
+      "alias": "fact_orders_channel",
+      "config": {"enabled": true},
+      "raw_code": "select 1 as order_id, 10 as gmv_amount",
+      "compiled_code": "select 1 as order_id, 10 as gmv_amount",
+      "columns": {
+        "order_id": {"name": "order_id", "description": "Order id."},
+        "gmv_amount": {"name": "gmv_amount", "description": "GMV amount."}
+      },
+      "meta": {
+        "nova": {
+          "domains": ["commerce"],
+          "synonyms": ["order revenue"],
+          "measures": [
+            {
+              "name": "gmv",
+              "description": "Gross merchandise value by channel rollup.",
+              "expression": "sum(gmv_amount)",
+              "type": "sum",
+              "field": "gmv_amount",
+              "synonyms": ["gross merchandise value"]
+            }
+          ]
+        }
+      }
+    },
+    "model.pkg.orders_semantic_templates": {
+      "name": "orders_semantic_templates",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "description": "Reusable order metric templates for analyst discovery.",
+      "path": "models/marts/orders_semantic_templates.sql",
+      "original_file_path": "models/marts/orders_semantic_templates.sql",
+      "alias": "orders_semantic_templates",
+      "config": {"enabled": true},
+      "raw_code": "select 1 as order_id, 10 as gmv_amount",
+      "compiled_code": "select 1 as order_id, 10 as gmv_amount",
+      "columns": {
+        "order_id": {"name": "order_id", "description": "Order id."},
+        "gmv_amount": {"name": "gmv_amount", "description": "GMV amount."}
+      },
+      "meta": {
+        "nova": {
+          "domains": ["commerce"],
+          "metrics": [
+            {
+              "name": "average_order_value",
+              "canonical": true,
+              "description": "Average order value across completed orders.",
+              "expression": "sum(gmv_amount) / nullif(count(distinct order_id), 0)",
+              "synonyms": ["aov", "average basket"],
+              "grain": {
+                "time_field": "order_date",
+                "dimensions": ["country_code", "sales_channel"]
+              }
+            }
+          ]
+        }
+      }
+    },
+    "model.pkg.orders_semantic_secondary": {
+      "name": "orders_semantic_secondary",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "description": "Secondary order metric templates for analyst discovery.",
+      "path": "models/intermediate/orders_semantic_secondary.sql",
+      "original_file_path": "models/intermediate/orders_semantic_secondary.sql",
+      "alias": "orders_semantic_secondary",
+      "config": {"enabled": true},
+      "raw_code": "select 1 as order_id, 10 as gmv_amount",
+      "compiled_code": "select 1 as order_id, 10 as gmv_amount",
+      "columns": {
+        "order_id": {"name": "order_id", "description": "Order id."},
+        "gmv_amount": {"name": "gmv_amount", "description": "GMV amount."}
+      },
+      "meta": {
+        "nova": {
+          "domains": ["commerce"],
+          "metrics": [
+            {
+              "name": "average_order_value",
+              "description": "Average order value for a secondary rollup.",
+              "expression": "sum(gmv_amount) / nullif(count(distinct order_id), 0)",
+              "synonyms": ["aov", "average basket"]
+            }
+          ]
+        }
+      }
+    }
+  },
+  "sources": {},
+  "macros": {},
+  "docs": {},
+  "groups": {},
+  "exposures": {},
+  "metrics": {
+    "metric.pkg.gmv": {
+      "name": "gmv",
+      "description": "Standalone dbt metric entity for gross merchandise value.",
+      "package_name": "pkg",
+      "resource_type": "metric",
+      "original_file_path": "models/metrics/gmv_metric.yml"
+    }
+  },
+  "parent_map": {
+    "model.pkg.fact_orders_canonical": [],
+    "model.pkg.fact_orders_channel": [],
+    "model.pkg.orders_semantic_templates": [],
+    "model.pkg.orders_semantic_secondary": [],
+    "metric.pkg.gmv": []
+  },
+  "child_map": {}
+}

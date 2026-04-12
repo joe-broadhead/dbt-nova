@@ -16,6 +16,8 @@ For the full field map and governance conventions, see
 
 Each metric is a dbt model (SQL file) plus a YAML schema entry.
 
+The `mart__...` model name used in examples is only a repo convention. Nova does not have special logic for model names that start with `mart__`; it keys off `meta.nova.metric` / `meta.nova.metrics` on any dbt `model`, while native dbt `metrics` from the manifest are separate `resource_type: metric` entities.
+
 Metrics are **templates**, not hardcoded answers. Analysts adapt:
 - time window (weekly/monthly/YoY)
 - filters (country/platform)
@@ -31,6 +33,7 @@ meta:
   nova:
     metrics:
       - name: conversion_rate
+        canonical: true
         template: true
         description: "Conversions per session."
         expression: "sum(is_converted) / nullif(count(distinct session_id), 0)"
@@ -39,6 +42,7 @@ meta:
           time_field: activity_date
           dimensions: ["country_code", "platform_name"]
       - name: revenue_per_session
+        canonical: true
         template: true
         description: "Revenue per session."
         expression: "sum(revenue) / nullif(count(distinct session_id), 0)"
@@ -59,6 +63,7 @@ meta:
     use_cases: ["weekly_report", "product_analytics"]
     metric:
       name: conversion_rate
+      canonical: true
       template: true
       description: "Conversions per session."
       expression: "sum(is_converted) / nullif(count(distinct session_id), 0)"
@@ -85,7 +90,7 @@ meta:
 
 ### SQL Example
 
-`models/metric/product/metric__conversion_rate/metric__conversion_rate.sql`
+`models/marts/product/mart__conversion_rate/mart__conversion_rate.sql`
 
 ```sql
 with base as (
@@ -107,7 +112,7 @@ group by 1, 2, 3, 4
 ```yaml
 version: 2
 models:
-  - name: metric__conversion_rate
+  - name: mart__conversion_rate
     description: "Conversions per session."
     group: product_analytics
 
@@ -119,6 +124,7 @@ models:
         use_cases: ["weekly_report", "product_analytics"]
         metric:
           name: conversion_rate
+          canonical: true
           template: true
           description: "Conversions per session."
           expression: "sum(is_converted) / nullif(count(distinct session_id), 0)"
@@ -147,6 +153,7 @@ models:
 ## Recommended Fields (Metric‑Level)
 
 - `name`: Canonical metric name.
+- `canonical`: Mark the preferred definition when the same KPI exists on multiple models.
 - `template`: Set `true` to signal this model is a reusable template (analysts adapt time/filters).
 - `description`: Business definition.
 - `expression`: Plain‑text formula (not parsed).
@@ -171,6 +178,8 @@ to additional domains.
   `revenue_opportunity`, `stock_availability`, `stockout_analysis`, `weekly_report`,
   `web_analytics`.
 - `metric.template`: `true` for all current metrics.
+- `metric.canonical`: supported on individual metric definitions when the same KPI
+  appears in multiple Nova metric templates and one should rank first.
 - `recommended_filters`: present on many metrics; when used it is currently
   `platform_name in ["web", "app"]` with label “Digital platforms (overall)”.
 - `governance`: `sensitivity: low`, `pii: none`, `compliance: ["gdpr"]`.
@@ -314,15 +323,15 @@ Recommended pattern:
 
 ```yaml
 models:
-  - name: metric__conversion_rate
+  - name: mart__conversion_rate
     description: |
-      {{ doc('metric__conversion_rate') }}
+      {{ doc('mart__conversion_rate') }}
 ```
 
 Doc block file example (path is project‑specific):
 
 ```
-docs/metrics/ecommerce/metric__conversion_rate.md
+docs/metrics/ecommerce/mart__conversion_rate.md
 ```
 
 Follow the **Metric Documentation Standard** sections (Meaning / Formula / Grain / Caveats)
@@ -334,7 +343,7 @@ Here is a full example:
 version: 2
 
 models:
-  - name: metric__conversion_rate
+  - name: mart__conversion_rate
     description: "Conversions per session."
     group: product_analytics
 

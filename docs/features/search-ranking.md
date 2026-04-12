@@ -19,8 +19,9 @@ Nova meta is indexed into dedicated search fields:
 | `meta.nova.domains` | `nova_domains` | Domain routing (e.g., web, ecommerce) |
 | `meta.nova.use_cases` | `nova_use_cases` | Intent queries (e.g., weekly_report) |
 | `meta.nova.measures[].name` + `synonyms[]` | `nova_measures` | Measure discovery (sessions, revenue) |
+| `meta.nova.measures[].description` + `expression` + `field` | `nova_measures` | Measure definition keywords and physical column hints |
 | `meta.nova.metric(s).name` + `synonyms[]` | `nova_metric` | KPI discovery (conversion_rate) |
-| `meta.nova.metric(s).description` | `nova_metric` | Metric definition keywords |
+| `meta.nova.metric(s).description` + `expression` | `nova_metric` | Metric definition keywords |
 | `meta.nova.governance.sensitivity` | `nova_sensitivity` | Governance discovery (none/public/internal/confidential/low/medium/high/restricted) |
 | `meta.nova.governance.pii` | `nova_pii` | PII signal (pii + level) |
 | `meta.nova.governance.compliance[]` | `nova_compliance` | Compliance frameworks (gdpr, soc2, hipaa) |
@@ -55,6 +56,13 @@ DBT_NOVA_SEARCH_ENGINEER_CANDIDATE_FALSE_DEBOOST_FACTOR=1.0
 DBT_NOVA_SEARCH_GOVERNANCE_CANDIDATE_FALSE_DEBOOST_FACTOR=1.0
 DBT_NOVA_SEARCH_MEASURE_MATCH_MULTIPLIER=1.15
 DBT_NOVA_SEARCH_METRIC_MATCH_MULTIPLIER=1.20
+DBT_NOVA_SEARCH_ANALYST_SEMANTIC_MATCH_MULTIPLIER=1.35
+DBT_NOVA_SEARCH_NON_ANALYST_SEMANTIC_MATCH_MULTIPLIER=1.05
+DBT_NOVA_SEARCH_SEMANTIC_NAME_MATCH_MULTIPLIER=1.12
+DBT_NOVA_SEARCH_SEMANTIC_SYNONYM_MATCH_MULTIPLIER=1.08
+DBT_NOVA_SEARCH_SEMANTIC_DEFINITION_MATCH_MULTIPLIER=1.03
+DBT_NOVA_SEARCH_SEMANTIC_CANONICAL_MATCH_MULTIPLIER=1.25
+DBT_NOVA_SEARCH_SEMANTIC_CANONICAL_MATCH_BONUS=1.5
 DBT_NOVA_SEARCH_SYNONYM_MATCH_MULTIPLIER=1.20
 DBT_NOVA_SEARCH_CANONICAL_MATCH_MULTIPLIER=1.08
 DBT_NOVA_SEARCH_CANONICAL_META_MATCH_MULTIPLIER=1.35
@@ -65,8 +73,8 @@ DBT_NOVA_SEARCH_ENGINEER_EXACT_MATCH_MULTIPLIER=2.0
 ## Ranking Behavior
 
 1) **Exact business terms** (synonyms/metric names) score close to `name` matches.  
-2) **Measures** are next‑highest (sessions, revenue) so KPI‑driven queries surface
-   the canonical model even without a metric model.
+2) **Nova measures and metrics** are next‑highest so KPI‑driven queries surface
+   the canonical model even without a standalone dbt metric resource.
 3) **Domains/use_cases** provide intent routing but stay below synonyms/measures.
 4) `description`, `columns`, `tags`, `path`, and `code` remain as backstops.
 5) **Staging-layer models** are de‑boosted so curated models rank higher.
@@ -76,13 +84,20 @@ DBT_NOVA_SEARCH_ENGINEER_EXACT_MATCH_MULTIPLIER=2.0
    engineering/governance discovery but should not dominate analyst discovery.
    Set `meta.nova.search.candidates.analyst: false` to mark helper or ops models
    as lower-signal for analysts while keeping them searchable.
-7) **Nova meta re‑ranking** boosts canonical models when query tokens match
-   `meta.nova.measures`, `meta.nova.metric(s)`, or `meta.nova.synonyms`.
-8) **Governance terms** (sensitivity/pii/compliance) get elevated when present.
-9) **Analyst semantic readiness** adds a bounded multiplier for entities with metric/measure
+7) **Query-aware semantic matching** prefers Nova measure/metric name and synonym
+   matches over field/description/expression matches, and boosts semantic matches
+   more strongly for `persona=analyst` than other personas.
+8) **Canonical semantic matches** boost entities when the matched
+   `meta.nova.measures[]` or `meta.nova.metric(s)` definition is canonical.
+   Effective canonicality comes from either the matched semantic entry
+   (`canonical: true`) or the owning entity’s `meta.nova.canonical: true`.
+9) **Entity-level Nova meta re‑ranking** still boosts canonical models when query
+   tokens match `meta.nova.measures`, `meta.nova.metric(s)`, or `meta.nova.synonyms`.
+10) **Governance terms** (sensitivity/pii/compliance) get elevated when present.
+11) **Analyst semantic readiness** adds a bounded multiplier for entities with metric/measure
    definitions, grain/time-field metadata, and query-aligned dimensions. Non-semantic entities
    receive a slight de-boost.
-10) **Analyst near-tie hinting** emits `analysis_hints` when top candidates are within a small score
+12) **Analyst near-tie hinting** emits `analysis_hints` when top candidates are within a small score
    gap, prompting `get_entity`/`get_context` validation before SQL generation.
 
 ## Persona Candidate Metadata
@@ -103,6 +118,37 @@ Semantics:
 - `false` is a ranking hint, not a filter.
 - Exact matches on name, alias, unique id, or file path bypass the deboost.
 - Current defaults only deboost analysts; engineer and governance defaults remain neutral.
+
+## Canonical Semantic Metadata
+
+You can mark the owning entity as canonical:
+
+```yaml
+meta:
+  nova:
+    canonical: true
+```
+
+and/or mark an individual matched measure or metric as canonical:
+
+```yaml
+meta:
+  nova:
+    measures:
+      - name: gmv
+        canonical: true
+```
+
+```yaml
+meta:
+  nova:
+    metrics:
+      - name: average_order_value
+        canonical: true
+```
+
+This is useful when the same business term appears in multiple tables, but only
+one definition should surface first for analyst discovery.
 
 ## Scoring Pipeline (Lexical + Vector + RRF + Reranker)
 
@@ -172,8 +218,9 @@ Any weight not listed remains at its default.
 After lexical/vector/sparse fusion, Nova applies persona-aware resource-type multipliers to reduce
 cross-persona noise:
 
-- **Analyst**: boosts `metric`, `semantic_model`, `saved_query`, and curated `model` results;
-  de-boosts `test` and `macro`.
+- **Analyst**: boosts `semantic_model`, `saved_query`, and curated `model` results,
+  applies a smaller boost to standalone dbt `metric` resources, and relies on
+  matched Nova metric/measure definitions to surface canonical analyst-ready models first.
 - **Engineer**: boosts `model`, `source`, `test`, and `macro`; slightly de-boosts pure business
   artifacts (`metric`, `semantic_model`, `saved_query`).
 - **Governance**: strongly boosts `test`, and also boosts `model`, `source`, and `exposure`;
@@ -192,6 +239,24 @@ With `nova_metric` and `nova_measures` indexed:
 
 Analysts can then apply filters (web/app, country, device) at query time instead of
 having one metric model per slice.
+
+## Search Payload Preview
+
+When a query matches Nova metrics or measures, standard search results include a
+compact `semantic_preview`:
+
+- `matched_measures`
+- `matched_metrics`
+- per-match fields:
+  - `name`
+  - `description`
+  - `expression`
+  - `field` (measures only)
+  - `canonical`
+  - `match_type`
+
+This lets agents see the semantic definition in the search result itself before
+calling `get_context`.
 
 ## When to Add Metric Models Anyway
 

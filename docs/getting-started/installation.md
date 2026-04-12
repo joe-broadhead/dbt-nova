@@ -77,7 +77,7 @@ client process reuses that cache.
 
 ### Optional: Install Agent Skills to `~/.agents/skills`
 
-To install the built-in persona skills (`analyst`, `engineer`, `governance`) into the
+To install the built-in skills (`analyst`, `engineer`, `governance`, `nova-meta-authoring`) into the
 standard Agent Skills user directory:
 
 ```bash

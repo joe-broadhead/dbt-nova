@@ -29,7 +29,11 @@ impl ManifestSearch {
         query_tokens: Option<&[String]>,
     ) -> Option<JsonValue> {
         match persona {
-            SearchPersona::Analyst => Self::analyst_payload(entity, query_tokens),
+            SearchPersona::Analyst => Self::analyst_payload(
+                entity,
+                query_tokens,
+                self.config.search.min_word_length.max(1),
+            ),
             SearchPersona::Engineer => Some(self.engineer_payload(unique_id, entity)),
             SearchPersona::Governance => Some(self.governance_payload(unique_id, entity)),
             SearchPersona::Default => None,
@@ -40,6 +44,7 @@ impl ManifestSearch {
     fn analyst_payload(
         entity: &ArchivedEntity,
         query_tokens: Option<&[String]>,
+        min_word_len: usize,
     ) -> Option<JsonValue> {
         let mut obj = serde_json::Map::new();
         obj.insert(
@@ -62,6 +67,11 @@ impl ManifestSearch {
         let mut metric_names: Vec<String> = Vec::new();
         let mut measure_names: Vec<String> = Vec::new();
         if let Some(nova) = entity.nova_meta() {
+            if let Some(tokens) = query_tokens
+                && let Some(semantic_preview) = Self::semantic_preview(nova, tokens, min_word_len)
+            {
+                obj.insert("semantic_preview".to_string(), semantic_preview);
+            }
             measure_names = nova
                 .measures
                 .iter()

@@ -26,6 +26,7 @@ This removes compact/rich variants and makes tool flows predictable.
 - `columns_total`
 - `primary_key_columns`
 - `nova_domains`, `nova_role`
+- `semantic_preview` (when query tokens match Nova measures/metrics)
 - `persona_payload` (high-signal analyst contract):
   - `focus: "business_discovery"`
   - `business_definition`
@@ -33,6 +34,7 @@ This removes compact/rich variants and makes tool flows predictable.
   - `time_field` (when available)
   - `candidate_measures`
   - `candidate_metrics`
+  - `semantic_preview` (same matched measure/metric preview surfaced at the root)
   - `selection_signals`:
     - `has_metric_definition`
     - `has_measure_definition`
@@ -185,6 +187,19 @@ column name. We do not add duplicate column lists in summaries.
   "primary_key_columns": ["order_id"],
   "nova_domains": ["commerce", "finance"],
   "nova_role": "measure",
+  "semantic_preview": {
+    "matched_measures": [
+      {
+        "name": "revenue",
+        "description": "Net recognized revenue.",
+        "expression": "sum(net_revenue_amount)",
+        "field": "net_revenue_amount",
+        "canonical": true,
+        "match_type": "name"
+      }
+    ],
+    "canonical_match": true
+  },
   "persona_payload": {
     "focus": "business_discovery",
     "business_definition": "Order-level fact table with completed orders...",
@@ -192,6 +207,19 @@ column name. We do not add duplicate column lists in summaries.
     "time_field": "order_date",
     "candidate_measures": ["revenue", "orders"],
     "candidate_metrics": ["net_revenue"],
+    "semantic_preview": {
+      "matched_measures": [
+        {
+          "name": "revenue",
+          "description": "Net recognized revenue.",
+          "expression": "sum(net_revenue_amount)",
+          "field": "net_revenue_amount",
+          "canonical": true,
+          "match_type": "name"
+        }
+      ],
+      "canonical_match": true
+    },
     "selection_signals": {
       "has_metric_definition": true,
       "has_measure_definition": true,

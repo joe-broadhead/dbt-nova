@@ -11,11 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Streamable HTTP server transport for hosted deployments, including container packaging and built-in liveness/readiness probe endpoints.
 - Persona-specific search ranking hints via `meta.nova.search.candidates.<persona>` so helper/ops models can stay searchable while being deboosted for analyst discovery.
+- Reusable metadata audit workflow plus `dbt-nova audit metadata-score` CLI support for project-wide, changed-entity, and explicit-entity metadata gating in CI.
+- Query-aware Nova semantic previews in search results, plus stronger canonical measure/metric ranking so analyst search surfaces the preferred execution model and formula directly.
+- New `nova-meta-authoring` skill for building and reviewing high-signal `meta.nova` blocks in dbt projects.
 - Tagged releases now publish a smoke-tested OCI image for hosted/server deployments.
 
 ### Changed
 
 - Reusable asset publishing now supports GitHub OIDC for GCS targets, refreshes GCS access tokens during longer uploads, uses `gcloud storage cp` for large transfers, and applies higher publish timeout budgets.
+- Metadata audit and reusable asset workflows now support the shared `DBT_NOVA_SECRET_BUNDLE_JSON` secret-bundle contract for cross-repo dbt execution.
+- Analyst search now prefers matched canonical Nova measures and metrics more strongly, including cases where the same business term appears across multiple models or alongside standalone dbt `metric` entities.
 - Release automation now pushes the exact smoke-tested OCI image instead of rebuilding a separate image during release.
 - Monthly fuzz maintenance now uses a shared Rust cache and a larger timeout budget so nightly fuzz targets spend time fuzzing instead of recompiling.
 
@@ -23,11 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Hosted HTTP startup/bind fallback handling is more robust: invalid `PORT` fallback is ignored, MCP paths are normalized/validated, and reserved probe paths are rejected.
 - Cold-start search model failures now degrade safely by disabling broken empty search indexes instead of leaving startup wedged.
+- Metadata audit tests now use isolated storage roots under parallel execution, and the reusable audit workflow no longer cancels sibling invocations on the same ref.
 - Documentation and dependency maintenance issues that broke docs or security checks were corrected (`Pygments` compatibility and `tar` advisory updates).
 
 ### Documentation
 
-- Added and refreshed docs for hosted deployment, streamable HTTP mode, prebuilt bootstrap/artifact hydration, OCI release behavior, and persona-specific search candidate metadata/ranking.
+- Added and refreshed docs for hosted deployment, streamable HTTP mode, prebuilt bootstrap/artifact hydration, metadata audit workflows, OCI release behavior, persona-specific search candidate metadata/ranking, and canonical Nova metric/measure search behavior.
 
 ## [0.0.3] - 2026-03-19
 
