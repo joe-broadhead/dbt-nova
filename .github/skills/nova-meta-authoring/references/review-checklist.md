@@ -34,6 +34,7 @@ Expected fields:
 Expected fields:
 - model-level routing fields where useful
 - `metric` or `metrics`
+- never both `metric` and `metrics`
 - `template: true`
 - expression aligned with the SQL model output
 - canonical metric flag only on the preferred repeated KPI definition
@@ -46,6 +47,7 @@ Expected fields:
 - Do not mark every duplicate as canonical.
 - Do not set `search.candidates.analyst: false` on the canonical analyst-facing model.
 - If both entity-level and measure/metric-level canonicality are present, they should point at the same preferred source.
+- Leave `search.candidates` absent unless the model is a real analyst-discovery exception.
 
 ## Search verification checks
 
@@ -54,14 +56,18 @@ When Nova tooling is available:
 - confirm the canonical entity ranks above helper or duplicate variants
 - confirm the result exposes `semantic_preview` for the matched measure or metric
 - use `get_context` or `get_entity` to verify final grain and expression
+- verify that the surfaced `semantic_preview` still points at fields and dimensions that exist on the model output
 
 ## Content quality checks
 
 - Synonyms are concise and high-signal.
 - Descriptions explain business meaning, not only SQL mechanics.
 - `grain.dimensions` reflect default analyst breakdowns.
+- `grain.time_field`, `grain.dimensions`, `measure.field`, and `recommended_filters[].field` all exist on the model output or are clearly derived.
+- Measure types stay within the current schema: `sum`, `count`, `avg`, `min`, `max`, `count_distinct`, `ratio`.
 - Governance metadata is present only when it changes routing, review, or compliance behavior.
 - Column-level metadata is selective and useful.
+- Column-level `meta.nova.role` stays within the current schema values: `dimension`, `measure`, `metric`, `identifier`, `time`.
 - Native dbt metrics are not the only place where the business definition lives when the model should drive analyst discovery.
 
 ## Anti-patterns
@@ -74,6 +80,7 @@ Avoid these:
 - copying the same measure metadata into every related table
 - using `search.candidates.analyst: false` as a substitute for choosing the real canonical model
 - relying on a standalone dbt `metric` entity alone when a canonical execution model should carry the reusable Nova semantic definition
+- assuming model name prefixes like `mart__` or `fct__` change Nova behavior
 
 ## Validation
 

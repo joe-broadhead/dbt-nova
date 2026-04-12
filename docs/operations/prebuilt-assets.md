@@ -41,6 +41,10 @@ read-only reuse after local materialization.
 
 Create a workflow in the downstream repo that calls Nova's reusable producer.
 
+The examples below pin a commit SHA because they rely on the current
+unreleased secret-bundle workflow contract. After the next release, replace
+that SHA with the corresponding release tag.
+
 ```yaml
 name: Build Nova Assets
 
@@ -50,11 +54,11 @@ on:
 jobs:
   build_nova_assets:
     # Pin to a release tag or commit SHA
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.3
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@c443c5c301db04189fea690ff1adc32823721d11
     with:
       manifest_path: target/manifest.json
       storage_instance_id: analytics-prod
-      installer_ref: v0.0.3
+      installer_ref: c443c5c301db04189fea690ff1adc32823721d11
       installer_install_mode: auto
       artifact_name_prefix: analytics-prod
       retention_days: 14
@@ -93,7 +97,7 @@ workflow works across Databricks, BigQuery, DuckDB, and mixed profiles:
 ```yaml
 jobs:
   build_nova_assets:
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.3
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@c443c5c301db04189fea690ff1adc32823721d11
     with:
       dbt_generate_manifest: true
       dbt_command_args_json: >-
@@ -112,7 +116,7 @@ DBFS publish wrapper example:
 ```yaml
 jobs:
   build_nova_assets:
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.3
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@c443c5c301db04189fea690ff1adc32823721d11
     with:
       dbt_generate_manifest: true
       dbt_command_args_json: >-
@@ -122,8 +126,8 @@ jobs:
       dbt_secret_env_map_json: >-
         {"DBT_ACCESS_TOKEN":"DBT_ACCESS_TOKEN","DATABRICKS_ACCESS_TOKEN":"DBT_ACCESS_TOKEN"}
       storage_instance_id: analytics-prod
-      installer_ref: v0.0.3
-      installer_install_mode: release
+      installer_ref: c443c5c301db04189fea690ff1adc32823721d11
+      installer_install_mode: source
       publish_targets: dbfs
       publish_dbfs_prefix: dbfs:/FileStore/projects/my-project/nova-assets/prod
       publish_dry_run: false

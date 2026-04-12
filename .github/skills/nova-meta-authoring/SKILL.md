@@ -6,7 +6,7 @@ allowed-tools: "mcp__nova__search mcp__nova__get_entity mcp__nova__get_context m
 metadata:
   owner: "dbt-nova"
   persona: "authoring"
-  version: "0.0.2"
+  version: "0.0.4"
 ---
 
 # Nova Meta Authoring
@@ -38,6 +38,7 @@ Typical triggers:
   - `canonical`, `domains`, `use_cases`, `synonyms`, `grain`, `governance`
 - Use `measures` when the model owns reusable aggregations on the execution dataset.
 - Use `metric` or `metrics` when the model is a reusable KPI template that analysts adapt by time window, filters, and breakdowns.
+- Never set both `metric` and `metrics` on the same entity.
 - Use column-level `meta.nova` only for identifiers, time fields, high-signal dimensions, or semantic disambiguation.
 - Use `search.candidates.analyst: false` for helper or ops models that should remain searchable but rank lower for analysts.
 
@@ -46,6 +47,7 @@ Typical triggers:
 - Do not encode report-specific time windows, one-off slices, or volatile operational details.
 - Prefer model-bound Nova `measures` and `metric` / `metrics` on the canonical execution model for analyst discovery.
 - If the repo also uses native dbt `metric` resources, they can coexist, but they should not be the only place where the business definition lives.
+- Treat model names as repo convention only. Nova does not infer semantics from prefixes like `mart__`, `fct__`, or `dim__`.
 
 4) Choose canonical sources deliberately
 - Use entity-level `canonical: true` for the preferred analyst-facing dataset.
@@ -58,6 +60,13 @@ Typical triggers:
 - Review the change against `references/review-checklist.md`.
 - Use `references/decision-rules.md` when deciding between `measures`, `metric`, `metrics`, column metadata, or search candidate hints.
 - Use `references/patterns.md` for copyable model, metric, source, and helper patterns.
+- Read the Nova docs pages that match the change before authoring or reviewing:
+  - docs site: `https://joe-broadhead.github.io/dbt-nova/`
+  - overview: `https://joe-broadhead.github.io/dbt-nova/features/nova-meta-overview/`
+  - models: `https://joe-broadhead.github.io/dbt-nova/features/nova-meta-models/`
+  - metrics and measures: `https://joe-broadhead.github.io/dbt-nova/features/nova-meta-metrics/`
+  - search ranking: `https://joe-broadhead.github.io/dbt-nova/features/search-ranking/`
+  - persona summaries: `https://joe-broadhead.github.io/dbt-nova/features/persona-summaries/`
 
 6) Verify search behavior when Nova tooling is available
 - Run `search` with `persona: "analyst"` for the key business terms.
@@ -71,8 +80,12 @@ Typical triggers:
 - Keep `meta.nova` small and stable.
 - Use 2–8 high-signal `synonyms`; prefer business phrasing over technical noise.
 - `grain.dimensions` should represent default analyst breakdowns, not every possible dimension.
+- Only use measure types supported by the schema: `sum`, `count`, `avg`, `min`, `max`, `count_distinct`, `ratio`.
 - Put `measures` on the model where the data lives.
 - Use `metric` or `metrics` for reusable KPI templates, not hardcoded business answers.
+- Default `search.candidates` to absent. Set `analyst: false` only for exceptions that should stay searchable but de-rank for analysts.
+- Validate that `grain.time_field`, `grain.dimensions`, `measure.field`, and `recommended_filters[].field` all exist on the model output or are clearly derived in the SQL.
+- For column-level `meta.nova.role`, use only the current schema values: `dimension`, `measure`, `metric`, `identifier`, `time`.
 - Be selective with column-level Nova metadata; use it for identifiers, time fields, high-signal dimensions, and disambiguation.
 - Preserve existing repo conventions unless they are clearly low-signal or internally inconsistent.
 
@@ -87,6 +100,12 @@ When you finish, make the reasoning explicit:
 
 ## References
 
+- docs site: `https://joe-broadhead.github.io/dbt-nova/`
+- overview: `https://joe-broadhead.github.io/dbt-nova/features/nova-meta-overview/`
+- models: `https://joe-broadhead.github.io/dbt-nova/features/nova-meta-models/`
+- metrics and measures: `https://joe-broadhead.github.io/dbt-nova/features/nova-meta-metrics/`
+- search ranking: `https://joe-broadhead.github.io/dbt-nova/features/search-ranking/`
+- persona summaries: `https://joe-broadhead.github.io/dbt-nova/features/persona-summaries/`
 - `references/decision-rules.md`
 - `references/patterns.md`
 - `references/review-checklist.md`

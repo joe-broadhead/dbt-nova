@@ -34,6 +34,15 @@ A measure should normally include:
 - `synonyms` when business vocabulary varies
 - `canonical: true` only on the preferred repeated definition
 
+Allowed measure types are:
+- `sum`
+- `count`
+- `avg`
+- `min`
+- `max`
+- `count_distinct`
+- `ratio`
+
 ### `metric` or `metrics`
 Use `metric` or `metrics` when:
 - the model is a KPI template
@@ -54,6 +63,8 @@ A metric should normally include:
 - optional `recommended_filters`
 - `canonical: true` only on the preferred repeated KPI definition
 
+Never set both `metric` and `metrics` on the same entity.
+
 ### Column-level `meta.nova`
 Use this only when the column needs semantic help:
 - identifier
@@ -70,6 +81,7 @@ Use `search.candidates.analyst: false` when:
 - the model is helper, ops, staging, or intermediate
 
 This is a ranking hint, not a filter.
+Leave `search.candidates` absent unless there is a real audience exception to encode.
 
 ## Canonicality hierarchy
 
@@ -99,6 +111,8 @@ Reason:
 
 Standalone dbt metrics can still coexist, but they should not be the only place where the KPI meaning lives.
 
+Model names themselves do not carry Nova semantics. Prefixes like `mart__`, `fct__`, `dim__`, or `int__` are repo conventions only.
+
 ## Search verification rule
 
 After editing metadata for a repeated business term:
@@ -107,3 +121,4 @@ After editing metadata for a repeated business term:
 3. confirm the preferred entity ranks first
 4. confirm `semantic_preview` exposes the matched measure or metric definition
 5. confirm helper variants remain searchable but rank lower
+6. confirm the fields referenced in `grain`, `measure.field`, and `recommended_filters` are present on the model output

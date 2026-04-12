@@ -16,6 +16,8 @@ For the full field map and governance conventions, see
 
 Each metric is a dbt model (SQL file) plus a YAML schema entry.
 
+The `mart__...` model name used in examples is only a repo convention. Nova does not have special logic for model names that start with `mart__`; it keys off `meta.nova.metric` / `meta.nova.metrics` on any dbt `model`, while native dbt `metrics` from the manifest are separate `resource_type: metric` entities.
+
 Metrics are **templates**, not hardcoded answers. Analysts adapt:
 - time window (weekly/monthly/YoY)
 - filters (country/platform)
@@ -88,7 +90,7 @@ meta:
 
 ### SQL Example
 
-`models/metric/product/metric__conversion_rate/metric__conversion_rate.sql`
+`models/marts/product/mart__conversion_rate/mart__conversion_rate.sql`
 
 ```sql
 with base as (
@@ -110,7 +112,7 @@ group by 1, 2, 3, 4
 ```yaml
 version: 2
 models:
-  - name: metric__conversion_rate
+  - name: mart__conversion_rate
     description: "Conversions per session."
     group: product_analytics
 
@@ -321,15 +323,15 @@ Recommended pattern:
 
 ```yaml
 models:
-  - name: metric__conversion_rate
+  - name: mart__conversion_rate
     description: |
-      {{ doc('metric__conversion_rate') }}
+      {{ doc('mart__conversion_rate') }}
 ```
 
 Doc block file example (path is project‑specific):
 
 ```
-docs/metrics/ecommerce/metric__conversion_rate.md
+docs/metrics/ecommerce/mart__conversion_rate.md
 ```
 
 Follow the **Metric Documentation Standard** sections (Meaning / Formula / Grain / Caveats)
@@ -341,7 +343,7 @@ Here is a full example:
 version: 2
 
 models:
-  - name: metric__conversion_rate
+  - name: mart__conversion_rate
     description: "Conversions per session."
     group: product_analytics
 

@@ -66,10 +66,12 @@ Use this when:
 
 Use this when the dbt model represents a reusable KPI template that analysts adapt by time window, filters, and breakdowns.
 
+`mart__...` is only an example naming convention. Nova does not have any special parser, ranking, or routing logic for model names that start with `mart__`. What matters is that the resource is a dbt `model` with `meta.nova.metric` or `meta.nova.metrics`.
+
 ```yaml
 version: 2
 models:
-  - name: metric__average_order_value
+  - name: mart__average_order_value
     meta:
       nova:
         canonical: true
