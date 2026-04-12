@@ -74,6 +74,10 @@ Common:
 - `standard`: persona‑optimized summary (default)
 - `full`: complete entity payload (same as `get_entity` with `detail: "full"`)
 
+When `detail: "standard"` and the query matches Nova measures or metrics, search
+results include a compact `semantic_preview` with the matched measure/metric
+name, description, expression, canonical flag, and match type.
+
 ### `get_entity`
 Fetch a single entity by `unique_id` or name.
 

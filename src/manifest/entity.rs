@@ -23,6 +23,7 @@ pub struct NovaMeasure {
     pub description: Option<String>,
     pub field: Option<String>,
     pub synonyms: Vec<String>,
+    pub canonical: bool,
 }
 
 #[derive(Clone, Debug, Archive, Serialize, Deserialize)]
@@ -34,6 +35,7 @@ pub struct NovaMetric {
     pub template: bool,
     pub grain: Option<NovaGrain>,
     pub recommended_filters: Vec<NovaRecommendedFilter>,
+    pub canonical: bool,
 }
 
 #[derive(Clone, Debug, Archive, Serialize, Deserialize)]
@@ -496,6 +498,10 @@ fn get_nova_meta(value: &serde_json::Value) -> Option<NovaMeta> {
                         .get("synonyms")
                         .map(extract_string_array)
                         .unwrap_or_default();
+                    let canonical = measure
+                        .get("canonical")
+                        .and_then(JsonValue::as_bool)
+                        .unwrap_or(false);
                     Some(NovaMeasure {
                         name: name.to_string(),
                         measure_type,
@@ -503,6 +509,7 @@ fn get_nova_meta(value: &serde_json::Value) -> Option<NovaMeta> {
                         description,
                         field,
                         synonyms,
+                        canonical,
                     })
                 })
                 .collect()
@@ -662,6 +669,10 @@ fn parse_metric(value: &JsonValue) -> Option<NovaMetric> {
                 .collect()
         })
         .unwrap_or_default();
+    let canonical = metric
+        .get("canonical")
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(false);
     Some(NovaMetric {
         name: name.to_string(),
         description,
@@ -670,6 +681,7 @@ fn parse_metric(value: &JsonValue) -> Option<NovaMetric> {
         template,
         grain,
         recommended_filters,
+        canonical,
     })
 }
 
@@ -730,5 +742,33 @@ mod tests {
 
         let meta = get_nova_meta(&entity).expect("expected nova meta");
         assert!(meta.search.is_none());
+    }
+
+    #[test]
+    fn get_nova_meta_parses_canonical_measure_and_metric_flags() {
+        let entity = serde_json::json!({
+            "meta": {
+                "nova": {
+                    "measures": [
+                        {
+                            "name": "gmv",
+                            "canonical": true
+                        }
+                    ],
+                    "metrics": [
+                        {
+                            "name": "aov",
+                            "canonical": true
+                        }
+                    ]
+                }
+            }
+        });
+
+        let meta = get_nova_meta(&entity).expect("expected nova meta");
+        assert_eq!(meta.measures.len(), 1);
+        assert!(meta.measures[0].canonical);
+        assert_eq!(meta.metrics.len(), 1);
+        assert!(meta.metrics[0].canonical);
     }
 }

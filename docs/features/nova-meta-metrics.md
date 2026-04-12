@@ -31,6 +31,7 @@ meta:
   nova:
     metrics:
       - name: conversion_rate
+        canonical: true
         template: true
         description: "Conversions per session."
         expression: "sum(is_converted) / nullif(count(distinct session_id), 0)"
@@ -39,6 +40,7 @@ meta:
           time_field: activity_date
           dimensions: ["country_code", "platform_name"]
       - name: revenue_per_session
+        canonical: true
         template: true
         description: "Revenue per session."
         expression: "sum(revenue) / nullif(count(distinct session_id), 0)"
@@ -59,6 +61,7 @@ meta:
     use_cases: ["weekly_report", "product_analytics"]
     metric:
       name: conversion_rate
+      canonical: true
       template: true
       description: "Conversions per session."
       expression: "sum(is_converted) / nullif(count(distinct session_id), 0)"
@@ -119,6 +122,7 @@ models:
         use_cases: ["weekly_report", "product_analytics"]
         metric:
           name: conversion_rate
+          canonical: true
           template: true
           description: "Conversions per session."
           expression: "sum(is_converted) / nullif(count(distinct session_id), 0)"
@@ -147,6 +151,7 @@ models:
 ## Recommended Fields (Metric‑Level)
 
 - `name`: Canonical metric name.
+- `canonical`: Mark the preferred definition when the same KPI exists on multiple models.
 - `template`: Set `true` to signal this model is a reusable template (analysts adapt time/filters).
 - `description`: Business definition.
 - `expression`: Plain‑text formula (not parsed).
@@ -171,6 +176,8 @@ to additional domains.
   `revenue_opportunity`, `stock_availability`, `stockout_analysis`, `weekly_report`,
   `web_analytics`.
 - `metric.template`: `true` for all current metrics.
+- `metric.canonical`: supported on individual metric definitions when the same KPI
+  appears in multiple Nova metric templates and one should rank first.
 - `recommended_filters`: present on many metrics; when used it is currently
   `platform_name in ["web", "app"]` with label “Digital platforms (overall)”.
 - `governance`: `sensitivity: low`, `pii: none`, `compliance: ["gdpr"]`.

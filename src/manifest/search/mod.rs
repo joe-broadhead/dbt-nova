@@ -1,9 +1,11 @@
 mod cache;
 mod core;
+mod semantic;
 mod summary;
 
 pub(crate) use cache::EntityCache;
 pub(crate) use core::{CompiledLayerRule, InUseLocks, compile_layer_rules};
+pub(crate) use semantic::{SemanticPreviewItem, match_nova_semantics};
 
 pub use core::{ManifestSearch, ManifestSearchHandle, ManifestStatus};
 

@@ -42,6 +42,7 @@ struct SummaryProfile {
     include_nova_canonical: bool,
     include_nova_search_candidates: bool,
     include_has_nova_meta: bool,
+    include_semantic_preview: bool,
     include_persona_payload: bool,
 }
 
@@ -79,6 +80,7 @@ impl SummaryProfile {
             include_nova_canonical: false,
             include_nova_search_candidates: false,
             include_has_nova_meta: false,
+            include_semantic_preview: false,
             include_persona_payload: false,
         }
     }
@@ -107,6 +109,7 @@ impl SummaryProfile {
             include_nova_search_candidates: true,
             include_nova_measures: false,
             include_nova_metrics: false,
+            include_semantic_preview: true,
             include_persona_payload: true,
             ..Self::empty()
         }
@@ -126,6 +129,7 @@ impl SummaryProfile {
             include_tests_summary: true,
             include_doc_coverage: true,
             include_nova_search_candidates: true,
+            include_semantic_preview: true,
             include_persona_payload: true,
             ..Self::empty()
         }
@@ -145,6 +149,7 @@ impl SummaryProfile {
             include_nova_canonical: true,
             include_nova_search_candidates: true,
             include_has_nova_meta: true,
+            include_semantic_preview: true,
             include_persona_payload: true,
             ..Self::empty()
         }
@@ -159,6 +164,7 @@ impl SummaryProfile {
             include_description: true,
             description_limit: 120,
             include_nova_search_candidates: true,
+            include_semantic_preview: true,
             ..Self::empty()
         }
     }
@@ -174,6 +180,7 @@ impl SummaryProfile {
             include_primary_key_columns: true,
             include_nova_search_candidates: true,
             include_nova_summary: true,
+            include_semantic_preview: true,
             ..Self::empty()
         }
     }
@@ -373,6 +380,7 @@ impl ManifestSearch {
             || profile.include_nova_canonical
             || profile.include_nova_search_candidates
             || profile.include_nova_summary
+            || profile.include_semantic_preview
             || profile.include_has_nova_meta;
         if has_any_nova && let Some(nova) = entity.nova_meta() {
             if profile.include_nova_governance
@@ -422,6 +430,13 @@ impl ManifestSearch {
                 && let Some(nova_summary) = Self::nova_summary(nova)
             {
                 obj.insert("nova_summary".to_string(), nova_summary);
+            }
+            if profile.include_semantic_preview
+                && let Some(tokens) = query_tokens
+                && let Some(semantic_preview) =
+                    Self::semantic_preview(nova, tokens, self.config.search.min_word_length.max(1))
+            {
+                obj.insert("semantic_preview".to_string(), semantic_preview);
             }
         }
         if profile.include_has_nova_meta {

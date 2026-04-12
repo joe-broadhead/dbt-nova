@@ -284,6 +284,20 @@ pub struct SearchConfig {
     pub nova_measure_match_multiplier: f32,
     /// Multiplier applied when query tokens match nova metrics
     pub nova_metric_match_multiplier: f32,
+    /// Persona-specific multiplier applied when Nova semantics match for analyst search
+    pub analyst_nova_semantic_match_multiplier: f32,
+    /// Persona-specific multiplier applied when Nova semantics match for non-analyst search
+    pub non_analyst_nova_semantic_match_multiplier: f32,
+    /// Multiplier applied when Nova semantic matches occur on the semantic name itself
+    pub nova_semantic_name_match_multiplier: f32,
+    /// Multiplier applied when Nova semantic matches occur on semantic synonyms
+    pub nova_semantic_synonym_match_multiplier: f32,
+    /// Multiplier applied when Nova semantic matches occur in definitions/fields/expressions
+    pub nova_semantic_definition_match_multiplier: f32,
+    /// Additional multiplier applied when matched Nova semantics are canonical
+    pub nova_semantic_canonical_match_multiplier: f32,
+    /// Bonus score added when matched Nova semantics are canonical
+    pub nova_semantic_canonical_match_bonus: f32,
     /// Multiplier applied when query tokens match nova synonyms
     pub nova_synonym_match_multiplier: f32,
     /// Multiplier applied for canonical models
@@ -386,6 +400,13 @@ impl Default for SearchConfig {
             governance_candidate_false_deboost_factor: 1.0,
             nova_measure_match_multiplier: 1.15,
             nova_metric_match_multiplier: 1.2,
+            analyst_nova_semantic_match_multiplier: 1.35,
+            non_analyst_nova_semantic_match_multiplier: 1.05,
+            nova_semantic_name_match_multiplier: 1.12,
+            nova_semantic_synonym_match_multiplier: 1.08,
+            nova_semantic_definition_match_multiplier: 1.03,
+            nova_semantic_canonical_match_multiplier: 1.25,
+            nova_semantic_canonical_match_bonus: 1.5,
             nova_synonym_match_multiplier: 1.2,
             nova_canonical_multiplier: 1.08,
             nova_canonical_match_multiplier: 1.35,
@@ -1040,6 +1061,55 @@ fn apply_nova_semantic_env(config: &mut SearchConfig) {
         config,
         nova_metric_match_multiplier,
         "DBT_NOVA_SEARCH_METRIC_MATCH_MULTIPLIER",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        analyst_nova_semantic_match_multiplier,
+        "DBT_NOVA_SEARCH_ANALYST_SEMANTIC_MATCH_MULTIPLIER",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        non_analyst_nova_semantic_match_multiplier,
+        "DBT_NOVA_SEARCH_NON_ANALYST_SEMANTIC_MATCH_MULTIPLIER",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        nova_semantic_name_match_multiplier,
+        "DBT_NOVA_SEARCH_SEMANTIC_NAME_MATCH_MULTIPLIER",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        nova_semantic_synonym_match_multiplier,
+        "DBT_NOVA_SEARCH_SEMANTIC_SYNONYM_MATCH_MULTIPLIER",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        nova_semantic_definition_match_multiplier,
+        "DBT_NOVA_SEARCH_SEMANTIC_DEFINITION_MATCH_MULTIPLIER",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        nova_semantic_canonical_match_multiplier,
+        "DBT_NOVA_SEARCH_SEMANTIC_CANONICAL_MATCH_MULTIPLIER",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        nova_semantic_canonical_match_bonus,
+        "DBT_NOVA_SEARCH_SEMANTIC_CANONICAL_MATCH_BONUS",
         parse_f32,
         |v: &f32| *v >= 0.0
     );

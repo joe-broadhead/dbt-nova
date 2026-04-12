@@ -20,7 +20,8 @@
         "measures": { "type": "array", "items": { "$ref": "#/$defs/NovaMeasure" } },
         "metric": { "$ref": "#/$defs/NovaMetric" },
         "metrics": { "type": "array", "items": { "$ref": "#/$defs/NovaMetric" } },
-        "governance": { "$ref": "#/$defs/NovaGovernance" }
+        "governance": { "$ref": "#/$defs/NovaGovernance" },
+        "search": { "$ref": "#/$defs/NovaSearchMeta" }
       }
     }
   },
@@ -43,7 +44,8 @@
         "expression": { "type": "string" },
         "description": { "type": "string" },
         "field": { "type": "string" },
-        "synonyms": { "type": "array", "items": { "type": "string" } }
+        "synonyms": { "type": "array", "items": { "type": "string" } },
+        "canonical": { "type": "boolean" }
       },
       "required": ["name", "type"]
     },
@@ -55,6 +57,7 @@
         "expression": { "type": "string" },
         "synonyms": { "type": "array", "items": { "type": "string" } },
         "template": { "type": "boolean" },
+        "canonical": { "type": "boolean" },
         "grain": { "$ref": "#/$defs/NovaGrain" },
         "recommended_filters": {
           "type": "array",
@@ -62,6 +65,20 @@
         }
       },
       "required": ["name"]
+    },
+    "NovaSearchMeta": {
+      "type": "object",
+      "properties": {
+        "candidates": { "$ref": "#/$defs/NovaSearchCandidates" }
+      }
+    },
+    "NovaSearchCandidates": {
+      "type": "object",
+      "properties": {
+        "analyst": { "type": "boolean" },
+        "engineer": { "type": "boolean" },
+        "governance": { "type": "boolean" }
+      }
     },
     "NovaRecommendedFilter": {
       "type": "object",

@@ -760,6 +760,9 @@ fn build_nova_summary(nova: &NovaMeta) -> Option<JsonValue> {
                 if !measure.synonyms.is_empty() {
                     measure_obj.insert("synonyms".to_string(), serde_json::json!(measure.synonyms));
                 }
+                if nova.canonical || measure.canonical {
+                    measure_obj.insert("canonical".to_string(), JsonValue::from(true));
+                }
                 JsonValue::Object(measure_obj)
             })
             .collect();
@@ -771,10 +774,10 @@ fn build_nova_summary(nova: &NovaMeta) -> Option<JsonValue> {
     if nova.metric.is_some() || !nova.metrics.is_empty() {
         let mut metrics: Vec<JsonValue> = Vec::new();
         if let Some(metric) = nova.metric.as_ref() {
-            metrics.push(build_metric_summary(metric));
+            metrics.push(build_metric_summary(metric, nova.canonical));
         }
         for metric in &nova.metrics {
-            metrics.push(build_metric_summary(metric));
+            metrics.push(build_metric_summary(metric, nova.canonical));
         }
         if !metrics.is_empty() {
             obj.insert("metrics".to_string(), JsonValue::Array(metrics));
@@ -810,7 +813,10 @@ fn build_nova_summary(nova: &NovaMeta) -> Option<JsonValue> {
     }
 }
 
-fn build_metric_summary(metric: &crate::manifest::entity::NovaMetric) -> JsonValue {
+fn build_metric_summary(
+    metric: &crate::manifest::entity::NovaMetric,
+    entity_canonical: bool,
+) -> JsonValue {
     let mut metric_obj = serde_json::Map::new();
     metric_obj.insert("name".to_string(), JsonValue::String(metric.name.clone()));
     if let Some(description) = metric.description.as_ref()
@@ -829,6 +835,9 @@ fn build_metric_summary(metric: &crate::manifest::entity::NovaMetric) -> JsonVal
     }
     if metric.template {
         metric_obj.insert("template".to_string(), JsonValue::from(true));
+    }
+    if entity_canonical || metric.canonical {
+        metric_obj.insert("canonical".to_string(), JsonValue::from(true));
     }
     if let Some(grain) = metric.grain.as_ref()
         && let Some(grain_obj) = build_grain_object(

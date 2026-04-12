@@ -316,6 +316,27 @@ impl TantivySearcher {
                                 }
                             }
                         }
+                        if let Some(description) = measure
+                            .get("description")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                        {
+                            doc.add_text(fields.nova_measures, description);
+                        }
+                        if let Some(expression) = measure
+                            .get("expression")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                        {
+                            doc.add_text(fields.nova_measures, expression);
+                        }
+                        if let Some(field) = measure
+                            .get("field")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                        {
+                            doc.add_text(fields.nova_measures, field);
+                        }
                     }
                 }
                 if let Some(metric) = nova.get("metric").and_then(|v| v.as_object()) {
@@ -332,6 +353,13 @@ impl TantivySearcher {
                         .filter(|s| !s.is_empty())
                     {
                         doc.add_text(fields.nova_metric, description);
+                    }
+                    if let Some(expression) = metric
+                        .get("expression")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                    {
+                        doc.add_text(fields.nova_metric, expression);
                     }
                     if let Some(syns) = metric.get("synonyms").and_then(|v| v.as_array()) {
                         for syn in syns {
@@ -359,6 +387,13 @@ impl TantivySearcher {
                             .filter(|s| !s.is_empty())
                         {
                             doc.add_text(fields.nova_metric, description);
+                        }
+                        if let Some(expression) = metric
+                            .get("expression")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                        {
+                            doc.add_text(fields.nova_metric, expression);
                         }
                         if let Some(syns) = metric.get("synonyms").and_then(|v| v.as_array()) {
                             for syn in syns {

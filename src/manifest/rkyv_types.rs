@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 /// Schema version for cache invalidation.
-pub const RKYV_SCHEMA_VERSION: u32 = 3;
+pub const RKYV_SCHEMA_VERSION: u32 = 4;
 
 /// All manifest indexes bundled for persistence.
 #[derive(rkyv_derive::Archive, rkyv_derive::Serialize, rkyv_derive::Deserialize)]

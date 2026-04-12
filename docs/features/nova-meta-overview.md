@@ -30,14 +30,12 @@ models:
           dimensions: ["country_code", "platform_name"]
         measures:
           - name: active_users
+            canonical: true
             type: count_distinct
             expression: "count(distinct user_id)"
             description: "Distinct active users."
             field: user_id
             synonyms: ["dau", "active users"]
-        search:
-          candidates:
-            analyst: false
         governance:
           sensitivity: medium
           pii: possible
@@ -84,14 +82,14 @@ columns:
 | `search.candidates` | object | Persona-specific ranking hints (`analyst`, `engineer`, `governance`) |
 
 `measures[]` fields:
-- `name` (required), `type` (required), `expression`, `description`, `field`, `synonyms`
+- `name` (required), `type` (required), `expression`, `description`, `field`, `synonyms`, `canonical`
 
 ### Metric fields (metric models)
 
 Use **either** `metric` (single KPI) or `metrics` (array).
 
 `metric`/`metrics[]` fields:
-- `name` (required), `description`, `expression`, `synonyms`, `template`
+- `name` (required), `description`, `expression`, `synonyms`, `template`, `canonical`
 - `grain`: `time_field`, `dimensions`, and optional `primary_key`
 - `recommended_filters`: `field`, `operator`, `values`, `label`
 
@@ -111,8 +109,8 @@ If you use `pii` as a list, prefer explicit classes (`["email", "phone"]`).
 ## How Nova Uses Meta
 
 - **Search ranking**: boosts matches on `synonyms`, `domains`, `use_cases`,
-  `measures`, and `metric(s)` fields, and can de-boost persona-specific helper models via
-  `search.candidates`.
+  `measures`, and `metric(s)` fields, can de-boost persona-specific helper models via
+  `search.candidates`, and favors canonical matched measures/metrics during analyst search.
 - **Metadata scoring**: evaluates coverage and quality of key Nova fields.
 - **Governance filters**: enables queries like “show restricted” or “pii”.
 - **Agent workflows**: persona skills rely on Nova meta for reliable outputs.

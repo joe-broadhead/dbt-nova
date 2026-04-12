@@ -4,11 +4,12 @@ Agent Skills are a lightweight, open format for packaging task-specific workflow
 
 ## Skills included in this repo
 
-We ship three persona skills under `.github/skills/`:
+We ship four built-in skills under `.github/skills/`:
 
 - `analyst` — business analysis and reporting workflows
 - `engineer` — dbt model development and quality gates
 - `governance` — metadata audits and A-grade enforcement
+- `nova-meta-authoring` — adding and reviewing high-signal `meta.nova` in dbt projects
 
 Each skill follows the Agent Skills spec and includes references and templates for deeper guidance.
 The analyst skill includes a deterministic metric-resolution workflow:
@@ -17,6 +18,8 @@ The engineer skill mirrors this deterministic pattern:
 discovery -> impact analysis -> input validation -> quality gates -> readiness scoring -> ship checklist.
 The governance skill now mirrors this deterministic pattern:
 preflight -> scope freeze -> paged scoring -> blocker classification -> remediation -> recheck.
+The Nova meta authoring skill adds a metadata-design workflow:
+classify entity -> choose the right Nova surface -> choose canonical definitions -> validate search behavior.
 
 ## Install in common tools
 
@@ -47,6 +50,7 @@ mkdir -p .codex/skills
 cp -R .github/skills/analyst .codex/skills/analyst
 cp -R .github/skills/engineer .codex/skills/engineer
 cp -R .github/skills/governance .codex/skills/governance
+cp -R .github/skills/nova-meta-authoring .codex/skills/nova-meta-authoring
 ```
 
 Restart Codex after installing new skills. You can invoke a skill explicitly with `$skill-name` or let Codex select it automatically.
@@ -69,6 +73,7 @@ mkdir -p ~/.claude/skills
 cp -R /path/to/repo/.github/skills/analyst ~/.claude/skills/analyst
 cp -R /path/to/repo/.github/skills/engineer ~/.claude/skills/engineer
 cp -R /path/to/repo/.github/skills/governance ~/.claude/skills/governance
+cp -R /path/to/repo/.github/skills/nova-meta-authoring ~/.claude/skills/nova-meta-authoring
 ```
 
 ### Gemini CLI
@@ -82,6 +87,7 @@ mkdir -p .gemini/skills
 cp -R .github/skills/analyst .gemini/skills/analyst
 cp -R .github/skills/engineer .gemini/skills/engineer
 cp -R .github/skills/governance .gemini/skills/governance
+cp -R .github/skills/nova-meta-authoring .gemini/skills/nova-meta-authoring
 ```
 
 Then reload skills:
@@ -103,6 +109,7 @@ Use the reference tooling from the Agent Skills project to validate your skills:
 
 ```bash
 skills-ref validate .github/skills/analyst
+skills-ref validate .github/skills/nova-meta-authoring
 ```
 
 ## Further reading

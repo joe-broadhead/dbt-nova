@@ -31,6 +31,7 @@ models:
           dimensions: ["country_code", "platform_name"]
         measures:
           - name: active_users
+            canonical: true
             expression: "count(distinct user_id)"
             description: "Distinct active users."
             type: count_distinct
@@ -71,7 +72,8 @@ to additional domains.
   `web_analytics`.
 - `grain`: both `primary_key` and `time_field` are populated.
 - `measures`: each measure uses `name`, `expression`, `description`, `type`, `field`,
-  and `synonyms`.
+  `synonyms`, and can optionally set `canonical: true` when the same business
+  term exists on multiple models.
 - `governance`: `sensitivity` is `low` or `medium`; `pii` is `none` or `possible`;
   `compliance` includes `gdpr`.
 
@@ -91,6 +93,7 @@ meta:
       dimensions: ["country_code", "platform_name"]
     measures:
       - name: active_users
+        canonical: true
         description: "Distinct active users."
         expression: "count(distinct user_id)"
         type: count_distinct
@@ -120,6 +123,7 @@ Use this minimal shape:
 ```yaml
 measures:
   - name: sessions
+    canonical: true
     expression: "count(distinct new_session_id)"
     description: "Total sessions."
     type: count_distinct
@@ -131,6 +135,9 @@ measures:
 
 A **measure** is a reusable aggregation defined at the model level (e.g., `count(distinct new_session_id)`).
 Measures are **model‑bound**: they belong to the model where the underlying data lives.
+
+Use `canonical: true` on a measure when the same business term exists on multiple
+models but one definition should surface first in analyst search.
 
 ### How to Detect Measures in a Model
 
