@@ -46,6 +46,7 @@ pub async fn dispatch(command: args::Command) -> DispatchResult {
             args::ManifestCommand::Reload(reload_args) => {
                 manifest::run_reload_command(&reload_args).await
             }
+            args::ManifestCommand::Warm(warm_args) => manifest::run_warm_command(&warm_args).await,
         },
         args::Command::Tool(tool_args) => match tool_args.command {
             args::ToolCommand::Call(call_args) => tool::run_call_command(&call_args).await,

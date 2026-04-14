@@ -11,18 +11,27 @@ pub(crate) async fn build_manifest_health_payload(
     searcher: &ManifestSearchHandle,
 ) -> ManifestHealthPayload {
     let status = searcher.status().await;
-    let ready_for_traffic = matches!(
-        status,
-        ManifestStatus::Ready { .. } | ManifestStatus::Refreshing { .. }
-    );
+    let active_searcher = match &status {
+        ManifestStatus::Ready { .. } | ManifestStatus::Refreshing { .. } => {
+            searcher.get().await.ok()
+        }
+        ManifestStatus::Loading { .. } | ManifestStatus::Failed { .. } => None,
+    };
+    let ready_for_traffic = active_searcher
+        .as_ref()
+        .is_some_and(|active| active.ready_for_traffic());
     let mut payload = match &status {
         ManifestStatus::Loading { elapsed_ms } => serde_json::json!({
             "status": "loading",
             "elapsed_ms": elapsed_ms,
+            "ready_for_traffic": false,
         }),
         ManifestStatus::Ready { entity_count } => serde_json::json!({
-            "status": "ready",
+            "status": active_searcher
+                .as_ref()
+                .map_or("degraded", |active| active.health_status_label()),
             "entity_count": entity_count,
+            "ready_for_traffic": ready_for_traffic,
         }),
         ManifestStatus::Refreshing {
             elapsed_ms,
@@ -31,14 +40,16 @@ pub(crate) async fn build_manifest_health_payload(
             "status": "refreshing",
             "elapsed_ms": elapsed_ms,
             "entity_count": entity_count,
+            "ready_for_traffic": ready_for_traffic,
         }),
         ManifestStatus::Failed { error } => serde_json::json!({
             "status": "failed",
             "error": error,
+            "ready_for_traffic": false,
         }),
     };
 
-    if ready_for_traffic && let Ok(active_searcher) = searcher.get().await {
+    if let Some(active_searcher) = active_searcher {
         merge_object_fields(&mut payload, &active_searcher.health_snapshot().await);
     }
 

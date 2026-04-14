@@ -909,6 +909,45 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn health_reports_degraded_when_enabled_semantic_components_are_not_query_ready() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path());
+        config.search.enable_vector_search = true;
+        config.search.enable_sparse_search = true;
+        config.search.enable_reranker = true;
+        config.search.embedding_cache_dir =
+            temp_dir.path().join("cache").to_string_lossy().to_string();
+
+        let handle = ManifestSearchHandle::spawn(config);
+        handle
+            .wait_ready()
+            .await
+            .expect("fixture manifest should still load");
+        let server = DbtNovaServer::new(handle);
+
+        let payload: serde_json::Value =
+            serde_json::from_str(&server.health().await).expect("health response JSON");
+        assert_eq!(payload["success"], serde_json::json!(true));
+        assert_eq!(payload["data"]["status"], serde_json::json!("degraded"));
+        assert_eq!(
+            payload["data"]["ready_for_traffic"],
+            serde_json::json!(false)
+        );
+        assert_eq!(
+            payload["data"]["search"]["vector"]["ready"],
+            serde_json::json!(false)
+        );
+        assert_eq!(
+            payload["data"]["search"]["sparse"]["ready"],
+            serde_json::json!(false)
+        );
+        assert_eq!(
+            payload["data"]["search"]["reranker"]["ready"],
+            serde_json::json!(false)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn search_and_list_tags_record_metrics() {
         let temp_dir = TempDir::new().expect("temp dir");
         let server = spawn_ready_server(temp_dir.path()).await;

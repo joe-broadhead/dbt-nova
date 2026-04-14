@@ -20,7 +20,7 @@ pub use core::{ArtifactFetchPolicy, DbtNovaConfig, GovernanceGateConfig, ServerT
 pub use metadata_score::{
     MetadataCategoryWeights, MetadataScoreConfig, MetadataScoreWeightProfiles,
 };
-pub use search::{PersonaProfile, PersonaWeights, SearchConfig};
+pub use search::{PersonaProfile, PersonaWeights, SearchColdStartPolicy, SearchConfig};
 
 /// Read a string environment variable.
 pub(crate) fn env_string(name: &str) -> Option<String> {

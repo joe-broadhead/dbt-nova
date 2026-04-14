@@ -41,8 +41,9 @@ pub async fn run_check_command(args: &HealthCheckArgs) -> DispatchResult {
 
 pub(crate) async fn build_cli_health_payload(searcher: &ManifestSearch) -> JsonValue {
     let mut payload = serde_json::json!({
-        "status": "ready",
+        "status": searcher.health_status_label(),
         "entity_count": searcher.entity_count(),
+        "ready_for_traffic": searcher.ready_for_traffic(),
     });
     let details = searcher.health_snapshot().await;
     if let (Some(base), Some(extra)) = (payload.as_object_mut(), details.as_object()) {
@@ -127,6 +128,12 @@ pub fn build_health_check_config(args: &HealthCheckArgs) -> Result<DbtNovaConfig
 fn print_human_summary(payload: &JsonValue) {
     println!("health check");
     println!("  status: {}", string_field(payload, "status", "unknown"));
+    if let Some(ready_for_traffic) = payload
+        .get("ready_for_traffic")
+        .and_then(JsonValue::as_bool)
+    {
+        println!("  ready_for_traffic: {ready_for_traffic}");
+    }
     if let Some(entity_count) = payload.get("entity_count").and_then(JsonValue::as_u64) {
         println!("  entity_count: {entity_count}");
     }
@@ -307,5 +314,40 @@ mod tests {
             "Vector search initialization failed"
         );
         assert!(payload["search"]["vector"]["ready"].is_boolean());
+    }
+
+    #[tokio::test]
+    async fn build_cli_health_payload_reports_degraded_when_semantic_components_are_unready() {
+        let args = HealthCheckArgs {
+            manifest_path: Some(fixture_manifest_path_string()),
+            manifest_uri: None,
+            json: false,
+        };
+        let mut config = build_health_check_config(&args).expect("config");
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        config.storage_dir = temp_dir
+            .path()
+            .join("storage")
+            .to_string_lossy()
+            .to_string();
+        config.search.embedding_cache_dir =
+            temp_dir.path().join("cache").to_string_lossy().to_string();
+        let loaded = execute_manifest_load(config).await.expect("load");
+
+        let payload = build_cli_health_payload(&loaded.search).await;
+        assert_eq!(payload["status"], serde_json::json!("degraded"));
+        assert_eq!(payload["ready_for_traffic"], serde_json::json!(false));
+        assert_eq!(
+            payload["search"]["vector"]["ready"],
+            serde_json::json!(false)
+        );
+        assert_eq!(
+            payload["search"]["sparse"]["ready"],
+            serde_json::json!(false)
+        );
+        assert_eq!(
+            payload["search"]["reranker"]["ready"],
+            serde_json::json!(false)
+        );
     }
 }

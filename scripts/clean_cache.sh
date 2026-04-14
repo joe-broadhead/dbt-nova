@@ -16,7 +16,7 @@ Targets:
 Path options:
   --storage-root <path>         Base storage root (default: ${DBT_NOVA_STORAGE_DIR:-.dbt-nova})
   --manifest-cache-dir <path>   Manifest cache path (default: <storage_root>/manifests)
-  --embeddings-cache-dir <path> Embeddings cache path (default: <storage_root>/.fastembed_cache)
+  --embeddings-cache-dir <path> Embeddings cache path (default: ${DBT_NOVA_EMBEDDINGS_CACHE_DIR:-$HOME/.dbt-nova/.fastembed_cache})
 
 Safety/options:
   --dry-run       Show what would be removed without deleting
@@ -110,7 +110,7 @@ if [[ -z "$manifest_cache_dir" ]]; then
   manifest_cache_dir="${storage_root}/manifests"
 fi
 if [[ -z "$embeddings_cache_dir" ]]; then
-  embeddings_cache_dir="${storage_root}/.fastembed_cache"
+  embeddings_cache_dir="${DBT_NOVA_EMBEDDINGS_CACHE_DIR:-${HOME:-.}/.dbt-nova/.fastembed_cache}"
 fi
 instances_dir="${storage_root}/instances"
 

@@ -633,9 +633,6 @@ fn build_search_indexes(
             None
         };
 
-        let vector_handle = scope.spawn(|| VectorSearcher::build(entities, search_config));
-        let sparse_handle = scope.spawn(|| SparseSearcher::build(entities, search_config));
-
         let tantivy_result = if let Some(opened) = opened.take() {
             Ok(opened)
         } else {
@@ -653,21 +650,8 @@ fn build_search_indexes(
             }
         };
 
-        let vector_result = match vector_handle.join() {
-            Ok(result) => result,
-            Err(err) => Err(DbtNovaError::ServerError(format!(
-                "Vector index build thread panicked: {}",
-                panic_message(&err)
-            ))),
-        };
-
-        let sparse_result = match sparse_handle.join() {
-            Ok(result) => result,
-            Err(err) => Err(DbtNovaError::ServerError(format!(
-                "Sparse index build thread panicked: {}",
-                panic_message(&err)
-            ))),
-        };
+        let vector_result = VectorSearcher::build(entities, search_config);
+        let sparse_result = SparseSearcher::build(entities, search_config);
 
         let (tantivy, vector_search, sparse_search) =
             combine_index_build_results(tantivy_result, vector_result, sparse_result)?;

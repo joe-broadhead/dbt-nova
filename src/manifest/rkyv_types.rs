@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 pub const RKYV_SCHEMA_VERSION: u32 = 4;
 
 /// All manifest indexes bundled for persistence.
-#[derive(rkyv_derive::Archive, rkyv_derive::Serialize, rkyv_derive::Deserialize)]
+#[derive(Clone, Debug, rkyv_derive::Archive, rkyv_derive::Serialize, rkyv_derive::Deserialize)]
 #[rkyv(bytecheck())]
 pub struct PersistedIndexes {
     pub schema_version: u32,
@@ -37,7 +37,7 @@ pub struct PersistedIndexes {
 }
 
 /// Cached embeddings with invalidation metadata.
-#[derive(rkyv_derive::Archive, rkyv_derive::Serialize, rkyv_derive::Deserialize)]
+#[derive(Clone, Debug, rkyv_derive::Archive, rkyv_derive::Serialize, rkyv_derive::Deserialize)]
 #[rkyv(bytecheck())]
 pub struct CachedEmbeddings {
     pub schema_version: u32,
@@ -57,7 +57,7 @@ pub struct CachedEmbeddings {
 }
 
 /// Cached sparse embeddings with invalidation metadata.
-#[derive(rkyv_derive::Archive, rkyv_derive::Serialize, rkyv_derive::Deserialize)]
+#[derive(Clone, Debug, rkyv_derive::Archive, rkyv_derive::Serialize, rkyv_derive::Deserialize)]
 #[rkyv(bytecheck())]
 pub struct CachedSparseEmbeddings {
     pub schema_version: u32,

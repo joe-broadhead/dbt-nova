@@ -12,6 +12,7 @@ dbt-nova
 ├── server start [--transport] [--http-host] [--http-port] [--http-path] [--http-stateful-mode]
 ├── manifest load [--manifest-path|--manifest-uri] [--storage-instance-id] [--cleanup-storage-on-start] [--read-only] [--json]
 ├── manifest reload [--manifest-path|--manifest-uri] [--refresh-secs] [--storage-instance-id] [--cleanup-storage-on-start] [--read-only] [--json]
+├── manifest warm [--manifest-path|--manifest-uri] [--storage-instance-id] [--vector] [--sparse] [--reranker] [--force] [--json]
 ├── tool call <tool_name> [--params-json|--params-file|--params-stdin] [--manifest-path|--manifest-uri] [--storage-instance-id] [--cleanup-storage-on-start] [--read-only] [--json]
 ├── audit metadata-score [--selection-mode] [--changed-files-json|--changed-files-file] [--entity-ids-json|--entity-ids-file] [--resource-types-json] [--personas-json] [--thresholds-json|--thresholds-file] [--manifest-path|--manifest-uri] [--storage-instance-id] [--report-json-path] [--report-md-path] [--fail-on-no-targets] [--json]
 ├── config show [--defaults] [--json]
@@ -66,6 +67,15 @@ dbt-nova manifest load \
 dbt-nova manifest reload \
   --manifest-path /path/to/target/manifest.json \
   --refresh-secs 300 \
+  --json
+```
+
+### Warm manifest-scoped semantic caches and reranker files
+
+```bash
+dbt-nova manifest warm \
+  --manifest-path /path/to/target/manifest.json \
+  --reranker \
   --json
 ```
 
@@ -147,7 +157,7 @@ When `--json` is passed, CLI commands return a standard envelope:
 {
   "command": "health check",
   "status": "success",
-  "data": { "status": "ready" },
+  "data": { "status": "ready", "ready_for_traffic": true },
   "meta": {
     "elapsed_ms": 42,
     "timestamp_ms": 1772304167827,
@@ -156,6 +166,9 @@ When `--json` is passed, CLI commands return a standard envelope:
   "error": null
 }
 ```
+
+Top-level health `status` can be `degraded` when the manifest is loaded but one or more enabled
+semantic components are not yet query-ready. Use `ready_for_traffic` for automation gates.
 
 On errors (`status: "error"`), `error` contains the standard Nova error payload.
 

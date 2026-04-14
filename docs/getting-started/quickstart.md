@@ -26,7 +26,7 @@ curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
 
 # Optional: pre-warm models during install (instead of first semantic query)
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/models" \
+  DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/.fastembed_cache" \
   DBT_NOVA_WARMUP_REQUIRED_MODELS=3 \
   bash -s -- --slim --warm-models --non-interactive
 
@@ -75,7 +75,7 @@ Set your manifest path:
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 export DBT_MANIFEST_PATH=/path/to/your/dbt/project/target/manifest.json
-export DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/models"
+export DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/.fastembed_cache"
 ```
 
 Use the same `DBT_NOVA_EMBEDDINGS_CACHE_DIR` value in your MCP client config.
@@ -140,7 +140,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
       "command": "dbt-nova",
       "env": {
         "DBT_MANIFEST_PATH": "/path/to/manifest.json",
-        "DBT_NOVA_EMBEDDINGS_CACHE_DIR": "/Users/<you>/.dbt-nova/models"
+        "DBT_NOVA_EMBEDDINGS_CACHE_DIR": "/Users/<you>/.dbt-nova/.fastembed_cache"
       }
     }
   }
@@ -158,7 +158,7 @@ Add to `.cursor/mcp.json` in your project:
       "command": "dbt-nova",
       "env": {
         "DBT_MANIFEST_PATH": "/path/to/manifest.json",
-        "DBT_NOVA_EMBEDDINGS_CACHE_DIR": "/Users/<you>/.dbt-nova/models"
+        "DBT_NOVA_EMBEDDINGS_CACHE_DIR": "/Users/<you>/.dbt-nova/.fastembed_cache"
       }
     }
   }

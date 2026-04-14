@@ -84,13 +84,13 @@ Remote manifest notes:
 - `DBT_NOVA_STORAGE_BUILD_LOCK_WAIT_SECS` – max seconds to wait for another process to finish building (default: `300`)
 - `DBT_NOVA_STORAGE_READ_ONLY` – do not build indexes or materialize prebuilt artifacts locally (`true`|`false`, default: `false`; incompatible with cold-start bootstrap/artifact hydration)
 - `DBT_NOVA_ENTITY_CACHE_SIZE` – max entities cached in memory (`0` disables, default: `1000`)
-- `DBT_NOVA_EMBEDDINGS_CACHE_DIR` – embeddings cache directory (default: `models/` next to executable if present, else `<storage_root>/.fastembed_cache`)
+- `DBT_NOVA_EMBEDDINGS_CACHE_DIR` – embeddings cache directory (default: `models/` next to executable if present, else `~/.dbt-nova/.fastembed_cache`)
 
 Embeddings cache resolution order when `DBT_NOVA_EMBEDDINGS_CACHE_DIR` is unset:
 
 1. `models/` next to the active executable
 2. `~/.local/bin/models` (if present)
-3. `<storage_root>/.fastembed_cache`
+3. `~/.dbt-nova/.fastembed_cache`
 
 Notes:
 - The entity cache backend is currently fixed to `moka` (no env override).

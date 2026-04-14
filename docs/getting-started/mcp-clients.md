@@ -17,12 +17,12 @@ remote artifacts vs model cache strategies), see
 [Modes & Combinations](modes-and-combinations.md).
 
 For slim installs, set a stable `DBT_NOVA_EMBEDDINGS_CACHE_DIR` (recommended:
-`~/.dbt-nova/models`) so model downloads are reused across sessions/clients.
+`~/.dbt-nova/.fastembed_cache`) so model downloads are reused across sessions/clients.
 If you installed with:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/models" \
+  DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/.fastembed_cache" \
   DBT_NOVA_WARMUP_REQUIRED_MODELS=3 \
   bash -s -- --slim --warm-models --non-interactive
 ```
@@ -79,7 +79,7 @@ startup_timeout_sec = 60
 DBT_NOVA_STORAGE_DIR = "/path/to/.dbt-nova"
 DBT_NOVA_BOOTSTRAP_URI = "s3://my-bucket/nova-assets/prod/analytics-prod-latest-bootstrap.json"
 DBT_NOVA_ARTIFACT_FETCH_POLICY = "if_missing"
-DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/models"
+DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/.fastembed_cache"
 ```
 
 Strict read-only variant after local materialization:
@@ -94,7 +94,7 @@ DBT_NOVA_STORAGE_DIR = "/path/to/.dbt-nova"
 DBT_NOVA_STORAGE_READ_ONLY = "true"
 DBT_NOVA_BOOTSTRAP_URI = "s3://my-bucket/nova-assets/prod/analytics-prod-latest-bootstrap.json"
 DBT_NOVA_ARTIFACT_FETCH_POLICY = "never"
-DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/models"
+DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/.fastembed_cache"
 ```
 
 For producer/consumer workflow details, see:
@@ -109,7 +109,7 @@ For producer/consumer workflow details, see:
       "command": "/path/to/dbt-nova",
       "env": {
         "DBT_MANIFEST_PATH": "/path/to/manifest.json",
-        "DBT_NOVA_EMBEDDINGS_CACHE_DIR": "/Users/<you>/.dbt-nova/models",
+        "DBT_NOVA_EMBEDDINGS_CACHE_DIR": "/Users/<you>/.dbt-nova/.fastembed_cache",
         "DATABRICKS_HOST": "https://<workspace>.cloud.databricks.com",
         "DATABRICKS_HTTP_PATH": "/sql/1.0/warehouses/<warehouse_id>",
         "DATABRICKS_ACCESS_TOKEN": "<token>"
@@ -131,7 +131,7 @@ DBT_MANIFEST_PATH = "/path/to/manifest.json"
 DATABRICKS_HOST = "https://<workspace>.cloud.databricks.com"
 DATABRICKS_HTTP_PATH = "/sql/1.0/warehouses/<warehouse_id>"
 DATABRICKS_ACCESS_TOKEN = "<token>"
-DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/models"
+DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/.fastembed_cache"
 ```
 
 ## Gemini CLI (config JSON)
@@ -152,7 +152,7 @@ hints from tool definitions.
       "command": "/path/to/dbt-nova",
       "env": {
         "DBT_MANIFEST_PATH": "/path/to/manifest.json",
-        "DBT_NOVA_EMBEDDINGS_CACHE_DIR": "/Users/<you>/.dbt-nova/models",
+        "DBT_NOVA_EMBEDDINGS_CACHE_DIR": "/Users/<you>/.dbt-nova/.fastembed_cache",
         "DBT_NOVA_DISABLE_TOOL_SCHEMAS": "1",
         "DATABRICKS_HOST": "https://<workspace>.cloud.databricks.com",
         "DATABRICKS_HTTP_PATH": "/sql/1.0/warehouses/<warehouse_id>",
@@ -249,5 +249,5 @@ DBT_NOVA_SQL_PROVIDER = "duckdb"
 DBT_NOVA_DUCKDB_PATH = "/absolute/path/to/analytics.duckdb"
 DBT_NOVA_DUCKDB_FILE_SEARCH_PATH = "/absolute/path/to/external/files"
 DBT_NOVA_DUCKDB_POOL_MAX_SIZE = "10"
-DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/models"
+DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/.fastembed_cache"
 ```

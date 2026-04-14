@@ -3,10 +3,10 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 bin_path="${DBT_NOVA_BIN:-$repo_root/target/release/dbt-nova}"
-cache_dir="${DBT_NOVA_EMBEDDINGS_CACHE_DIR:-$HOME/.dbt-nova-models}"
+cache_dir="${DBT_NOVA_EMBEDDINGS_CACHE_DIR:-$HOME/.dbt-nova/.fastembed_cache}"
 mode="${1:-partial}"
 default_manifest="$repo_root/tests/fixtures/nova_manifest.json"
-manifest_path="${DBT_NOVA_WARMUP_MANIFEST_PATH:-${DBT_MANIFEST_PATH:-$default_manifest}}"
+manifest_path="${DBT_NOVA_WARMUP_MANIFEST_PATH:-${DBT_MANIFEST_PATH:-}}"
 timeout_secs="${DBT_NOVA_WARMUP_TIMEOUT_SECS:-480}"
 poll_secs="${DBT_NOVA_WARMUP_POLL_SECS:-2}"
 required_models="${DBT_NOVA_WARMUP_REQUIRED_MODELS:-3}"
@@ -21,7 +21,7 @@ checksum_file="${DBT_NOVA_WARMUP_CHECKSUM_FILE:-}"
 pid=""
 
 usage() {
-  cat <<EOF
+  cat <<'EOF'
 Usage: scripts/warm_models.sh [partial|full]
 
 Pre-download vector/sparse/reranker model files into a cache directory.
@@ -29,12 +29,12 @@ Default mode is 'partial'.
 
 Modes:
   partial  Only ensure model files are present in cache (default)
-  full     Ensure model files, then run dbt-nova to generate embedding caches
+  full     Ensure model files, then run `dbt-nova manifest warm --vector --sparse --reranker` to generate semantic caches
 
 Optional env overrides:
   DBT_NOVA_BIN                         Path to dbt-nova binary
-  DBT_NOVA_EMBEDDINGS_CACHE_DIR        Cache directory (default: \$HOME/.dbt-nova-models)
-  DBT_NOVA_WARMUP_MANIFEST_PATH        Manifest file for full mode
+  DBT_NOVA_EMBEDDINGS_CACHE_DIR        Cache directory (default: \$HOME/.dbt-nova/.fastembed_cache)
+  DBT_NOVA_WARMUP_MANIFEST_PATH        Manifest file for full mode (required)
   DBT_NOVA_WARMUP_TIMEOUT_SECS         Timeout in seconds (default: 480)
   DBT_NOVA_WARMUP_POLL_SECS            Poll interval in seconds (default: 2)
   DBT_NOVA_WARMUP_REQUIRED_MODELS      Required distinct model snapshot count (default: 3)
@@ -55,9 +55,9 @@ Optional env overrides:
 
 Example:
   # Model files only (default)
-  DBT_NOVA_EMBEDDINGS_CACHE_DIR="\$HOME/.dbt-nova-models" scripts/warm_models.sh
+  DBT_NOVA_EMBEDDINGS_CACHE_DIR="\$HOME/.dbt-nova/.fastembed_cache" scripts/warm_models.sh
 
-  # Model files + embedding caches
+  # Model files + manifest-scoped semantic caches
   DBT_NOVA_WARMUP_MANIFEST_PATH=/path/to/manifest.json scripts/warm_models.sh full
 EOF
 }
@@ -144,14 +144,32 @@ normalize_onnx_layout() {
   fi
 }
 
-count_embedding_cache_files() {
+extract_warm_cache_paths() {
+  local log_file="$1"
+  grep -Eo '"(vector|sparse)"[[:space:]]*:[[:space:]]*"[^"]+"' "$log_file" 2>/dev/null \
+    | sed -E 's/^"(vector|sparse)"[[:space:]]*:[[:space:]]*"([^"]+)"$/\2/' \
+    | sort -u
+}
+
+verify_warm_cache_outputs() {
+  local log_file="$1"
   local found=0
-  if [[ -f "$cache_dir/embeddings.rkyv.zst" || -f "$cache_dir/embeddings.rkyv" ]]; then
+  local cache_path
+
+  while IFS= read -r cache_path; do
+    [[ -z "$cache_path" ]] && continue
+    if [[ ! -f "$cache_path" ]]; then
+      echo "Warmup failed (full): expected cache file is missing: $cache_path" >&2
+      return 1
+    fi
     found=$((found + 1))
+  done < <(extract_warm_cache_paths "$log_file")
+
+  if (( found < required_cache_files )); then
+    echo "Warmup failed (full): expected >= $required_cache_files manifest-scoped semantic cache files, found $found" >&2
+    return 1
   fi
-  if [[ -f "$cache_dir/sparse_embeddings.rkyv.zst" || -f "$cache_dir/sparse_embeddings.rkyv" ]]; then
-    found=$((found + 1))
-  fi
+
   echo "$found"
 }
 
@@ -485,6 +503,11 @@ if [[ ! -x "$bin_path" ]]; then
   exit 1
 fi
 
+if [[ -z "$manifest_path" ]]; then
+  echo "Full mode requires DBT_NOVA_WARMUP_MANIFEST_PATH (or DBT_MANIFEST_PATH)." >&2
+  exit 1
+fi
+
 if [[ ! -f "$manifest_path" ]]; then
   echo "Manifest file not found: $manifest_path" >&2
   echo "Set DBT_NOVA_WARMUP_MANIFEST_PATH for full mode." >&2
@@ -496,39 +519,28 @@ echo "  binary: $bin_path"
 echo "  manifest: $manifest_path"
 echo "  logs:   $log_path"
 
-DBT_MANIFEST_PATH="$manifest_path" \
-DBT_NOVA_MANIFEST_REFRESH_SECS=0 \
-DBT_NOVA_EMBEDDINGS_CACHE_DIR="$cache_dir" \
-DBT_NOVA_SEARCH_ENABLE_VECTOR=true \
-DBT_NOVA_SEARCH_ENABLE_SPARSE=true \
-DBT_NOVA_SEARCH_ENABLE_RERANKER=true \
-DBT_NOVA_LOG="${DBT_NOVA_LOG:-info}" \
-"$bin_path" >"$log_path" 2>&1 &
-pid="$!"
-
-deadline=$((SECONDS + timeout_secs))
-downloaded="$(count_model_files)"
-cache_files="$(count_embedding_cache_files)"
-
-while (( SECONDS < deadline )); do
-  downloaded="$(count_model_files)"
-  cache_files="$(count_embedding_cache_files)"
-  if (( downloaded >= required_models && cache_files >= required_cache_files )); then
-    break
-  fi
-  if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
-    break
-  fi
-  sleep "$poll_secs"
-done
-
-if (( cache_files < required_cache_files )); then
-  echo "Warmup failed (full): expected >= $required_cache_files embedding cache files, found $cache_files" >&2
+if ! DBT_MANIFEST_PATH="$manifest_path" \
+  DBT_NOVA_MANIFEST_REFRESH_SECS=0 \
+  DBT_NOVA_EMBEDDINGS_CACHE_DIR="$cache_dir" \
+  DBT_NOVA_SEARCH_ENABLE_VECTOR=true \
+  DBT_NOVA_SEARCH_ENABLE_SPARSE=true \
+  DBT_NOVA_SEARCH_ENABLE_RERANKER=true \
+  DBT_NOVA_SEARCH_COLD_START_POLICY=build \
+  DBT_NOVA_LOG="${DBT_NOVA_LOG:-info}" \
+  "$bin_path" manifest warm --manifest-path "$manifest_path" --vector --sparse --reranker --json >"$log_path" 2>&1; then
+  echo "Warmup failed (full)." >&2
   echo "Last log lines:" >&2
   tail -n 80 "$log_path" >&2 || true
   exit 1
 fi
 
+downloaded="$(count_model_files)"
+cache_files="$(verify_warm_cache_outputs "$log_path")" || {
+  echo "Last log lines:" >&2
+  tail -n 80 "$log_path" >&2 || true
+  exit 1
+}
+
 echo "Warmup complete (full). Found $downloaded model file(s)."
-echo "Embedding cache files:"
-ls -lh "$cache_dir"/embeddings.rkyv* "$cache_dir"/sparse_embeddings.rkyv* 2>/dev/null || true
+echo "Manifest-scoped semantic cache files ($cache_files):"
+extract_warm_cache_paths "$log_path"

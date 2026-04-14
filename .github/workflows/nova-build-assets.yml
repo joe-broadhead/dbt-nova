@@ -1075,6 +1075,12 @@ jobs:
           dbt-nova manifest load "${manifest_args[@]}" --storage-instance-id "${DBT_NOVA_STORAGE_INSTANCE_ID}" --json | tee out/manifest-load.json
           jq -e '.status == "success"' out/manifest-load.json >/dev/null
 
+          if [[ "${INPUT_PUBLISH_MODELS_ARCHIVE}" == "true" ]]; then
+            dbt-nova manifest warm "${manifest_args[@]}" --storage-instance-id "${DBT_NOVA_STORAGE_INSTANCE_ID}" --reranker --json | tee out/manifest-warm.json
+            jq -e '.status == "success"' out/manifest-warm.json >/dev/null
+            jq -e '.data.persisted.vector == true and .data.persisted.sparse == true and .data.ready.vector == true and .data.ready.sparse == true and .data.ready.reranker == true' out/manifest-warm.json >/dev/null
+          fi
+
           manifest_hash="$(jq -r '.data.manifest_hash // empty' out/manifest-load.json)"
           manifest_version="$(jq -r '.data.manifest_version // empty' out/manifest-load.json)"
           entity_count="$(jq -r '.data.entity_count // 0' out/manifest-load.json)"
@@ -1086,7 +1092,7 @@ jobs:
 
           dbt-nova health check "${manifest_args[@]}" --json | tee out/health.json
           jq -e '.status == "success"' out/health.json >/dev/null
-          jq -e '.data.status == "ready" or .data.status == "refreshing"' out/health.json >/dev/null
+          jq -e '.data.status == "ready" and .data.ready_for_traffic == true' out/health.json >/dev/null
 
           dbt-nova tool call show_metadata --params-json '{}' "${manifest_args[@]}" --storage-instance-id "${DBT_NOVA_STORAGE_INSTANCE_ID}" --json | tee out/show-metadata.json
           jq -e '.status == "success"' out/show-metadata.json >/dev/null

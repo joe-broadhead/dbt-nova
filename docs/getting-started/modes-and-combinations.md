@@ -68,7 +68,7 @@ If `DBT_NOVA_EMBEDDINGS_CACHE_DIR` is unset, Nova resolves model path in this or
 
 1. `models/` next to the executable
 2. `~/.local/bin/models` (if present)
-3. `<storage_root>/.fastembed_cache`
+3. `~/.dbt-nova/.fastembed_cache`
 
 ### Ways to supply models
 

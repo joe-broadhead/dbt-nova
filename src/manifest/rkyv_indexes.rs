@@ -18,7 +18,10 @@ pub fn save_indexes(indexes: &PersistedIndexes, storage_dir: &Path) -> Result<()
 #[must_use]
 pub fn try_load_indexes(storage_dir: &Path, expected_hash: &str) -> Option<PersistedIndexes> {
     let path = storage_dir.join(INDEXES_FILE);
-    load_rkyv_file::<PersistedIndexes, _>(&path, |cache| {
-        cache.schema_version == RKYV_SCHEMA_VERSION && cache.manifest_hash.as_str() == expected_hash
-    })
+    load_rkyv_file::<PersistedIndexes>(&path)
+        .ok()
+        .filter(|cache| {
+            cache.schema_version == RKYV_SCHEMA_VERSION
+                && cache.manifest_hash.as_str() == expected_hash
+        })
 }

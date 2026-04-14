@@ -108,15 +108,112 @@ fn create_storage_source(workspace: &TempDir) -> PathBuf {
     storage_source
 }
 
-fn create_models_source(workspace: &TempDir) -> PathBuf {
+fn write_manifest_scoped_semantic_caches(root: &Path, manifest_hash: &str) {
+    write_file(
+        &root
+            .join("manifests")
+            .join(manifest_hash)
+            .join("dense__intfloat--multilingual-e5-base.rkyv.zst"),
+        b"dense-cache",
+    );
+    write_file(
+        &root
+            .join("manifests")
+            .join(manifest_hash)
+            .join("sparse__Qdrant--Splade_PP_en_v1.rkyv.zst"),
+        b"sparse-cache",
+    );
+}
+
+fn write_hf_model_repo(
+    root: &Path,
+    model_code: &str,
+    commit_hash: &str,
+    model_file: &str,
+    additional_files: &[&str],
+) {
+    let repo_root = root.join(format!("models--{}", model_code.replace('/', "--")));
+    write_file(&repo_root.join("refs").join("main"), commit_hash.as_bytes());
+
+    let snapshot_root = repo_root.join("snapshots").join(commit_hash);
+    write_file(&snapshot_root.join(model_file), b"model");
+    write_file(&snapshot_root.join("tokenizer.json"), b"{}");
+    write_file(&snapshot_root.join("config.json"), b"{}");
+    write_file(&snapshot_root.join("special_tokens_map.json"), b"{}");
+    write_file(
+        &snapshot_root.join("tokenizer_config.json"),
+        br#"{"model_max_length":512,"pad_token":"[PAD]"}"#,
+    );
+    for additional_file in additional_files {
+        write_file(&snapshot_root.join(additional_file), b"extra");
+    }
+}
+
+fn write_complete_models_cache(root: &Path, manifest_hash: &str) {
+    let commit_hash = "abc123";
+    write_hf_model_repo(
+        root,
+        "intfloat/multilingual-e5-base",
+        commit_hash,
+        "onnx/model.onnx",
+        &[],
+    );
+    write_hf_model_repo(
+        root,
+        "Qdrant/Splade_PP_en_v1",
+        commit_hash,
+        "model.onnx",
+        &[],
+    );
+    write_hf_model_repo(
+        root,
+        "jinaai/jina-reranker-v2-base-multilingual",
+        commit_hash,
+        "onnx/model.onnx",
+        &[],
+    );
+    write_manifest_scoped_semantic_caches(root, manifest_hash);
+}
+
+fn create_models_source(workspace: &TempDir, manifest_hash: &str) -> PathBuf {
     let models_source = workspace.path().join("models-source");
+    write_complete_models_cache(&models_source, manifest_hash);
+    models_source
+}
+
+fn create_invalid_models_source_missing_refs(workspace: &TempDir) -> PathBuf {
+    let models_source = workspace.path().join("models-source-invalid");
+    let commit_hash = "abc123";
+    write_hf_model_repo(
+        &models_source,
+        "Qdrant/Splade_PP_en_v1",
+        commit_hash,
+        "model.onnx",
+        &[],
+    );
+    write_hf_model_repo(
+        &models_source,
+        "jinaai/jina-reranker-v2-base-multilingual",
+        commit_hash,
+        "onnx/model.onnx",
+        &[],
+    );
     let model_path = models_source
         .join("models--intfloat--multilingual-e5-base")
         .join("snapshots")
-        .join("main")
+        .join(commit_hash)
         .join("onnx")
         .join("model.onnx");
     write_file(&model_path, b"model");
+    models_source
+}
+
+fn create_models_source_with_legacy_semantic_caches(
+    workspace: &TempDir,
+    manifest_hash: &str,
+) -> PathBuf {
+    let models_source = create_models_source(workspace, manifest_hash);
+    write_file(&models_source.join("embeddings.rkyv.zst"), b"legacy-dense");
     models_source
 }
 
@@ -134,7 +231,7 @@ fn materialize_file_artifacts_happy_path() {
     let storage_archive = workspace.path().join("storage.tar.gz");
     create_archive_from_dir(&storage_source, &storage_archive);
 
-    let models_source = create_models_source(&workspace);
+    let models_source = create_models_source(&workspace, "manifest-hash");
     let models_archive = workspace.path().join("models.tar.gz");
     create_archive_from_dir(&models_source, &models_archive);
 
@@ -180,11 +277,275 @@ fn materialize_file_artifacts_happy_path() {
     assert!(
         PathBuf::from(&config.search.embedding_cache_dir)
             .join("models--intfloat--multilingual-e5-base")
-            .join("snapshots")
+            .join("refs")
             .join("main")
+            .exists()
+    );
+    assert!(
+        PathBuf::from(&config.search.embedding_cache_dir)
+            .join("models--intfloat--multilingual-e5-base")
+            .join("snapshots")
+            .join("abc123")
             .join("onnx")
             .join("model.onnx")
             .exists()
+    );
+    assert!(
+        PathBuf::from(&config.search.embedding_cache_dir)
+            .join("models--Qdrant--Splade_PP_en_v1")
+            .join("snapshots")
+            .join("abc123")
+            .join("model.onnx")
+            .exists()
+    );
+    assert!(
+        PathBuf::from(&config.search.embedding_cache_dir)
+            .join("models--jinaai--jina-reranker-v2-base-multilingual")
+            .join("snapshots")
+            .join("abc123")
+            .join("onnx")
+            .join("model.onnx")
+            .exists()
+    );
+    assert!(
+        PathBuf::from(&config.search.embedding_cache_dir)
+            .join("models--intfloat--multilingual-e5-base")
+            .join("snapshots")
+            .join("abc123")
+            .join("tokenizer_config.json")
+            .exists()
+    );
+    assert!(
+        PathBuf::from(&config.search.embedding_cache_dir)
+            .join("manifests")
+            .join("manifest-hash")
+            .join("dense__intfloat--multilingual-e5-base.rkyv.zst")
+            .exists()
+    );
+    assert!(
+        PathBuf::from(&config.search.embedding_cache_dir)
+            .join("manifests")
+            .join("manifest-hash")
+            .join("sparse__Qdrant--Splade_PP_en_v1.rkyv.zst")
+            .exists()
+    );
+}
+
+#[test]
+fn materialize_file_artifacts_rejects_models_archive_missing_refs() {
+    let workspace = TempDir::new().expect("tempdir");
+    let mut config = setup_config(&workspace);
+    config.search.embedding_cache_dir = workspace
+        .path()
+        .join("embedding-cache")
+        .to_string_lossy()
+        .to_string();
+
+    let storage_source = create_storage_source(&workspace);
+    let storage_archive = workspace.path().join("storage.tar.gz");
+    create_archive_from_dir(&storage_source, &storage_archive);
+
+    let models_source = create_invalid_models_source_missing_refs(&workspace);
+    let models_archive = workspace.path().join("models-invalid.tar.gz");
+    create_archive_from_dir(&models_source, &models_archive);
+
+    let metadata_path = workspace.path().join("nova-build-metadata.json");
+    write_file(
+        &metadata_path,
+        br#"{
+  "contract_version":"v1",
+  "manifest_hash":"manifest-hash",
+  "manifest_version":"v12",
+  "entity_count":42,
+  "storage_instance_id":"analytics-prod",
+  "dbt_nova_version":"0.0.2",
+  "build_timestamp":"2026-03-02T00:00:00Z",
+  "artifact_name_storage":"storage-asset",
+  "artifact_name_models":"models-asset"
+}"#,
+    );
+
+    config.storage_artifact_uri = to_file_uri(&storage_archive);
+    config.metadata_artifact_uri = to_file_uri(&metadata_path);
+    config.models_artifact_uri = to_file_uri(&models_archive);
+    config.artifact_fetch_policy = ArtifactFetchPolicy::IfMissing;
+
+    let err = materialize_file_artifacts(&config, "manifest-hash")
+        .expect_err("invalid models archive should be rejected");
+    assert!(err.to_string().contains("missing refs directory"));
+}
+
+#[test]
+fn materialize_file_artifacts_prefers_ref_target_snapshot_over_stale_main_snapshot() {
+    let workspace = TempDir::new().expect("tempdir");
+    let mut config = setup_config(&workspace);
+    config.search.embedding_cache_dir = workspace
+        .path()
+        .join("embedding-cache")
+        .to_string_lossy()
+        .to_string();
+
+    let storage_source = create_storage_source(&workspace);
+    let storage_archive = workspace.path().join("storage.tar.gz");
+    create_archive_from_dir(&storage_source, &storage_archive);
+
+    let models_source = create_models_source(&workspace, "manifest-hash");
+    write_file(
+        &models_source
+            .join("models--intfloat--multilingual-e5-base")
+            .join("snapshots")
+            .join("main")
+            .join("README.txt"),
+        b"stale-main-snapshot",
+    );
+    let models_archive = workspace.path().join("models-ref-target.tar.gz");
+    create_archive_from_dir(&models_source, &models_archive);
+
+    let metadata_path = workspace.path().join("nova-build-metadata.json");
+    write_file(
+        &metadata_path,
+        br#"{
+  "contract_version":"v1",
+  "manifest_hash":"manifest-hash",
+  "manifest_version":"v12",
+  "entity_count":42,
+  "storage_instance_id":"analytics-prod",
+  "dbt_nova_version":"0.0.2",
+  "build_timestamp":"2026-03-02T00:00:00Z",
+  "artifact_name_storage":"storage-asset",
+  "artifact_name_models":"models-asset"
+}"#,
+    );
+
+    config.storage_artifact_uri = to_file_uri(&storage_archive);
+    config.metadata_artifact_uri = to_file_uri(&metadata_path);
+    config.models_artifact_uri = to_file_uri(&models_archive);
+    config.artifact_fetch_policy = ArtifactFetchPolicy::IfMissing;
+
+    let outcome = materialize_file_artifacts(&config, "manifest-hash")
+        .expect("models archive should validate using refs/main target")
+        .expect("artifact mode enabled");
+    assert!(outcome.models_materialized);
+    assert!(
+        PathBuf::from(&config.search.embedding_cache_dir)
+            .join("models--intfloat--multilingual-e5-base")
+            .join("snapshots")
+            .join("abc123")
+            .join("tokenizer_config.json")
+            .exists()
+    );
+}
+
+#[test]
+fn materialize_file_artifacts_rejects_models_archive_missing_manifest_scoped_caches() {
+    let workspace = TempDir::new().expect("tempdir");
+    let mut config = setup_config(&workspace);
+    config.search.embedding_cache_dir = workspace
+        .path()
+        .join("embedding-cache")
+        .to_string_lossy()
+        .to_string();
+
+    let storage_source = create_storage_source(&workspace);
+    let storage_archive = workspace.path().join("storage.tar.gz");
+    create_archive_from_dir(&storage_source, &storage_archive);
+
+    let models_source = workspace.path().join("models-source-no-semantic");
+    write_hf_model_repo(
+        &models_source,
+        "intfloat/multilingual-e5-base",
+        "abc123",
+        "onnx/model.onnx",
+        &[],
+    );
+    write_hf_model_repo(
+        &models_source,
+        "Qdrant/Splade_PP_en_v1",
+        "abc123",
+        "model.onnx",
+        &[],
+    );
+    write_hf_model_repo(
+        &models_source,
+        "jinaai/jina-reranker-v2-base-multilingual",
+        "abc123",
+        "onnx/model.onnx",
+        &[],
+    );
+    let models_archive = workspace.path().join("models-missing-semantic.tar.gz");
+    create_archive_from_dir(&models_source, &models_archive);
+
+    let metadata_path = workspace.path().join("nova-build-metadata.json");
+    write_file(
+        &metadata_path,
+        br#"{
+  "contract_version":"v1",
+  "manifest_hash":"manifest-hash",
+  "manifest_version":"v12",
+  "entity_count":42,
+  "storage_instance_id":"analytics-prod",
+  "dbt_nova_version":"0.0.2",
+  "build_timestamp":"2026-03-02T00:00:00Z",
+  "artifact_name_storage":"storage-asset",
+  "artifact_name_models":"models-asset"
+}"#,
+    );
+
+    config.storage_artifact_uri = to_file_uri(&storage_archive);
+    config.metadata_artifact_uri = to_file_uri(&metadata_path);
+    config.models_artifact_uri = to_file_uri(&models_archive);
+    config.artifact_fetch_policy = ArtifactFetchPolicy::IfMissing;
+
+    let err = materialize_file_artifacts(&config, "manifest-hash")
+        .expect_err("missing manifest-scoped semantic caches should be rejected");
+    assert!(err.to_string().contains("missing manifests directory"));
+}
+
+#[test]
+fn materialize_file_artifacts_rejects_legacy_singleton_semantic_cache_files() {
+    let workspace = TempDir::new().expect("tempdir");
+    let mut config = setup_config(&workspace);
+    config.search.embedding_cache_dir = workspace
+        .path()
+        .join("embedding-cache")
+        .to_string_lossy()
+        .to_string();
+
+    let storage_source = create_storage_source(&workspace);
+    let storage_archive = workspace.path().join("storage.tar.gz");
+    create_archive_from_dir(&storage_source, &storage_archive);
+
+    let models_source =
+        create_models_source_with_legacy_semantic_caches(&workspace, "manifest-hash");
+    let models_archive = workspace.path().join("models-legacy-semantic.tar.gz");
+    create_archive_from_dir(&models_source, &models_archive);
+
+    let metadata_path = workspace.path().join("nova-build-metadata.json");
+    write_file(
+        &metadata_path,
+        br#"{
+  "contract_version":"v1",
+  "manifest_hash":"manifest-hash",
+  "manifest_version":"v12",
+  "entity_count":42,
+  "storage_instance_id":"analytics-prod",
+  "dbt_nova_version":"0.0.2",
+  "build_timestamp":"2026-03-02T00:00:00Z",
+  "artifact_name_storage":"storage-asset",
+  "artifact_name_models":"models-asset"
+}"#,
+    );
+
+    config.storage_artifact_uri = to_file_uri(&storage_archive);
+    config.metadata_artifact_uri = to_file_uri(&metadata_path);
+    config.models_artifact_uri = to_file_uri(&models_archive);
+    config.artifact_fetch_policy = ArtifactFetchPolicy::IfMissing;
+
+    let err = materialize_file_artifacts(&config, "manifest-hash")
+        .expect_err("legacy singleton semantic cache files should be rejected");
+    assert!(
+        err.to_string()
+            .contains("legacy singleton semantic cache file")
     );
 }
 
@@ -337,7 +698,7 @@ fn materialize_file_artifacts_if_missing_skips_remote_storage_fetch_when_local_p
 }
 
 #[test]
-fn materialize_file_artifacts_if_missing_skips_remote_models_fetch_when_local_present() {
+fn materialize_file_artifacts_if_missing_skips_remote_models_fetch_when_local_cache_is_complete() {
     let workspace = TempDir::new().expect("tempdir");
     let mut config = setup_config(&workspace);
     config.search.embedding_cache_dir = workspace
@@ -353,13 +714,10 @@ fn materialize_file_artifacts_if_missing_skips_remote_models_fetch_when_local_pr
         .join("existing");
     write_file(&existing_version_dir.join("entities.bin"), b"entities");
 
-    let existing_model = PathBuf::from(&config.search.embedding_cache_dir)
-        .join("models--intfloat--multilingual-e5-base")
-        .join("snapshots")
-        .join("main")
-        .join("onnx")
-        .join("model.onnx");
-    write_file(&existing_model, b"model");
+    write_complete_models_cache(
+        Path::new(&config.search.embedding_cache_dir),
+        "manifest-hash",
+    );
 
     let metadata_path = workspace.path().join("nova-build-metadata.json");
     write_file(
@@ -387,6 +745,138 @@ fn materialize_file_artifacts_if_missing_skips_remote_models_fetch_when_local_pr
         .expect("artifact mode enabled");
     assert!(!outcome.storage_materialized);
     assert!(!outcome.models_materialized);
+}
+
+#[test]
+fn materialize_file_artifacts_if_missing_fetches_remote_models_when_local_cache_is_incomplete() {
+    let workspace = TempDir::new().expect("tempdir");
+    let mut config = setup_config(&workspace);
+    config.search.embedding_cache_dir = workspace
+        .path()
+        .join("embedding-cache")
+        .to_string_lossy()
+        .to_string();
+
+    let existing_version_dir = PathBuf::from(&config.storage_dir)
+        .join("instances")
+        .join("analytics-prod")
+        .join("versions")
+        .join("existing");
+    write_file(&existing_version_dir.join("entities.bin"), b"entities");
+
+    let existing_model_ref = PathBuf::from(&config.search.embedding_cache_dir)
+        .join("models--intfloat--multilingual-e5-base")
+        .join("refs")
+        .join("main");
+    write_file(&existing_model_ref, b"abc123");
+    let existing_model = PathBuf::from(&config.search.embedding_cache_dir)
+        .join("models--intfloat--multilingual-e5-base")
+        .join("snapshots")
+        .join("abc123")
+        .join("onnx")
+        .join("model.onnx");
+    write_file(&existing_model, b"model");
+
+    let models_source = create_models_source(&workspace, "manifest-hash");
+    let models_archive = workspace.path().join("models.tar.gz");
+    create_archive_from_dir(&models_source, &models_archive);
+
+    let metadata_path = workspace.path().join("nova-build-metadata.json");
+    write_file(
+        &metadata_path,
+        br#"{
+  "contract_version":"v1",
+  "manifest_hash":"manifest-hash",
+  "manifest_version":"v12",
+  "entity_count":42,
+  "storage_instance_id":"analytics-prod",
+  "dbt_nova_version":"0.0.2",
+  "build_timestamp":"2026-03-02T00:00:00Z",
+  "artifact_name_storage":"storage-asset",
+  "artifact_name_models":"models-asset"
+}"#,
+    );
+
+    config.storage_artifact_uri = "s3://bucket/storage.tar.gz".to_string();
+    config.metadata_artifact_uri = to_file_uri(&metadata_path);
+    config.models_artifact_uri = to_file_uri(&models_archive);
+    config.artifact_fetch_policy = ArtifactFetchPolicy::IfMissing;
+
+    let outcome = materialize_file_artifacts(&config, "manifest-hash")
+        .expect("incomplete local models cache should trigger artifact hydration")
+        .expect("artifact mode enabled");
+    assert!(!outcome.storage_materialized);
+    assert!(outcome.models_materialized);
+    assert!(
+        PathBuf::from(&config.search.embedding_cache_dir)
+            .join("manifests")
+            .join("manifest-hash")
+            .join("dense__intfloat--multilingual-e5-base.rkyv.zst")
+            .exists()
+    );
+    assert!(
+        PathBuf::from(&config.search.embedding_cache_dir)
+            .join("manifests")
+            .join("manifest-hash")
+            .join("sparse__Qdrant--Splade_PP_en_v1.rkyv.zst")
+            .exists()
+    );
+}
+
+#[test]
+fn materialize_file_artifacts_policy_never_rejects_incomplete_local_models_cache() {
+    let workspace = TempDir::new().expect("tempdir");
+    let mut config = setup_config(&workspace);
+    config.search.embedding_cache_dir = workspace
+        .path()
+        .join("embedding-cache")
+        .to_string_lossy()
+        .to_string();
+
+    let existing_version_dir = PathBuf::from(&config.storage_dir)
+        .join("instances")
+        .join("analytics-prod")
+        .join("versions")
+        .join("existing");
+    write_file(&existing_version_dir.join("entities.bin"), b"entities");
+
+    let existing_model_ref = PathBuf::from(&config.search.embedding_cache_dir)
+        .join("models--intfloat--multilingual-e5-base")
+        .join("refs")
+        .join("main");
+    write_file(&existing_model_ref, b"abc123");
+    let existing_model = PathBuf::from(&config.search.embedding_cache_dir)
+        .join("models--intfloat--multilingual-e5-base")
+        .join("snapshots")
+        .join("abc123")
+        .join("onnx")
+        .join("model.onnx");
+    write_file(&existing_model, b"model");
+
+    let metadata_path = workspace.path().join("nova-build-metadata.json");
+    write_file(
+        &metadata_path,
+        br#"{
+  "contract_version":"v1",
+  "manifest_hash":"manifest-hash",
+  "manifest_version":"v12",
+  "entity_count":42,
+  "storage_instance_id":"analytics-prod",
+  "dbt_nova_version":"0.0.2",
+  "build_timestamp":"2026-03-02T00:00:00Z",
+  "artifact_name_storage":"storage-asset",
+  "artifact_name_models":"models-asset"
+}"#,
+    );
+
+    config.storage_artifact_uri = "s3://bucket/storage.tar.gz".to_string();
+    config.metadata_artifact_uri = to_file_uri(&metadata_path);
+    config.models_artifact_uri = "gs://bucket/models.tar.gz".to_string();
+    config.artifact_fetch_policy = ArtifactFetchPolicy::Never;
+
+    let err = materialize_file_artifacts(&config, "manifest-hash")
+        .expect_err("policy never should reject incomplete local models cache");
+    assert!(err.to_string().contains("incomplete or invalid"));
 }
 
 #[test]

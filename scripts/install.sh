@@ -431,7 +431,7 @@ fi
 
 if [[ "${INSTALL_WARM_MODELS}" == "1" && "${INSTALL_FLAVOR}" == "slim" ]]; then
   warm_script_path="${tmp_dir}/warm_models.sh"
-  warm_cache_dir="${DBT_NOVA_EMBEDDINGS_CACHE_DIR:-$HOME/.dbt-nova/models}"
+  warm_cache_dir="${DBT_NOVA_EMBEDDINGS_CACHE_DIR:-$HOME/.dbt-nova/.fastembed_cache}"
   warm_required_models="${DBT_NOVA_WARMUP_REQUIRED_MODELS:-3}"
   warm_script_downloaded="0"
   warm_script_url=""

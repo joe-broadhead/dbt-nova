@@ -580,7 +580,7 @@ jobs:
             --json | tee "${{ steps.workspace.outputs.workspace_dir }}/health.json"
 
           jq -e '.status == "success"' "${{ steps.workspace.outputs.workspace_dir }}/health.json" >/dev/null
-          jq -e '.data.status == "ready" or .data.status == "refreshing"' "${{ steps.workspace.outputs.workspace_dir }}/health.json" >/dev/null
+          jq -e '.data.status == "ready" and .data.ready_for_traffic == true' "${{ steps.workspace.outputs.workspace_dir }}/health.json" >/dev/null
 
       - name: Read-only tool call succeeds without rebuild
         shell: bash

@@ -12,7 +12,7 @@ use super::metadata_score::MetadataScoreConfig;
 use super::search::SearchConfig;
 use super::warehouse::DEFAULT_SQL_PROVIDER;
 use super::{env_string, parse_bool, parse_f64, parse_u16, parse_u64, parse_usize, set_string};
-use tracing::warn;
+use tracing::{info, warn};
 
 /// Rule for mapping entities into logical layers (e.g., staging, mart, core).
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -395,6 +395,13 @@ impl DbtNovaConfig {
             || !self.models_artifact_uri.trim().is_empty()
     }
 
+    #[must_use]
+    pub fn uses_home_storage_root_fallback(&self) -> bool {
+        !self.manifest_uri.trim().is_empty()
+            && self.manifest_cache_dir.trim().is_empty()
+            && !Path::new(&self.storage_dir).is_absolute()
+    }
+
     /// Ensure the embedding cache directory is set under the cache root.
     pub fn ensure_embedding_cache_dir(&mut self) {
         if !self.search.embedding_cache_dir.trim().is_empty() {
@@ -406,25 +413,47 @@ impl DbtNovaConfig {
             let bundled = parent.join("models");
             if bundled.is_dir() {
                 self.search.embedding_cache_dir = bundled.to_string_lossy().to_string();
+                info!(
+                    embedding_cache_dir = %self.search.embedding_cache_dir,
+                    source = "adjacent_executable_models_dir",
+                    "selected embedding cache dir"
+                );
                 return;
             }
         }
         if let Ok(home) = std::env::var("HOME") {
-            let bundled = PathBuf::from(home)
-                .join(".local")
-                .join("bin")
-                .join("models");
+            let home_path = PathBuf::from(&home);
+            let bundled = home_path.join(".local").join("bin").join("models");
             if bundled.is_dir() {
                 self.search.embedding_cache_dir = bundled.to_string_lossy().to_string();
+                info!(
+                    embedding_cache_dir = %self.search.embedding_cache_dir,
+                    source = "local_bin_models_dir",
+                    "selected embedding cache dir"
+                );
                 return;
             }
-        }
-        if let Ok(storage_root) = self.storage_root_dir() {
-            self.search.embedding_cache_dir = storage_root
+            self.search.embedding_cache_dir = home_path
+                .join(".dbt-nova")
                 .join(".fastembed_cache")
                 .to_string_lossy()
                 .to_string();
+            info!(
+                embedding_cache_dir = %self.search.embedding_cache_dir,
+                source = "home_default",
+                "selected embedding cache dir"
+            );
+            return;
         }
+        self.search.embedding_cache_dir = PathBuf::from(".dbt-nova")
+            .join(".fastembed_cache")
+            .to_string_lossy()
+            .to_string();
+        info!(
+            embedding_cache_dir = %self.search.embedding_cache_dir,
+            source = "relative_default",
+            "selected embedding cache dir"
+        );
     }
 
     /// Validate configuration for conflicting or unsafe settings.
@@ -497,6 +526,15 @@ impl DbtNovaConfig {
                 &self.bootstrap_uri,
                 self.artifact_allow_http,
             )?;
+        }
+
+        if self.uses_home_storage_root_fallback()
+            && (self.remote_artifact_mode_enabled() || !self.bootstrap_uri.trim().is_empty())
+        {
+            return Err(DbtNovaError::InvalidParams(
+                "manifest_uri with bootstrap/remote-artifact mode requires an explicit non-HOME storage anchor; set DBT_NOVA_MANIFEST_CACHE_DIR or an absolute DBT_NOVA_STORAGE_DIR"
+                    .to_string(),
+            ));
         }
 
         if self.server_transport == ServerTransport::StreamableHttp {
@@ -1129,6 +1167,7 @@ mod tests {
         config.metadata_artifact_uri = "https://example.com/nova-build-metadata.json".to_string();
         config.models_artifact_uri = "dbfs:/FileStore/models.tar.gz".to_string();
         config.artifact_allow_http = true;
+        config.storage_dir = "/tmp/nova-storage".to_string();
 
         config
             .validate()
@@ -1146,6 +1185,45 @@ mod tests {
             "unexpected artifacts cache path: {}",
             path.display()
         );
+    }
+
+    #[test]
+    fn uses_home_storage_root_fallback_for_manifest_uri_without_cache_dir() {
+        let config = base_config();
+        assert!(config.uses_home_storage_root_fallback());
+    }
+
+    #[test]
+    fn does_not_use_home_storage_root_fallback_when_manifest_cache_dir_is_set() {
+        let config = DbtNovaConfig {
+            manifest_uri: "file:///tmp/manifest.json".to_string(),
+            manifest_cache_dir: "/tmp/nova-manifests".to_string(),
+            ..DbtNovaConfig::default()
+        };
+        assert!(!config.uses_home_storage_root_fallback());
+    }
+
+    #[test]
+    fn does_not_use_home_storage_root_fallback_when_storage_dir_is_absolute() {
+        let config = DbtNovaConfig {
+            manifest_uri: "file:///tmp/manifest.json".to_string(),
+            storage_dir: "/tmp/nova-storage".to_string(),
+            ..DbtNovaConfig::default()
+        };
+        assert!(!config.uses_home_storage_root_fallback());
+    }
+
+    #[test]
+    fn validate_rejects_home_storage_root_fallback_for_remote_artifact_mode() {
+        let mut config = base_config();
+        config.storage_artifact_uri = "file:///tmp/storage.tar.gz".to_string();
+        config.metadata_artifact_uri = "file:///tmp/metadata.json".to_string();
+
+        let error = config
+            .validate()
+            .expect_err("implicit home storage fallback should be rejected");
+        assert!(error.to_string().contains("DBT_NOVA_MANIFEST_CACHE_DIR"));
+        assert!(error.to_string().contains("DBT_NOVA_STORAGE_DIR"));
     }
 
     #[test]
