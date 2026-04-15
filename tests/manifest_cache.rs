@@ -8,10 +8,10 @@ use std::path::PathBuf;
 use dbt_nova::manifest::rkyv_cache::{CacheLoadFailure, save_rkyv};
 use dbt_nova::manifest::rkyv_embeddings;
 use dbt_nova::manifest::rkyv_sparse_embeddings;
-use dbt_nova::manifest::semantic_cache::{self, SemanticCacheComponent};
 use dbt_nova::manifest::rkyv_types::{
     CachedEmbeddings, CachedSparseEmbeddings, RKYV_SCHEMA_VERSION,
 };
+use dbt_nova::manifest::semantic_cache::{self, SemanticCacheComponent};
 use dbt_nova::{DbtNovaConfig, ManifestSearch, config::SearchConfig};
 
 #[test]
