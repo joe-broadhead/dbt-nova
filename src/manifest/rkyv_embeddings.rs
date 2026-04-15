@@ -1,7 +1,7 @@
 use crate::config::SearchConfig;
 use crate::error::Result;
 use crate::manifest::rkyv_cache::{
-    CacheLoadFailure, load_rkyv_file, load_rkyv_file_zst, save_rkyv_zst,
+    CacheLoadFailure, load_rkyv_file_limited, load_rkyv_file_zst, save_rkyv_zst,
 };
 use crate::manifest::rkyv_types::{CachedEmbeddings, RKYV_SCHEMA_VERSION};
 use crate::manifest::semantic_cache::{self, SemanticCacheComponent, SemanticCachePaths};
@@ -83,7 +83,7 @@ pub fn load_embeddings(
         Err(failure) => first_failure = Some(EmbeddingsCacheFailure::Load(failure)),
     }
 
-    match load_rkyv_file(&paths.raw_path) {
+    match load_rkyv_file_limited(&paths.raw_path, max_decompressed_bytes) {
         Ok(cache) => match validate_cache(&cache, expected_model, expected_hash) {
             Ok(()) => EmbeddingsCacheLoad::Hit { cache, paths },
             Err(failure) => EmbeddingsCacheLoad::Miss { paths, failure },

@@ -144,7 +144,46 @@ where
     T::Archived:
         for<'a> CheckBytes<HighValidator<'a, RkyvError>> + Deserialize<T, RkyvDeserializer>,
 {
+    load_rkyv_file_limited(path, 0)
+}
+
+/// Load an uncompressed rkyv cache from disk while enforcing a byte limit.
+///
+/// # Errors
+/// Returns a typed cache failure when the file is missing, unreadable, too large, or invalid.
+pub fn load_rkyv_file_limited<T>(
+    path: &Path,
+    max_bytes: u64,
+) -> std::result::Result<T, CacheLoadFailure>
+where
+    T: Archive,
+    T::Archived:
+        for<'a> CheckBytes<HighValidator<'a, RkyvError>> + Deserialize<T, RkyvDeserializer>,
+{
+    if max_bytes > 0 {
+        let actual_bytes = fs::metadata(path)
+            .map_err(|error| map_read_failure(path, &error))?
+            .len();
+        if actual_bytes > max_bytes {
+            return Err(CacheLoadFailure::TooLarge {
+                path: path.to_path_buf(),
+                actual_bytes,
+                max_bytes,
+            });
+        }
+    }
+
     let bytes = fs::read(path).map_err(|error| map_read_failure(path, &error))?;
+    if max_bytes > 0 {
+        let actual_bytes = bytes.len() as u64;
+        if actual_bytes > max_bytes {
+            return Err(CacheLoadFailure::TooLarge {
+                path: path.to_path_buf(),
+                actual_bytes,
+                max_bytes,
+            });
+        }
+    }
     decode_rkyv(path, &bytes)
 }
 
