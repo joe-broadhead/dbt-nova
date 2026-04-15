@@ -10,6 +10,7 @@ pub mod rkyv_indexes;
 pub mod rkyv_sparse_embeddings;
 pub mod rkyv_types;
 pub mod search;
+pub mod semantic_cache;
 pub mod source;
 pub mod store;
 pub mod tantivy_search;

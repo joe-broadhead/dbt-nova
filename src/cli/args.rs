@@ -59,6 +59,7 @@ pub struct ManifestArgs {
 pub enum ManifestCommand {
     Load(ManifestLoadArgs),
     Reload(ManifestReloadArgs),
+    Warm(ManifestWarmArgs),
 }
 
 #[derive(Debug, Clone, Args, Default)]
@@ -91,6 +92,27 @@ pub struct ManifestReloadArgs {
     pub cleanup_storage_on_start: bool,
     #[arg(long, default_value_t = false)]
     pub read_only: bool,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, Args, Default)]
+pub struct ManifestWarmArgs {
+    #[arg(long, value_name = "PATH", conflicts_with = "manifest_uri")]
+    pub manifest_path: Option<String>,
+    #[arg(long, value_name = "URI", conflicts_with = "manifest_path")]
+    pub manifest_uri: Option<String>,
+    #[arg(long, value_name = "INSTANCE_ID")]
+    pub storage_instance_id: Option<String>,
+    #[arg(long, default_value_t = false)]
+    pub vector: bool,
+    #[arg(long, default_value_t = false)]
+    pub sparse: bool,
+    #[arg(long, default_value_t = false)]
+    pub reranker: bool,
+    #[arg(long, default_value_t = false)]
+    pub force: bool,
     #[arg(long, default_value_t = false)]
     pub json: bool,
 }
@@ -406,7 +428,37 @@ mod tests {
                     assert_eq!(args.refresh_secs, Some(120));
                     assert!(args.json);
                 }
-                ManifestCommand::Load(_) => panic!("expected manifest reload command"),
+                ManifestCommand::Load(_) | ManifestCommand::Warm(_) => {
+                    panic!("expected manifest reload command")
+                }
+            },
+            _ => panic!("expected manifest command"),
+        }
+    }
+
+    #[test]
+    fn manifest_warm_parses_flags() {
+        let cli = Cli::parse_from([
+            "dbt-nova",
+            "manifest",
+            "warm",
+            "--manifest-path",
+            "target/manifest.json",
+            "--vector",
+            "--force",
+            "--json",
+        ]);
+        let command = cli.command.expect("command");
+        match command {
+            Command::Manifest(manifest) => match manifest.command {
+                ManifestCommand::Warm(args) => {
+                    assert_eq!(args.manifest_path.as_deref(), Some("target/manifest.json"));
+                    assert!(args.vector);
+                    assert!(!args.sparse);
+                    assert!(args.force);
+                    assert!(args.json);
+                }
+                _ => panic!("expected manifest warm command"),
             },
             _ => panic!("expected manifest command"),
         }

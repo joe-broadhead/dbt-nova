@@ -2,7 +2,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value as JsonValue, json};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::config::DbtNovaConfig;
 use crate::error::{DbtNovaError, Result};
@@ -188,6 +188,29 @@ pub fn prepare_runtime_config(config: &mut DbtNovaConfig) -> Result<BootstrapRes
     let resolution = apply_bootstrap_defaults(config)?;
     config.ensure_storage_instance_id();
     config.ensure_embedding_cache_dir();
+    let storage_root = config
+        .storage_root_dir()
+        .map(|path| path.display().to_string())
+        .unwrap_or_default();
+    if config.uses_home_storage_root_fallback() {
+        warn!(
+            manifest_uri = %sanitize_uri(&config.manifest_uri),
+            storage_root = %storage_root,
+            embedding_cache_dir = %config.search.embedding_cache_dir,
+            "using implicit HOME-scoped Nova storage because manifest_uri is set and no manifest cache/storage dir override was provided"
+        );
+    }
+    info!(
+        storage_instance_id = %config.storage_instance_id,
+        storage_root = %storage_root,
+        embedding_cache_dir = %config.search.embedding_cache_dir,
+        remote_artifact_mode = config.remote_artifact_mode_enabled(),
+        bootstrap_uri = %sanitize_uri(&config.bootstrap_uri),
+        storage_artifact_uri = %sanitize_uri(&config.storage_artifact_uri),
+        metadata_artifact_uri = %sanitize_uri(&config.metadata_artifact_uri),
+        models_artifact_uri = %sanitize_uri(&config.models_artifact_uri),
+        "prepared runtime config"
+    );
     config.validate()?;
     Ok(resolution)
 }
@@ -418,6 +441,23 @@ mod tests {
         let resolution = prepare_runtime_config(&mut config).expect("runtime config should pass");
         assert_eq!(resolution.status["enabled"], serde_json::json!(true));
         assert_eq!(config.storage_instance_id, "analytics-prod");
+    }
+
+    #[test]
+    fn prepare_runtime_config_rejects_bootstrap_home_storage_fallback() {
+        let temp_dir = TempDir::new().expect("tempdir");
+        let bootstrap_path = temp_dir.path().join("nova-bootstrap.json");
+        write_bootstrap(&bootstrap_path);
+
+        let mut config = DbtNovaConfig {
+            bootstrap_uri: file_uri(&bootstrap_path),
+            ..DbtNovaConfig::default()
+        };
+
+        let error = prepare_runtime_config(&mut config)
+            .expect_err("bootstrap manifest_uri should require explicit storage anchor");
+        assert!(error.to_string().contains("DBT_NOVA_MANIFEST_CACHE_DIR"));
+        assert!(error.to_string().contains("DBT_NOVA_STORAGE_DIR"));
     }
 
     #[test]

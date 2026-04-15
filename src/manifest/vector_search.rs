@@ -12,6 +12,13 @@ impl<T> SearchComponentBuild<T> {
         }
     }
 
+    pub fn ready_with_warning(component: T, warning: String) -> Self {
+        Self {
+            component: Some(component),
+            warning: Some(warning),
+        }
+    }
+
     #[must_use]
     pub fn disabled(warning: String) -> Self {
         Self {
@@ -36,6 +43,11 @@ impl<T> SearchComponentBuild<T> {
 #[cfg(feature = "embeddings")]
 #[path = "embeddings/mod.rs"]
 mod vector_search_embeddings;
+#[cfg(feature = "embeddings")]
+pub(crate) use vector_search_embeddings::{
+    RequiredLocalModelLayout, required_embedding_model_layout, required_reranker_model_layout,
+    required_sparse_model_layout,
+};
 #[cfg(feature = "embeddings")]
 pub use vector_search_embeddings::{
     Reranker, SparseSearcher, VectorSearcher, embedding_text, embedding_text_from_archived,

@@ -1,15 +1,19 @@
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
 
 use serde::Serialize;
 
-use crate::cli::args::{ManifestLoadArgs, ManifestReloadArgs};
+use crate::cli::args::{ManifestLoadArgs, ManifestReloadArgs, ManifestWarmArgs};
 use crate::cli::output::{CliEnvelope, error_envelope};
 use crate::config::DbtNovaConfig;
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::bootstrap::prepare_runtime_config;
+use crate::manifest::rkyv_embeddings::{self, EmbeddingsCacheLoad};
+use crate::manifest::rkyv_sparse_embeddings::{self, SparseEmbeddingsCacheLoad};
 use crate::manifest::search::ManifestSearch;
+use crate::manifest::semantic_cache::default_sparse_model_name;
 use crate::utils::sanitize_uri;
 
 use super::{DispatchError, DispatchResult, prepare_storage};
@@ -35,11 +39,31 @@ pub struct ReuseInfo {
     pub indexes: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct SearchReadyInfo {
     pub vector: bool,
     pub sparse: bool,
     pub reranker: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ManifestWarmData {
+    pub source: String,
+    pub manifest_hash: String,
+    pub manifest_version: String,
+    pub elapsed_ms: u128,
+    pub force: bool,
+    pub requested: SearchReadyInfo,
+    pub persisted: SearchReadyInfo,
+    pub ready: SearchReadyInfo,
+    pub search_warnings: BTreeMap<String, String>,
+    pub cache_paths: BTreeMap<String, String>,
+}
+
+#[derive(Debug)]
+struct WarmCacheVerification {
+    persisted: SearchReadyInfo,
+    cache_paths: BTreeMap<String, String>,
 }
 
 /// Runs the `manifest load` CLI command.
@@ -61,6 +85,66 @@ pub async fn run_reload_command(args: &ManifestReloadArgs) -> DispatchResult {
         build_manifest_reload_config(args),
     )
     .await
+}
+
+/// Runs the `manifest warm` CLI command.
+///
+/// # Errors
+/// Returns an error if configuration is invalid, manifest loading fails, or requested caches
+/// cannot be warmed successfully.
+pub async fn run_warm_command(args: &ManifestWarmArgs) -> DispatchResult {
+    let started = Instant::now();
+    let warm_started_at = std::time::SystemTime::now();
+    let requested = requested_warm_components(args);
+    let config = build_manifest_warm_config(args).map_err(|error| {
+        render_or_propagate_error(
+            "manifest warm",
+            args.json,
+            error,
+            started.elapsed().as_millis(),
+        )
+    })?;
+    let mut load_result = execute_manifest_load(config).await.map_err(|error| {
+        render_or_propagate_error(
+            "manifest warm",
+            args.json,
+            error,
+            started.elapsed().as_millis(),
+        )
+    })?;
+    warm_requested_query_models(&mut load_result.search, requested).map_err(|error| {
+        render_or_propagate_error(
+            "manifest warm",
+            args.json,
+            error,
+            started.elapsed().as_millis(),
+        )
+    })?;
+
+    let cache_verification =
+        verify_requested_warm_caches(&load_result.search, requested, args.force, warm_started_at)
+            .map_err(|error| {
+            render_or_propagate_error(
+                "manifest warm",
+                args.json,
+                error,
+                started.elapsed().as_millis(),
+            )
+        })?;
+
+    let payload = warm_payload_from_result(&load_result, requested, cache_verification, args.force);
+    if args.json {
+        let output = render_success_json("manifest warm", &payload, started.elapsed().as_millis())
+            .map_err(|error| DispatchError {
+                error,
+                rendered: false,
+            })?;
+        println!("{output}");
+    } else {
+        print_warm_summary(&payload);
+    }
+
+    Ok(())
 }
 
 async fn run_manifest_command(
@@ -153,7 +237,7 @@ fn ready_label(ready: bool) -> &'static str {
 
 fn render_success_json(
     command_name: &str,
-    payload: &ManifestLoadData,
+    payload: &impl Serialize,
     elapsed_ms: u128,
 ) -> Result<String> {
     let envelope = CliEnvelope::success(command_name, payload, elapsed_ms);
@@ -239,6 +323,29 @@ pub fn build_manifest_reload_config(args: &ManifestReloadArgs) -> Result<DbtNova
     if let Some(refresh_secs) = args.refresh_secs {
         config.manifest_refresh_secs = refresh_secs;
     }
+    finalize_manifest_config(config)
+}
+
+/// Builds a manifest-warm configuration from environment defaults plus CLI overrides.
+///
+/// # Errors
+/// Returns an error if overrides are invalid or resulting configuration fails validation.
+pub fn build_manifest_warm_config(args: &ManifestWarmArgs) -> Result<DbtNovaConfig> {
+    let mut config = DbtNovaConfig::from_env();
+    apply_manifest_common_overrides(
+        &mut config,
+        args.manifest_path.as_deref(),
+        args.manifest_uri.as_deref(),
+        args.storage_instance_id.as_deref(),
+        false,
+        false,
+    )?;
+    let requested = requested_warm_components(args);
+    config.search.enable_vector_search = requested.vector;
+    config.search.enable_sparse_search = requested.sparse;
+    config.search.enable_reranker = requested.reranker;
+    config.search.cold_start_policy = crate::config::SearchColdStartPolicy::Build;
+    config.search.force_rebuild_semantic_caches = args.force;
     finalize_manifest_config(config)
 }
 
@@ -337,16 +444,262 @@ pub(crate) async fn execute_manifest_load(
         .map_err(|error| DbtNovaError::ServerError(error.to_string()))?
 }
 
+fn requested_warm_components(args: &ManifestWarmArgs) -> SearchReadyInfo {
+    let any_explicit = args.vector || args.sparse || args.reranker;
+    SearchReadyInfo {
+        vector: args.vector || !any_explicit,
+        sparse: args.sparse || !any_explicit,
+        reranker: args.reranker,
+    }
+}
+
+fn warm_requested_query_models(
+    search: &mut ManifestSearch,
+    requested: SearchReadyInfo,
+) -> Result<()> {
+    if requested.vector {
+        let searcher = search.vector_search.as_ref().ok_or_else(|| {
+            let cause = search
+                .search_init_warnings
+                .get("vector")
+                .cloned()
+                .unwrap_or_else(|| {
+                    "vector search was not initialized during manifest warm".to_string()
+                });
+            DbtNovaError::ServerError(format!(
+                "vector warm could not prepare query-model files. Cause: {cause}"
+            ))
+        })?;
+        searcher.warm_query_model().map_err(|error| {
+            DbtNovaError::ServerError(format!(
+                "vector warm could not prepare query-model files. Cause: {error}"
+            ))
+        })?;
+        search.search_init_warnings.remove("vector");
+    }
+
+    if requested.sparse {
+        let searcher = search.sparse_search.as_ref().ok_or_else(|| {
+            let cause = search
+                .search_init_warnings
+                .get("sparse")
+                .cloned()
+                .unwrap_or_else(|| {
+                    "sparse search was not initialized during manifest warm".to_string()
+                });
+            DbtNovaError::ServerError(format!(
+                "sparse warm could not prepare query-model files. Cause: {cause}"
+            ))
+        })?;
+        searcher.warm_query_model().map_err(|error| {
+            DbtNovaError::ServerError(format!(
+                "sparse warm could not prepare query-model files. Cause: {error}"
+            ))
+        })?;
+        search.search_init_warnings.remove("sparse");
+    }
+
+    if requested.reranker {
+        let reranker = search.reranker.as_ref().ok_or_else(|| {
+            let cause = search
+                .search_init_warnings
+                .get("reranker")
+                .cloned()
+                .unwrap_or_else(|| "reranker was not initialized during manifest warm".to_string());
+            DbtNovaError::ServerError(format!(
+                "reranker warm could not prepare query-model files. Cause: {cause}"
+            ))
+        })?;
+        reranker.warm_query_model().map_err(|error| {
+            DbtNovaError::ServerError(format!(
+                "reranker warm could not prepare query-model files. Cause: {error}"
+            ))
+        })?;
+        search.search_init_warnings.remove("reranker");
+    }
+
+    Ok(())
+}
+
+fn configured_vector_model_name(search: &ManifestSearch) -> String {
+    if search.config().search.embedding_model.trim().is_empty() {
+        crate::config::SearchConfig::default().embedding_model
+    } else {
+        search.config().search.embedding_model.trim().to_string()
+    }
+}
+
+fn cache_path_is_fresh_enough(path: &Path, started_at: std::time::SystemTime) -> bool {
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .is_ok_and(|modified| {
+            modified
+                .checked_add(std::time::Duration::from_secs(2))
+                .is_some_and(|adjusted| adjusted >= started_at)
+        })
+}
+
+fn verify_requested_warm_caches(
+    search: &ManifestSearch,
+    requested: SearchReadyInfo,
+    force: bool,
+    started_at: std::time::SystemTime,
+) -> Result<WarmCacheVerification> {
+    let mut persisted = SearchReadyInfo {
+        vector: false,
+        sparse: false,
+        reranker: false,
+    };
+    let mut cache_paths = BTreeMap::new();
+
+    if requested.vector {
+        let model_name = configured_vector_model_name(search);
+        match rkyv_embeddings::load_embeddings(
+            &search.config().search,
+            &model_name,
+            &search.manifest_hash,
+            search.config().search.embeddings_max_decompressed_bytes,
+        ) {
+            EmbeddingsCacheLoad::Hit { paths, .. } => {
+                let cache_path = paths.preferred_path();
+                if force && !cache_path_is_fresh_enough(&cache_path, started_at) {
+                    return Err(DbtNovaError::ServerError(format!(
+                        "vector warm completed without rewriting the manifest-scoped cache at {}",
+                        cache_path.display()
+                    )));
+                }
+                persisted.vector = true;
+                cache_paths.insert(
+                    "vector".to_string(),
+                    cache_path.to_string_lossy().to_string(),
+                );
+            }
+            EmbeddingsCacheLoad::Miss { paths, failure } => {
+                return Err(DbtNovaError::ServerError(format!(
+                    "vector warm did not persist a usable manifest-scoped cache at {}. Cause: {}",
+                    paths.compressed_path.display(),
+                    failure.summary()
+                )));
+            }
+        }
+    }
+
+    if requested.sparse {
+        match rkyv_sparse_embeddings::load_sparse_embeddings(
+            &search.config().search,
+            default_sparse_model_name(),
+            &search.manifest_hash,
+            search.config().search.embeddings_max_decompressed_bytes,
+        ) {
+            SparseEmbeddingsCacheLoad::Hit { paths, .. } => {
+                let cache_path = paths.preferred_path();
+                if force && !cache_path_is_fresh_enough(&cache_path, started_at) {
+                    return Err(DbtNovaError::ServerError(format!(
+                        "sparse warm completed without rewriting the manifest-scoped cache at {}",
+                        cache_path.display()
+                    )));
+                }
+                persisted.sparse = true;
+                cache_paths.insert(
+                    "sparse".to_string(),
+                    cache_path.to_string_lossy().to_string(),
+                );
+            }
+            SparseEmbeddingsCacheLoad::Miss { paths, failure } => {
+                return Err(DbtNovaError::ServerError(format!(
+                    "sparse warm did not persist a usable manifest-scoped cache at {}. Cause: {}",
+                    paths.compressed_path.display(),
+                    failure.summary()
+                )));
+            }
+        }
+    }
+
+    Ok(WarmCacheVerification {
+        persisted,
+        cache_paths,
+    })
+}
+
+fn warm_payload_from_result(
+    result: &crate::manifest::loader::ManifestLoadResult,
+    requested: SearchReadyInfo,
+    cache_verification: WarmCacheVerification,
+    force: bool,
+) -> ManifestWarmData {
+    let search = &result.search;
+    let mut search_warnings = BTreeMap::new();
+    for (component, warning) in &search.search_init_warnings {
+        search_warnings.insert(component.clone(), warning.clone());
+    }
+
+    ManifestWarmData {
+        source: sanitize_uri(&search.manifest_source_uri),
+        manifest_hash: search.manifest_hash.clone(),
+        manifest_version: search.manifest_version.clone(),
+        elapsed_ms: result.elapsed_ms,
+        force,
+        requested,
+        persisted: cache_verification.persisted,
+        ready: SearchReadyInfo {
+            vector: search.vector_search_ready(),
+            sparse: search.sparse_search_ready(),
+            reranker: search.reranker_ready(),
+        },
+        search_warnings,
+        cache_paths: cache_verification.cache_paths,
+    }
+}
+
+fn print_warm_summary(payload: &ManifestWarmData) {
+    println!("manifest semantic caches warmed");
+    println!("  source: {}", payload.source);
+    println!("  manifest_hash: {}", payload.manifest_hash);
+    println!("  manifest_version: {}", payload.manifest_version);
+    println!("  elapsed_ms: {}", payload.elapsed_ms);
+    println!("  force: {}", payload.force);
+    if payload.requested.vector {
+        println!("  vector_cache: {}", ready_label(payload.persisted.vector));
+        println!("  vector: {}", ready_label(payload.ready.vector));
+        if let Some(path) = payload.cache_paths.get("vector") {
+            println!("  vector_cache_path: {path}");
+        }
+    }
+    if payload.requested.sparse {
+        println!("  sparse_cache: {}", ready_label(payload.persisted.sparse));
+        println!("  sparse: {}", ready_label(payload.ready.sparse));
+        if let Some(path) = payload.cache_paths.get("sparse") {
+            println!("  sparse_cache_path: {path}");
+        }
+    }
+    if payload.requested.reranker {
+        println!("  reranker: {}", ready_label(payload.ready.reranker));
+    }
+    if !payload.search_warnings.is_empty() {
+        println!("  search_warnings:");
+        for (component, warning) in &payload.search_warnings {
+            println!("    {component}: {warning}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::time::{Duration, SystemTime};
 
     use super::{
-        build_manifest_load_config, build_manifest_reload_config, execute_manifest_load,
-        payload_from_result, render_success_json,
+        SearchReadyInfo, build_manifest_load_config, build_manifest_reload_config,
+        build_manifest_warm_config, execute_manifest_load, payload_from_result,
+        render_success_json, requested_warm_components, verify_requested_warm_caches,
     };
-    use crate::cli::args::{ManifestLoadArgs, ManifestReloadArgs};
+    use crate::cli::args::{ManifestLoadArgs, ManifestReloadArgs, ManifestWarmArgs};
     use crate::config::DbtNovaConfig;
+    use crate::manifest::rkyv_embeddings::save_embeddings;
+    use crate::manifest::rkyv_sparse_embeddings::save_sparse_embeddings;
+    use crate::manifest::rkyv_types::{
+        CachedEmbeddings, CachedSparseEmbeddings, RKYV_SCHEMA_VERSION,
+    };
     use crate::tests::common::fixture_manifest_path_string;
     use tempfile::TempDir;
 
@@ -419,6 +772,129 @@ mod tests {
             error
                 .to_string()
                 .contains("--storage-instance-id must be a single safe path segment")
+        );
+    }
+
+    #[test]
+    fn build_manifest_warm_config_enables_requested_components() {
+        let args = ManifestWarmArgs {
+            manifest_path: Some(fixture_manifest_path_string()),
+            vector: true,
+            force: true,
+            ..ManifestWarmArgs::default()
+        };
+
+        let config = build_manifest_warm_config(&args).expect("warm config");
+        assert!(config.search.enable_vector_search);
+        assert!(!config.search.enable_sparse_search);
+        assert!(!config.search.enable_reranker);
+        assert!(matches!(
+            config.search.cold_start_policy,
+            crate::config::SearchColdStartPolicy::Build
+        ));
+        assert!(config.search.force_rebuild_semantic_caches);
+    }
+
+    #[test]
+    fn build_manifest_warm_config_can_enable_reranker() {
+        let args = ManifestWarmArgs {
+            manifest_path: Some(fixture_manifest_path_string()),
+            reranker: true,
+            ..ManifestWarmArgs::default()
+        };
+
+        let config = build_manifest_warm_config(&args).expect("warm config");
+        assert!(!config.search.enable_vector_search);
+        assert!(!config.search.enable_sparse_search);
+        assert!(config.search.enable_reranker);
+    }
+
+    #[test]
+    fn requested_warm_components_defaults_to_vector_and_sparse() {
+        let requested = requested_warm_components(&ManifestWarmArgs::default());
+        assert!(requested.vector);
+        assert!(requested.sparse);
+        assert!(!requested.reranker);
+    }
+
+    #[test]
+    fn requested_warm_components_honors_explicit_reranker() {
+        let requested = requested_warm_components(&ManifestWarmArgs {
+            reranker: true,
+            ..ManifestWarmArgs::default()
+        });
+        assert!(!requested.vector);
+        assert!(!requested.sparse);
+        assert!(requested.reranker);
+    }
+
+    #[tokio::test]
+    async fn verify_requested_warm_caches_requires_force_rebuild_to_refresh_cache_files() {
+        let args = ManifestLoadArgs {
+            manifest_path: Some(fixture_manifest_path_string()),
+            ..ManifestLoadArgs::default()
+        };
+        let mut config = build_manifest_load_config(&args).expect("config");
+        let temp_dir = TempDir::new().expect("temp dir");
+        config.storage_dir = temp_dir
+            .path()
+            .join("storage")
+            .to_string_lossy()
+            .to_string();
+        config.search.embedding_cache_dir =
+            temp_dir.path().join("cache").to_string_lossy().to_string();
+        config.search.enable_vector_search = false;
+        config.search.enable_sparse_search = false;
+        config.search.enable_reranker = false;
+        let loaded = execute_manifest_load(config).await.expect("load result");
+        let manifest_hash = loaded.search.manifest_hash.clone();
+        let search = loaded.search.config().search.clone();
+
+        save_embeddings(
+            &CachedEmbeddings {
+                schema_version: RKYV_SCHEMA_VERSION,
+                model_name: "intfloat/multilingual-e5-base".to_string(),
+                manifest_hash: manifest_hash.clone(),
+                entity_ids: vec!["model.test".to_string()],
+                dense_embeddings: vec![vec![1.0, 0.0]],
+                is_quantized: false,
+                sparse_indices: None,
+                sparse_values: None,
+                ann_hyperplanes: None,
+                ann_bucket_keys: None,
+                ann_bucket_values: None,
+            },
+            &search,
+        )
+        .expect("save dense cache");
+        save_sparse_embeddings(
+            &CachedSparseEmbeddings {
+                schema_version: RKYV_SCHEMA_VERSION,
+                model_name: "Qdrant/Splade_PP_en_v1".to_string(),
+                manifest_hash,
+                entity_ids: vec!["model.test".to_string()],
+                sparse_indices: vec![vec![1, 2]],
+                sparse_values: vec![vec![0.4, 0.6]],
+            },
+            &search,
+        )
+        .expect("save sparse cache");
+
+        let error = verify_requested_warm_caches(
+            &loaded.search,
+            SearchReadyInfo {
+                vector: true,
+                sparse: true,
+                reranker: false,
+            },
+            true,
+            SystemTime::now() + Duration::from_secs(60),
+        )
+        .expect_err("force warm should require freshly persisted cache files");
+        assert!(
+            error
+                .to_string()
+                .contains("completed without rewriting the manifest-scoped cache")
         );
     }
 

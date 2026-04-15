@@ -106,8 +106,8 @@ flowchart TD
 
   STORE --> BIN["entities.bin + entities.idx"]
   IDX --> RK1["indexes.rkyv"]
-  VEC --> RK2["embeddings.rkyv.zst"]
-  VEC --> RK3["sparse_embeddings.rkyv.zst"]
+  VEC --> RK2["manifests/<hash>/dense__<model>.rkyv.zst"]
+  VEC --> RK3["manifests/<hash>/sparse__<model>.rkyv.zst"]
   VEC --> MODELS["fastembed model cache"]
 
   SQLP["SQL Provider"] --> DBX["Databricks API"]
@@ -193,11 +193,14 @@ cache (`.fastembed_cache`) and per-manifest instances:
           entities.checksum.json
           index/
           indexes.rkyv
-          embeddings.rkyv.zst
-          sparse_embeddings.rkyv.zst
           manifest.signature.json
           .in_use.lock
       .build.lock
+    .fastembed_cache/
+      manifests/
+        <manifest_hash>/
+          dense__<model_slug>.rkyv.zst
+          sparse__<model_slug>.rkyv.zst
 ```
 
 Key behaviors:

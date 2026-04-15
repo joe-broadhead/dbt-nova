@@ -13,6 +13,7 @@ use crate::config::{ArtifactFetchPolicy, DbtNovaConfig};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::bootstrap::prepare_runtime_config;
 use crate::manifest::entity::{ArchivedEntity, Entity};
+use crate::manifest::semantic_cache::{self, SemanticCacheComponent};
 use crate::manifest::store::EntityStore;
 use crate::manifest::tantivy_search::TantivySearcher;
 use crate::manifest::vector_search::{Reranker, SparseSearcher, VectorSearcher};
@@ -401,22 +402,47 @@ impl ManifestSearch {
     /// Returns whether vector search was initialized successfully.
     #[must_use]
     pub fn vector_search_ready(&self) -> bool {
-        self.vector_search.is_some()
+        self.vector_search
+            .as_ref()
+            .is_some_and(|searcher| searcher.query_ready())
     }
 
     /// Returns whether sparse search was initialized successfully.
     #[must_use]
     pub fn sparse_search_ready(&self) -> bool {
-        self.sparse_search.is_some()
+        self.sparse_search
+            .as_ref()
+            .is_some_and(|searcher| searcher.query_ready())
     }
 
     /// Returns whether the reranker was initialized successfully.
     #[must_use]
     pub fn reranker_ready(&self) -> bool {
-        self.reranker.is_some()
+        self.reranker
+            .as_ref()
+            .is_some_and(|reranker| reranker.query_ready())
+    }
+
+    /// Returns whether all enabled semantic capabilities are ready to serve queries.
+    #[must_use]
+    pub fn ready_for_traffic(&self) -> bool {
+        (!self.config.search.enable_vector_search || self.vector_search_ready())
+            && (!self.config.search.enable_sparse_search || self.sparse_search_ready())
+            && (!self.config.search.enable_reranker || self.reranker_ready())
+    }
+
+    /// Returns the top-level health status label for a loaded manifest.
+    #[must_use]
+    pub fn health_status_label(&self) -> &'static str {
+        if self.ready_for_traffic() {
+            "ready"
+        } else {
+            "degraded"
+        }
     }
 
     /// Build a health snapshot payload for diagnostics.
+    #[allow(clippy::too_many_lines)]
     pub async fn health_snapshot(&self) -> JsonValue {
         fn state_label(state: crate::utils::CircuitBreakerState) -> &'static str {
             match state {
@@ -449,6 +475,23 @@ impl ManifestSearch {
 
         let (manifest_cache_hits, manifest_cache_misses) =
             crate::manifest::source::manifest_cache_stats();
+        let vector_model_name = if self.config.search.embedding_model.trim().is_empty() {
+            crate::config::SearchConfig::default().embedding_model
+        } else {
+            self.config.search.embedding_model.trim().to_string()
+        };
+        let vector_cache = semantic_cache::cache_paths(
+            &self.config.search,
+            SemanticCacheComponent::Dense,
+            &vector_model_name,
+            &self.manifest_hash,
+        );
+        let sparse_cache = semantic_cache::cache_paths(
+            &self.config.search,
+            SemanticCacheComponent::Sparse,
+            semantic_cache::default_sparse_model_name(),
+            &self.manifest_hash,
+        );
 
         let lineage_cache_json = if let Some(cache) = &self.lineage_cache {
             serde_json::json!({
@@ -464,6 +507,7 @@ impl ManifestSearch {
         };
 
         serde_json::json!({
+            "ready_for_traffic": self.ready_for_traffic(),
             "manifest": {
                 "source_uri": self.manifest_source_uri,
                 "hash": self.manifest_hash,
@@ -486,16 +530,52 @@ impl ManifestSearch {
                     "enabled": self.config.search.enable_vector_search,
                     "ready": self.vector_search_ready(),
                     "warning": self.search_init_warnings.get("vector"),
+                    "query_model_files_present": self
+                        .vector_search
+                        .as_ref()
+                        .is_some_and(|searcher| searcher.query_model_files_present()),
+                    "query_model_initialized": self
+                        .vector_search
+                        .as_ref()
+                        .is_some_and(|searcher| searcher.query_model_initialized()),
+                    "cache": {
+                        "expected_path": vector_cache.compressed_path,
+                        "manifest_hash": vector_cache.manifest_hash,
+                        "model_slug": vector_cache.model_slug,
+                        "present": vector_cache.present(),
+                    },
                 },
                 "sparse": {
                     "enabled": self.config.search.enable_sparse_search,
                     "ready": self.sparse_search_ready(),
                     "warning": self.search_init_warnings.get("sparse"),
+                    "query_model_files_present": self
+                        .sparse_search
+                        .as_ref()
+                        .is_some_and(|searcher| searcher.query_model_files_present()),
+                    "query_model_initialized": self
+                        .sparse_search
+                        .as_ref()
+                        .is_some_and(|searcher| searcher.query_model_initialized()),
+                    "cache": {
+                        "expected_path": sparse_cache.compressed_path,
+                        "manifest_hash": sparse_cache.manifest_hash,
+                        "model_slug": sparse_cache.model_slug,
+                        "present": sparse_cache.present(),
+                    },
                 },
                 "reranker": {
                     "enabled": self.config.search.enable_reranker,
                     "ready": self.reranker_ready(),
                     "warning": self.search_init_warnings.get("reranker"),
+                    "query_model_files_present": self
+                        .reranker
+                        .as_ref()
+                        .is_some_and(|reranker| reranker.query_model_files_present()),
+                    "query_model_initialized": self
+                        .reranker
+                        .as_ref()
+                        .is_some_and(|reranker| reranker.initialized()),
                 },
             },
             "circuit_breakers": {

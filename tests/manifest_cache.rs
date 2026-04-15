@@ -5,12 +5,14 @@ mod support_config;
 use std::fs;
 use std::path::PathBuf;
 
+use dbt_nova::manifest::rkyv_cache::{CacheLoadFailure, save_rkyv};
 use dbt_nova::manifest::rkyv_embeddings;
 use dbt_nova::manifest::rkyv_sparse_embeddings;
 use dbt_nova::manifest::rkyv_types::{
     CachedEmbeddings, CachedSparseEmbeddings, RKYV_SCHEMA_VERSION,
 };
-use dbt_nova::{DbtNovaConfig, ManifestSearch};
+use dbt_nova::manifest::semantic_cache::{self, SemanticCacheComponent};
+use dbt_nova::{DbtNovaConfig, ManifestSearch, config::SearchConfig};
 
 #[test]
 fn indexes_cache_persists_to_disk() {
@@ -58,6 +60,10 @@ fn indexes_cache_persists_to_disk() {
 #[test]
 fn embeddings_cache_respects_decompression_limit() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
+    let search = SearchConfig {
+        embedding_cache_dir: temp_dir.path().to_string_lossy().to_string(),
+        ..SearchConfig::default()
+    };
     let cache = CachedEmbeddings {
         schema_version: RKYV_SCHEMA_VERSION,
         model_name: "test-model".to_string(),
@@ -71,16 +77,21 @@ fn embeddings_cache_respects_decompression_limit() {
         ann_bucket_keys: None,
         ann_bucket_values: None,
     };
-    rkyv_embeddings::save_embeddings(&cache, temp_dir.path()).expect("save embeddings");
+    rkyv_embeddings::save_embeddings(&cache, &search).expect("save embeddings");
 
-    let loaded =
-        rkyv_embeddings::try_load_embeddings(temp_dir.path(), "test-model", "test-hash", 1);
-    assert!(loaded.is_none(), "expected cache to be rejected");
+    assert!(matches!(
+        rkyv_embeddings::load_embeddings(&search, "test-model", "test-hash", 1),
+        rkyv_embeddings::EmbeddingsCacheLoad::Miss { .. }
+    ));
 }
 
 #[test]
 fn sparse_embeddings_cache_respects_decompression_limit() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
+    let search = SearchConfig {
+        embedding_cache_dir: temp_dir.path().to_string_lossy().to_string(),
+        ..SearchConfig::default()
+    };
     let cache = CachedSparseEmbeddings {
         schema_version: RKYV_SCHEMA_VERSION,
         model_name: "sparse-model".to_string(),
@@ -89,14 +100,99 @@ fn sparse_embeddings_cache_respects_decompression_limit() {
         sparse_indices: vec![vec![1, 2, 3, 4, 5]],
         sparse_values: vec![vec![0.1_f32; 5]],
     };
-    rkyv_sparse_embeddings::save_sparse_embeddings(&cache, temp_dir.path())
+    rkyv_sparse_embeddings::save_sparse_embeddings(&cache, &search)
         .expect("save sparse embeddings");
 
-    let loaded = rkyv_sparse_embeddings::try_load_sparse_embeddings(
-        temp_dir.path(),
-        "sparse-model",
-        "sparse-hash",
-        1,
+    assert!(matches!(
+        rkyv_sparse_embeddings::load_sparse_embeddings(&search, "sparse-model", "sparse-hash", 1),
+        rkyv_sparse_embeddings::SparseEmbeddingsCacheLoad::Miss { .. }
+    ));
+}
+
+#[test]
+fn raw_embeddings_cache_respects_size_limit() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let search = SearchConfig {
+        embedding_cache_dir: temp_dir.path().to_string_lossy().to_string(),
+        ..SearchConfig::default()
+    };
+    let cache = CachedEmbeddings {
+        schema_version: RKYV_SCHEMA_VERSION,
+        model_name: "raw-model".to_string(),
+        manifest_hash: "raw-hash".to_string(),
+        entity_ids: vec!["id-1".to_string()],
+        dense_embeddings: vec![vec![0.0_f32; 512]],
+        is_quantized: false,
+        sparse_indices: None,
+        sparse_values: None,
+        ann_hyperplanes: None,
+        ann_bucket_keys: None,
+        ann_bucket_values: None,
+    };
+    let paths = semantic_cache::cache_paths(
+        &search,
+        SemanticCacheComponent::Dense,
+        "raw-model",
+        "raw-hash",
     );
-    assert!(loaded.is_none(), "expected cache to be rejected");
+    save_rkyv(&cache, &paths.raw_path).expect("save raw embeddings");
+
+    match rkyv_embeddings::load_embeddings(&search, "raw-model", "raw-hash", 1) {
+        rkyv_embeddings::EmbeddingsCacheLoad::Miss { failure, .. } => {
+            assert!(matches!(
+                failure,
+                rkyv_embeddings::EmbeddingsCacheFailure::Load(CacheLoadFailure::TooLarge {
+                    path,
+                    max_bytes,
+                    ..
+                }) if path == paths.raw_path && max_bytes == 1
+            ));
+        }
+        other => panic!("expected size-limited miss, got {other:?}"),
+    }
+}
+
+#[test]
+fn raw_sparse_embeddings_cache_respects_size_limit() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let search = SearchConfig {
+        embedding_cache_dir: temp_dir.path().to_string_lossy().to_string(),
+        ..SearchConfig::default()
+    };
+    let cache = CachedSparseEmbeddings {
+        schema_version: RKYV_SCHEMA_VERSION,
+        model_name: "raw-sparse-model".to_string(),
+        manifest_hash: "raw-sparse-hash".to_string(),
+        entity_ids: vec!["id-1".to_string()],
+        sparse_indices: vec![vec![1, 2, 3, 4, 5]],
+        sparse_values: vec![vec![0.1_f32; 5]],
+    };
+    let paths = semantic_cache::cache_paths(
+        &search,
+        SemanticCacheComponent::Sparse,
+        "raw-sparse-model",
+        "raw-sparse-hash",
+    );
+    save_rkyv(&cache, &paths.raw_path).expect("save raw sparse embeddings");
+
+    match rkyv_sparse_embeddings::load_sparse_embeddings(
+        &search,
+        "raw-sparse-model",
+        "raw-sparse-hash",
+        1,
+    ) {
+        rkyv_sparse_embeddings::SparseEmbeddingsCacheLoad::Miss { failure, .. } => {
+            assert!(matches!(
+                failure,
+                rkyv_sparse_embeddings::SparseEmbeddingsCacheFailure::Load(
+                    CacheLoadFailure::TooLarge {
+                        path,
+                        max_bytes,
+                        ..
+                    }
+                ) if path == paths.raw_path && max_bytes == 1
+            ));
+        }
+        other => panic!("expected size-limited miss, got {other:?}"),
+    }
 }

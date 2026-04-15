@@ -63,11 +63,11 @@ or remote model hydration? See [Modes & Combinations](modes-and-combinations.md)
 
 ### Optional: Install + Pre-Warm Models
 
-If you want users to avoid first-run model downloads, pre-warm during install:
+If you want users to enable semantic layers without a later model download, pre-warm during install:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/models" \
+  DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/.fastembed_cache" \
   DBT_NOVA_WARMUP_REQUIRED_MODELS=3 \
   bash -s -- --slim --warm-models --non-interactive
 ```
@@ -106,7 +106,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | dbt-nova
 If you pre-warmed models, verify three required model snapshots exist:
 
 ```bash
-find "$HOME/.dbt-nova/models" -type f \
+find "$HOME/.dbt-nova/.fastembed_cache" -type f \
   \( -path "*/snapshots/*/onnx/model.onnx" -o -path "*/snapshots/*/model.onnx" \) \
   | sed -E 's#/(onnx/)?model\.onnx$##' | sort -u | wc -l
 ```
@@ -159,8 +159,9 @@ cargo install --path . --features embeddings --locked
 
 ## Release Artifacts
 
-Published release assets are **slim** (binary only). Models download on first run
-or can be pre-warmed with `scripts/warm_models.sh`.
+Published release assets are **slim** (binary only). Semantic layers are disabled
+by default; when you opt in to them, model files can be downloaded on demand or
+pre-warmed with `scripts/warm_models.sh`.
 
 If you request `--bundled` and no bundled artifact exists for that release/target,
 the installer automatically falls back to slim.
@@ -211,7 +212,7 @@ The installer defaults to **slim** and supports:
 | `status: refreshing` | Manifest refreshed in background while existing index is still serving | Confirm `DBT_NOVA_MANIFEST_REFRESH_SECS`, reduce size of source updates if needed, and check for refresh errors in logs |
 | `status: failed` at startup | Manifest source unavailable or malformed manifest | Fix source/path credentials and wait for retry recovery to return to `ready` |
 | `ENOENT manifest.json` | Wrong path | Verify `DBT_MANIFEST_PATH` points to a valid file |
-| Out of memory | Dense vectors enabled on small instance | Disable with `DBT_NOVA_SEARCH_ENABLE_VECTOR=false` or increase RAM |
+| Out of memory | Dense vectors enabled on small instance | Leave semantic layers disabled, or set `DBT_NOVA_SEARCH_ENABLE_VECTOR=false` and increase RAM only if you need dense search |
 | Permission denied | Binary not executable | Run `chmod +x dbt-nova` |
 
 ### Debug Logging
@@ -224,10 +225,10 @@ DBT_NOVA_LOG=debug dbt-nova
 
 ### First-Run Model Downloads
 
-Slim/source installs download models on first run with embeddings enabled.
+Slim/source installs only download models when semantic layers are explicitly enabled.
 This happens once and is cached in the configured `DBT_NOVA_EMBEDDINGS_CACHE_DIR`.
 If unset, Nova uses `models/` next to the binary when present, otherwise
-`<DBT_NOVA_STORAGE_DIR>/.fastembed_cache`.
+`$HOME/.dbt-nova/.fastembed_cache`.
 
 To pre-download models explicitly:
 
@@ -239,7 +240,9 @@ bash scripts/warm_models.sh
 
 - `partial` (default): download/seed model files only
 - `full`: download/seed model files and run a manifest-scoped warmup to generate
-  `embeddings.rkyv.zst` and `sparse_embeddings.rkyv.zst`
+  manifest-scoped dense/sparse caches under
+  `manifests/<manifest_hash>/dense__<model_slug>.rkyv.zst` and
+  `manifests/<manifest_hash>/sparse__<model_slug>.rkyv.zst`
 
 To run full warmup:
 

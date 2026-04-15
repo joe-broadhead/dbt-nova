@@ -16,6 +16,11 @@ export DBT_NOVA_EMBEDDINGS_CACHE_DIR=/tmp/dbt-nova/models
 export DBT_NOVA_BOOTSTRAP_URI='https://example.invalid/bootstrap.json'
 export DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing
 unset DBT_NOVA_STORAGE_READ_ONLY
+
+# Optional: enable semantic layers when your runtime has warmed or hydrated models
+# export DBT_NOVA_SEARCH_ENABLE_VECTOR=true
+# export DBT_NOVA_SEARCH_ENABLE_SPARSE=true
+# export DBT_NOVA_SEARCH_ENABLE_RERANKER=true
 ```
 
 Why these defaults matter:
@@ -36,8 +41,14 @@ When `DBT_NOVA_SERVER_TRANSPORT=streamable_http`, Nova exposes:
 - `GET /readyz`
   - manifest/search readiness probe
   - returns:
-    - `200 OK` when status is `ready` or `refreshing`
-    - `503 Service Unavailable` when status is `loading` or `failed`
+    - `200 OK` when Nova is ready for traffic
+    - `503 Service Unavailable` when Nova is not ready for traffic
+
+In practice that usually means:
+
+- `ready` -> `200 OK`
+- `refreshing` -> `200 OK` when an active searcher is still traffic-ready
+- `degraded`, `loading`, `failed` -> `503 Service Unavailable`
 
 `/readyz` reflects the same manifest status that powers the MCP `health` tool,
 including refresh stats and active index diagnostics when available.

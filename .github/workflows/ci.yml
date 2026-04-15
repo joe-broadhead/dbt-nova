@@ -222,6 +222,21 @@ jobs:
       installer_repository: ${{ github.repository }}
       installer_ref: ${{ github.sha }}
 
+  reusable-assets-semantic-producer:
+    name: reusable-assets-semantic-producer
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/nova-build-assets.yml
+    with:
+      manifest_path: tests/fixtures/nova_manifest.json
+      storage_instance_id: ci-semantic-smoke
+      artifact_name_prefix: ci-semantic-smoke
+      models_distribution_mode: publish_and_bootstrap
+      retention_days: 1
+      installer_repository: ${{ github.repository }}
+      installer_ref: ${{ github.sha }}
+
   reusable-assets-producer-structured-dbt:
     name: reusable-assets-producer-structured-dbt
     permissions:
@@ -580,7 +595,7 @@ jobs:
             --json | tee "${{ steps.workspace.outputs.workspace_dir }}/health.json"
 
           jq -e '.status == "success"' "${{ steps.workspace.outputs.workspace_dir }}/health.json" >/dev/null
-          jq -e '.data.status == "ready" or .data.status == "refreshing"' "${{ steps.workspace.outputs.workspace_dir }}/health.json" >/dev/null
+          jq -e '.data.status == "ready" and .data.ready_for_traffic == true' "${{ steps.workspace.outputs.workspace_dir }}/health.json" >/dev/null
 
       - name: Read-only tool call succeeds without rebuild
         shell: bash
@@ -747,6 +762,167 @@ jobs:
 
           jq -e '.status == "success"' "${{ steps.remote_workspace.outputs.workspace_dir }}/remote-health-readonly.json" >/dev/null
           jq -e '.data.artifact_consumer.fetch_policy == "never"' "${{ steps.remote_workspace.outputs.workspace_dir }}/remote-health-readonly.json" >/dev/null
+
+  reusable-assets-semantic-remote-consumer-smoke:
+    name: reusable-assets-semantic-remote-consumer-smoke
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    needs: reusable-assets-semantic-producer
+    env:
+      STORAGE_INSTANCE_ID: ci-semantic-smoke
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
+      - name: Build dbt-nova CLI binary
+        run: cargo build --locked --bin dbt-nova
+
+      - name: Ensure jq is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v jq >/dev/null 2>&1; then
+            exit 0
+          fi
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Download storage artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: ${{ needs.reusable-assets-semantic-producer.outputs.artifact_name_storage }}
+          path: semantic-consumer-artifacts/storage
+
+      - name: Download metadata artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: ${{ needs.reusable-assets-semantic-producer.outputs.artifact_name_metadata }}
+          path: semantic-consumer-artifacts/metadata
+
+      - name: Download models artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: ${{ needs.reusable-assets-semantic-producer.outputs.artifact_name_models }}
+          path: semantic-consumer-artifacts/models
+
+      - name: Prepare semantic file URI smoke workspace
+        id: semantic_workspace
+        shell: bash
+        env:
+          STORAGE_ARTIFACT_NAME: ${{ needs.reusable-assets-semantic-producer.outputs.artifact_name_storage }}
+          MODELS_ARTIFACT_NAME: ${{ needs.reusable-assets-semantic-producer.outputs.artifact_name_models }}
+        run: |
+          set -euo pipefail
+
+          workspace_dir="$(mktemp -d)"
+          storage_root="${workspace_dir}/nova-storage"
+          models_root="${workspace_dir}/nova-models"
+          mkdir -p "${storage_root}" "${models_root}"
+
+          storage_archive="semantic-consumer-artifacts/storage/${STORAGE_ARTIFACT_NAME}.tar.gz"
+          metadata_path="semantic-consumer-artifacts/metadata/nova-build-metadata.json"
+          models_archive="semantic-consumer-artifacts/models/${MODELS_ARTIFACT_NAME}.tar.gz"
+          test -f "${storage_archive}"
+          test -f "${metadata_path}"
+          test -f "${models_archive}"
+
+          manifest_path="${workspace_dir}/manifest.json"
+          cp tests/fixtures/nova_manifest.json "${manifest_path}"
+
+          storage_uri="file://$(realpath "${storage_archive}")"
+          metadata_uri="file://$(realpath "${metadata_path}")"
+          models_uri="file://$(realpath "${models_archive}")"
+
+          echo "workspace_dir=${workspace_dir}" >> "$GITHUB_OUTPUT"
+          echo "storage_root=${storage_root}" >> "$GITHUB_OUTPUT"
+          echo "models_root=${models_root}" >> "$GITHUB_OUTPUT"
+          echo "manifest_path=${manifest_path}" >> "$GITHUB_OUTPUT"
+          echo "storage_uri=${storage_uri}" >> "$GITHUB_OUTPUT"
+          echo "metadata_uri=${metadata_uri}" >> "$GITHUB_OUTPUT"
+          echo "models_uri=${models_uri}" >> "$GITHUB_OUTPUT"
+
+      - name: First run materializes semantic artifacts from file URIs
+        shell: bash
+        env:
+          DBT_NOVA_STORAGE_DIR: ${{ steps.semantic_workspace.outputs.storage_root }}
+          DBT_NOVA_EMBEDDINGS_CACHE_DIR: ${{ steps.semantic_workspace.outputs.models_root }}
+          DBT_NOVA_STORAGE_INSTANCE_ID: ${{ env.STORAGE_INSTANCE_ID }}
+          DBT_NOVA_STORAGE_ARTIFACT_URI: ${{ steps.semantic_workspace.outputs.storage_uri }}
+          DBT_NOVA_METADATA_ARTIFACT_URI: ${{ steps.semantic_workspace.outputs.metadata_uri }}
+          DBT_NOVA_MODELS_ARTIFACT_URI: ${{ steps.semantic_workspace.outputs.models_uri }}
+          DBT_NOVA_ARTIFACT_FETCH_POLICY: if_missing
+          DBT_NOVA_SEARCH_ENABLE_VECTOR: "true"
+          DBT_NOVA_SEARCH_ENABLE_SPARSE: "true"
+          DBT_NOVA_SEARCH_ENABLE_RERANKER: "true"
+        run: |
+          set -euo pipefail
+          ./target/debug/dbt-nova health check \
+            --manifest-path "${{ steps.semantic_workspace.outputs.manifest_path }}" \
+            --json | tee "${{ steps.semantic_workspace.outputs.workspace_dir }}/semantic-health-first.json"
+
+          jq -e '.status == "success"' "${{ steps.semantic_workspace.outputs.workspace_dir }}/semantic-health-first.json" >/dev/null
+          jq -e '.data.status == "ready" and .data.ready_for_traffic == true' "${{ steps.semantic_workspace.outputs.workspace_dir }}/semantic-health-first.json" >/dev/null
+          jq -e '.data.artifact_consumer.enabled == true' "${{ steps.semantic_workspace.outputs.workspace_dir }}/semantic-health-first.json" >/dev/null
+          jq -e '.data.artifact_consumer.metadata_validated == true' "${{ steps.semantic_workspace.outputs.workspace_dir }}/semantic-health-first.json" >/dev/null
+          jq -e '.data.artifact_consumer.storage_materialized == true' "${{ steps.semantic_workspace.outputs.workspace_dir }}/semantic-health-first.json" >/dev/null
+          jq -e '.data.artifact_consumer.models_materialized == true' "${{ steps.semantic_workspace.outputs.workspace_dir }}/semantic-health-first.json" >/dev/null
+          jq -e '.data.search.vector.ready == true and .data.search.sparse.ready == true and .data.search.reranker.ready == true' "${{ steps.semantic_workspace.outputs.workspace_dir }}/semantic-health-first.json" >/dev/null
+
+      - name: Second run reuses local semantic artifacts under if_missing
+        shell: bash
+        env:
+          DBT_NOVA_STORAGE_DIR: ${{ steps.semantic_workspace.outputs.storage_root }}
+          DBT_NOVA_EMBEDDINGS_CACHE_DIR: ${{ steps.semantic_workspace.outputs.models_root }}
+          DBT_NOVA_STORAGE_INSTANCE_ID: ${{ env.STORAGE_INSTANCE_ID }}
+          DBT_NOVA_STORAGE_ARTIFACT_URI: ${{ steps.semantic_workspace.outputs.storage_uri }}
+          DBT_NOVA_METADATA_ARTIFACT_URI: ${{ steps.semantic_workspace.outputs.metadata_uri }}
+          DBT_NOVA_MODELS_ARTIFACT_URI: ${{ steps.semantic_workspace.outputs.models_uri }}
+          DBT_NOVA_ARTIFACT_FETCH_POLICY: if_missing
+          DBT_NOVA_SEARCH_ENABLE_VECTOR: "true"
+          DBT_NOVA_SEARCH_ENABLE_SPARSE: "true"
+          DBT_NOVA_SEARCH_ENABLE_RERANKER: "true"
+        run: |
+          set -euo pipefail
+          ./target/debug/dbt-nova health check \
+            --manifest-path "${{ steps.semantic_workspace.outputs.manifest_path }}" \
+            --json | tee "${{ steps.semantic_workspace.outputs.workspace_dir }}/semantic-health-second.json"
+
+          jq -e '.status == "success"' "${{ steps.semantic_workspace.outputs.workspace_dir }}/semantic-health-second.json" >/dev/null
+          jq -e '.data.status == "ready" and .data.ready_for_traffic == true' "${{ steps.semantic_workspace.outputs.workspace_dir }}/semantic-health-second.json" >/dev/null
+          jq -e '.data.artifact_consumer.storage_materialized == false' "${{ steps.semantic_workspace.outputs.workspace_dir }}/semantic-health-second.json" >/dev/null
+          jq -e '.data.artifact_consumer.models_materialized == false' "${{ steps.semantic_workspace.outputs.workspace_dir }}/semantic-health-second.json" >/dev/null
+          jq -e '.data.search.vector.ready == true and .data.search.sparse.ready == true and .data.search.reranker.ready == true' "${{ steps.semantic_workspace.outputs.workspace_dir }}/semantic-health-second.json" >/dev/null
+
+      - name: Read-only semantic mode succeeds with never policy after materialization
+        shell: bash
+        env:
+          DBT_NOVA_STORAGE_DIR: ${{ steps.semantic_workspace.outputs.storage_root }}
+          DBT_NOVA_EMBEDDINGS_CACHE_DIR: ${{ steps.semantic_workspace.outputs.models_root }}
+          DBT_NOVA_STORAGE_INSTANCE_ID: ${{ env.STORAGE_INSTANCE_ID }}
+          DBT_NOVA_STORAGE_READ_ONLY: "true"
+          DBT_NOVA_STORAGE_ARTIFACT_URI: ${{ steps.semantic_workspace.outputs.storage_uri }}
+          DBT_NOVA_METADATA_ARTIFACT_URI: ${{ steps.semantic_workspace.outputs.metadata_uri }}
+          DBT_NOVA_MODELS_ARTIFACT_URI: ${{ steps.semantic_workspace.outputs.models_uri }}
+          DBT_NOVA_ARTIFACT_FETCH_POLICY: never
+          DBT_NOVA_SEARCH_ENABLE_VECTOR: "true"
+          DBT_NOVA_SEARCH_ENABLE_SPARSE: "true"
+          DBT_NOVA_SEARCH_ENABLE_RERANKER: "true"
+        run: |
+          set -euo pipefail
+          ./target/debug/dbt-nova health check \
+            --manifest-path "${{ steps.semantic_workspace.outputs.manifest_path }}" \
+            --json | tee "${{ steps.semantic_workspace.outputs.workspace_dir }}/semantic-health-readonly.json"
+
+          jq -e '.status == "success"' "${{ steps.semantic_workspace.outputs.workspace_dir }}/semantic-health-readonly.json" >/dev/null
+          jq -e '.data.status == "ready" and .data.ready_for_traffic == true' "${{ steps.semantic_workspace.outputs.workspace_dir }}/semantic-health-readonly.json" >/dev/null
+          jq -e '.data.artifact_consumer.fetch_policy == "never"' "${{ steps.semantic_workspace.outputs.workspace_dir }}/semantic-health-readonly.json" >/dev/null
+          jq -e '.data.search.vector.ready == true and .data.search.sparse.ready == true and .data.search.reranker.ready == true' "${{ steps.semantic_workspace.outputs.workspace_dir }}/semantic-health-readonly.json" >/dev/null
 
   reusable-assets-negative-contract:
     name: reusable-assets-negative-contract

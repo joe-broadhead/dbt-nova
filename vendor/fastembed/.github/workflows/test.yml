@@ -1,0 +1,33 @@
+name: "Cargo Tests"
+on:
+    pull_request:
+      types:
+        - opened
+        - edited
+        - synchronize
+        - reopened
+    schedule:
+      - cron: 0 0 * * *
+  
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Cargo Test
+        run: cargo test
+
+      - name: Cargo Test Offline
+        run: cargo test --no-default-features --features ort-download-binaries
+
+      - name: Cargo Clippy
+        run: cargo clippy
+
+      - name: Cargo FMT
+        run: cargo fmt --all -- --check

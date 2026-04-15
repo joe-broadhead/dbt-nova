@@ -3,20 +3,27 @@ mod text;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
+use std::fs;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 use fastembed::{
     EmbeddingModel, InitOptions, RerankInitOptions, RerankerModel, SparseEmbedding,
     SparseInitOptions, SparseTextEmbedding, TextEmbedding, TextRerank,
 };
 
-use crate::config::SearchConfig;
+use crate::config::{SearchColdStartPolicy, SearchConfig};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::rkyv_embeddings;
 use crate::manifest::rkyv_sparse_embeddings;
 use crate::manifest::rkyv_types::{CachedEmbeddings, CachedSparseEmbeddings};
+use crate::manifest::semantic_cache::{
+    SemanticCacheComponent, SemanticCachePaths, cache_paths, default_sparse_model_name,
+};
 use crate::manifest::store::EntityStore;
-use tracing::warn;
+use tracing::{info, warn};
 
 use super::SearchComponentBuild;
 
@@ -28,6 +35,7 @@ const PROXY_KEYS: [&str; 6] = [
     "https_proxy",
     "all_proxy",
 ];
+const EMBEDDING_PROGRESS_LOG_EVERY_BATCHES: usize = 10;
 
 pub use text::{
     embedding_text, embedding_text_from_archived, embedding_text_from_entity,
@@ -37,18 +45,51 @@ pub use text::{
 use cache::embeddings_cache_dir;
 
 pub struct VectorSearcher {
-    model: TextEmbedding,
+    model: LazyVectorQueryModel,
     embeddings: DenseEmbeddings,
     ann: Option<AnnIndex>,
 }
 
 pub struct SparseSearcher {
-    model: SparseTextEmbedding,
+    model: LazySparseQueryModel,
     embeddings: Vec<(String, SparseEmbedding)>,
 }
 
 pub struct Reranker {
-    model: TextRerank,
+    model: LazyRerankerModel,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RequiredLocalModelLayout {
+    pub component: &'static str,
+    pub model_code: String,
+    pub model_file: String,
+    pub additional_files: Vec<&'static str>,
+}
+
+struct LazyVectorQueryModel {
+    model_name: EmbeddingModel,
+    cache_dir: PathBuf,
+    onnx_threads: usize,
+    model: DeferredInit<TextEmbedding>,
+}
+
+struct LazySparseQueryModel {
+    cache_dir: PathBuf,
+    onnx_threads: usize,
+    model: DeferredInit<SparseTextEmbedding>,
+}
+
+struct LazyRerankerModel {
+    model_name: RerankerModel,
+    cache_dir: PathBuf,
+    onnx_threads: usize,
+    model: DeferredInit<TextRerank>,
+}
+
+struct DeferredInit<T> {
+    value: OnceLock<T>,
+    init_lock: Mutex<()>,
 }
 
 fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
@@ -63,7 +104,7 @@ fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
 
 fn model_guidance(disable_env: &str) -> String {
     format!(
-        "Ensure model files are available in DBT_NOVA_EMBEDDINGS_CACHE_DIR, pre-warm them with --warm-models, or publish a models artifact. If you do not need this component, set {disable_env}=false."
+        "Ensure model files are available in DBT_NOVA_EMBEDDINGS_CACHE_DIR, run `dbt-nova manifest warm` for the target manifest, or publish a models artifact. If you do not need this component, set {disable_env}=false."
     )
 }
 
@@ -86,6 +127,26 @@ fn component_runtime_error(
     ))
 }
 
+fn component_missing_model_files_error(
+    component_label: &str,
+    disable_env: &str,
+    cause: &str,
+) -> DbtNovaError {
+    component_runtime_error(
+        component_label,
+        "query model initialization",
+        disable_env,
+        cause,
+    )
+}
+
+fn query_model_missing_files_warning(component_label: &str, disable_env: &str) -> String {
+    format!(
+        "{component_label} loaded reusable semantic state, but local query-model files are unavailable in DBT_NOVA_EMBEDDINGS_CACHE_DIR. The component is not query-ready until files are present or the lazy initializer succeeds. {}",
+        model_guidance(disable_env)
+    )
+}
+
 fn disable_on_total_batch_failure<T>(
     component_label: &str,
     disable_env: &str,
@@ -106,6 +167,34 @@ fn disable_on_total_batch_failure<T>(
     )))
 }
 
+fn cache_startup_warning(
+    component_label: &str,
+    warm_flag: &str,
+    disable_env: &str,
+    paths: &SemanticCachePaths,
+    cause: &str,
+) -> String {
+    let legacy_note = if paths.legacy_present() {
+        " Legacy singleton cache files are ignored."
+    } else {
+        ""
+    };
+    format!(
+        "{component_label} startup skipped because the manifest-scoped cache is unavailable at {}. Run `dbt-nova manifest warm --{warm_flag}` for this manifest, or publish a models artifact.{legacy_note} If you do not need this component, set {disable_env}=false. Cause: {cause}",
+        paths.compressed_path.display()
+    )
+}
+
+fn configured_embedding_model_name(config: &SearchConfig) -> String {
+    let trimmed = config.embedding_model.trim();
+    if trimmed.is_empty() {
+        SearchConfig::default().embedding_model
+    } else {
+        trimmed.to_string()
+    }
+}
+
+#[cfg(test)]
 fn build_optional_component<T, E, F>(
     component_label: &str,
     disable_env: &str,
@@ -154,6 +243,369 @@ where
             disable_env,
             &panic_payload_message(payload.as_ref()),
         )),
+    }
+}
+
+fn model_repo_dir(cache_dir: &Path, model_code: &str) -> PathBuf {
+    cache_dir.join(format!("models--{}", model_code.replace('/', "--")))
+}
+
+fn snapshot_dir_from_repo_dir(repo_dir: &Path) -> Result<PathBuf> {
+    if !repo_dir.is_dir() {
+        return Err(DbtNovaError::ServerError(format!(
+            "missing model repository directory {}",
+            repo_dir.display()
+        )));
+    }
+
+    let snapshots_dir = repo_dir.join("snapshots");
+    if !snapshots_dir.is_dir() {
+        return Err(DbtNovaError::ServerError(format!(
+            "missing snapshots directory in {}",
+            repo_dir.display()
+        )));
+    }
+
+    let refs_main = repo_dir.join("refs").join("main");
+    if refs_main.is_file() {
+        let revision = fs::read_to_string(&refs_main)?.trim().to_string();
+        if !revision.is_empty() {
+            let revision_snapshot = snapshots_dir.join(&revision);
+            if revision_snapshot.is_dir() {
+                return Ok(revision_snapshot);
+            }
+        }
+    }
+
+    let main_snapshot = snapshots_dir.join("main");
+    if main_snapshot.is_dir() {
+        return Ok(main_snapshot);
+    }
+
+    let mut snapshot_dirs = fs::read_dir(&snapshots_dir)?
+        .filter_map(std::result::Result::ok)
+        .filter_map(|entry| entry.file_type().ok().map(|file_type| (entry, file_type)))
+        .filter(|(_, file_type)| file_type.is_dir())
+        .map(|(entry, _)| entry.path())
+        .collect::<Vec<_>>();
+    if snapshot_dirs.len() == 1 {
+        return Ok(snapshot_dirs.remove(0));
+    }
+
+    Err(DbtNovaError::ServerError(format!(
+        "unable to resolve local snapshot directory in {}",
+        repo_dir.display()
+    )))
+}
+
+fn validate_local_model_files(
+    cache_dir: &Path,
+    model_code: &str,
+    model_file: &str,
+    additional_files: &[&str],
+) -> Result<()> {
+    let repo_dir = model_repo_dir(cache_dir, model_code);
+    let snapshot_dir = snapshot_dir_from_repo_dir(&repo_dir)?;
+    let mut required_files = vec![
+        model_file,
+        "tokenizer.json",
+        "config.json",
+        "special_tokens_map.json",
+        "tokenizer_config.json",
+    ];
+    required_files.extend_from_slice(additional_files);
+
+    for relative_path in required_files {
+        let path = snapshot_dir.join(relative_path);
+        if !path.is_file() {
+            return Err(DbtNovaError::ServerError(format!(
+                "missing required local model file {} for {}",
+                path.display(),
+                model_code
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+impl<T> DeferredInit<T> {
+    fn new() -> Self {
+        Self {
+            value: OnceLock::new(),
+            init_lock: Mutex::new(()),
+        }
+    }
+
+    fn get_or_try_init<F>(&self, init: F) -> Result<&T>
+    where
+        F: FnOnce() -> Result<T>,
+    {
+        if let Some(value) = self.value.get() {
+            return Ok(value);
+        }
+
+        let _guard = self
+            .init_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(value) = self.value.get() {
+            return Ok(value);
+        }
+
+        let value = init()?;
+        let _ = self.value.set(value);
+        self.value.get().ok_or_else(|| {
+            DbtNovaError::ServerError("lazy model initialization did not persist".to_string())
+        })
+    }
+
+    fn initialized(&self) -> bool {
+        self.value.get().is_some()
+    }
+}
+
+impl LazyVectorQueryModel {
+    fn new(model_name: EmbeddingModel, cache_dir: PathBuf, onnx_threads: usize) -> Self {
+        Self {
+            model_name,
+            cache_dir,
+            onnx_threads,
+            model: DeferredInit::new(),
+        }
+    }
+
+    fn ensure_local_files_available(&self) -> Result<()> {
+        let model_info = TextEmbedding::get_model_info(&self.model_name);
+        let mut additional_files = Vec::new();
+        if self.model_name == EmbeddingModel::MultilingualE5Large {
+            additional_files.push("model.onnx_data");
+        }
+        validate_local_model_files(
+            &self.cache_dir,
+            &model_info.model_code,
+            &model_info.model_file,
+            &additional_files,
+        )
+        .map_err(|err| {
+            component_missing_model_files_error(
+                "vector search",
+                "DBT_NOVA_SEARCH_ENABLE_VECTOR",
+                &err.to_string(),
+            )
+        })
+    }
+
+    fn get_or_try_init(&self) -> Result<&TextEmbedding> {
+        self.model.get_or_try_init(|| {
+            info!(
+                model_name = %self.model_name,
+                cache_dir = %self.cache_dir.display(),
+                "initializing vector query model lazily"
+            );
+            run_component_operation(
+                "vector search",
+                "query model initialization",
+                "DBT_NOVA_SEARCH_ENABLE_VECTOR",
+                || {
+                    TextEmbedding::try_new(InitOptions {
+                        model_name: self.model_name.clone(),
+                        cache_dir: self.cache_dir.clone(),
+                        show_download_progress: false,
+                        threads: Some(self.onnx_threads),
+                        ..Default::default()
+                    })
+                },
+            )
+        })
+    }
+
+    fn initialized(&self) -> bool {
+        self.model.initialized()
+    }
+
+    fn local_files_present(&self) -> bool {
+        self.ensure_local_files_available().is_ok()
+    }
+
+    fn query_ready(&self) -> bool {
+        self.initialized() || self.local_files_present()
+    }
+}
+
+impl LazySparseQueryModel {
+    fn new(cache_dir: PathBuf, onnx_threads: usize) -> Self {
+        Self {
+            cache_dir,
+            onnx_threads,
+            model: DeferredInit::new(),
+        }
+    }
+
+    fn ensure_local_files_available(&self) -> Result<()> {
+        let model_info = SparseTextEmbedding::list_supported_models()
+            .into_iter()
+            .find(|model| model.model_code == default_sparse_model_name())
+            .ok_or_else(|| {
+                DbtNovaError::ServerError(format!(
+                    "unsupported sparse model {}",
+                    default_sparse_model_name()
+                ))
+            })?;
+        validate_local_model_files(
+            &self.cache_dir,
+            &model_info.model_code,
+            &model_info.model_file,
+            &[],
+        )
+        .map_err(|err| {
+            component_missing_model_files_error(
+                "sparse search",
+                "DBT_NOVA_SEARCH_ENABLE_SPARSE",
+                &err.to_string(),
+            )
+        })
+    }
+
+    fn get_or_try_init(&self) -> Result<&SparseTextEmbedding> {
+        self.model.get_or_try_init(|| {
+            info!(
+                model_name = %default_sparse_model_name(),
+                cache_dir = %self.cache_dir.display(),
+                "initializing sparse query model lazily"
+            );
+            run_component_operation(
+                "sparse search",
+                "query model initialization",
+                "DBT_NOVA_SEARCH_ENABLE_SPARSE",
+                || {
+                    SparseTextEmbedding::try_new(SparseInitOptions {
+                        cache_dir: self.cache_dir.clone(),
+                        show_download_progress: false,
+                        threads: Some(self.onnx_threads),
+                        ..Default::default()
+                    })
+                },
+            )
+        })
+    }
+
+    fn initialized(&self) -> bool {
+        self.model.initialized()
+    }
+
+    fn local_files_present(&self) -> bool {
+        self.ensure_local_files_available().is_ok()
+    }
+
+    fn query_ready(&self) -> bool {
+        self.initialized() || self.local_files_present()
+    }
+}
+
+impl LazyRerankerModel {
+    fn new(model_name: RerankerModel, cache_dir: PathBuf, onnx_threads: usize) -> Self {
+        Self {
+            model_name,
+            cache_dir,
+            onnx_threads,
+            model: DeferredInit::new(),
+        }
+    }
+
+    fn ensure_local_files_available(&self) -> Result<()> {
+        let model_info = TextRerank::get_model_info(&self.model_name);
+        validate_local_model_files(
+            &self.cache_dir,
+            &model_info.model_code,
+            &model_info.model_file,
+            &[],
+        )
+        .map_err(|err| {
+            component_missing_model_files_error(
+                "reranker",
+                "DBT_NOVA_SEARCH_ENABLE_RERANKER",
+                &err.to_string(),
+            )
+        })
+    }
+
+    fn get_or_try_init(&self) -> Result<&TextRerank> {
+        self.model.get_or_try_init(|| {
+            info!(
+                model_name = %self.model_name,
+                cache_dir = %self.cache_dir.display(),
+                "initializing reranker model lazily"
+            );
+            run_component_operation(
+                "reranker",
+                "query model initialization",
+                "DBT_NOVA_SEARCH_ENABLE_RERANKER",
+                || {
+                    TextRerank::try_new(RerankInitOptions {
+                        model_name: self.model_name.clone(),
+                        cache_dir: self.cache_dir.clone(),
+                        show_download_progress: false,
+                        threads: Some(self.onnx_threads),
+                        ..Default::default()
+                    })
+                },
+            )
+        })
+    }
+
+    fn initialized(&self) -> bool {
+        self.model.initialized()
+    }
+
+    fn local_files_present(&self) -> bool {
+        self.ensure_local_files_available().is_ok()
+    }
+
+    fn query_ready(&self) -> bool {
+        self.initialized() || self.local_files_present()
+    }
+}
+
+pub(crate) fn required_embedding_model_layout(value: &str) -> RequiredLocalModelLayout {
+    let model_name = resolve_embedding_model(value);
+    let model_info = TextEmbedding::get_model_info(&model_name);
+    let mut additional_files = Vec::new();
+    if model_name == EmbeddingModel::MultilingualE5Large {
+        additional_files.push("model.onnx_data");
+    }
+
+    RequiredLocalModelLayout {
+        component: "vector",
+        model_code: model_info.model_code,
+        model_file: model_info.model_file,
+        additional_files,
+    }
+}
+
+pub(crate) fn required_sparse_model_layout() -> RequiredLocalModelLayout {
+    let model_info = SparseTextEmbedding::list_supported_models()
+        .into_iter()
+        .find(|model| model.model_code == default_sparse_model_name())
+        .expect("default sparse model should be supported");
+
+    RequiredLocalModelLayout {
+        component: "sparse",
+        model_code: model_info.model_code,
+        model_file: model_info.model_file,
+        additional_files: Vec::new(),
+    }
+}
+
+pub(crate) fn required_reranker_model_layout(value: &str) -> RequiredLocalModelLayout {
+    let model_name = resolve_reranker_model(value);
+    let model_info = TextRerank::get_model_info(&model_name);
+
+    RequiredLocalModelLayout {
+        component: "reranker",
+        model_code: model_info.model_code,
+        model_file: model_info.model_file,
+        additional_files: Vec::new(),
     }
 }
 
@@ -339,6 +791,30 @@ impl AnnIndex {
 }
 
 impl VectorSearcher {
+    #[must_use]
+    pub fn query_model_initialized(&self) -> bool {
+        self.model.initialized()
+    }
+
+    #[must_use]
+    pub fn query_model_files_present(&self) -> bool {
+        self.model.local_files_present()
+    }
+
+    #[must_use]
+    pub fn query_ready(&self) -> bool {
+        self.model.query_ready()
+    }
+
+    /// Ensure the local vector query model files are available and the model can initialize.
+    ///
+    /// # Errors
+    /// Returns an error when the model cannot be initialized or required local files are absent.
+    pub fn warm_query_model(&self) -> Result<()> {
+        let _ = self.model.get_or_try_init()?;
+        self.model.ensure_local_files_available()
+    }
+
     /// Build the vector search index and embeddings.
     ///
     /// # Errors
@@ -351,36 +827,64 @@ impl VectorSearcher {
 
         validate_proxy_env_vars()?;
         let cache_dir = embeddings_cache_dir(config);
+        let manifest_hash = config.manifest_hash.as_deref().unwrap_or("");
+        let model_name = configured_embedding_model_name(config);
+        let cache_paths = cache_paths(
+            config,
+            SemanticCacheComponent::Dense,
+            &model_name,
+            manifest_hash,
+        );
+        let build_started = Instant::now();
+        info!(
+            manifest_hash,
+            model_name = %model_name,
+            entity_count = store.len(),
+            batch_size = config.embedding_batch_size.max(1),
+            cache_path = %cache_paths.compressed_path.display(),
+            "starting vector semantic cache build"
+        );
+        let mut cached_embeddings = None;
+        let model = LazyVectorQueryModel::new(
+            resolve_embedding_model(&model_name),
+            cache_dir.clone(),
+            config.onnx_threads,
+        );
 
-        let (model, warning) =
-            build_optional_component("vector search", "DBT_NOVA_SEARCH_ENABLE_VECTOR", || {
-                TextEmbedding::try_new(InitOptions {
-                    model_name: resolve_embedding_model(&config.embedding_model),
-                    cache_dir: cache_dir.clone(),
-                    show_download_progress: false,
-                    ..Default::default()
-                })
-            })
-            .into_parts();
-        let Some(model) = model else {
-            if let Some(warning) = warning {
-                warn!(warning = %warning, "Vector search unavailable during startup");
-                return Ok(SearchComponentBuild::disabled(warning));
+        if !config.force_rebuild_semantic_caches {
+            match rkyv_embeddings::load_embeddings(
+                config,
+                &model_name,
+                manifest_hash,
+                config.embeddings_max_decompressed_bytes,
+            ) {
+                rkyv_embeddings::EmbeddingsCacheLoad::Hit { cache, .. } => {
+                    cached_embeddings = Some(cache);
+                }
+                rkyv_embeddings::EmbeddingsCacheLoad::Miss { paths, failure } => {
+                    if matches!(config.cold_start_policy, SearchColdStartPolicy::Degrade) {
+                        let warning = cache_startup_warning(
+                            "vector search",
+                            "vector",
+                            "DBT_NOVA_SEARCH_ENABLE_VECTOR",
+                            &paths,
+                            &failure.summary(),
+                        );
+                        warn!(warning = %warning, "Vector search unavailable during startup");
+                        return Ok(SearchComponentBuild::disabled(warning));
+                    }
+                    warn!(
+                        cache_path = %paths.compressed_path.display(),
+                        reason = %failure.summary(),
+                        "Vector search cache unavailable; rebuilding manifest-scoped cache"
+                    );
+                }
             }
-            return Ok(SearchComponentBuild::unavailable());
-        };
+        }
 
         let batch_size = config.embedding_batch_size.max(1);
         let use_quant = config.enable_vector_quantization;
-        let manifest_hash = config.manifest_hash.as_deref().unwrap_or("");
-        let model_name = resolve_embedding_model(&config.embedding_model).to_string();
-
-        if let Some(cached) = rkyv_embeddings::try_load_embeddings(
-            &cache_dir,
-            &model_name,
-            manifest_hash,
-            config.embeddings_max_decompressed_bytes,
-        ) {
+        if let Some(cached) = cached_embeddings {
             let embeddings = if cached.is_quantized {
                 let quantized = cached
                     .entity_ids
@@ -406,19 +910,52 @@ impl VectorSearcher {
                 DenseEmbeddings::Float(values) => AnnIndex::build_f32(values, config),
                 DenseEmbeddings::Quantized(values) => AnnIndex::build_quantized(values, config),
             };
-
-            return Ok(SearchComponentBuild::ready(Self {
+            let query_model_files_present = model.local_files_present();
+            info!(
+                manifest_hash,
+                model_name = %model_name,
+                query_model_files_present,
+                elapsed_ms = build_started.elapsed().as_millis(),
+                "vector semantic cache ready; deferring query model initialization"
+            );
+            let searcher = Self {
                 model,
                 embeddings,
                 ann,
-            }));
+            };
+            if query_model_files_present {
+                return Ok(SearchComponentBuild::ready(searcher));
+            }
+            return Ok(SearchComponentBuild::ready_with_warning(
+                searcher,
+                query_model_missing_files_warning("vector search", "DBT_NOVA_SEARCH_ENABLE_VECTOR"),
+            ));
         }
+        let model_ref = match model.get_or_try_init() {
+            Ok(model_ref) => model_ref,
+            Err(err) => {
+                let warning = component_init_warning(
+                    "vector search",
+                    "DBT_NOVA_SEARCH_ENABLE_VECTOR",
+                    &err.to_string(),
+                );
+                warn!(warning = %warning, "Vector search unavailable during startup");
+                return Ok(SearchComponentBuild::disabled(warning));
+            }
+        };
+        info!(
+            manifest_hash,
+            model_name = %model_name,
+            elapsed_ms = build_started.elapsed().as_millis(),
+            "vector embedding model ready"
+        );
         let mut embeddings_f32: Vec<(String, Vec<f32>)> = Vec::new();
         let mut embeddings_i8: Vec<QuantizedEmbedding> = Vec::new();
         let mut batch_ids: Vec<String> = Vec::with_capacity(batch_size);
         let mut batch_texts: Vec<String> = Vec::with_capacity(batch_size);
         let mut attempted_batches = 0usize;
         let mut last_batch_failure: Option<String> = None;
+        let mut processed_items = 0usize;
 
         let mut flush_batch =
             |batch_ids: &mut Vec<String>, batch_texts: &mut Vec<String>| -> Result<()> {
@@ -429,12 +966,13 @@ impl VectorSearcher {
 
                 let texts = std::mem::take(batch_texts);
                 let ids = std::mem::take(batch_ids);
+                let batch_len = ids.len();
 
                 let mut vecs = match run_component_operation(
                     "vector search",
                     "embedding batch generation",
                     "DBT_NOVA_SEARCH_ENABLE_VECTOR",
-                    || model.embed(texts, Some(batch_size)),
+                    || model_ref.embed(texts, Some(batch_size)),
                 ) {
                     Ok(vecs) => vecs,
                     Err(err) => {
@@ -467,6 +1005,24 @@ impl VectorSearcher {
                         embeddings_f32.push((id, vec));
                     }
                 }
+                processed_items += batch_len;
+                if attempted_batches == 1
+                    || attempted_batches.is_multiple_of(EMBEDDING_PROGRESS_LOG_EVERY_BATCHES)
+                {
+                    info!(
+                        manifest_hash,
+                        model_name = %model_name,
+                        attempted_batches,
+                        processed_items,
+                        produced_items = if use_quant {
+                            embeddings_i8.len()
+                        } else {
+                            embeddings_f32.len()
+                        },
+                        elapsed_ms = build_started.elapsed().as_millis(),
+                        "vector embedding warm progress"
+                    );
+                }
 
                 batch_ids.reserve(batch_size);
                 batch_texts.reserve(batch_size);
@@ -495,6 +1051,15 @@ impl VectorSearcher {
         } else {
             embeddings_f32.len()
         };
+        info!(
+            manifest_hash,
+            model_name = %model_name,
+            attempted_batches,
+            processed_items,
+            produced_items,
+            elapsed_ms = build_started.elapsed().as_millis(),
+            "vector embedding generation finished"
+        );
         if let Some(disabled) = disable_on_total_batch_failure(
             "vector search",
             "DBT_NOVA_SEARCH_ENABLE_VECTOR",
@@ -509,9 +1074,23 @@ impl VectorSearcher {
         }
 
         let (embeddings, ann) = if use_quant {
+            info!(
+                manifest_hash,
+                model_name = %model_name,
+                entries = embeddings_i8.len(),
+                elapsed_ms = build_started.elapsed().as_millis(),
+                "building vector ANN index from quantized embeddings"
+            );
             let ann = AnnIndex::build_quantized(&embeddings_i8, config);
             (DenseEmbeddings::Quantized(embeddings_i8), ann)
         } else {
+            info!(
+                manifest_hash,
+                model_name = %model_name,
+                entries = embeddings_f32.len(),
+                elapsed_ms = build_started.elapsed().as_millis(),
+                "building vector ANN index from float embeddings"
+            );
             let ann = AnnIndex::build_f32(&embeddings_f32, config);
             (DenseEmbeddings::Float(embeddings_f32), ann)
         };
@@ -519,6 +1098,13 @@ impl VectorSearcher {
         let mut cache_ids = Vec::new();
         let mut cache_vectors = Vec::new();
         let mut is_quantized = false;
+        info!(
+            manifest_hash,
+            model_name = %model_name,
+            entries = produced_items,
+            elapsed_ms = build_started.elapsed().as_millis(),
+            "preparing vector cache payload"
+        );
         match &embeddings {
             DenseEmbeddings::Float(values) => {
                 for (id, vec) in values {
@@ -543,7 +1129,7 @@ impl VectorSearcher {
 
         let cache = CachedEmbeddings {
             schema_version: crate::manifest::rkyv_types::RKYV_SCHEMA_VERSION,
-            model_name,
+            model_name: model_name.clone(),
             manifest_hash: manifest_hash.to_string(),
             entity_ids: cache_ids,
             dense_embeddings: cache_vectors,
@@ -554,8 +1140,25 @@ impl VectorSearcher {
             ann_bucket_keys: None,
             ann_bucket_values: None,
         };
-        if let Err(err) = rkyv_embeddings::save_embeddings(&cache, &cache_dir) {
+        info!(
+            manifest_hash,
+            model_name = %model_name,
+            entries = cache.entity_ids.len(),
+            cache_path = %cache_paths.compressed_path.display(),
+            elapsed_ms = build_started.elapsed().as_millis(),
+            "persisting vector cache"
+        );
+        if let Err(err) = rkyv_embeddings::save_embeddings(&cache, config) {
             warn!(error = %err, "failed to save embeddings cache");
+        } else {
+            info!(
+                manifest_hash,
+                model_name = %model_name,
+                entries = cache.entity_ids.len(),
+                cache_path = %cache_paths.compressed_path.display(),
+                elapsed_ms = build_started.elapsed().as_millis(),
+                "persisted vector cache"
+            );
         }
 
         Ok(SearchComponentBuild::ready(Self {
@@ -577,7 +1180,11 @@ impl VectorSearcher {
             "vector search",
             "embedding generation",
             "DBT_NOVA_SEARCH_ENABLE_VECTOR",
-            || self.model.embed(vec![query.to_string()], None),
+            || {
+                self.model
+                    .get_or_try_init()?
+                    .embed(vec![query.to_string()], None)
+            },
         )?;
         let mut query_vec = vecs.pop().unwrap_or_default();
         if query_vec.is_empty() {
@@ -660,6 +1267,30 @@ impl VectorSearcher {
 }
 
 impl SparseSearcher {
+    #[must_use]
+    pub fn query_model_initialized(&self) -> bool {
+        self.model.initialized()
+    }
+
+    #[must_use]
+    pub fn query_model_files_present(&self) -> bool {
+        self.model.local_files_present()
+    }
+
+    #[must_use]
+    pub fn query_ready(&self) -> bool {
+        self.model.query_ready()
+    }
+
+    /// Ensure the local sparse query model files are available and the model can initialize.
+    ///
+    /// # Errors
+    /// Returns an error when the model cannot be initialized or required local files are absent.
+    pub fn warm_query_model(&self) -> Result<()> {
+        let _ = self.model.get_or_try_init()?;
+        self.model.ensure_local_files_available()
+    }
+
     /// Build the sparse search index.
     ///
     /// # Errors
@@ -672,46 +1303,106 @@ impl SparseSearcher {
 
         validate_proxy_env_vars()?;
         let cache_dir = embeddings_cache_dir(config);
-        let (model, warning) =
-            build_optional_component("sparse search", "DBT_NOVA_SEARCH_ENABLE_SPARSE", || {
-                SparseTextEmbedding::try_new(SparseInitOptions {
-                    cache_dir: cache_dir.clone(),
-                    show_download_progress: false,
-                    ..Default::default()
-                })
-            })
-            .into_parts();
-        let Some(model) = model else {
-            if let Some(warning) = warning {
-                warn!(warning = %warning, "Sparse search unavailable during startup");
-                return Ok(SearchComponentBuild::disabled(warning));
-            }
-            return Ok(SearchComponentBuild::unavailable());
-        };
-
-        let batch_size = config.embedding_batch_size.max(1);
         let manifest_hash = config.manifest_hash.as_deref().unwrap_or("");
-        let sparse_model_name = SparseInitOptions::default().model_name.to_string();
-
-        if let Some(cached) = rkyv_sparse_embeddings::try_load_sparse_embeddings(
-            &cache_dir,
+        let sparse_model_name = default_sparse_model_name().to_string();
+        let cache_paths = cache_paths(
+            config,
+            SemanticCacheComponent::Sparse,
             &sparse_model_name,
             manifest_hash,
-            config.embeddings_max_decompressed_bytes,
-        ) {
+        );
+        let build_started = Instant::now();
+        info!(
+            manifest_hash,
+            model_name = %sparse_model_name,
+            entity_count = store.len(),
+            batch_size = config.sparse_embedding_batch_size.max(1),
+            cache_path = %cache_paths.compressed_path.display(),
+            "starting sparse semantic cache build"
+        );
+        let mut cached_embeddings = None;
+        let model = LazySparseQueryModel::new(cache_dir.clone(), config.onnx_threads);
+
+        if !config.force_rebuild_semantic_caches {
+            match rkyv_sparse_embeddings::load_sparse_embeddings(
+                config,
+                &sparse_model_name,
+                manifest_hash,
+                config.embeddings_max_decompressed_bytes,
+            ) {
+                rkyv_sparse_embeddings::SparseEmbeddingsCacheLoad::Hit { cache, .. } => {
+                    cached_embeddings = Some(cache);
+                }
+                rkyv_sparse_embeddings::SparseEmbeddingsCacheLoad::Miss { paths, failure } => {
+                    if matches!(config.cold_start_policy, SearchColdStartPolicy::Degrade) {
+                        let warning = cache_startup_warning(
+                            "sparse search",
+                            "sparse",
+                            "DBT_NOVA_SEARCH_ENABLE_SPARSE",
+                            &paths,
+                            &failure.summary(),
+                        );
+                        warn!(warning = %warning, "Sparse search unavailable during startup");
+                        return Ok(SearchComponentBuild::disabled(warning));
+                    }
+                    warn!(
+                        cache_path = %paths.compressed_path.display(),
+                        reason = %failure.summary(),
+                        "Sparse search cache unavailable; rebuilding manifest-scoped cache"
+                    );
+                }
+            }
+        }
+
+        let batch_size = config.sparse_embedding_batch_size.max(1);
+        if let Some(cached) = cached_embeddings {
             let embeddings = cached
                 .entity_ids
                 .into_iter()
                 .zip(cached.sparse_indices.into_iter().zip(cached.sparse_values))
                 .map(|(id, (indices, values))| (id, SparseEmbedding { indices, values }))
                 .collect::<Vec<_>>();
-            return Ok(SearchComponentBuild::ready(Self { model, embeddings }));
+            let query_model_files_present = model.local_files_present();
+            info!(
+                manifest_hash,
+                model_name = %sparse_model_name,
+                query_model_files_present,
+                elapsed_ms = build_started.elapsed().as_millis(),
+                "sparse semantic cache ready; deferring query model initialization"
+            );
+            let searcher = Self { model, embeddings };
+            if query_model_files_present {
+                return Ok(SearchComponentBuild::ready(searcher));
+            }
+            return Ok(SearchComponentBuild::ready_with_warning(
+                searcher,
+                query_model_missing_files_warning("sparse search", "DBT_NOVA_SEARCH_ENABLE_SPARSE"),
+            ));
         }
+        let model_ref = match model.get_or_try_init() {
+            Ok(model_ref) => model_ref,
+            Err(err) => {
+                let warning = component_init_warning(
+                    "sparse search",
+                    "DBT_NOVA_SEARCH_ENABLE_SPARSE",
+                    &err.to_string(),
+                );
+                warn!(warning = %warning, "Sparse search unavailable during startup");
+                return Ok(SearchComponentBuild::disabled(warning));
+            }
+        };
+        info!(
+            manifest_hash,
+            model_name = %sparse_model_name,
+            elapsed_ms = build_started.elapsed().as_millis(),
+            "sparse embedding model ready"
+        );
         let mut embeddings: Vec<(String, SparseEmbedding)> = Vec::new();
         let mut batch_ids: Vec<String> = Vec::with_capacity(batch_size);
         let mut batch_texts: Vec<String> = Vec::with_capacity(batch_size);
         let mut attempted_batches = 0usize;
         let mut last_batch_failure: Option<String> = None;
+        let mut processed_items = 0usize;
 
         let mut flush_batch =
             |batch_ids: &mut Vec<String>, batch_texts: &mut Vec<String>| -> Result<()> {
@@ -722,12 +1413,13 @@ impl SparseSearcher {
 
                 let texts = std::mem::take(batch_texts);
                 let ids = std::mem::take(batch_ids);
+                let batch_len = ids.len();
 
                 let mut vecs = match run_component_operation(
                     "sparse search",
                     "embedding batch generation",
                     "DBT_NOVA_SEARCH_ENABLE_SPARSE",
-                    || model.embed(texts, Some(batch_size)),
+                    || model_ref.embed(texts, Some(batch_size)),
                 ) {
                     Ok(vecs) => vecs,
                     Err(err) => {
@@ -754,6 +1446,20 @@ impl SparseSearcher {
                 for (id, vec) in ids.into_iter().zip(vecs.drain(..)) {
                     embeddings.push((id, vec));
                 }
+                processed_items += batch_len;
+                if attempted_batches == 1
+                    || attempted_batches.is_multiple_of(EMBEDDING_PROGRESS_LOG_EVERY_BATCHES)
+                {
+                    info!(
+                        manifest_hash,
+                        model_name = %sparse_model_name,
+                        attempted_batches,
+                        processed_items,
+                        produced_items = embeddings.len(),
+                        elapsed_ms = build_started.elapsed().as_millis(),
+                        "sparse embedding warm progress"
+                    );
+                }
 
                 batch_ids.reserve(batch_size);
                 batch_texts.reserve(batch_size);
@@ -776,6 +1482,15 @@ impl SparseSearcher {
         }
 
         flush_batch(&mut batch_ids, &mut batch_texts)?;
+        info!(
+            manifest_hash,
+            model_name = %sparse_model_name,
+            attempted_batches,
+            processed_items,
+            produced_items = embeddings.len(),
+            elapsed_ms = build_started.elapsed().as_millis(),
+            "sparse embedding generation finished"
+        );
 
         if let Some(disabled) = disable_on_total_batch_failure(
             "sparse search",
@@ -793,6 +1508,25 @@ impl SparseSearcher {
         let mut cache_ids = Vec::with_capacity(embeddings.len());
         let mut cache_indices = Vec::with_capacity(embeddings.len());
         let mut cache_values = Vec::with_capacity(embeddings.len());
+        let total_sparse_terms: usize = embeddings
+            .iter()
+            .map(|(_, embedding)| embedding.indices.len())
+            .sum();
+        let avg_sparse_terms_per_entry = if embeddings.is_empty() {
+            "0.00".to_string()
+        } else {
+            let scaled_average = total_sparse_terms.saturating_mul(100) / embeddings.len();
+            format!("{}.{:02}", scaled_average / 100, scaled_average % 100)
+        };
+        info!(
+            manifest_hash,
+            model_name = %sparse_model_name,
+            entries = embeddings.len(),
+            total_sparse_terms,
+            avg_sparse_terms_per_entry = %avg_sparse_terms_per_entry,
+            elapsed_ms = build_started.elapsed().as_millis(),
+            "preparing sparse cache payload"
+        );
         for (id, embedding) in &embeddings {
             cache_ids.push(id.clone());
             cache_indices.push(embedding.indices.clone());
@@ -801,14 +1535,33 @@ impl SparseSearcher {
 
         let cache = CachedSparseEmbeddings {
             schema_version: crate::manifest::rkyv_types::RKYV_SCHEMA_VERSION,
-            model_name: sparse_model_name,
+            model_name: sparse_model_name.clone(),
             manifest_hash: manifest_hash.to_string(),
             entity_ids: cache_ids,
             sparse_indices: cache_indices,
             sparse_values: cache_values,
         };
-        if let Err(err) = rkyv_sparse_embeddings::save_sparse_embeddings(&cache, &cache_dir) {
+        info!(
+            manifest_hash,
+            model_name = %sparse_model_name,
+            entries = cache.entity_ids.len(),
+            total_sparse_terms,
+            cache_path = %cache_paths.compressed_path.display(),
+            elapsed_ms = build_started.elapsed().as_millis(),
+            "persisting sparse cache"
+        );
+        if let Err(err) = rkyv_sparse_embeddings::save_sparse_embeddings(&cache, config) {
             warn!(error = %err, "failed to save sparse embeddings cache");
+        } else {
+            info!(
+                manifest_hash,
+                model_name = %sparse_model_name,
+                entries = cache.entity_ids.len(),
+                total_sparse_terms,
+                cache_path = %cache_paths.compressed_path.display(),
+                elapsed_ms = build_started.elapsed().as_millis(),
+                "persisted sparse cache"
+            );
         }
 
         Ok(SearchComponentBuild::ready(Self { model, embeddings }))
@@ -826,7 +1579,11 @@ impl SparseSearcher {
             "sparse search",
             "embedding generation",
             "DBT_NOVA_SEARCH_ENABLE_SPARSE",
-            || self.model.embed(vec![query.to_string()], None),
+            || {
+                self.model
+                    .get_or_try_init()?
+                    .embed(vec![query.to_string()], None)
+            },
         )?;
         let query_vec = vecs.pop().ok_or_else(|| {
             DbtNovaError::ServerError("Sparse embedding returned empty vector".to_string())
@@ -851,6 +1608,30 @@ impl SparseSearcher {
 }
 
 impl Reranker {
+    #[must_use]
+    pub fn initialized(&self) -> bool {
+        self.model.initialized()
+    }
+
+    #[must_use]
+    pub fn query_model_files_present(&self) -> bool {
+        self.model.local_files_present()
+    }
+
+    #[must_use]
+    pub fn query_ready(&self) -> bool {
+        self.model.query_ready()
+    }
+
+    /// Ensure the local reranker model files are available and the model can initialize.
+    ///
+    /// # Errors
+    /// Returns an error when the model cannot be initialized or required local files are absent.
+    pub fn warm_query_model(&self) -> Result<()> {
+        let _ = self.model.get_or_try_init()?;
+        self.model.ensure_local_files_available()
+    }
+
     /// Build the reranker model.
     ///
     /// # Errors
@@ -862,24 +1643,21 @@ impl Reranker {
         validate_proxy_env_vars()?;
         let cache_dir = embeddings_cache_dir(config);
         let model_name = resolve_reranker_model(&config.reranker_model);
-        let (model, warning) =
-            build_optional_component("reranker", "DBT_NOVA_SEARCH_ENABLE_RERANKER", || {
-                TextRerank::try_new(RerankInitOptions {
-                    model_name,
-                    cache_dir,
-                    show_download_progress: false,
-                    ..Default::default()
-                })
-            })
-            .into_parts();
-        let Some(model) = model else {
-            if let Some(warning) = warning {
-                warn!(warning = %warning, "Reranker unavailable during startup");
-                return Ok(SearchComponentBuild::disabled(warning));
-            }
-            return Ok(SearchComponentBuild::unavailable());
-        };
-        Ok(SearchComponentBuild::ready(Self { model }))
+        let model = LazyRerankerModel::new(model_name, cache_dir, config.onnx_threads);
+        let query_model_files_present = model.local_files_present();
+        info!(
+            query_model_files_present,
+            "reranker ready; deferring model initialization until first use"
+        );
+        let reranker = Self { model };
+        if query_model_files_present {
+            Ok(SearchComponentBuild::ready(reranker))
+        } else {
+            Ok(SearchComponentBuild::ready_with_warning(
+                reranker,
+                query_model_missing_files_warning("reranker", "DBT_NOVA_SEARCH_ENABLE_RERANKER"),
+            ))
+        }
     }
 
     /// Rerank candidate documents using the configured model.
@@ -900,7 +1678,11 @@ impl Reranker {
             "reranker",
             "document scoring",
             "DBT_NOVA_SEARCH_ENABLE_RERANKER",
-            || self.model.rerank(query, docs, false, None),
+            || {
+                self.model
+                    .get_or_try_init()?
+                    .rerank(query, docs, false, None)
+            },
         )?;
 
         let mut scored: Vec<(usize, f32)> =
@@ -1260,14 +2042,28 @@ fn sparse_dot(query: &SparseEmbedding, doc: &SparseEmbedding) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{LazyLock, Mutex};
 
     use super::{
-        build_optional_component, disable_on_total_batch_failure, run_component_operation,
+        DeferredInit, build_optional_component, disable_on_total_batch_failure, model_repo_dir,
+        run_component_operation, snapshot_dir_from_repo_dir, validate_local_model_files,
         validate_proxy_env_vars,
     };
+    use tempfile::TempDir;
 
     static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    fn write_file(root: &Path, relative_path: &str) -> PathBuf {
+        let path = root.join(relative_path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("parent dir");
+        }
+        fs::write(&path, b"test").expect("write file");
+        path
+    }
 
     fn with_proxy_env<F>(key: &str, value: Option<&str>, f: F)
     where
@@ -1369,5 +2165,89 @@ mod tests {
             Some("failed to retrieve model.onnx"),
         );
         assert!(disabled.is_none());
+    }
+
+    #[test]
+    fn deferred_init_retries_after_failure_and_caches_success() {
+        let deferred = DeferredInit::new();
+        let attempts = AtomicUsize::new(0);
+
+        let first_error = deferred
+            .get_or_try_init(|| {
+                attempts.fetch_add(1, Ordering::Relaxed);
+                Err(crate::error::DbtNovaError::ServerError(
+                    "first failure".to_string(),
+                ))
+            })
+            .expect_err("first init should fail");
+        assert!(first_error.to_string().contains("first failure"));
+        assert!(!deferred.initialized());
+
+        let value = deferred
+            .get_or_try_init(|| {
+                attempts.fetch_add(1, Ordering::Relaxed);
+                Ok(42usize)
+            })
+            .expect("second init should succeed");
+        assert_eq!(*value, 42);
+        assert!(deferred.initialized());
+
+        let cached = deferred
+            .get_or_try_init(|| {
+                attempts.fetch_add(1, Ordering::Relaxed);
+                Ok(99usize)
+            })
+            .expect("cached init should reuse existing value");
+        assert_eq!(*cached, 42);
+        assert_eq!(attempts.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn snapshot_dir_prefers_ref_target_when_both_ref_and_main_snapshot_exist() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let repo_dir = model_repo_dir(temp_dir.path(), "owner/model");
+        fs::create_dir_all(repo_dir.join("refs")).expect("refs dir");
+        fs::write(repo_dir.join("refs/main"), "commit123").expect("write ref");
+        fs::create_dir_all(repo_dir.join("snapshots/main")).expect("main snapshot");
+        fs::create_dir_all(repo_dir.join("snapshots/commit123")).expect("commit snapshot");
+
+        let snapshot_dir = snapshot_dir_from_repo_dir(&repo_dir).expect("snapshot dir");
+        assert_eq!(snapshot_dir, repo_dir.join("snapshots/commit123"));
+    }
+
+    #[test]
+    fn snapshot_dir_uses_ref_target_when_main_snapshot_missing() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let repo_dir = model_repo_dir(temp_dir.path(), "owner/model");
+        fs::create_dir_all(repo_dir.join("refs")).expect("refs dir");
+        fs::write(repo_dir.join("refs/main"), "commit456").expect("write ref");
+        fs::create_dir_all(repo_dir.join("snapshots/commit456")).expect("commit snapshot");
+
+        let snapshot_dir = snapshot_dir_from_repo_dir(&repo_dir).expect("snapshot dir");
+        assert_eq!(snapshot_dir, repo_dir.join("snapshots/commit456"));
+    }
+
+    #[test]
+    fn validate_local_model_files_requires_tokenizer_and_model_files() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let repo_dir = model_repo_dir(temp_dir.path(), "owner/model");
+        fs::create_dir_all(repo_dir.join("refs")).expect("refs dir");
+        fs::write(repo_dir.join("refs/main"), "main").expect("write ref");
+        let snapshot_dir = repo_dir.join("snapshots/main");
+        fs::create_dir_all(&snapshot_dir).expect("snapshot dir");
+
+        write_file(&snapshot_dir, "onnx/model.onnx");
+        write_file(&snapshot_dir, "tokenizer.json");
+        write_file(&snapshot_dir, "config.json");
+        write_file(&snapshot_dir, "special_tokens_map.json");
+
+        let error =
+            validate_local_model_files(temp_dir.path(), "owner/model", "onnx/model.onnx", &[])
+                .expect_err("missing tokenizer_config.json should fail");
+        assert!(error.to_string().contains("tokenizer_config.json"));
+
+        write_file(&snapshot_dir, "tokenizer_config.json");
+        validate_local_model_files(temp_dir.path(), "owner/model", "onnx/model.onnx", &[])
+            .expect("all required files should validate");
     }
 }

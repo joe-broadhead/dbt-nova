@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::thread::available_parallelism;
 
 use super::{env_string, parse_bool, parse_f32, parse_u64, parse_usize, set_string};
 
@@ -326,6 +327,8 @@ pub struct SearchConfig {
     pub search_max_queue: usize,
     /// Enable dense vector search
     pub enable_vector_search: bool,
+    /// Cold-start policy when semantic caches are missing.
+    pub cold_start_policy: SearchColdStartPolicy,
     /// Embedding model name (fastembed model code or alias)
     pub embedding_model: String,
     /// Max results to return from vector search before fusion
@@ -348,8 +351,12 @@ pub struct SearchConfig {
     pub vector_ann_min_candidates: usize,
     /// Embeddings cache directory (shared across runs)
     pub embedding_cache_dir: String,
+    /// ONNX intra-thread count for vector/sparse/reranker models.
+    pub onnx_threads: usize,
     /// Batch size for embedding model inference
     pub embedding_batch_size: usize,
+    /// Batch size for sparse embedding model inference
+    pub sparse_embedding_batch_size: usize,
     /// Enable sparse vector search (SPLADE)
     pub enable_sparse_search: bool,
     /// Max results to return from sparse search
@@ -360,6 +367,9 @@ pub struct SearchConfig {
     pub reranker_model: String,
     /// Max results to rerank with cross-encoder
     pub rerank_top_n: usize,
+    /// Ignore existing semantic caches and rebuild them on next load.
+    #[serde(skip)]
+    pub force_rebuild_semantic_caches: bool,
 }
 
 impl Default for SearchConfig {
@@ -420,7 +430,8 @@ impl Default for SearchConfig {
             search_timeout_ms: 30_000,
             search_max_concurrent: 4,
             search_max_queue: 8,
-            enable_vector_search: true,
+            enable_vector_search: false,
+            cold_start_policy: SearchColdStartPolicy::default(),
             embedding_model: "intfloat/multilingual-e5-base".to_string(),
             vector_top_k: 200,
             vector_max_chars: 4000,
@@ -432,12 +443,15 @@ impl Default for SearchConfig {
             vector_ann_max_candidates: 5000,
             vector_ann_min_candidates: 200,
             embedding_cache_dir: String::new(),
+            onnx_threads: default_onnx_threads(),
             embedding_batch_size: 128,
-            enable_sparse_search: true,
+            sparse_embedding_batch_size: 16,
+            enable_sparse_search: false,
             sparse_top_k: 200,
-            enable_reranker: true,
+            enable_reranker: false,
             reranker_model: "jinaai/jina-reranker-v2-base-multilingual".to_string(),
             rerank_top_n: 20,
+            force_rebuild_semantic_caches: false,
         }
     }
 }
@@ -450,6 +464,34 @@ impl SearchConfig {
         apply_search_env(&mut config);
         config
     }
+}
+
+/// Semantic startup behavior when manifest-scoped caches are missing.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchColdStartPolicy {
+    /// Skip semantic startup work and mark the component unavailable for this run.
+    #[default]
+    Degrade,
+    /// Build missing semantic caches during startup.
+    Build,
+}
+
+impl SearchColdStartPolicy {
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "degrade" => Some(Self::Degrade),
+            "build" => Some(Self::Build),
+            _ => None,
+        }
+    }
+}
+
+fn default_onnx_threads() -> usize {
+    available_parallelism()
+        .map(|threads| threads.get().min(4))
+        .unwrap_or(1)
 }
 
 fn apply_search_limits_env(config: &mut SearchConfig) {
@@ -685,6 +727,11 @@ fn apply_vector_env(config: &mut SearchConfig) {
         "DBT_NOVA_SEARCH_ENABLE_VECTOR",
         parse_bool
     );
+    if let Some(value) = env_string("DBT_NOVA_SEARCH_COLD_START_POLICY")
+        && let Some(policy) = SearchColdStartPolicy::parse(&value)
+    {
+        config.cold_start_policy = policy;
+    }
     crate::env_config!(
         config,
         vector_top_k,
@@ -749,6 +796,13 @@ fn apply_vector_env(config: &mut SearchConfig) {
         "DBT_NOVA_EMBEDDINGS_CACHE_DIR",
         &mut config.embedding_cache_dir,
     );
+    crate::env_config!(
+        config,
+        onnx_threads,
+        "DBT_NOVA_SEARCH_ONNX_THREADS",
+        parse_usize,
+        |v: &usize| *v > 0
+    );
     set_string("DBT_NOVA_EMBEDDING_MODEL", &mut config.embedding_model);
     crate::env_config!(
         config,
@@ -760,6 +814,15 @@ fn apply_vector_env(config: &mut SearchConfig) {
 }
 
 fn apply_sparse_and_reranker_env(config: &mut SearchConfig) {
+    let sparse_batch_override = std::env::var("DBT_NOVA_SEARCH_SPARSE_EMBEDDING_BATCH_SIZE")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0);
+    let general_batch_override = std::env::var("DBT_NOVA_SEARCH_EMBEDDING_BATCH_SIZE")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0);
+
     crate::env_config!(
         config,
         enable_sparse_search,
@@ -773,6 +836,18 @@ fn apply_sparse_and_reranker_env(config: &mut SearchConfig) {
         parse_usize,
         |v: &usize| *v > 0
     );
+    crate::env_config!(
+        config,
+        sparse_embedding_batch_size,
+        "DBT_NOVA_SEARCH_SPARSE_EMBEDDING_BATCH_SIZE",
+        parse_usize,
+        |v: &usize| *v > 0
+    );
+    if sparse_batch_override.is_none()
+        && let Some(value) = general_batch_override
+    {
+        config.sparse_embedding_batch_size = value;
+    }
     crate::env_config!(
         config,
         enable_reranker,
@@ -1161,4 +1236,107 @@ fn apply_search_env(config: &mut SearchConfig) {
     apply_persona_env(config);
     apply_field_boosts_env(config);
     apply_semantic_scoring_env(config);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SearchConfig;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn default_sparse_batch_size_is_smaller_than_dense_batch_size() {
+        let config = SearchConfig::default();
+        assert_eq!(config.embedding_batch_size, 128);
+        assert_eq!(config.sparse_embedding_batch_size, 16);
+    }
+
+    #[test]
+    fn semantic_components_are_disabled_by_default() {
+        let config = SearchConfig::default();
+        assert!(!config.enable_vector_search);
+        assert!(!config.enable_sparse_search);
+        assert!(!config.enable_reranker);
+    }
+
+    #[test]
+    fn sparse_batch_size_falls_back_to_general_embedding_batch_size_override() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [
+            ("DBT_NOVA_SEARCH_EMBEDDING_BATCH_SIZE", Some("24")),
+            ("DBT_NOVA_SEARCH_SPARSE_EMBEDDING_BATCH_SIZE", None),
+        ];
+        let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let config = SearchConfig::from_env();
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        assert_eq!(config.embedding_batch_size, 24);
+        assert_eq!(config.sparse_embedding_batch_size, 24);
+    }
+
+    #[test]
+    fn sparse_specific_batch_size_override_wins_over_general_override() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [
+            ("DBT_NOVA_SEARCH_EMBEDDING_BATCH_SIZE", Some("24")),
+            ("DBT_NOVA_SEARCH_SPARSE_EMBEDDING_BATCH_SIZE", Some("12")),
+        ];
+        let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let config = SearchConfig::from_env();
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        assert_eq!(config.embedding_batch_size, 24);
+        assert_eq!(config.sparse_embedding_batch_size, 12);
+    }
 }

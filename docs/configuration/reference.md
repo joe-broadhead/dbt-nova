@@ -84,13 +84,13 @@ Remote manifest notes:
 - `DBT_NOVA_STORAGE_BUILD_LOCK_WAIT_SECS` – max seconds to wait for another process to finish building (default: `300`)
 - `DBT_NOVA_STORAGE_READ_ONLY` – do not build indexes or materialize prebuilt artifacts locally (`true`|`false`, default: `false`; incompatible with cold-start bootstrap/artifact hydration)
 - `DBT_NOVA_ENTITY_CACHE_SIZE` – max entities cached in memory (`0` disables, default: `1000`)
-- `DBT_NOVA_EMBEDDINGS_CACHE_DIR` – embeddings cache directory (default: `models/` next to executable if present, else `<storage_root>/.fastembed_cache`)
+- `DBT_NOVA_EMBEDDINGS_CACHE_DIR` – embeddings cache directory (default: `models/` next to executable if present, else `~/.dbt-nova/.fastembed_cache`)
 
 Embeddings cache resolution order when `DBT_NOVA_EMBEDDINGS_CACHE_DIR` is unset:
 
 1. `models/` next to the active executable
 2. `~/.local/bin/models` (if present)
-3. `<storage_root>/.fastembed_cache`
+3. `~/.dbt-nova/.fastembed_cache`
 
 Notes:
 - The entity cache backend is currently fixed to `moka` (no env override).
@@ -167,7 +167,13 @@ Note: `DBT_NOVA_MAX_LINEAGE_RESULTS` applies to **column lineage** (`get_column_
     Enabling dense vectors (`DBT_NOVA_SEARCH_ENABLE_VECTOR=true`) requires ~2 GB RAM
     for embeddings. Disable on memory-constrained systems.
 
-- `DBT_NOVA_SEARCH_ENABLE_VECTOR` – enable dense vectors (default: `true`)
+- Semantic layers are disabled by default. Opt in explicitly with
+  `DBT_NOVA_SEARCH_ENABLE_VECTOR=true`,
+  `DBT_NOVA_SEARCH_ENABLE_SPARSE=true`, and/or
+  `DBT_NOVA_SEARCH_ENABLE_RERANKER=true` after warming model files and, for
+  vector/sparse, manifest-scoped caches.
+
+- `DBT_NOVA_SEARCH_ENABLE_VECTOR` – enable dense vectors (default: `false`)
 - `DBT_NOVA_SEARCH_VECTOR_TOP_K` – max vector hits before fusion (default: `200`)
 - `DBT_NOVA_SEARCH_VECTOR_MAX_CHARS` – max chars in embedding text (default: `4000`)
 - `DBT_NOVA_SEARCH_ENABLE_VECTOR_ANN` – enable ANN buckets (default: `true`)
@@ -178,9 +184,9 @@ Note: `DBT_NOVA_MAX_LINEAGE_RESULTS` applies to **column lineage** (`get_column_
 - `DBT_NOVA_SEARCH_VECTOR_ANN_MIN_CANDIDATES` – min before full scan (default: `200`)
 - `DBT_NOVA_SEARCH_EMBEDDING_BATCH_SIZE` – embedding batch size (default: `128`)
 - `DBT_NOVA_EMBEDDING_MODEL` – embedding model name (default: `intfloat/multilingual-e5-base`)
-- `DBT_NOVA_SEARCH_ENABLE_SPARSE` – enable sparse vectors (default: `true`)
+- `DBT_NOVA_SEARCH_ENABLE_SPARSE` – enable sparse vectors (default: `false`)
 - `DBT_NOVA_SEARCH_SPARSE_TOP_K` – max sparse hits before fusion (default: `200`)
-- `DBT_NOVA_SEARCH_ENABLE_RERANKER` – enable cross‑encoder reranker (default: `true`)
+- `DBT_NOVA_SEARCH_ENABLE_RERANKER` – enable cross‑encoder reranker (default: `false`)
 - `DBT_NOVA_RERANKER_MODEL` – reranker model (default: `jinaai/jina-reranker-v2-base-multilingual`)
 - `DBT_NOVA_SEARCH_RERANK_TOP_N` – max results reranked (default: `20`)
 

@@ -169,11 +169,17 @@ To test fallback behavior:
           entities.checksum.json
           index/
           indexes.rkyv
-          embeddings.rkyv.zst
-          sparse_embeddings.rkyv.zst
           manifest.signature.json
           .in_use.lock
       .build.lock
+```
+
+```text
+  ~/.dbt-nova/.fastembed_cache/
+    manifests/
+      <manifest_hash>/
+        dense__<model_slug>.rkyv.zst
+        sparse__<model_slug>.rkyv.zst
 ```
 
 - **`manifest.current.json`** points at the active version.
