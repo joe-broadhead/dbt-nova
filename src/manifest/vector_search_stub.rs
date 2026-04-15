@@ -30,6 +30,28 @@ impl VectorSearcher {
     pub fn search(&self, _query: &str, _top_k: usize) -> Result<Vec<(String, f32)>> {
         Ok(Vec::new())
     }
+
+    #[must_use]
+    pub fn query_model_initialized(&self) -> bool {
+        false
+    }
+
+    #[must_use]
+    pub fn query_model_files_present(&self) -> bool {
+        false
+    }
+
+    #[must_use]
+    pub fn query_ready(&self) -> bool {
+        false
+    }
+
+    pub fn warm_query_model(&self) -> Result<()> {
+        Err(crate::error::DbtNovaError::ServerError(
+            "vector search requested but embeddings feature is disabled; rebuild with --features embeddings"
+                .to_string(),
+        ))
+    }
 }
 
 impl SparseSearcher {
@@ -51,6 +73,28 @@ impl SparseSearcher {
 
     pub fn search(&self, _query: &str, _top_k: usize) -> Result<Vec<(String, f32)>> {
         Ok(Vec::new())
+    }
+
+    #[must_use]
+    pub fn query_model_initialized(&self) -> bool {
+        false
+    }
+
+    #[must_use]
+    pub fn query_model_files_present(&self) -> bool {
+        false
+    }
+
+    #[must_use]
+    pub fn query_ready(&self) -> bool {
+        false
+    }
+
+    pub fn warm_query_model(&self) -> Result<()> {
+        Err(crate::error::DbtNovaError::ServerError(
+            "sparse search requested but embeddings feature is disabled; rebuild with --features embeddings"
+                .to_string(),
+        ))
     }
 }
 
@@ -75,6 +119,28 @@ impl Reranker {
         _top_n: usize,
     ) -> Result<Vec<(usize, f32)>> {
         Ok(Vec::new())
+    }
+
+    #[must_use]
+    pub fn initialized(&self) -> bool {
+        false
+    }
+
+    #[must_use]
+    pub fn query_model_files_present(&self) -> bool {
+        false
+    }
+
+    #[must_use]
+    pub fn query_ready(&self) -> bool {
+        false
+    }
+
+    pub fn warm_query_model(&self) -> Result<()> {
+        Err(crate::error::DbtNovaError::ServerError(
+            "reranker requested but embeddings feature is disabled; rebuild with --features embeddings"
+                .to_string(),
+        ))
     }
 }
 
