@@ -82,7 +82,7 @@ fn setup_config(workspace: &TempDir) -> DbtNovaConfig {
     let manifest_path = workspace.path().join("nova_manifest.json");
     write_file(&manifest_path, br#"{"metadata":{"dbt_version":"1.8.0"}}"#);
 
-    DbtNovaConfig {
+    let mut config = DbtNovaConfig {
         manifest_path: manifest_path.to_string_lossy().to_string(),
         storage_dir: workspace
             .path()
@@ -91,7 +91,11 @@ fn setup_config(workspace: &TempDir) -> DbtNovaConfig {
             .to_string(),
         storage_instance_id: "analytics-prod".to_string(),
         ..DbtNovaConfig::default()
-    }
+    };
+    config.search.enable_vector_search = true;
+    config.search.enable_sparse_search = true;
+    config.search.enable_reranker = true;
+    config
 }
 
 fn create_storage_source(workspace: &TempDir) -> PathBuf {

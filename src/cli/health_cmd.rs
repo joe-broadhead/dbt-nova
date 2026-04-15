@@ -330,6 +330,9 @@ mod tests {
             .join("storage")
             .to_string_lossy()
             .to_string();
+        config.search.enable_vector_search = true;
+        config.search.enable_sparse_search = true;
+        config.search.enable_reranker = true;
         config.search.embedding_cache_dir =
             temp_dir.path().join("cache").to_string_lossy().to_string();
         let loaded = execute_manifest_load(config).await.expect("load");
