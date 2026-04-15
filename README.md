@@ -145,7 +145,7 @@ curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
   https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
   DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --slim --non-interactive
 
-# Optional: pre-warm model files during install (recommended for first-time setup)
+# Optional: pre-warm model files during install before enabling semantic layers
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
   DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/.fastembed_cache" \
   DBT_NOVA_WARMUP_REQUIRED_MODELS=3 \
@@ -163,6 +163,12 @@ curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scrip
 
 export DBT_MANIFEST_PATH=/path/to/manifest.json
 export PATH="$HOME/.local/bin:$PATH"
+
+# Optional: enable semantic search layers after warming models/caches
+# export DBT_NOVA_SEARCH_ENABLE_VECTOR=true
+# export DBT_NOVA_SEARCH_ENABLE_SPARSE=true
+# export DBT_NOVA_SEARCH_ENABLE_RERANKER=true
+
 dbt-nova
 
 # Remote manifest (optional)

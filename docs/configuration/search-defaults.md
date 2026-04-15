@@ -17,17 +17,23 @@ get out‑of‑box unless environment variables override it).
   - max fields: `5`
 - **Suggestions** (“did you mean”)
 
-### Hybrid Search
+## Opt-In Semantic Search
 - **RRF fusion** (`k=60`, `overfetch=3`)
-- **Dense vectors**: enabled
+- **Dense vectors**: disabled by default
   - model: `intfloat/multilingual-e5-base`
   - top‑K: `200`
   - ANN buckets: enabled
-- **Sparse vectors**: enabled (SPLADE)
+- **Sparse vectors**: disabled by default (SPLADE)
   - top‑K: `200`
-- **Cross‑encoder reranker**: enabled
+- **Cross‑encoder reranker**: disabled by default
   - model: `jinaai/jina-reranker-v2-base-multilingual`
   - rerank top‑N: `20`
+
+Enable them explicitly with:
+
+- `DBT_NOVA_SEARCH_ENABLE_VECTOR=true`
+- `DBT_NOVA_SEARCH_ENABLE_SPARSE=true`
+- `DBT_NOVA_SEARCH_ENABLE_RERANKER=true`
 
 ### Persona‑aware Ranking
 If `persona` is provided, ranking weights are tuned for:
@@ -103,11 +109,11 @@ Canonical defaults are also captured in `docs/config_defaults.json`
 |---------|---------|-------------|
 | `enable_rrf` | true | Reciprocal Rank Fusion enabled |
 | `rrf_k` | 60 | RRF smoothing constant |
-| `enable_vector_search` | true | Dense vector search enabled |
+| `enable_vector_search` | false | Dense vector search enabled |
 | `vector_top_k` | 200 | Vector candidates before fusion |
-| `enable_sparse_search` | true | SPLADE sparse vectors enabled |
+| `enable_sparse_search` | false | SPLADE sparse vectors enabled |
 | `sparse_top_k` | 200 | Sparse candidates before fusion |
-| `enable_reranker` | true | Cross-encoder reranker enabled |
+| `enable_reranker` | false | Cross-encoder reranker enabled |
 | `rerank_top_n` | 20 | Results to rerank |
 
 ### Models

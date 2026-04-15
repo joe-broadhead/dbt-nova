@@ -29,6 +29,13 @@ curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scrip
 
 use that exact same `DBT_NOVA_EMBEDDINGS_CACHE_DIR` path in your MCP client env.
 
+Semantic layers are disabled by default. If you want dense search, sparse search,
+or reranking in your MCP client, enable them explicitly with:
+
+- `DBT_NOVA_SEARCH_ENABLE_VECTOR=true`
+- `DBT_NOVA_SEARCH_ENABLE_SPARSE=true`
+- `DBT_NOVA_SEARCH_ENABLE_RERANKER=true`
+
 ## Prebuilt Consumer Setup
 
 If you consume prebuilt Nova storage artifacts (built by the reusable producer

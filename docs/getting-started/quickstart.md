@@ -11,7 +11,7 @@ Get dbt-nova running in under 5 minutes.
 
 !!! tip "All-in-one option"
     Use the installer script. It defaults to the **slim** release and
-    downloads models on first run.
+    starts with lexical search only. Semantic layers are opt-in.
 
 ```bash
 # Public repo (unauthenticated)
@@ -24,7 +24,7 @@ curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
   https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
   DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --slim --non-interactive
 
-# Optional: pre-warm models during install (instead of first semantic query)
+# Optional: pre-warm models during install before enabling semantic layers
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
   DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/.fastembed_cache" \
   DBT_NOVA_WARMUP_REQUIRED_MODELS=3 \
@@ -76,6 +76,11 @@ Set your manifest path:
 export PATH="$HOME/.local/bin:$PATH"
 export DBT_MANIFEST_PATH=/path/to/your/dbt/project/target/manifest.json
 export DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/.fastembed_cache"
+
+# Optional: enable semantic search after warming models/caches
+# export DBT_NOVA_SEARCH_ENABLE_VECTOR=true
+# export DBT_NOVA_SEARCH_ENABLE_SPARSE=true
+# export DBT_NOVA_SEARCH_ENABLE_RERANKER=true
 ```
 
 Use the same `DBT_NOVA_EMBEDDINGS_CACHE_DIR` value in your MCP client config.

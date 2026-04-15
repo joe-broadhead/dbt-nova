@@ -430,7 +430,7 @@ impl Default for SearchConfig {
             search_timeout_ms: 30_000,
             search_max_concurrent: 4,
             search_max_queue: 8,
-            enable_vector_search: true,
+            enable_vector_search: false,
             cold_start_policy: SearchColdStartPolicy::default(),
             embedding_model: "intfloat/multilingual-e5-base".to_string(),
             vector_top_k: 200,
@@ -446,9 +446,9 @@ impl Default for SearchConfig {
             onnx_threads: default_onnx_threads(),
             embedding_batch_size: 128,
             sparse_embedding_batch_size: 16,
-            enable_sparse_search: true,
+            enable_sparse_search: false,
             sparse_top_k: 200,
-            enable_reranker: true,
+            enable_reranker: false,
             reranker_model: "jinaai/jina-reranker-v2-base-multilingual".to_string(),
             rerank_top_n: 20,
             force_rebuild_semantic_caches: false,
@@ -1250,6 +1250,14 @@ mod tests {
         let config = SearchConfig::default();
         assert_eq!(config.embedding_batch_size, 128);
         assert_eq!(config.sparse_embedding_batch_size, 16);
+    }
+
+    #[test]
+    fn semantic_components_are_disabled_by_default() {
+        let config = SearchConfig::default();
+        assert!(!config.enable_vector_search);
+        assert!(!config.enable_sparse_search);
+        assert!(!config.enable_reranker);
     }
 
     #[test]

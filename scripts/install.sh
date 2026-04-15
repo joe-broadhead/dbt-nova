@@ -425,8 +425,8 @@ if [[ "${INSTALL_FLAVOR}" == "bundled" && -d "${tmp_dir}/models" ]]; then
   echo "Models installed to ${models_dir}"
   echo "dbt-nova will auto-discover this colocated models/ directory."
 elif [[ "${INSTALL_FLAVOR}" == "slim" ]]; then
-  echo "Slim install selected. Models will be downloaded on first run."
-  echo "Optional: set DBT_NOVA_INSTALL_WARM_MODELS=1 (or pass --warm-models) to pre-warm now."
+  echo "Slim install selected. Semantic layers are disabled by default."
+  echo "Optional: set DBT_NOVA_INSTALL_WARM_MODELS=1 (or pass --warm-models) to pre-warm models before enabling semantic search."
 fi
 
 if [[ "${INSTALL_WARM_MODELS}" == "1" && "${INSTALL_FLAVOR}" == "slim" ]]; then
