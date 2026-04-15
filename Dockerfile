@@ -19,6 +19,7 @@ COPY Cargo.toml Cargo.lock build.rs ./
 COPY benches ./benches
 COPY schemas ./schemas
 COPY src ./src
+COPY vendor ./vendor
 
 RUN cargo build --locked --release --bin dbt-nova
 
