@@ -1076,7 +1076,7 @@ jobs:
           jq -e '.status == "success"' out/manifest-load.json >/dev/null
 
           if [[ "${INPUT_PUBLISH_MODELS_ARCHIVE}" == "true" ]]; then
-            dbt-nova manifest warm "${manifest_args[@]}" --storage-instance-id "${DBT_NOVA_STORAGE_INSTANCE_ID}" --reranker --json | tee out/manifest-warm.json
+            dbt-nova manifest warm "${manifest_args[@]}" --storage-instance-id "${DBT_NOVA_STORAGE_INSTANCE_ID}" --vector --sparse --reranker --json | tee out/manifest-warm.json
             jq -e '.status == "success"' out/manifest-warm.json >/dev/null
             jq -e '.data.persisted.vector == true and .data.persisted.sparse == true and .data.ready.vector == true and .data.ready.sparse == true and .data.ready.reranker == true' out/manifest-warm.json >/dev/null
           fi
@@ -1090,7 +1090,14 @@ jobs:
           fi
           hash_short="${manifest_hash:0:12}"
 
-          dbt-nova health check "${manifest_args[@]}" --json | tee out/health.json
+          if [[ "${INPUT_PUBLISH_MODELS_ARCHIVE}" == "true" ]]; then
+            DBT_NOVA_SEARCH_ENABLE_VECTOR=true \
+            DBT_NOVA_SEARCH_ENABLE_SPARSE=true \
+            DBT_NOVA_SEARCH_ENABLE_RERANKER=true \
+            dbt-nova health check "${manifest_args[@]}" --json | tee out/health.json
+          else
+            dbt-nova health check "${manifest_args[@]}" --json | tee out/health.json
+          fi
           jq -e '.status == "success"' out/health.json >/dev/null
           jq -e '.data.status == "ready" and .data.ready_for_traffic == true' out/health.json >/dev/null
 

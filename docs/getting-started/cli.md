@@ -75,6 +75,8 @@ dbt-nova manifest reload \
 ```bash
 dbt-nova manifest warm \
   --manifest-path /path/to/target/manifest.json \
+  --vector \
+  --sparse \
   --reranker \
   --json
 ```
