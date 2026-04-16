@@ -9,15 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- CLI-only `dbt-nova audit nova-meta` validation for `meta.nova`, with project/file/resource/column targeting, JSON output, schema validation against `schemas/nova/v0.json`, and local semantic checks for references, grain consistency, duplicate definitions, and filter-operator rules.
+- New search and modeling tools for semantic inventory and cleanup work:
+  `search_indicator`, `indicator_inventory`, `search_columns`, `column_inventory`,
+  `compare_grains`, `find_entity_overlap`, and `modelling_consistency_report`.
+- Deterministic search explain/debug mode for `search` and `search_indicator`, including ranking-factor and retriever contribution output.
+- New shared skill architecture under `.github/skills/shared/` plus new persona skills for BI engineering, KPI debugging, model architecture, project cleanup, and metadata authoring across both CLI and MCP bundles.
+- Helper workflow scripts for architecture and cleanup work:
+  `scripts/export_entity_inventory.py`, `scripts/export_column_inventory.py`,
+  `scripts/build_overlap_report.py`, and `scripts/install_skills.sh`.
 - Streamable HTTP server transport for hosted deployments, including container packaging and built-in liveness/readiness probe endpoints.
 - Persona-specific search ranking hints via `meta.nova.search.candidates.<persona>` so helper/ops models can stay searchable while being deboosted for analyst discovery.
 - Reusable metadata audit workflow plus `dbt-nova audit metadata-score` CLI support for project-wide, changed-entity, and explicit-entity metadata gating in CI.
 - Query-aware Nova semantic previews in search results, plus stronger canonical measure/metric ranking so analyst search surfaces the preferred execution model and formula directly.
-- New `nova-meta-authoring` skill for building and reviewing high-signal `meta.nova` blocks in dbt projects.
 - Tagged releases now publish a smoke-tested OCI image for hosted/server deployments.
 
 ### Changed
 
+- Search ranking is now more configurable, deterministic, and analyst-oriented:
+  canonical indicator/entity signals, metadata-support signals, parent coherence,
+  RRF fusion, reranker alignment, stable tie-breaking, and cleaner support evidence
+  all participate in ranking for both `search` and `search_indicator`.
+- Search/modeling inventory and consistency tools now respect the same search
+  concurrency and timeout guardrails as the main search surface.
+- Skill installation is now bundle-aware (`cli` or `mcp`, not both in the same
+  destination), and installed skills are rewritten as standalone packages with
+  vendored shared references and assets.
+- CI hardening now includes lower-memory lint/coverage/test settings and extra
+  runner disk cleanup for the `test` job.
 - Reusable asset publishing now supports GitHub OIDC for GCS targets, refreshes GCS access tokens during longer uploads, uses `gcloud storage cp` for large transfers, and applies higher publish timeout budgets.
 - Metadata audit and reusable asset workflows now support the shared `DBT_NOVA_SECRET_BUNDLE_JSON` secret-bundle contract for cross-repo dbt execution.
 - Analyst search now prefers matched canonical Nova measures and metrics more strongly, including cases where the same business term appears across multiple models or alongside standalone dbt `metric` entities.
@@ -26,6 +45,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `indicator_inventory canonical_only=true` now treats entity-level canonical
+  metadata consistently, matching search behavior.
+- Modeling consistency and overlap checks now use normalized grain signatures,
+  apply pagination offsets correctly, compare the best matching grain variants,
+  and detect overlap through repeated shared column names as well as semantic metadata.
+- `search` ordering now sorts by the returned final score before parent-signal
+  tie-breaks, preventing lower-scored rows from outranking stronger results.
+- `audit nova-meta` now rejects unsupported `recommended_filters.operator`
+  values explicitly and avoids false missing-field errors for dbt `metric` resources
+  that do not declare `columns`.
+- Reusable metadata audit workflows now resolve `selection_mode=changed` from
+  immutable pull-request SHAs when available, so reruns stay stable after the
+  base branch has advanced.
+- Public docs, examples, and fixtures were sanitized to remove private
+  manifest-specific vocabulary from the public repository.
 - Hosted HTTP startup/bind fallback handling is more robust: invalid `PORT` fallback is ignored, MCP paths are normalized/validated, and reserved probe paths are rejected.
 - Cold-start search model failures now degrade safely by disabling broken empty search indexes instead of leaving startup wedged.
 - Metadata audit tests now use isolated storage roots under parallel execution, and the reusable audit workflow no longer cancels sibling invocations on the same ref.
@@ -33,6 +67,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Added and refreshed docs for the new search/modeling tools, CLI `audit nova-meta`,
+  bundle-aware skill installation, the shared skill architecture, new persona skills,
+  and updated analyst/engineering/governance workflows.
 - Added and refreshed docs for hosted deployment, streamable HTTP mode, prebuilt bootstrap/artifact hydration, metadata audit workflows, OCI release behavior, persona-specific search candidate metadata/ranking, and canonical Nova metric/measure search behavior.
 
 ## [0.0.3] - 2026-03-19

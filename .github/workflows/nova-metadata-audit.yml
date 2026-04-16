@@ -734,15 +734,43 @@ jobs:
           SELECTION_MODE: ${{ needs.prepare.outputs.selection_mode }}
           INPUT_CHANGED_FILES_JSON: ${{ needs.prepare.outputs.changed_files_json }}
           BASE_REF: ${{ github.base_ref }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
+
+          has_commit() {
+            local sha="$1"
+            [[ -n "${sha}" ]] && git cat-file -e "${sha}^{commit}" >/dev/null 2>&1
+          }
+
           changed_files_json="${INPUT_CHANGED_FILES_JSON}"
-          if [[ "${SELECTION_MODE}" == "changed" && "${changed_files_json}" == "[]" && -n "${BASE_REF}" ]]; then
-            git fetch --no-tags --depth=1 origin "${BASE_REF}"
-            changed_files_json="$(
-              git diff --name-only "origin/${BASE_REF}...${GITHUB_SHA}" | \
-                jq -R -s -c 'split("\n") | map(select(length > 0))'
-            )"
+          if [[ "${SELECTION_MODE}" == "changed" && "${changed_files_json}" == "[]" ]]; then
+            if [[ -n "${PR_BASE_SHA}" && -n "${PR_HEAD_SHA}" ]]; then
+              if ! has_commit "${PR_BASE_SHA}"; then
+                git fetch --no-tags origin "${PR_BASE_SHA}" || true
+              fi
+              if ! has_commit "${PR_HEAD_SHA}" && [[ -n "${PR_NUMBER}" ]]; then
+                git fetch --no-tags origin "pull/${PR_NUMBER}/head" || true
+              fi
+              if ! has_commit "${PR_BASE_SHA}" || ! has_commit "${PR_HEAD_SHA}"; then
+                echo "Failed to resolve immutable pull_request SHAs for changed-file detection." >&2
+                echo "  PR_BASE_SHA=${PR_BASE_SHA}" >&2
+                echo "  PR_HEAD_SHA=${PR_HEAD_SHA}" >&2
+                exit 1
+              fi
+              changed_files_json="$(
+                git diff --name-only "${PR_BASE_SHA}...${PR_HEAD_SHA}" | \
+                  jq -R -s -c 'split("\n") | map(select(length > 0))'
+              )"
+            elif [[ -n "${BASE_REF}" ]]; then
+              git fetch --no-tags origin "${BASE_REF}"
+              changed_files_json="$(
+                git diff --name-only "origin/${BASE_REF}...${GITHUB_SHA}" | \
+                  jq -R -s -c 'split("\n") | map(select(length > 0))'
+              )"
+            fi
           fi
           echo "changed_files_json=${changed_files_json}" >> "$GITHUB_OUTPUT"
 

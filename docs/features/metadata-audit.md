@@ -94,6 +94,12 @@ It follows the same installer and dbt invocation standards as the reusable
 asset workflow, but disables vector, sparse, and reranker search so CI does not
 pay for full search/model startup during metadata-only audits.
 
+When `selection_mode: changed` and `changed_files_json` is omitted on
+`pull_request` events, the reusable workflow resolves changed files from the
+immutable PR event SHAs (`pull_request.base.sha` and `pull_request.head.sha`)
+instead of the moving base branch name. This keeps reruns stable even after the
+base branch has advanced.
+
 When using `dbt_generate_manifest: true`, prefer the same secret-bundle pattern
 as the Nova assets workflow so callers can work consistently across providers
 and across same-owner or cross-owner reusable workflow calls:
