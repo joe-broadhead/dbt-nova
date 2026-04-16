@@ -584,6 +584,10 @@ async fn test_search_indicator_returns_canonical_measure_context() {
         rows[0].get("canonical").and_then(JsonValue::as_bool),
         Some(true)
     );
+    assert!(
+        rows[0].get("explain").is_none(),
+        "indicator explain should be omitted unless explicitly requested"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

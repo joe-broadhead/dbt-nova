@@ -1183,15 +1183,9 @@ fn reset_bootstrap_applied_fields_for_reload(
 
     for field in applied_fields.iter().filter_map(JsonValue::as_str) {
         match field {
-            "manifest_uri" => {
-                if !explicit_manifest_source {
-                    next.manifest_uri.clear();
-                }
-            }
-            "storage_instance_id" => {
-                if !explicit_storage_instance_id {
-                    next.storage_instance_id.clear();
-                }
+            "manifest_uri" if !explicit_manifest_source => next.manifest_uri.clear(),
+            "storage_instance_id" if !explicit_storage_instance_id => {
+                next.storage_instance_id.clear();
             }
             "storage_artifact_uri" => {
                 next.storage_artifact_uri.clear();

@@ -395,6 +395,7 @@ impl ManifestSearch {
             &tokens,
             resource_filter.as_ref(),
             indicator_filter.as_ref(),
+            params.explain,
         )?;
         rows = self
             .rank_indicator_rows(params, query_has_syntax, persona, rows)
@@ -800,6 +801,7 @@ impl ManifestSearch {
         tokens: &[String],
         resource_filter: Option<&HashSet<String>>,
         indicator_filter: Option<&HashSet<String>>,
+        include_explain: bool,
     ) -> Result<Vec<IndicatorSearchRow>> {
         let min_word_len = self.config.search.min_word_length.max(1);
         let token_set: HashSet<&str> = tokens.iter().map(String::as_str).collect();
@@ -832,6 +834,7 @@ impl ManifestSearch {
                 unique_id,
                 entity,
                 nova,
+                include_explain,
                 token_set: &token_set,
                 query_token_count,
                 min_word_len,
@@ -1196,8 +1199,12 @@ impl ManifestSearch {
             let indicator_tokens =
                 tokenize_alnum_lowercase(&params.query, self.config.search.min_word_length.max(1));
             let resource_filter = normalized_resource_type_filter(&params.resource_types);
-            let mut indicator_rows =
-                self.search_indicator_rows(&indicator_tokens, resource_filter.as_ref(), None)?;
+            let mut indicator_rows = self.search_indicator_rows(
+                &indicator_tokens,
+                resource_filter.as_ref(),
+                None,
+                false,
+            )?;
             if self.config.search.indicator_ranking.enable_parent_coherence
                 && indicator_rows.len() > 1
             {
@@ -2170,6 +2177,7 @@ struct IndicatorSearchContext<'a> {
     unique_id: &'a str,
     entity: &'a ArchivedEntity,
     nova: &'a ArchivedNovaMeta,
+    include_explain: bool,
     token_set: &'a HashSet<&'a str>,
     query_token_count: usize,
     min_word_len: usize,
@@ -2245,13 +2253,13 @@ fn build_measure_indicator_row(
     measure: &ArchivedNovaMeasure,
     matched: &crate::manifest::search::SemanticPreviewItem,
 ) -> IndicatorSearchRow {
-    let explain = indicator_match_explain(context, measure.name.as_str(), matched);
+    let explain_payload = indicator_match_explain(context, measure.name.as_str(), matched);
     IndicatorSearchRow {
         indicator_name: measure.name.as_str().to_string(),
         indicator_type: "measure".to_string(),
         canonical: matched.canonical,
         match_type: matched.match_type.as_str().to_string(),
-        score: explain.final_score,
+        score: explain_payload.final_score,
         description: measure
             .description
             .as_ref()
@@ -2287,7 +2295,7 @@ fn build_measure_indicator_row(
             .collect(),
         grain: grain_summary(context.nova.grain.as_ref()),
         support_signals: context.support_signals.clone(),
-        explain: Some(explain),
+        explain: context.include_explain.then_some(explain_payload),
     }
 }
 
@@ -2347,14 +2355,14 @@ fn build_metric_indicator_row(
     matched: &crate::manifest::search::SemanticPreviewItem,
 ) -> IndicatorSearchRow {
     let preferred_grain = metric.grain.as_ref().or(context.nova.grain.as_ref());
-    let explain =
+    let explain_payload =
         indicator_match_explain_with_grain(context, metric.name.as_str(), matched, preferred_grain);
     IndicatorSearchRow {
         indicator_name: metric.name.as_str().to_string(),
         indicator_type: "metric".to_string(),
         canonical: matched.canonical,
         match_type: matched.match_type.as_str().to_string(),
-        score: explain.final_score,
+        score: explain_payload.final_score,
         description: metric
             .description
             .as_ref()
@@ -2386,7 +2394,7 @@ fn build_metric_indicator_row(
             .collect(),
         grain: grain_summary(preferred_grain),
         support_signals: context.support_signals.clone(),
-        explain: Some(explain),
+        explain: context.include_explain.then_some(explain_payload),
     }
 }
 

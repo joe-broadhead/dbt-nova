@@ -47,14 +47,13 @@ impl ToolMetrics {
         let errors = self.errors.load(Ordering::Relaxed);
         let total_ms = self.total_ms.load(Ordering::Relaxed);
         let max_ms = self.max_ms.load(Ordering::Relaxed);
-        let avg_ms = if calls == 0 { 0 } else { total_ms / calls };
+        let avg_ms = total_ms.checked_div(calls).unwrap_or(0);
         let p95_ms = percentile_ms(&self.buckets, calls, 95, 100, max_ms);
         let p99_ms = percentile_ms(&self.buckets, calls, 99, 100, max_ms);
-        let error_rate_bps = if calls == 0 {
-            0
-        } else {
-            (errors.saturating_mul(10_000)) / calls
-        };
+        let error_rate_bps = errors
+            .saturating_mul(10_000)
+            .checked_div(calls)
+            .unwrap_or(0);
 
         let mut buckets = serde_json::Map::new();
         for (idx, count) in self.buckets.iter().enumerate() {

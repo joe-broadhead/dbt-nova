@@ -1799,12 +1799,11 @@ fn normalize_vector(vec: &mut [f32]) {
 fn random_hyperplane_seed() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| {
+        .map_or(0x9E37_79B9_7F4A_7C15, |d| {
             d.as_secs()
                 ^ u64::from(d.subsec_nanos())
                 ^ u64::from(std::process::id()).rotate_left(13)
         })
-        .unwrap_or(0x9E37_79B9_7F4A_7C15)
 }
 
 fn generate_hyperplanes(bits: usize, dim: usize, seed: u64) -> Vec<Vec<f32>> {

@@ -499,11 +499,9 @@ impl ManifestSearch {
         let total_columns = entity.as_ref().map_or(0, |e| e.column_names_iter().count());
 
         let columns_tested_count = columns_tested.len();
-        let coverage_percentage = if total_columns > 0 {
-            (columns_tested_count.saturating_mul(100) + total_columns / 2) / total_columns
-        } else {
-            100
-        };
+        let coverage_percentage = (columns_tested_count.saturating_mul(100) + total_columns / 2)
+            .checked_div(total_columns)
+            .unwrap_or(100);
 
         let mut columns_without_tests: Vec<String> = Vec::new();
         if let Some(entity) = entity.as_ref() {
