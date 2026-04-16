@@ -11,12 +11,14 @@ We ship two built-in skill bundles under `.github/skills/`:
   - `mcp-bi-engineer`
   - `mcp-engineer`
   - `mcp-governance`
+  - `mcp-kpi-debugger`
   - `mcp-nova-meta-authoring`
 - `.github/skills/cli/`
   - `cli-analyst`
   - `cli-bi-engineer`
   - `cli-engineer`
   - `cli-governance`
+  - `cli-kpi-debugger`
   - `cli-nova-meta-authoring`
 - `.github/skills/shared/`
   - transport-agnostic references and assets used by both bundles
@@ -78,6 +80,8 @@ cp -R .github/skills/mcp/engineer .codex/skills/mcp-engineer
 cp -R .github/skills/cli/engineer .codex/skills/cli-engineer
 cp -R .github/skills/mcp/governance .codex/skills/mcp-governance
 cp -R .github/skills/cli/governance .codex/skills/cli-governance
+cp -R .github/skills/mcp/kpi-debugger .codex/skills/mcp-kpi-debugger
+cp -R .github/skills/cli/kpi-debugger .codex/skills/cli-kpi-debugger
 cp -R .github/skills/mcp/nova-meta-authoring .codex/skills/mcp-nova-meta-authoring
 cp -R .github/skills/cli/nova-meta-authoring .codex/skills/cli-nova-meta-authoring
 ```
@@ -107,6 +111,8 @@ cp -R /path/to/repo/.github/skills/mcp/engineer ~/.claude/skills/mcp-engineer
 cp -R /path/to/repo/.github/skills/cli/engineer ~/.claude/skills/cli-engineer
 cp -R /path/to/repo/.github/skills/mcp/governance ~/.claude/skills/mcp-governance
 cp -R /path/to/repo/.github/skills/cli/governance ~/.claude/skills/cli-governance
+cp -R /path/to/repo/.github/skills/mcp/kpi-debugger ~/.claude/skills/mcp-kpi-debugger
+cp -R /path/to/repo/.github/skills/cli/kpi-debugger ~/.claude/skills/cli-kpi-debugger
 cp -R /path/to/repo/.github/skills/mcp/nova-meta-authoring ~/.claude/skills/mcp-nova-meta-authoring
 cp -R /path/to/repo/.github/skills/cli/nova-meta-authoring ~/.claude/skills/cli-nova-meta-authoring
 ```
@@ -127,6 +133,8 @@ cp -R .github/skills/mcp/engineer .gemini/skills/mcp-engineer
 cp -R .github/skills/cli/engineer .gemini/skills/cli-engineer
 cp -R .github/skills/mcp/governance .gemini/skills/mcp-governance
 cp -R .github/skills/cli/governance .gemini/skills/cli-governance
+cp -R .github/skills/mcp/kpi-debugger .gemini/skills/mcp-kpi-debugger
+cp -R .github/skills/cli/kpi-debugger .gemini/skills/cli-kpi-debugger
 cp -R .github/skills/mcp/nova-meta-authoring .gemini/skills/mcp-nova-meta-authoring
 cp -R .github/skills/cli/nova-meta-authoring .gemini/skills/cli-nova-meta-authoring
 ```
