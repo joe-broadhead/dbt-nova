@@ -11,60 +11,13 @@ metadata:
 
 # MCP Engineer Skill (dbt-nova)
 
-## Mission
+## Transport contract
 
-Ship production-safe dbt changes with explicit blast-radius, quality, and readiness checks.
-
-## Core workflow (required)
-
-1. Preflight
-- Run `health`.
+- Run `health` before substantive work.
 - If status is not `ready`, run `reload_manifest` and wait for readiness.
+- MCP does not expose `audit nova-meta`; use the CLI separately when schema/YAML validation is required.
 
-2. Discover the implementation target
-- Prefer:
-  - `search` with `persona: "engineer"`
-  - `find_by_path` when the file area is already known
-- Prefer reuse or extension before adding new models.
-
-3. Validate upstream inputs
-- Use:
-  - `get_entity`
-  - `get_columns`
-  - `get_sql`
-  - `get_context` with `context_mode: "engineer"` for fast triage
-- Default `get_sql` mode:
-  - `compiled: false`
-- Use `compiled: true` only when you need rendered SQL and the manifest actually contains it.
-
-4. Run blast-radius analysis
-- Use:
-  - `get_lineage`
-  - `get_impact`
-  - `get_column_lineage` for critical fields
-- Filter lineage to models only when tests would add noise.
-
-5. Run quality gates
-- Use:
-  - `get_test_coverage`
-  - `get_metadata_score`
-  - `get_undocumented`
-  - `validate_dag`
-- Use `validate_dag` with `detail: "summary"` unless you are actively debugging graph defects.
-
-6. Refresh after changes
-- After dbt compile/build updates the manifest, run `reload_manifest` again and re-check `health`.
-
-7. Report the ship checklist
-- Include:
-  - target model and grain
-  - changed columns or logic
-  - downstream impact
-  - test gaps
-  - metadata score
-  - manifest readiness
-
-## Tool usage (quick map)
+## MCP surface
 
 - `search` / `find_by_path`: target discovery
 - `get_entity` / `get_columns` / `get_sql`: contract and SQL inspection
@@ -74,30 +27,15 @@ Ship production-safe dbt changes with explicit blast-radius, quality, and readin
 - `diff_entities` / `validate_dag`: change verification
 - `reload_manifest` / `health`: lifecycle and readiness
 
-## Output standard (required)
+## Load these shared references before substantive work
 
-Provide a ship checklist:
-- model name + grain
-- selection rationale
-- columns added or changed
-- tests added or required
-- downstream impact summary
-- metadata score and missing fields
-- manifest readiness
-
-## Validation checklist (copy and complete)
-
-[ ] Manifest ready before analysis
-[ ] Target entity selected and justified
-[ ] Upstream inputs validated
-[ ] Impact analysis reviewed
-[ ] Tests checked
-[ ] Documentation / metadata score checked
-[ ] Manifest reloaded after changes
-[ ] Ship checklist completed
+- `../../shared/engineer/references/workflow.md`
+- `../../shared/common/references/manifest-refresh.md`
+- `../../shared/engineer/assets/ship-checklist.md`
 
 ## References
 
-- `references/engineering-workflow.md`
+- `../../shared/engineer/references/workflow.md`
+- `../../shared/common/references/manifest-refresh.md`
+- `../../shared/engineer/assets/ship-checklist.md`
 - `references/tool-recipes.md`
-- `references/manifest-refresh.md`

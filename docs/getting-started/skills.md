@@ -16,12 +16,22 @@ We ship two built-in skill bundles under `.github/skills/`:
   - `cli-engineer`
   - `cli-governance`
   - `cli-nova-meta-authoring`
+- `.github/skills/shared/`
+  - transport-agnostic references and assets used by both bundles
 
 Use the `mcp-*` skills when the agent can call Nova MCP tools directly.
 Use the `cli-*` skills when the agent only has terminal access to `dbt-nova` commands such as
 `tool call`, `manifest load`, `health check`, `audit metadata-score`, and `audit nova-meta`.
 
-Each skill follows the Agent Skills spec and includes task-specific workflows for one transport.
+Each installable skill follows the Agent Skills spec. The repo structure now separates:
+- thin transport wrappers in `.github/skills/cli/` and `.github/skills/mcp/`
+- shared workflow references and reusable assets in `.github/skills/shared/`
+
+This keeps the real workflow logic in one place while letting each transport wrapper stay focused on:
+- session setup
+- transport-specific caveats
+- command/tool syntax
+- boundaries where CLI and MCP differ
 
 ## Install in common tools
 

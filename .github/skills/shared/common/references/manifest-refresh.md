@@ -1,6 +1,6 @@
-# Manifest Refresh (Engineer)
+# Manifest Refresh
 
-Use this after rebuilding or moving the manifest so Nova can index the latest version.
+Use this after rebuilding, uploading, or changing the manifest so Nova reflects the latest project state.
 
 ## Steps
 
@@ -26,4 +26,4 @@ You can also use a local path:
 {"name":"health","arguments":{}}
 ```
 
-Wait until status is `ready` before searching.
+Wait until status is `ready` before trusting search, scoring, or downstream validation.
