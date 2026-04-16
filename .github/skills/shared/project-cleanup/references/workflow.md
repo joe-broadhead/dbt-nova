@@ -27,3 +27,8 @@ Use the shared overlap audit template when handing off cleanup work:
 - inconsistent patterns
 - canonical candidates
 - cleanup queue with priority
+
+For deterministic artifact generation, prefer the helper scripts in `scripts/`:
+- `python3 scripts/export_entity_inventory.py ...`
+- `python3 scripts/export_column_inventory.py ...`
+- `python3 scripts/build_overlap_report.py ...`

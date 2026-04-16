@@ -27,3 +27,8 @@ Use the shared refactor-plan template when handing off architecture work:
 - migration steps
 - impact / rollback
 - validation plan
+
+For deterministic current-state artifacts, prefer the helper scripts in `scripts/`:
+- `python3 scripts/export_entity_inventory.py ...`
+- `python3 scripts/export_column_inventory.py ...`
+- `python3 scripts/build_overlap_report.py ...`

@@ -48,6 +48,13 @@ The shared layer also holds reusable output templates for current and upcoming s
 - BI engineer dashboard, metric card, dataset contract, and viz QA templates
 - KPI investigation, refactor-plan, and overlap-audit templates for future debugger/architecture/cleanup skills
 
+The repo also ships deterministic helper scripts for architecture and cleanup workflows:
+- `scripts/export_entity_inventory.py`
+- `scripts/export_column_inventory.py`
+- `scripts/build_overlap_report.py`
+
+These scripts call Nova CLI tools directly and keep their outputs aligned with the tool contracts rather than introducing a second reporting schema.
+
 ## Install in common tools
 
 ### Installer shortcut (`~/.agents/skills`)
