@@ -888,7 +888,7 @@ mod tests {
                 reranker: false,
             },
             true,
-            SystemTime::now() + Duration::from_secs(60),
+            SystemTime::now() + Duration::from_mins(1),
         )
         .expect_err("force warm should require freshly persisted cache files");
         assert!(
