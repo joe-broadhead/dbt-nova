@@ -94,6 +94,13 @@ async fn test_find_entity_overlap_surfaces_closest_order_entities() {
             .and_then(JsonValue::as_str),
         Some("gmv")
     );
+    assert_eq!(
+        evidence
+            .get("shared_column_names")
+            .and_then(JsonValue::as_array)
+            .map(Vec::len),
+        Some(3)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

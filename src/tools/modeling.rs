@@ -217,6 +217,8 @@ struct EntityOverlapEvidence {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     shared_name_tokens: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    shared_column_names: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     shared_parent_synonyms: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     shared_domains: Vec<String>,
@@ -290,6 +292,7 @@ struct EntityOverlapProfile {
     relation_name: Option<String>,
     canonical: bool,
     name_tokens: BTreeSet<String>,
+    column_names: BTreeSet<String>,
     parent_synonyms: BTreeSet<String>,
     domains: BTreeSet<String>,
     indicator_names: BTreeSet<String>,
@@ -303,6 +306,7 @@ impl EntityOverlapProfile {
         !self.parent_synonyms.is_empty()
             || !self.domains.is_empty()
             || !self.indicator_names.is_empty()
+            || !self.column_names.is_empty()
             || !self.column_semantic_types.is_empty()
             || !self.grain_variants.is_empty()
             || !self.name_tokens.is_empty()
@@ -345,6 +349,11 @@ fn build_entity_profile(
             .filter(|value| !value.is_empty())
             .collect()
     });
+    let column_names = entity
+        .column_names_iter()
+        .map(normalize_value)
+        .filter(|value| is_distinctive_column_name(value, min_word_len))
+        .collect();
     let domains = nova.map_or_else(BTreeSet::new, |nova| {
         nova.domains
             .iter()
@@ -395,6 +404,7 @@ fn build_entity_profile(
         relation_name: entity.relation_name_str().map(str::to_string),
         canonical: nova.is_some_and(|nova| nova.canonical),
         name_tokens,
+        column_names,
         parent_synonyms,
         domains,
         indicator_names,
@@ -469,8 +479,9 @@ fn compare_entity_grains(
     left: &EntityOverlapProfile,
     right: &EntityOverlapProfile,
 ) -> GrainComparison {
-    let left_grain = left.preferred_grain();
-    let right_grain = right.preferred_grain();
+    let best_pair = best_grain_pair(left, right);
+    let left_grain = best_pair.map(|(left_grain, _)| left_grain);
+    let right_grain = best_pair.map(|(_, right_grain)| right_grain);
 
     let left_pk = left_grain.map_or_else(BTreeSet::new, |grain| {
         grain.primary_key.iter().cloned().collect()
@@ -587,10 +598,13 @@ fn overlap_bucket_keys(profile: &EntityOverlapProfile) -> BTreeSet<String> {
     for indicator in &profile.indicator_names {
         keys.insert(format!("ind:{indicator}"));
     }
+    for column_name in &profile.column_names {
+        keys.insert(format!("col:{column_name}"));
+    }
     for semantic_type in &profile.column_semantic_types {
         keys.insert(format!("stype:{semantic_type}"));
     }
-    if let Some(grain) = profile.preferred_grain() {
+    for grain in &profile.grain_variants {
         if let Some(time_field) = &grain.time_field {
             keys.insert(format!("time:{}", normalize_value(time_field)));
         }
@@ -605,19 +619,26 @@ fn overlap_evidence(
     left: &EntityOverlapProfile,
     right: &EntityOverlapProfile,
 ) -> EntityOverlapEvidence {
-    let shared_time_field = left
-        .preferred_grain()
-        .and_then(|grain| grain.time_field.as_deref())
-        .zip(
-            right
-                .preferred_grain()
-                .and_then(|grain| grain.time_field.as_deref()),
-        )
+    let best_pair = best_grain_pair(left, right);
+    let shared_time_field = best_pair
+        .and_then(|(left_grain, right_grain)| {
+            left_grain
+                .time_field
+                .as_deref()
+                .zip(right_grain.time_field.as_deref())
+        })
         .filter(|(left_time, right_time)| left_time == right_time)
         .map(|(time_field, _)| time_field.to_string());
+    let shared_dimensions = best_pair.map_or_else(Vec::new, |(left_grain, right_grain)| {
+        sorted_intersection(
+            &left_grain.dimensions.iter().cloned().collect(),
+            &right_grain.dimensions.iter().cloned().collect(),
+        )
+    });
 
     EntityOverlapEvidence {
         shared_name_tokens: sorted_intersection(&left.name_tokens, &right.name_tokens),
+        shared_column_names: sorted_intersection(&left.column_names, &right.column_names),
         shared_parent_synonyms: sorted_intersection(&left.parent_synonyms, &right.parent_synonyms),
         shared_domains: sorted_intersection(&left.domains, &right.domains),
         shared_indicators: sorted_intersection(&left.indicator_names, &right.indicator_names),
@@ -625,14 +646,7 @@ fn overlap_evidence(
             &left.column_semantic_types,
             &right.column_semantic_types,
         ),
-        shared_dimensions: sorted_intersection(
-            &left.preferred_grain().map_or_else(BTreeSet::new, |grain| {
-                grain.dimensions.iter().cloned().collect()
-            }),
-            &right.preferred_grain().map_or_else(BTreeSet::new, |grain| {
-                grain.dimensions.iter().cloned().collect()
-            }),
-        ),
+        shared_dimensions,
         shared_time_field,
     }
 }
@@ -640,6 +654,7 @@ fn overlap_evidence(
 impl EntityOverlapEvidence {
     fn surface_overlap_count(&self) -> usize {
         usize::from(!self.shared_name_tokens.is_empty())
+            + usize::from(!self.shared_column_names.is_empty())
             + usize::from(!self.shared_parent_synonyms.is_empty())
             + usize::from(!self.shared_domains.is_empty())
             + usize::from(!self.shared_indicators.is_empty())
@@ -650,6 +665,7 @@ impl EntityOverlapEvidence {
 
     fn shared_value_count(&self) -> usize {
         self.shared_name_tokens.len()
+            + self.shared_column_names.len()
             + self.shared_parent_synonyms.len()
             + self.shared_domains.len()
             + self.shared_indicators.len()
@@ -685,7 +701,7 @@ fn duplicate_indicator_rows(
             .count();
         let mut grain_signatures: BTreeMap<String, GrainVariant> = BTreeMap::new();
         for profile in &parents {
-            if let Some(grain) = profile.preferred_grain() {
+            for grain in &profile.grain_variants {
                 grain_signatures
                     .entry(grain_signature_key(grain))
                     .or_insert_with(|| grain.clone());
@@ -755,6 +771,68 @@ fn sorted_difference(values1: &BTreeSet<String>, values2: &BTreeSet<String>) -> 
     values1.difference(values2).cloned().collect()
 }
 
+fn best_grain_pair<'a>(
+    left: &'a EntityOverlapProfile,
+    right: &'a EntityOverlapProfile,
+) -> Option<(&'a GrainVariant, &'a GrainVariant)> {
+    let mut best_pair: Option<(&GrainVariant, &GrainVariant)> = None;
+    let mut best_score: Option<(u8, u8, usize, usize, usize, usize)> = None;
+    let mut best_signature: Option<(String, String)> = None;
+
+    for left_grain in &left.grain_variants {
+        for right_grain in &right.grain_variants {
+            let left_primary_key: BTreeSet<String> =
+                left_grain.primary_key.iter().cloned().collect();
+            let right_primary_key: BTreeSet<String> =
+                right_grain.primary_key.iter().cloned().collect();
+            let left_dimensions: BTreeSet<String> = left_grain.dimensions.iter().cloned().collect();
+            let right_dimensions: BTreeSet<String> =
+                right_grain.dimensions.iter().cloned().collect();
+            let shared_primary_key = left_primary_key.intersection(&right_primary_key).count();
+            let shared_dimensions = left_dimensions.intersection(&right_dimensions).count();
+            let same_time_field = left_grain
+                .time_field
+                .as_deref()
+                .zip(right_grain.time_field.as_deref())
+                .is_some_and(|(left_time, right_time)| left_time == right_time);
+            let exact_match = grain_signature_key(left_grain) == grain_signature_key(right_grain);
+            let diff_count = left_primary_key
+                .symmetric_difference(&right_primary_key)
+                .count()
+                + left_dimensions
+                    .symmetric_difference(&right_dimensions)
+                    .count()
+                + usize::from(left_grain.time_field != right_grain.time_field);
+            let score = (
+                u8::from(exact_match),
+                u8::from(same_time_field),
+                shared_primary_key + shared_dimensions,
+                shared_primary_key,
+                shared_dimensions,
+                usize::MAX - diff_count,
+            );
+            let signature = (
+                grain_signature_key(left_grain),
+                grain_signature_key(right_grain),
+            );
+            let replace = match (&best_score, &best_signature) {
+                (Some(current_score), Some(current_signature)) => {
+                    score > *current_score
+                        || (score == *current_score && signature < *current_signature)
+                }
+                _ => true,
+            };
+            if replace {
+                best_score = Some(score);
+                best_signature = Some(signature);
+                best_pair = Some((left_grain, right_grain));
+            }
+        }
+    }
+
+    best_pair
+}
+
 fn score_from_overlap(surface_overlap_count: usize, shared_value_count: usize) -> f32 {
     let combined = surface_overlap_count.saturating_mul(10) + shared_value_count;
     f32::from(u16::try_from(combined).unwrap_or(u16::MAX))
@@ -762,6 +840,12 @@ fn score_from_overlap(surface_overlap_count: usize, shared_value_count: usize) -
 
 fn normalize_value(value: &str) -> String {
     value.trim().to_lowercase()
+}
+
+fn is_distinctive_column_name(value: &str, min_word_len: usize) -> bool {
+    let tokens = tokenize_alnum_lowercase(value, min_word_len);
+    tokens.len() >= 2
+        || (tokens.len() == 1 && tokens[0].chars().count() >= min_word_len.saturating_mul(3))
 }
 
 fn normalized_resource_type_filter(resource_types: &[String]) -> Option<HashSet<String>> {
@@ -815,4 +899,121 @@ fn compare_duplicate_indicator_rows(
         })
         .then_with(|| left.indicator_type.cmp(&right.indicator_type))
         .then_with(|| left.indicator_name.cmp(&right.indicator_name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn grain_variant(
+        primary_key: &[&str],
+        time_field: Option<&str>,
+        dimensions: &[&str],
+    ) -> GrainVariant {
+        GrainVariant {
+            sources: vec!["test".to_string()],
+            primary_key: primary_key
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
+            time_field: time_field.map(str::to_string),
+            dimensions: dimensions
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
+        }
+    }
+
+    fn profile_with(
+        unique_id: &str,
+        column_names: &[&str],
+        grain_variants: Vec<GrainVariant>,
+    ) -> EntityOverlapProfile {
+        EntityOverlapProfile {
+            unique_id: unique_id.to_string(),
+            name: unique_id.to_string(),
+            resource_type: "model".to_string(),
+            relation_name: None,
+            canonical: false,
+            name_tokens: BTreeSet::new(),
+            column_names: column_names
+                .iter()
+                .map(|value| normalize_value(value))
+                .collect(),
+            parent_synonyms: BTreeSet::new(),
+            domains: BTreeSet::new(),
+            indicator_names: BTreeSet::new(),
+            typed_indicators: BTreeSet::new(),
+            column_semantic_types: BTreeSet::new(),
+            grain_variants,
+        }
+    }
+
+    #[test]
+    fn compare_entity_grains_prefers_best_matching_variant() {
+        let left = profile_with(
+            "model.pkg.left",
+            &[],
+            vec![
+                grain_variant(&["session_id"], Some("session_date"), &["platform_name"]),
+                grain_variant(
+                    &["order_id"],
+                    Some("order_date"),
+                    &["country_code", "sales_channel"],
+                ),
+            ],
+        );
+        let right = profile_with(
+            "model.pkg.right",
+            &[],
+            vec![grain_variant(
+                &["order_id"],
+                Some("order_date"),
+                &["country_code", "sales_channel"],
+            )],
+        );
+
+        let comparison = compare_entity_grains(&left, &right);
+        assert!(comparison.exact_match);
+        assert!(comparison.same_time_field);
+        assert_eq!(comparison.shared_primary_key, vec!["order_id".to_string()]);
+        assert_eq!(
+            comparison.shared_dimensions,
+            vec!["country_code".to_string(), "sales_channel".to_string()]
+        );
+    }
+
+    #[test]
+    fn overlap_evidence_includes_shared_column_names() {
+        let left = profile_with(
+            "model.pkg.left",
+            &["order_id", "gmv_amount", "country_code"],
+            vec![],
+        );
+        let right = profile_with(
+            "model.pkg.right",
+            &["order_id", "gmv_amount", "customer_id"],
+            vec![],
+        );
+
+        let evidence = overlap_evidence(&left, &right);
+        assert_eq!(
+            evidence.shared_column_names,
+            vec!["gmv_amount".to_string(), "order_id".to_string()]
+        );
+        assert!(evidence.surface_overlap_count() > 0);
+    }
+
+    #[test]
+    fn overlap_candidate_pairs_use_shared_column_names() {
+        let profiles = vec![
+            profile_with("model.pkg.left", &["order_id", "gmv_amount"], vec![]),
+            profile_with("model.pkg.right", &["order_id", "gmv_amount"], vec![]),
+            profile_with("model.pkg.other", &["promotion_id"], vec![]),
+        ];
+
+        let pairs = overlap_candidate_pairs(&profiles);
+        assert!(pairs.contains(&(0, 1)));
+        assert!(!pairs.contains(&(0, 2)));
+    }
 }

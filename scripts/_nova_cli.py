@@ -7,6 +7,7 @@ import csv
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -19,7 +20,11 @@ JsonDict = dict[str, Any]
 def default_nova_bin() -> str:
     """Return the Nova binary path for helper scripts."""
 
-    return os.environ.get("DBT_NOVA_BIN", "./target/debug/dbt-nova")
+    if env_bin := os.environ.get("DBT_NOVA_BIN"):
+        return env_bin
+    if path_bin := shutil.which("dbt-nova"):
+        return path_bin
+    return "./target/debug/dbt-nova"
 
 
 def chunked(items: list[str], size: int) -> Iterable[list[str]]:

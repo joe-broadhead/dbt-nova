@@ -121,8 +121,8 @@ def compare_grains_for_pair(args: argparse.Namespace, overlap_row: dict[str, Any
         {
             "entity1": entity1["unique_id"],
             "entity2": entity2["unique_id"],
-            "resource_type1": entity1["resource_type"],
-            "resource_type2": entity2["resource_type"],
+            "entity1_resource_type": entity1["resource_type"],
+            "entity2_resource_type": entity2["resource_type"],
         },
     )
     data = payload["result"].get("data", {})

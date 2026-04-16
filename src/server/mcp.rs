@@ -199,6 +199,54 @@ impl DbtNovaServer {
         };
         concurrency.acquire(timeout).await
     }
+
+    async fn handle_bounded_search<F, Fut>(
+        &self,
+        tool: &'static str,
+        persona: Option<&str>,
+        f: F,
+    ) -> String
+    where
+        F: FnOnce(Arc<ManifestSearch>) -> Fut,
+        Fut: Future<Output = Result<serde_json::Value, DbtNovaError>>,
+    {
+        let search_started = Instant::now();
+        let search_timeout_ms = match self.searcher.get().await {
+            Ok(searcher) => searcher.config().search.search_timeout_ms as u64,
+            Err(_) => 0,
+        };
+        let permit_timeout = remaining_timeout(search_started, search_timeout_ms);
+        let permit_result = if let Ok(searcher) = self.searcher.get().await {
+            self.acquire_search_permit(searcher.config(), permit_timeout)
+                .await
+        } else {
+            Ok(None)
+        };
+        let permit = match Self::permit_from_result(permit_result) {
+            Ok(permit) => permit,
+            Err(response) => return response,
+        };
+        let result = self
+            .handle_async(tool, persona, |searcher| async move {
+                let future = f(searcher);
+                if search_timeout_ms == 0 {
+                    return future.await;
+                }
+                let Some(remaining) = remaining_timeout(search_started, search_timeout_ms) else {
+                    return Err(search_timeout_error(search_timeout_ms));
+                };
+                if remaining.is_zero() {
+                    return Err(search_timeout_error(search_timeout_ms));
+                }
+                match tokio::time::timeout(remaining, future).await {
+                    Ok(result) => result,
+                    Err(_) => Err(search_timeout_error(search_timeout_ms)),
+                }
+            })
+            .await;
+        drop(permit);
+        result
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -387,48 +435,10 @@ impl DbtNovaServer {
     #[instrument(level = "info", skip(self, params))]
     async fn search(&self, params: Parameters<SearchParams>) -> String {
         let persona = params.0.persona.clone();
-        let search_started = Instant::now();
-        let search_timeout_ms = match self.searcher.get().await {
-            Ok(searcher) => searcher.config().search.search_timeout_ms as u64,
-            Err(_) => 0,
-        };
-        let permit_timeout = remaining_timeout(search_started, search_timeout_ms);
-        let permit_result = if let Ok(searcher) = self.searcher.get().await {
-            self.acquire_search_permit(searcher.config(), permit_timeout)
-                .await
-        } else {
-            Ok(None)
-        };
-        let permit = match Self::permit_from_result(permit_result) {
-            Ok(permit) => permit,
-            Err(response) => return response,
-        };
-        let result = self
-            .handle_async("search", persona.as_deref(), |searcher| async move {
-                if search_timeout_ms == 0 {
-                    return searcher.search(&params.0).await;
-                }
-                let Some(remaining) = remaining_timeout(search_started, search_timeout_ms) else {
-                    return Err(DbtNovaError::ServerError(format!(
-                        "Search timed out after {search_timeout_ms}ms"
-                    )));
-                };
-                if remaining.is_zero() {
-                    return Err(DbtNovaError::ServerError(format!(
-                        "Search timed out after {search_timeout_ms}ms"
-                    )));
-                }
-                let duration = remaining;
-                match tokio::time::timeout(duration, searcher.search(&params.0)).await {
-                    Ok(result) => result,
-                    Err(_) => Err(DbtNovaError::ServerError(format!(
-                        "Search timed out after {search_timeout_ms}ms"
-                    ))),
-                }
-            })
-            .await;
-        drop(permit);
-        result
+        self.handle_bounded_search("search", persona.as_deref(), |searcher| async move {
+            searcher.search(&params.0).await
+        })
+        .await
     }
 
     /// Resolve Nova measures and metrics that match the query.
@@ -439,54 +449,12 @@ impl DbtNovaServer {
     #[instrument(level = "info", skip(self, params))]
     async fn search_indicator(&self, params: Parameters<SearchIndicatorParams>) -> String {
         let persona = params.0.persona.clone();
-        let search_started = Instant::now();
-        let search_timeout_ms = match self.searcher.get().await {
-            Ok(searcher) => searcher.config().search.search_timeout_ms as u64,
-            Err(_) => 0,
-        };
-        let permit_timeout = remaining_timeout(search_started, search_timeout_ms);
-        let permit_result = if let Ok(searcher) = self.searcher.get().await {
-            self.acquire_search_permit(searcher.config(), permit_timeout)
-                .await
-        } else {
-            Ok(None)
-        };
-        let permit = match Self::permit_from_result(permit_result) {
-            Ok(permit) => permit,
-            Err(response) => return response,
-        };
-        let result = self
-            .handle_async(
-                "search_indicator",
-                persona.as_deref(),
-                |searcher| async move {
-                    if search_timeout_ms == 0 {
-                        return searcher.search_indicator(&params.0).await;
-                    }
-                    let Some(remaining) = remaining_timeout(search_started, search_timeout_ms)
-                    else {
-                        return Err(DbtNovaError::ServerError(format!(
-                            "Search timed out after {search_timeout_ms}ms"
-                        )));
-                    };
-                    if remaining.is_zero() {
-                        return Err(DbtNovaError::ServerError(format!(
-                            "Search timed out after {search_timeout_ms}ms"
-                        )));
-                    }
-                    match tokio::time::timeout(remaining, searcher.search_indicator(&params.0))
-                        .await
-                    {
-                        Ok(result) => result,
-                        Err(_) => Err(DbtNovaError::ServerError(format!(
-                            "Search timed out after {search_timeout_ms}ms"
-                        ))),
-                    }
-                },
-            )
-            .await;
-        drop(permit);
-        result
+        self.handle_bounded_search(
+            "search_indicator",
+            persona.as_deref(),
+            |searcher| async move { searcher.search_indicator(&params.0).await },
+        )
+        .await
     }
 
     /// List Nova measures and metrics deterministically with parent execution context.
@@ -496,7 +464,7 @@ impl DbtNovaServer {
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn indicator_inventory(&self, params: Parameters<IndicatorInventoryParams>) -> String {
-        self.handle_async("indicator_inventory", None, |searcher| async move {
+        self.handle_bounded_search("indicator_inventory", None, |searcher| async move {
             searcher.indicator_inventory(&params.0).await
         })
         .await
@@ -509,47 +477,10 @@ impl DbtNovaServer {
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn search_columns(&self, params: Parameters<SearchColumnsParams>) -> String {
-        let search_started = Instant::now();
-        let search_timeout_ms = match self.searcher.get().await {
-            Ok(searcher) => searcher.config().search.search_timeout_ms as u64,
-            Err(_) => 0,
-        };
-        let permit_timeout = remaining_timeout(search_started, search_timeout_ms);
-        let permit_result = if let Ok(searcher) = self.searcher.get().await {
-            self.acquire_search_permit(searcher.config(), permit_timeout)
-                .await
-        } else {
-            Ok(None)
-        };
-        let permit = match Self::permit_from_result(permit_result) {
-            Ok(permit) => permit,
-            Err(response) => return response,
-        };
-        let result = self
-            .handle_async("search_columns", None, |searcher| async move {
-                if search_timeout_ms == 0 {
-                    return searcher.search_columns(&params.0).await;
-                }
-                let Some(remaining) = remaining_timeout(search_started, search_timeout_ms) else {
-                    return Err(DbtNovaError::ServerError(format!(
-                        "Search timed out after {search_timeout_ms}ms"
-                    )));
-                };
-                if remaining.is_zero() {
-                    return Err(DbtNovaError::ServerError(format!(
-                        "Search timed out after {search_timeout_ms}ms"
-                    )));
-                }
-                match tokio::time::timeout(remaining, searcher.search_columns(&params.0)).await {
-                    Ok(result) => result,
-                    Err(_) => Err(DbtNovaError::ServerError(format!(
-                        "Search timed out after {search_timeout_ms}ms"
-                    ))),
-                }
-            })
-            .await;
-        drop(permit);
-        result
+        self.handle_bounded_search("search_columns", None, |searcher| async move {
+            searcher.search_columns(&params.0).await
+        })
+        .await
     }
 
     /// List columns deterministically across entities.
@@ -559,7 +490,7 @@ impl DbtNovaServer {
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn column_inventory(&self, params: Parameters<ColumnInventoryParams>) -> String {
-        self.handle_async("column_inventory", None, |searcher| async move {
+        self.handle_bounded_search("column_inventory", None, |searcher| async move {
             searcher.column_inventory(&params.0).await
         })
         .await
@@ -572,7 +503,7 @@ impl DbtNovaServer {
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn compare_grains(&self, params: Parameters<CompareGrainsParams>) -> String {
-        self.handle_async("compare_grains", None, |searcher| async move {
+        self.handle_bounded_search("compare_grains", None, |searcher| async move {
             searcher.compare_grains(&params.0).await
         })
         .await
@@ -585,7 +516,7 @@ impl DbtNovaServer {
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn find_entity_overlap(&self, params: Parameters<FindEntityOverlapParams>) -> String {
-        self.handle_async("find_entity_overlap", None, |searcher| async move {
+        self.handle_bounded_search("find_entity_overlap", None, |searcher| async move {
             searcher.find_entity_overlap(&params.0).await
         })
         .await
@@ -601,7 +532,7 @@ impl DbtNovaServer {
         &self,
         params: Parameters<ModellingConsistencyReportParams>,
     ) -> String {
-        self.handle_async(
+        self.handle_bounded_search(
             "modelling_consistency_report",
             None,
             |searcher| async move { searcher.modelling_consistency_report(&params.0).await },
@@ -1029,6 +960,10 @@ fn remaining_timeout(start: Instant, timeout_ms: u64) -> Option<Duration> {
         .map(Duration::from_millis)
 }
 
+fn search_timeout_error(search_timeout_ms: u64) -> DbtNovaError {
+    DbtNovaError::ServerError(format!("Search timed out after {search_timeout_ms}ms"))
+}
+
 fn sql_queue_timeout(config: &crate::config::DbtNovaConfig) -> Option<Duration> {
     if config.sql_queue_timeout_ms == 0 {
         return None;
@@ -1186,6 +1121,45 @@ mod tests {
             .await;
         let err = second_attempt.expect_err("second SQL permit should be rejected");
         assert!(err.to_string().contains("SQL concurrency limit exceeded"));
+
+        drop(first_permit);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn search_concurrency_rejects_indicator_inventory_when_limit_is_saturated() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path());
+        config.search.search_max_concurrent = 1;
+        config.search.search_max_queue = 0;
+        config.search.search_timeout_ms = 50;
+
+        let handle = ManifestSearchHandle::spawn(config);
+        handle
+            .wait_ready()
+            .await
+            .expect("fixture manifest should load");
+        let server = DbtNovaServer::new(handle);
+        let searcher = server.searcher.get().await.expect("searcher ready");
+
+        let first_permit = server
+            .acquire_search_permit(searcher.config(), Some(Duration::from_millis(5)))
+            .await
+            .expect("first search permit")
+            .expect("permit should be enabled");
+
+        let response: serde_json::Value = serde_json::from_str(
+            &server
+                .indicator_inventory(Parameters(IndicatorInventoryParams::default()))
+                .await,
+        )
+        .expect("indicator inventory response JSON");
+        assert_eq!(response["success"], serde_json::json!(false));
+        assert!(
+            response["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Search concurrency limit exceeded")
+        );
 
         drop(first_permit);
     }
