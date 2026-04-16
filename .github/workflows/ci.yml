@@ -45,10 +45,19 @@ jobs:
     env:
       DBT_NOVA_STRICT_SCHEMA: "1"
       CARGO_BUILD_JOBS: "1"
+      CARGO_INCREMENTAL: "0"
       RUSTFLAGS: "-C debuginfo=0"
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          df -h
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
