@@ -15,11 +15,12 @@ use crate::cli::output::{CliEnvelope, error_envelope};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::search::ManifestSearch;
 use crate::params::{
-    BatchGetParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams, GetColumnLineageParams,
-    GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams, GetLineageParams,
-    GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
+    BatchGetParams, ColumnInventoryParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams,
+    GetColumnLineageParams, GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams,
+    GetLineageParams, GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
     GetUndocumentedParams, IndicatorInventoryParams, ListEntitiesParams, ReloadManifestParams,
-    RunRecipeParams, SearchIndicatorParams, SearchParams, SearchRecipesParams, ValidateDagParams,
+    RunRecipeParams, SearchColumnsParams, SearchIndicatorParams, SearchParams, SearchRecipesParams,
+    ValidateDagParams,
 };
 use crate::responses::SuccessResponse;
 
@@ -34,7 +35,7 @@ struct ToolRegistryEntry {
     dispatch: ToolDispatchFn,
 }
 
-const TOOL_REGISTRY: [ToolRegistryEntry; 28] = [
+const TOOL_REGISTRY: [ToolRegistryEntry; 30] = [
     ToolRegistryEntry {
         name: "search",
         dispatch: dispatch_search,
@@ -46,6 +47,14 @@ const TOOL_REGISTRY: [ToolRegistryEntry; 28] = [
     ToolRegistryEntry {
         name: "indicator_inventory",
         dispatch: dispatch_indicator_inventory,
+    },
+    ToolRegistryEntry {
+        name: "search_columns",
+        dispatch: dispatch_search_columns,
+    },
+    ToolRegistryEntry {
+        name: "column_inventory",
+        dispatch: dispatch_column_inventory,
     },
     ToolRegistryEntry {
         name: "get_entity",
@@ -483,6 +492,24 @@ fn dispatch_indicator_inventory(searcher: &ManifestSearch, params: JsonValue) ->
     })
 }
 
+fn dispatch_search_columns(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: SearchColumnsParams = decode_tool_params("search_columns", params)?;
+        run_search_with_timeout(
+            searcher.config().search.search_timeout_ms,
+            searcher.search_columns(&decoded),
+        )
+        .await
+    })
+}
+
+fn dispatch_column_inventory(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: ColumnInventoryParams = decode_tool_params("column_inventory", params)?;
+        searcher.column_inventory(&decoded).await
+    })
+}
+
 typed_dispatch!(
     dispatch_get_entity,
     "get_entity",
@@ -851,6 +878,8 @@ mod tests {
             "search",
             "search_indicator",
             "indicator_inventory",
+            "search_columns",
+            "column_inventory",
             "get_entity",
             "list_entities",
             "get_lineage",

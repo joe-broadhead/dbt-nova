@@ -103,6 +103,7 @@ pub struct ColumnMetaSummary {
     pub description: Option<String>,
     pub role: Option<String>,
     pub semantic_type: Option<String>,
+    pub synonyms: Vec<String>,
     pub example_values: Vec<String>,
     pub primary_key: bool,
 }
@@ -377,6 +378,9 @@ fn get_column_meta(value: &serde_json::Value, column_names: &[String]) -> Vec<Co
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string);
+        let synonyms = nova
+            .map(|n| extract_string_array_from_map(n, "synonyms"))
+            .unwrap_or_default();
         let example_values = nova
             .and_then(|n| n.get("example_values"))
             .and_then(|v| v.as_array())
@@ -402,6 +406,7 @@ fn get_column_meta(value: &serde_json::Value, column_names: &[String]) -> Vec<Co
         if description.is_none()
             && role.is_none()
             && semantic_type.is_none()
+            && synonyms.is_empty()
             && example_values.is_empty()
             && !primary_key
         {
@@ -412,6 +417,7 @@ fn get_column_meta(value: &serde_json::Value, column_names: &[String]) -> Vec<Co
             description,
             role,
             semantic_type,
+            synonyms,
             example_values,
             primary_key,
         });

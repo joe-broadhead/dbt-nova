@@ -28,6 +28,7 @@
             "nova": {
               "role": "dimension",
               "semantic_type": "country_code",
+              "synonyms": ["market"],
               "example_values": ["spain", "france"]
             }
           }
@@ -102,6 +103,7 @@
             "nova": {
               "role": "dimension",
               "semantic_type": "country_code",
+              "synonyms": ["market"],
               "example_values": ["spain", "france"]
             }
           }

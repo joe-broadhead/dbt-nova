@@ -16,11 +16,12 @@ use tracing::instrument;
 use crate::error::DbtNovaError;
 use crate::manifest::search::{ManifestSearch, ManifestSearchHandle};
 use crate::params::{
-    BatchGetParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams, GetColumnLineageParams,
-    GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams, GetLineageParams,
-    GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
+    BatchGetParams, ColumnInventoryParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams,
+    GetColumnLineageParams, GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams,
+    GetLineageParams, GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
     GetUndocumentedParams, IndicatorInventoryParams, ListEntitiesParams, ReloadManifestParams,
-    RunRecipeParams, SearchIndicatorParams, SearchParams, SearchRecipesParams, ValidateDagParams,
+    RunRecipeParams, SearchColumnsParams, SearchIndicatorParams, SearchParams, SearchRecipesParams,
+    ValidateDagParams,
 };
 use crate::responses::SuccessResponse;
 use crate::server::health::build_manifest_health_payload;
@@ -496,6 +497,69 @@ impl DbtNovaServer {
     async fn indicator_inventory(&self, params: Parameters<IndicatorInventoryParams>) -> String {
         self.handle_async("indicator_inventory", None, |searcher| async move {
             searcher.indicator_inventory(&params.0).await
+        })
+        .await
+    }
+
+    /// Search columns by semantic metadata and business hints.
+    #[tool(
+        name = "search_columns",
+        description = "Search columns by name, synonym, description, role, semantic_type, or example_values, and return the parent entity context for downstream modelling or analytics work."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn search_columns(&self, params: Parameters<SearchColumnsParams>) -> String {
+        let search_started = Instant::now();
+        let search_timeout_ms = match self.searcher.get().await {
+            Ok(searcher) => searcher.config().search.search_timeout_ms as u64,
+            Err(_) => 0,
+        };
+        let permit_timeout = remaining_timeout(search_started, search_timeout_ms);
+        let permit_result = if let Ok(searcher) = self.searcher.get().await {
+            self.acquire_search_permit(searcher.config(), permit_timeout)
+                .await
+        } else {
+            Ok(None)
+        };
+        let permit = match Self::permit_from_result(permit_result) {
+            Ok(permit) => permit,
+            Err(response) => return response,
+        };
+        let result = self
+            .handle_async("search_columns", None, |searcher| async move {
+                if search_timeout_ms == 0 {
+                    return searcher.search_columns(&params.0).await;
+                }
+                let Some(remaining) = remaining_timeout(search_started, search_timeout_ms) else {
+                    return Err(DbtNovaError::ServerError(format!(
+                        "Search timed out after {search_timeout_ms}ms"
+                    )));
+                };
+                if remaining.is_zero() {
+                    return Err(DbtNovaError::ServerError(format!(
+                        "Search timed out after {search_timeout_ms}ms"
+                    )));
+                }
+                match tokio::time::timeout(remaining, searcher.search_columns(&params.0)).await {
+                    Ok(result) => result,
+                    Err(_) => Err(DbtNovaError::ServerError(format!(
+                        "Search timed out after {search_timeout_ms}ms"
+                    ))),
+                }
+            })
+            .await;
+        drop(permit);
+        result
+    }
+
+    /// List columns deterministically across entities.
+    #[tool(
+        name = "column_inventory",
+        description = "Inventory tool for columns. List columns across models or sources with role, semantic_type, synonyms, example values, and parent entity context."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn column_inventory(&self, params: Parameters<ColumnInventoryParams>) -> String {
+        self.handle_async("column_inventory", None, |searcher| async move {
+            searcher.column_inventory(&params.0).await
         })
         .await
     }

@@ -169,6 +169,85 @@ Example response shape:
 }
 ```
 
+### `search_columns`
+Search columns directly by name, synonym, description, role, semantic type, or example values.
+
+Required:
+- `query`
+
+Common:
+- `resource_types` (filters parent entity types)
+- `roles`
+- `semantic_types`
+- `limit`, `offset`, `min_score`
+
+```json
+{"name":"search_columns","arguments":{"query":"spain","resource_types":["model"],"limit":10,"offset":0}}
+```
+
+Example response shape:
+
+```json
+{
+  "success": true,
+  "count": 1,
+  "data": [
+    {
+      "column_name": "country_code",
+      "match_type": "example_value",
+      "score": 5.25,
+      "matched_value": "spain",
+      "annotated": true,
+      "role": "dimension",
+      "semantic_type": "country_code",
+      "synonyms": ["market"],
+      "example_values": ["spain", "france"],
+      "parent_unique_id": "model.package.base__sales_enriched_sql",
+      "parent_name": "base__sales_enriched_sql",
+      "parent_resource_type": "model",
+      "domains": ["sales", "commerce"]
+    }
+  ]
+}
+```
+
+### `column_inventory`
+List columns deterministically across models or sources, with parent context and semantic hints.
+
+Common:
+- `resource_types` (filters parent entity types)
+- `roles`
+- `semantic_types`
+- `annotated_only` (boolean, defaults to `false`)
+- `limit`, `offset`
+
+```json
+{"name":"column_inventory","arguments":{"resource_types":["model"],"roles":["dimension"],"annotated_only":true,"limit":100,"offset":0}}
+```
+
+Example response shape:
+
+```json
+{
+  "success": true,
+  "count": 1,
+  "data": [
+    {
+      "column_name": "country_code",
+      "annotated": true,
+      "role": "dimension",
+      "semantic_type": "country_code",
+      "synonyms": ["market"],
+      "example_values": ["spain", "france"],
+      "parent_unique_id": "model.package.base__sales_enriched_sql",
+      "parent_name": "base__sales_enriched_sql",
+      "parent_resource_type": "model",
+      "domains": ["sales", "commerce"]
+    }
+  ]
+}
+```
+
 ### `get_entity`
 Fetch a single entity by `unique_id` or name.
 

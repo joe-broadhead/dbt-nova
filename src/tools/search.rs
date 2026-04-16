@@ -12,7 +12,8 @@ use crate::config::search::{
 };
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::entity::{
-    ArchivedEntity, ArchivedNovaGrain, ArchivedNovaMeasure, ArchivedNovaMeta, ArchivedNovaMetric,
+    ArchivedColumnMetaSummary, ArchivedEntity, ArchivedNovaGrain, ArchivedNovaMeasure,
+    ArchivedNovaMeta, ArchivedNovaMetric,
 };
 use crate::manifest::search::{
     ManifestSearch, NovaSemanticMatches, SemanticMatchType, match_nova_semantics,
@@ -20,7 +21,8 @@ use crate::manifest::search::{
 use crate::manifest::tantivy_search::{SearchHit, SearchRequest, SearchScope, TantivySearcher};
 use crate::manifest::vector_search::embedding_text_from_archived;
 use crate::params::{
-    DetailLevel, IndicatorInventoryParams, ListEntitiesParams, SearchIndicatorParams, SearchParams,
+    ColumnInventoryParams, DetailLevel, IndicatorInventoryParams, ListEntitiesParams,
+    SearchColumnsParams, SearchIndicatorParams, SearchParams,
 };
 use crate::responses::{SearchResponse, SuccessResponse};
 use crate::utils::{SearchPersona, has_query_syntax, tokenize_alnum_lowercase};
@@ -389,6 +391,108 @@ impl ManifestSearch {
         Ok(serde_json::to_value(response)?)
     }
 
+    /// Search columns across entities using names, semantic hints, and example values.
+    ///
+    /// # Errors
+    /// Returns an error if the query is invalid, filters are invalid, or pagination exceeds configured limits.
+    #[instrument(skip(self, params), fields(tool = "search_columns", query_len = params.query.len(), limit = params.pagination.limit, offset = params.pagination.offset))]
+    pub async fn search_columns(&self, params: &SearchColumnsParams) -> Result<JsonValue> {
+        if params.query.chars().count() > self.config.search.max_query_length {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "Query exceeds maximum length of {} characters",
+                self.config.search.max_query_length
+            )));
+        }
+        if params.pagination.offset > self.config.search.max_offset {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "Offset exceeds maximum of {}",
+                self.config.search.max_offset
+            )));
+        }
+
+        let min_word_len = self.config.search.min_word_length.max(1);
+        let tokens = tokenize_alnum_lowercase(&params.query, min_word_len);
+        if tokens.is_empty() {
+            return Err(DbtNovaError::InvalidParams(
+                "Query too short or invalid".to_string(),
+            ));
+        }
+
+        let resource_filter = normalized_resource_type_filter(&params.resource_types);
+        let role_filter = normalized_value_filter(&params.roles);
+        let semantic_type_filter = normalized_value_filter(&params.semantic_types);
+        let token_set: HashSet<&str> = tokens.iter().map(String::as_str).collect();
+        let mut rows = self.search_column_rows(
+            &token_set,
+            min_word_len,
+            resource_filter.as_ref(),
+            role_filter.as_ref(),
+            semantic_type_filter.as_ref(),
+        )?;
+        if let Some(min_score) = params.min_score {
+            rows.retain(|row| row.score >= min_score);
+        }
+
+        let total = rows.len();
+        let limit = self.page_limit(params.pagination.limit);
+        let start = params.pagination.offset.min(total);
+        let end = (start + limit).min(total);
+        let results: Vec<JsonValue> = rows
+            .into_iter()
+            .skip(start)
+            .take(end.saturating_sub(start))
+            .map(serde_json::to_value)
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|error| DbtNovaError::ServerError(error.to_string()))?;
+        let count = results.len();
+        let mut response = SuccessResponse::new(results, count).with_total(total);
+        if total > end {
+            response = response.with_truncated(true);
+        }
+        Ok(serde_json::to_value(response)?)
+    }
+
+    /// List columns deterministically across entities.
+    ///
+    /// # Errors
+    /// Returns an error if filters are invalid or pagination exceeds configured limits.
+    #[instrument(skip(self, params), fields(tool = "column_inventory", limit = params.pagination.limit, offset = params.pagination.offset))]
+    pub async fn column_inventory(&self, params: &ColumnInventoryParams) -> Result<JsonValue> {
+        if params.pagination.offset > self.config.search.max_offset {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "Offset exceeds maximum of {}",
+                self.config.search.max_offset
+            )));
+        }
+
+        let resource_filter = normalized_resource_type_filter(&params.resource_types);
+        let role_filter = normalized_value_filter(&params.roles);
+        let semantic_type_filter = normalized_value_filter(&params.semantic_types);
+        let rows = self.column_inventory_rows(
+            resource_filter.as_ref(),
+            role_filter.as_ref(),
+            semantic_type_filter.as_ref(),
+            params.annotated_only,
+        )?;
+        let total = rows.len();
+        let limit = self.page_limit(params.pagination.limit);
+        let start = params.pagination.offset.min(total);
+        let end = (start + limit).min(total);
+        let results: Vec<JsonValue> = rows
+            .into_iter()
+            .skip(start)
+            .take(end.saturating_sub(start))
+            .map(serde_json::to_value)
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|error| DbtNovaError::ServerError(error.to_string()))?;
+        let count = results.len();
+        let mut response = SuccessResponse::new(results, count).with_total(total);
+        if total > end {
+            response = response.with_truncated(true);
+        }
+        Ok(serde_json::to_value(response)?)
+    }
+
     fn prepare_indicator_search(
         &self,
         params: &SearchIndicatorParams,
@@ -743,6 +847,96 @@ impl ManifestSearch {
         }
 
         rows.sort_by(compare_indicator_inventory_rows);
+        Ok(rows)
+    }
+
+    fn search_column_rows(
+        &self,
+        token_set: &HashSet<&str>,
+        min_word_len: usize,
+        resource_filter: Option<&HashSet<String>>,
+        role_filter: Option<&HashSet<String>>,
+        semantic_type_filter: Option<&HashSet<String>>,
+    ) -> Result<Vec<ColumnSearchRow>> {
+        let mut rows = Vec::new();
+
+        for unique_id in self.entities.ids() {
+            let Some(entity) = self.get_entity_archived(unique_id)? else {
+                continue;
+            };
+            if !resource_type_allowed_for_search(entity.resource_type_str(), resource_filter) {
+                continue;
+            }
+            let nova = entity.nova_meta();
+            let column_meta = entity_column_meta_lookup(entity);
+
+            for column_name in entity.column_names_iter() {
+                let summary = column_meta.get(column_name).copied();
+                if !column_matches_filters(summary, role_filter, semantic_type_filter, false) {
+                    continue;
+                }
+                let Some(search_match) =
+                    best_column_search_match(column_name, summary, token_set, min_word_len)
+                else {
+                    continue;
+                };
+                rows.push(build_column_search_row(
+                    unique_id,
+                    entity,
+                    nova,
+                    column_name,
+                    summary,
+                    search_match,
+                    token_set,
+                    min_word_len,
+                ));
+            }
+        }
+
+        rows.sort_by(compare_column_search_rows);
+        Ok(rows)
+    }
+
+    fn column_inventory_rows(
+        &self,
+        resource_filter: Option<&HashSet<String>>,
+        role_filter: Option<&HashSet<String>>,
+        semantic_type_filter: Option<&HashSet<String>>,
+        annotated_only: bool,
+    ) -> Result<Vec<ColumnInventoryRow>> {
+        let mut rows = Vec::new();
+
+        for unique_id in self.entities.ids() {
+            let Some(entity) = self.get_entity_archived(unique_id)? else {
+                continue;
+            };
+            if !resource_type_allowed_for_search(entity.resource_type_str(), resource_filter) {
+                continue;
+            }
+            let nova = entity.nova_meta();
+            let column_meta = entity_column_meta_lookup(entity);
+
+            for column_name in entity.column_names_iter() {
+                let summary = column_meta.get(column_name).copied();
+                if !column_matches_filters(
+                    summary,
+                    role_filter,
+                    semantic_type_filter,
+                    annotated_only,
+                ) {
+                    continue;
+                }
+                rows.push(build_column_inventory_row(
+                    unique_id,
+                    entity,
+                    nova,
+                    column_name,
+                    summary,
+                ));
+            }
+        }
+
+        rows.sort_by(compare_column_inventory_rows);
         Ok(rows)
     }
 
@@ -1327,6 +1521,60 @@ struct IndicatorInventoryRow {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct ColumnInventoryRow {
+    column_name: String,
+    annotated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    semantic_type: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    synonyms: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    example_values: Vec<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    primary_key: bool,
+    parent_unique_id: String,
+    parent_name: String,
+    parent_resource_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    relation_name: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    domains: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ColumnSearchRow {
+    column_name: String,
+    match_type: String,
+    score: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    matched_value: Option<String>,
+    annotated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    semantic_type: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    synonyms: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    example_values: Vec<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    primary_key: bool,
+    parent_unique_id: String,
+    parent_name: String,
+    parent_resource_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    relation_name: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    domains: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct IndicatorParentGroupItem {
     indicator_name: String,
     indicator_type: String,
@@ -1467,6 +1715,13 @@ struct IndicatorSearchContext<'a> {
     support_signals: Option<MetadataSupportSignals>,
     indicator_config: &'a IndicatorRankingConfig,
     metadata_config: &'a MetadataSupportConfig,
+}
+
+#[derive(Clone, Copy)]
+struct ColumnSearchMatch<'a> {
+    match_type: &'static str,
+    matched_value: Option<&'a str>,
+    score: f32,
 }
 
 struct FusedHitBundle {
@@ -1704,6 +1959,115 @@ fn build_metric_inventory_row(
             .collect(),
         grain: grain_summary(metric.grain.as_ref().or(nova.grain.as_ref())),
     }
+}
+
+fn build_column_inventory_row(
+    unique_id: &str,
+    entity: &ArchivedEntity,
+    nova: Option<&ArchivedNovaMeta>,
+    column_name: &str,
+    summary: Option<&ArchivedColumnMetaSummary>,
+) -> ColumnInventoryRow {
+    ColumnInventoryRow {
+        column_name: column_name.to_string(),
+        annotated: column_is_annotated(summary),
+        description: summary
+            .and_then(|summary| summary.description.as_ref().map(ArchivedString::as_str))
+            .map(str::to_string),
+        role: summary
+            .and_then(|summary| summary.role.as_ref().map(ArchivedString::as_str))
+            .map(str::to_string),
+        semantic_type: summary
+            .and_then(|summary| summary.semantic_type.as_ref().map(ArchivedString::as_str))
+            .map(str::to_string),
+        synonyms: summary.map_or_else(Vec::new, |summary| {
+            summary
+                .synonyms
+                .iter()
+                .map(ArchivedString::as_str)
+                .map(str::to_string)
+                .collect()
+        }),
+        example_values: summary.map_or_else(Vec::new, |summary| {
+            summary
+                .example_values
+                .iter()
+                .map(ArchivedString::as_str)
+                .map(str::to_string)
+                .collect()
+        }),
+        primary_key: summary.is_some_and(|summary| summary.primary_key),
+        parent_unique_id: unique_id.to_string(),
+        parent_name: entity.name_str().unwrap_or(unique_id).to_string(),
+        parent_resource_type: entity.resource_type_str().unwrap_or("unknown").to_string(),
+        relation_name: entity.relation_name_str().map(str::to_string),
+        domains: nova.map_or_else(Vec::new, |nova| {
+            nova.domains
+                .iter()
+                .map(ArchivedString::as_str)
+                .map(str::to_string)
+                .collect()
+        }),
+    }
+}
+
+fn build_column_search_row(
+    unique_id: &str,
+    entity: &ArchivedEntity,
+    nova: Option<&ArchivedNovaMeta>,
+    column_name: &str,
+    summary: Option<&ArchivedColumnMetaSummary>,
+    search_match: ColumnSearchMatch<'_>,
+    token_set: &HashSet<&str>,
+    min_word_len: usize,
+) -> ColumnSearchRow {
+    let mut row = ColumnSearchRow {
+        column_name: column_name.to_string(),
+        match_type: search_match.match_type.to_string(),
+        score: search_match.score
+            + column_parent_context_bonus(entity, nova, token_set, min_word_len),
+        matched_value: search_match.matched_value.map(str::to_string),
+        annotated: column_is_annotated(summary),
+        description: summary
+            .and_then(|summary| summary.description.as_ref().map(ArchivedString::as_str))
+            .map(str::to_string),
+        role: summary
+            .and_then(|summary| summary.role.as_ref().map(ArchivedString::as_str))
+            .map(str::to_string),
+        semantic_type: summary
+            .and_then(|summary| summary.semantic_type.as_ref().map(ArchivedString::as_str))
+            .map(str::to_string),
+        synonyms: summary.map_or_else(Vec::new, |summary| {
+            summary
+                .synonyms
+                .iter()
+                .map(ArchivedString::as_str)
+                .map(str::to_string)
+                .collect()
+        }),
+        example_values: summary.map_or_else(Vec::new, |summary| {
+            summary
+                .example_values
+                .iter()
+                .map(ArchivedString::as_str)
+                .map(str::to_string)
+                .collect()
+        }),
+        primary_key: summary.is_some_and(|summary| summary.primary_key),
+        parent_unique_id: unique_id.to_string(),
+        parent_name: entity.name_str().unwrap_or(unique_id).to_string(),
+        parent_resource_type: entity.resource_type_str().unwrap_or("unknown").to_string(),
+        relation_name: entity.relation_name_str().map(str::to_string),
+        domains: nova.map_or_else(Vec::new, |nova| {
+            nova.domains
+                .iter()
+                .map(ArchivedString::as_str)
+                .map(str::to_string)
+                .collect()
+        }),
+    };
+    row.score = row.score.max(0.0);
+    row
 }
 
 fn grain_summary(grain: Option<&ArchivedNovaGrain>) -> IndicatorGrainSummary {
@@ -2349,6 +2713,22 @@ fn compare_indicator_inventory_rows(
         .then_with(|| left.indicator_name.cmp(&right.indicator_name))
 }
 
+fn compare_column_inventory_rows(
+    left: &ColumnInventoryRow,
+    right: &ColumnInventoryRow,
+) -> Ordering {
+    left.parent_unique_id
+        .cmp(&right.parent_unique_id)
+        .then_with(|| left.column_name.cmp(&right.column_name))
+}
+
+fn compare_column_search_rows(left: &ColumnSearchRow, right: &ColumnSearchRow) -> Ordering {
+    compare_scores_desc(left.score, right.score)
+        .then_with(|| left.parent_unique_id.cmp(&right.parent_unique_id))
+        .then_with(|| left.column_name.cmp(&right.column_name))
+        .then_with(|| left.match_type.cmp(&right.match_type))
+}
+
 fn compare_search_candidates(left: &SearchCandidate<'_>, right: &SearchCandidate<'_>) -> Ordering {
     compare_scores_desc(
         left.indicator_parent_score.unwrap_or_default(),
@@ -2356,6 +2736,169 @@ fn compare_search_candidates(left: &SearchCandidate<'_>, right: &SearchCandidate
     )
     .then_with(|| compare_scores_desc(left.score, right.score))
     .then_with(|| left.unique_id.cmp(&right.unique_id))
+}
+
+fn entity_column_meta_lookup<'a>(
+    entity: &'a ArchivedEntity,
+) -> HashMap<&'a str, &'a ArchivedColumnMetaSummary> {
+    entity
+        .column_meta()
+        .iter()
+        .map(|summary| (summary.name.as_str(), summary))
+        .collect()
+}
+
+fn column_is_annotated(summary: Option<&ArchivedColumnMetaSummary>) -> bool {
+    summary.is_some_and(|summary| {
+        summary.role.is_some()
+            || summary.semantic_type.is_some()
+            || !summary.synonyms.is_empty()
+            || !summary.example_values.is_empty()
+    })
+}
+
+fn column_matches_filters(
+    summary: Option<&ArchivedColumnMetaSummary>,
+    role_filter: Option<&HashSet<String>>,
+    semantic_type_filter: Option<&HashSet<String>>,
+    annotated_only: bool,
+) -> bool {
+    if annotated_only && !column_is_annotated(summary) {
+        return false;
+    }
+    if let Some(filter) = role_filter {
+        let Some(role) = summary
+            .and_then(|summary| summary.role.as_ref().map(ArchivedString::as_str))
+            .map(str::trim)
+            .map(str::to_lowercase)
+        else {
+            return false;
+        };
+        if !filter.contains(&role) {
+            return false;
+        }
+    }
+    if let Some(filter) = semantic_type_filter {
+        let Some(semantic_type) = summary
+            .and_then(|summary| summary.semantic_type.as_ref().map(ArchivedString::as_str))
+            .map(str::trim)
+            .map(str::to_lowercase)
+        else {
+            return false;
+        };
+        if !filter.contains(&semantic_type) {
+            return false;
+        }
+    }
+    true
+}
+
+fn best_column_search_match<'a>(
+    column_name: &'a str,
+    summary: Option<&'a ArchivedColumnMetaSummary>,
+    token_set: &HashSet<&str>,
+    min_word_len: usize,
+) -> Option<ColumnSearchMatch<'a>> {
+    let mut best: Option<ColumnSearchMatch<'a>> = None;
+
+    let mut consider = |candidate: ColumnSearchMatch<'a>| {
+        if let Some(current) = best
+            && candidate.score <= current.score
+        {
+            return;
+        }
+        best = Some(candidate);
+    };
+
+    if let Some(overlap) = token_overlap_count(column_name, token_set, min_word_len) {
+        consider(ColumnSearchMatch {
+            match_type: "name",
+            matched_value: Some(column_name),
+            score: 6.0 + usize_to_f32(overlap),
+        });
+    }
+
+    if let Some(summary) = summary {
+        for synonym in summary.synonyms.iter().map(ArchivedString::as_str) {
+            if let Some(overlap) = token_overlap_count(synonym, token_set, min_word_len) {
+                consider(ColumnSearchMatch {
+                    match_type: "synonym",
+                    matched_value: Some(synonym),
+                    score: 5.5 + usize_to_f32(overlap),
+                });
+            }
+        }
+        if let Some(description) = summary.description.as_ref().map(ArchivedString::as_str)
+            && let Some(overlap) = token_overlap_count(description, token_set, min_word_len)
+        {
+            consider(ColumnSearchMatch {
+                match_type: "description",
+                matched_value: Some(description),
+                score: 2.5 + usize_to_f32(overlap),
+            });
+        }
+        if let Some(role) = summary.role.as_ref().map(ArchivedString::as_str)
+            && let Some(overlap) = token_overlap_count(role, token_set, min_word_len)
+        {
+            consider(ColumnSearchMatch {
+                match_type: "role",
+                matched_value: Some(role),
+                score: 4.0 + usize_to_f32(overlap),
+            });
+        }
+        if let Some(semantic_type) = summary.semantic_type.as_ref().map(ArchivedString::as_str)
+            && let Some(overlap) = token_overlap_count(semantic_type, token_set, min_word_len)
+        {
+            consider(ColumnSearchMatch {
+                match_type: "semantic_type",
+                matched_value: Some(semantic_type),
+                score: 4.5 + usize_to_f32(overlap),
+            });
+        }
+        for example_value in summary.example_values.iter().map(ArchivedString::as_str) {
+            if let Some(overlap) = token_overlap_count(example_value, token_set, min_word_len) {
+                consider(ColumnSearchMatch {
+                    match_type: "example_value",
+                    matched_value: Some(example_value),
+                    score: 4.25 + usize_to_f32(overlap),
+                });
+            }
+        }
+    }
+
+    best
+}
+
+fn column_parent_context_bonus(
+    entity: &ArchivedEntity,
+    nova: Option<&ArchivedNovaMeta>,
+    token_set: &HashSet<&str>,
+    min_word_len: usize,
+) -> f32 {
+    let name_bonus = entity
+        .name_str()
+        .and_then(|name| token_overlap_count(name, token_set, min_word_len))
+        .map_or(0.0, |count| usize_to_f32(count) * 0.2);
+    let relation_bonus = entity
+        .relation_name_str()
+        .and_then(|name| token_overlap_count(name, token_set, min_word_len))
+        .map_or(0.0, |count| usize_to_f32(count) * 0.1);
+    let domain_bonus = nova.map_or(0.0, |nova| {
+        nova.domains
+            .iter()
+            .filter_map(|value| token_overlap_count(value.as_str(), token_set, min_word_len))
+            .map(|count| usize_to_f32(count) * 0.15)
+            .sum::<f32>()
+    });
+    let use_case_bonus = nova.map_or(0.0, |nova| {
+        nova.use_cases
+            .iter()
+            .filter_map(|value| token_overlap_count(value.as_str(), token_set, min_word_len))
+            .map(|count| usize_to_f32(count) * 0.1)
+            .sum::<f32>()
+    });
+
+    (name_bonus + relation_bonus + domain_bonus + use_case_bonus).min(1.5)
 }
 
 fn normalized_resource_type_filter(resource_types: &[String]) -> Option<HashSet<String>> {
@@ -2367,6 +2910,19 @@ fn normalized_resource_type_filter(resource_types: &[String]) -> Option<HashSet<
             .iter()
             .map(|rt| rt.trim().to_lowercase())
             .filter(|rt| !rt.is_empty())
+            .collect(),
+    )
+}
+
+fn normalized_value_filter(values: &[String]) -> Option<HashSet<String>> {
+    if values.is_empty() {
+        return None;
+    }
+    Some(
+        values
+            .iter()
+            .map(|value| value.trim().to_lowercase())
+            .filter(|value| !value.is_empty())
             .collect(),
     )
 }

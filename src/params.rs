@@ -135,6 +135,47 @@ pub struct IndicatorInventoryParams {
     pub pagination: PaginationParams,
 }
 
+/// Parameters for the search_columns tool.
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct SearchColumnsParams {
+    /// Search query - resolves columns by name, synonym, description, role, semantic_type, or example_values.
+    #[serde(default)]
+    pub query: String,
+    /// Filter parent entities by resource types (for example: model, source).
+    #[serde(default)]
+    pub resource_types: Vec<String>,
+    /// Filter columns by role (for example: dimension, time, measure).
+    #[serde(default)]
+    pub roles: Vec<String>,
+    /// Filter columns by semantic_type.
+    #[serde(default)]
+    pub semantic_types: Vec<String>,
+    #[serde(default, flatten)]
+    pub pagination: PaginationParams,
+    /// Minimum relevance score threshold (0.0+, default: no threshold).
+    #[serde(default)]
+    pub min_score: Option<f32>,
+}
+
+/// Parameters for the column_inventory tool.
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct ColumnInventoryParams {
+    /// Filter parent entities by resource types (for example: model, source).
+    #[serde(default)]
+    pub resource_types: Vec<String>,
+    /// Filter columns by role (for example: dimension, time, measure).
+    #[serde(default)]
+    pub roles: Vec<String>,
+    /// Filter columns by semantic_type.
+    #[serde(default)]
+    pub semantic_types: Vec<String>,
+    /// Return only columns with Nova annotations (`role`, `semantic_type`, `synonyms`, or `example_values`) when true.
+    #[serde(default)]
+    pub annotated_only: bool,
+    #[serde(default, flatten)]
+    pub pagination: PaginationParams,
+}
+
 /// Parameters for the get_entity tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetEntityParams {
