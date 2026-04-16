@@ -24,20 +24,22 @@ metadata:
 ## CLI surface
 
 - `tool call search_indicator`: canonical KPI resolution
+- `tool call indicator_inventory`: indicator-set inventory for dashboard sections
 - `tool call search_recipes`, `get_recipe`, `run_recipe`: recurring reporting scaffolds
 - `tool call get_entity` with `detail: "standard"`: compact semantic contract
-- `tool call get_columns`: supported dimensions and filter fields
+- `tool call search_columns`, `column_inventory`, `get_columns`: supported dimensions and filter fields
 - `tool call get_sql`: execution logic inspection when needed
 - `tool call execute_sql`: bounded validation of filters and dataset shape
 
-## Load these shared references before substantive work
+## Load order
 
-- `../../shared/bi-engineer/references/workflow.md`
-- `../../shared/bi-engineer/references/dashboard-design-workflow.md`
-- `../../shared/bi-engineer/references/chart-selection-matrix.md`
-- `../../shared/bi-engineer/references/grain-and-aggregation-rules.md`
-- `../../shared/bi-engineer/references/filter-design-contracts.md`
-- `../../shared/bi-engineer/references/metric-card-patterns.md`
+- Read `../../shared/bi-engineer/references/workflow.md` first.
+- Load the specific design references only when the workflow reaches them:
+  - `../../shared/bi-engineer/references/dashboard-design-workflow.md`
+  - `../../shared/bi-engineer/references/chart-selection-matrix.md`
+  - `../../shared/bi-engineer/references/grain-and-aggregation-rules.md`
+  - `../../shared/bi-engineer/references/filter-design-contracts.md`
+  - `../../shared/bi-engineer/references/metric-card-patterns.md`
 
 ## Shared assets
 

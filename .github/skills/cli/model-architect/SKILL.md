@@ -23,20 +23,24 @@ metadata:
 
 ## CLI surface
 
-- `tool call search`, `find_by_path`, `list_entities`: candidate discovery
+- `tool call modelling_consistency_report`: broad baseline for overlap, duplicate indicators, and grain drift
+- `tool call find_entity_overlap`, `search`, `find_by_path`, `list_entities`: candidate discovery and clustering
+- `tool call indicator_inventory`, `column_inventory`, `search_columns`: repeated semantics and repeated columns
 - `tool call get_entity`, `get_columns`, `get_context`: contract and shape inspection
-- `tool call diff_entities`: side-by-side comparison
+- `tool call compare_grains`, `diff_entities`: side-by-side comparison
 - `tool call get_lineage`, `get_impact`, `get_column_lineage`: dependency and blast-radius review
 - `tool call get_metadata_score`: quality signal during canonical selection
+- Prefer `scripts/export_entity_inventory.py`, `scripts/export_column_inventory.py`, and `scripts/build_overlap_report.py` when you need deterministic exported artifacts.
 
-## Load these shared references before substantive work
+## Load order
 
-- `../../shared/model-architect/references/workflow.md`
-- `../../shared/model-architect/references/canonical-model-selection.md`
-- `../../shared/model-architect/references/grain-decision-tree.md`
-- `../../shared/model-architect/references/modelling-antipatterns.md`
-- `../../shared/model-architect/references/helper-vs-canonical-rules.md`
-- `../../shared/model-architect/references/semantic-layer-boundaries.md`
+- Read `../../shared/model-architect/references/workflow.md` first.
+- Load the decision references only when the workflow reaches them:
+  - `../../shared/model-architect/references/canonical-model-selection.md`
+  - `../../shared/model-architect/references/grain-decision-tree.md`
+  - `../../shared/model-architect/references/modelling-antipatterns.md`
+  - `../../shared/model-architect/references/helper-vs-canonical-rules.md`
+  - `../../shared/model-architect/references/semantic-layer-boundaries.md`
 
 ## Shared asset
 

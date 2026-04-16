@@ -23,6 +23,7 @@ Installer controls:
 - `DBT_NOVA_INSTALL_FLAVOR=bundled|slim`
 - `DBT_NOVA_INSTALL_WARM_MODELS=1` (or `--warm-models`, slim only)
 - `DBT_NOVA_INSTALL_SKILLS=1` (or `--install-skills`)
+- `DBT_NOVA_SKILLS_BUNDLE=cli|mcp` (required when installing skills)
 - `DBT_NOVA_INSTALL_NONINTERACTIVE=1`
 - `DBT_NOVA_INSTALL_DIR`, `DBT_NOVA_SKILLS_DIR`
 - `DBT_NOVA_VERIFY_CHECKSUM=1|0`, `DBT_NOVA_VERIFY_SIGNATURE=1|0`

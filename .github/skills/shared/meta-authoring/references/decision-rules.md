@@ -1,4 +1,4 @@
-# Nova Meta Decision Rules
+# Metadata Decision Rules
 
 ## When to use each surface
 

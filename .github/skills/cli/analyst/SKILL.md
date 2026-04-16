@@ -25,16 +25,20 @@ metadata:
 ## CLI surface
 
 - Use `tool call search_indicator` as the primary KPI resolver.
+- Use `tool call indicator_inventory` when the task is cataloging or comparing indicators rather than answering one question.
 - Use `tool call search_recipes`, `get_recipe`, and `run_recipe` for recurring workflows.
 - Use `tool call search` as supporting discovery, not the only KPI resolver.
 - Use `tool call get_entity` with `detail: "standard"` as the compact semantic contract.
-- Use `tool call get_columns`, `get_sql`, and `execute_sql` only after the execution entity is chosen.
+- Use `tool call search_columns` and `get_columns` only after the execution entity is chosen.
+- Use `tool call get_sql` and `execute_sql` only after the execution entity is chosen.
 
-## Load these shared references before substantive work
+## Load order
 
-- `../../shared/analyst/references/workflow.md`
-- `../../shared/analyst/assets/evidence-block.md`
-- `../../shared/analyst/assets/report-template.md`
+- Read `../../shared/analyst/references/workflow.md` first.
+- Load the shared assets only when producing the final answer:
+  - `../../shared/analyst/assets/evidence-block.md`
+  - `../../shared/analyst/assets/report-template.md`
+- Open `docs/getting-started/cli.md` or `docs/api/tools.md` only when you need exact CLI flag or payload shapes.
 
 ## References
 

@@ -29,6 +29,10 @@ Before finalizing a dashboard design, confirm:
 - filter values or value families are real, not assumed
 - any comparison pattern uses the same base grain
 
+Use `indicator_inventory` when the design starts from a KPI family or dashboard section rather than one explicitly named metric.
+
+Use `search_columns` or `column_inventory` when the design starts from a filter or breakdown need and the supporting field is not yet obvious.
+
 ## Output requirement
 
 Use the shared BI assets when handing off a design:

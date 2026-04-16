@@ -3,8 +3,10 @@
 ## Table of contents
 
 - Discovery
-  - Search for metrics (start here)
+  - Resolve indicators directly (start here)
+  - Inventory indicators
   - Search by Nova fields
+  - Search columns for filters
 - Inspection
   - Inspect entity
   - Inspect columns
@@ -21,15 +23,25 @@
 
 ## Discovery
 
-### Search for metrics (start here)
-**When:** Beginning any analysis.
-**Why:** Analyst persona prioritizes well-documented models.
+### Resolve indicators directly (start here)
+**When:** Beginning any KPI analysis.
+**Why:** `search_indicator` is the primary resolver for measures and metrics.
 
 ```json
-{"query":"conversion rate","persona":"analyst","resource_types":["model"],"detail":"standard","limit":10,"include_highlights":true}
+{"name":"search_indicator","arguments":{"query":"conversion rate","indicator_types":["metric"],"resource_types":["model"],"persona":"analyst","limit":10}}
 ```
 
-Key fields: `persona_payload`, `relation_name`, `primary_key_columns`, `description`.
+Key fields: `indicator_name`, `parent_unique_id`, `grain`, `parent_groups`, `match_type`.
+
+### Inventory indicators
+**When:** The ask is broad or repeated-term selection matters.
+**Why:** Use a deterministic catalog instead of ranked search when comparing candidate KPIs.
+
+```json
+{"name":"indicator_inventory","arguments":{"indicator_types":["metric","measure"],"resource_types":["model"],"canonical_only":true,"limit":100,"offset":0}}
+```
+
+Key fields: `indicator_name`, `indicator_type`, `canonical`, `parent_unique_id`, `domains`, `grain`.
 
 ### Search by Nova fields
 **When:** You already know the semantic target.
@@ -43,6 +55,16 @@ nova_domains:ecommerce AND nova_use_cases:weekly_report
 
 Key fields: meta.nova.* fields present in search highlights.
 
+### Search columns for filters
+**When:** The filter field is unclear after choosing an entity.
+**Why:** Find the best matching field for geography, channel, segment, or similar constraints.
+
+```json
+{"name":"search_columns","arguments":{"query":"market","resource_types":["model"],"limit":10,"offset":0}}
+```
+
+Key fields: `column_name`, `match_type`, `matched_value`, `parent_unique_id`, `semantic_type`.
+
 ## Inspection
 
 ### Inspect entity
@@ -50,10 +72,10 @@ Key fields: meta.nova.* fields present in search highlights.
 **Why:** Validate grain, measures, and ownership.
 
 ```json
-{"name":"get_entity","arguments":{"id_or_name":"model.package.model_name"}}
+{"name":"get_entity","arguments":{"id_or_name":"model.package.model_name","detail":"standard"}}
 ```
 
-Key fields: description, meta.nova, columns.
+Key fields: `nova_summary`, `relation_name`, `domains`, `synonyms`.
 
 ### Inspect columns
 **When:** Confirm dimensions, PKs, or filter fields.
@@ -74,6 +96,7 @@ Key fields: data_type, meta.primary_key, meta.nova.
 ```
 
 Key fields: SQL expressions for metrics, joins, filters.
+Default to `compiled: false` unless the manifest definitely contains compiled SQL.
 
 ## Trust and lineage
 
@@ -202,9 +225,10 @@ Key fields: status, refresh details.
 
 ## End-to-end recipe: "sessions and CR last week for UK"
 
-1. `search` with query `"sessions conversion rate ecommerce uk"` and `persona: "analyst"`.
-2. `get_entity` on top 1-3 candidates; choose one execution relation.
-3. `get_columns` to pick `<time_col>` and `<geo_col>`.
-4. `execute_sql` filter-value validation query to find UK value(s).
-5. `execute_sql` final aggregate query with validated value(s).
-6. Return result table and include: selected relation, selected columns, validated UK mapping.
+1. `search_indicator` separately for each requested indicator.
+2. Choose one execution entity from the top shared `parent_groups` result.
+3. `get_entity detail=standard` on that parent.
+4. `get_columns` to pick `<time_col>` and `<geo_col>`.
+5. `execute_sql` filter-value validation query to find UK value(s).
+6. `execute_sql` final aggregate query with validated value(s).
+7. Return result table and include: selected relation, selected columns, validated UK mapping.

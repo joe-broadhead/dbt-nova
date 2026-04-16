@@ -77,13 +77,29 @@ client process reuses that cache.
 
 ### Optional: Install Agent Skills to `~/.agents/skills`
 
-To install the built-in skills (both `mcp-*` and `cli-*` variants for analyst,
-engineer, governance, and Nova meta authoring) into the standard Agent Skills
-user directory:
+Choose exactly one built-in skill bundle:
+
+- `mcp`: for agents that call Nova MCP tools directly
+- `cli`: for agents that only use terminal access to `dbt-nova`
+
+The installer keeps the destination exclusive to the selected dbt-nova bundle
+and removes any previously installed dbt-nova skills from the other bundle in
+that same destination.
+Use separate destinations only if you intentionally want different clients to
+consume different bundles.
+
+Example (`mcp` bundle):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  bash -s -- --slim --install-skills --non-interactive
+  bash -s -- --slim --install-skills --skills-bundle mcp --non-interactive
+```
+
+Alternative (`cli` bundle):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+  bash -s -- --slim --install-skills --skills-bundle cli --non-interactive
 ```
 
 To choose a different destination:
@@ -91,7 +107,7 @@ To choose a different destination:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
   DBT_NOVA_SKILLS_DIR="$HOME/.codex/skills" \
-  bash -s -- --slim --install-skills --non-interactive
+  bash -s -- --slim --install-skills --skills-bundle mcp --non-interactive
 ```
 
 ## Verify Installation
@@ -195,10 +211,11 @@ The installer defaults to **slim** and supports:
 - `DBT_NOVA_INSTALL_FLAVOR=bundled|slim`
 - `DBT_NOVA_INSTALL_SKILLS=1` (install Agent Skills)
 - `DBT_NOVA_SKILLS_DIR=/custom/skills/path` (default: `~/.agents/skills`)
+- `DBT_NOVA_SKILLS_BUNDLE=cli|mcp` (required when installing skills)
 - `DBT_NOVA_INSTALL_WARM_MODELS=1` (pre-warm model files after install)
 - `DBT_NOVA_INSTALL_NONINTERACTIVE=1`
 - `DBT_NOVA_INSTALL_DIR=/custom/path`
-- `--bundled`, `--slim`, `--warm-models`, `--install-skills`, `--skills-dir <path>`, `--non-interactive`, `--install-dir <path>`
+- `--bundled`, `--slim`, `--warm-models`, `--install-skills`, `--skills-bundle <cli|mcp>`, `--skills-dir <path>`, `--non-interactive`, `--install-dir <path>`
 - `DBT_NOVA_VERIFY_CHECKSUM=1|0`
 - `DBT_NOVA_VERIFY_SIGNATURE=1|0`
 - `DBT_NOVA_COSIGN_BINARY=cosign`

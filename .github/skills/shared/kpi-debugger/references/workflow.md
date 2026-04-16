@@ -15,8 +15,10 @@ Use this workflow when a KPI changed unexpectedly, disagrees with another source
 ## Investigation rules
 
 - Start from the canonical indicator definition, not stakeholder shorthand.
+- If stakeholder shorthand maps to several KPIs, use `indicator_inventory` before picking one to reproduce.
 - Reproduce the KPI on one execution entity before comparing multiple candidates.
 - Treat mismatched filters and time windows as the first-class failure mode.
+- Use `search_columns` or `get_columns` to make the filter mapping explicit before blaming the metric definition.
 - Use lineage and column lineage only after the discrepancy is concretely reproduced.
 - Prefer evidence-backed suspected causes over speculative explanations.
 

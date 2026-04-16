@@ -1,4 +1,4 @@
-# Nova Meta Patterns
+# Metadata Patterns
 
 ## Canonical analyst-facing model
 

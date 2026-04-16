@@ -24,19 +24,23 @@ metadata:
 ## CLI surface
 
 - `tool call search_indicator`: canonical KPI resolution
+- `tool call indicator_inventory`: compare nearby KPI definitions before choosing one
 - `tool call search`: supporting discovery when the KPI name is ambiguous
+- `tool call search_columns`: resolve filter or segment fields during reproduction
 - `tool call get_entity` with `detail: "standard"`: compact semantic contract
 - `tool call get_columns` / `get_sql`: execution and definition checks
 - `tool call get_lineage` / `get_column_lineage`: provenance and root-cause checks
+- `tool call get_test_coverage` / `get_metadata_score`: optional trust signals after reproduction
 - `tool call execute_sql`: bounded KPI reproduction and comparison queries
 - `tool call run_recipe`: recurring reconciliations or reference workflows when available
 
-## Load these shared references before substantive work
+## Load order
 
-- `../../shared/kpi-debugger/references/workflow.md`
-- `../../shared/kpi-debugger/references/metric-discrepancy-playbook.md`
-- `../../shared/kpi-debugger/references/root-cause-catalog.md`
-- `../../shared/kpi-debugger/references/variance-investigation-flow.md`
+- Read `../../shared/kpi-debugger/references/workflow.md` first.
+- Load the deeper investigation references only when needed:
+  - `../../shared/kpi-debugger/references/metric-discrepancy-playbook.md`
+  - `../../shared/kpi-debugger/references/root-cause-catalog.md`
+  - `../../shared/kpi-debugger/references/variance-investigation-flow.md`
 
 ## Shared asset
 

@@ -1,4 +1,4 @@
-# Nova Meta Review Checklist
+# Metadata Review Checklist
 
 ## Entity classification
 

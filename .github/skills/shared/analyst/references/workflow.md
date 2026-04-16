@@ -42,6 +42,9 @@ Use recipes for deterministic recurring workflows such as:
 If a recipe fully covers the ask, prefer it.
 If it only partially covers the ask, use it as the domain scaffold and continue discovery on the same execution entity.
 
+Use `get_recipe` as metadata first.
+Default to `include_sql: false` unless you explicitly need the SQL payload.
+
 ## Entity selection rubric
 
 Prefer the candidate that satisfies the most checks:
@@ -52,6 +55,11 @@ Prefer the candidate that satisfies the most checks:
 - acceptable tests and metadata
 
 If two candidates tie, prefer the one with clearer definitions and fewer assumptions.
+
+Use `search_indicator` first for direct KPI resolution.
+Use `indicator_inventory` when the task is cataloging a KPI family, comparing repeated definitions, or choosing among several plausible indicators before execution.
+
+When `search_indicator` returns multiple rows from one parent, reason from `parent_groups` before choosing an execution entity.
 
 ## Compact contract rule
 
@@ -73,6 +81,8 @@ Use `get_columns` after choosing the entity to confirm:
 - time field
 - filter fields
 - numerator / denominator fields for rate metrics
+
+If the likely filter field is still unclear after `get_entity detail=standard`, use `search_columns` to find the best matching column candidate on the chosen entity.
 
 Use `get_sql` only when SQL inspection is required.
 Default to raw SQL unless the manifest definitely contains compiled SQL.

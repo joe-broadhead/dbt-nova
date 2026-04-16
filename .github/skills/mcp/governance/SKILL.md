@@ -26,6 +26,15 @@ metadata:
 - `search` with `persona: "governance"`: triage support only
 - `reload_manifest` / `health`: rerun readiness
 
+## Load order
+
+- Read `../../shared/governance/references/workflow.md` first.
+- Load `../../shared/governance/references/metadata-rubric.md` when you need scoring interpretation.
+- Load `references/tool-recipes.md` only when you need exact call shapes.
+- Load the shared assets only when producing a formal audit handoff:
+  - `../../shared/governance/assets/governance-audit-template.md`
+  - `../../shared/governance/assets/remediation-queue-template.md`
+
 ## References
 
 - `../../shared/governance/references/workflow.md`

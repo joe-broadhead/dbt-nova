@@ -5,11 +5,12 @@ Use this workflow when improving the structure of a dbt project itself: choosing
 ## Deterministic sequence
 
 1. Define the business concept or modeling problem to be cleaned up.
-2. Inventory the candidate entities in scope.
-3. Compare grains, dimensions, and semantic definitions across those candidates.
-4. Identify the canonical execution model and the helper / intermediate models around it.
-5. Document modelling anti-patterns and cleanup risks.
-6. Produce a refactor plan with migration steps, validation, and rollback notes.
+2. Run a broad consistency baseline when the scope is project-wide.
+3. Inventory the candidate entities in scope.
+4. Compare grains, dimensions, columns, and semantic definitions across those candidates.
+5. Identify the canonical execution model and the helper / intermediate models around it.
+6. Document modelling anti-patterns and cleanup risks.
+7. Produce a refactor plan with migration steps, validation, and rollback notes.
 
 ## Core rules
 
@@ -18,6 +19,12 @@ Use this workflow when improving the structure of a dbt project itself: choosing
 - Prefer one clear analyst-facing execution model per repeated business concept.
 - Keep helper models useful for engineering without letting them dominate discovery.
 - Treat overlap as a design smell until proven otherwise.
+
+Use:
+- `modelling_consistency_report` for the first project-wide baseline
+- `find_entity_overlap` to form overlap clusters
+- `compare_grains` for shortlisted candidate pairs
+- `indicator_inventory`, `column_inventory`, and `search_columns` to inspect repeated semantic and column surfaces
 
 ## Output requirement
 
@@ -28,7 +35,7 @@ Use the shared refactor-plan template when handing off architecture work:
 - impact / rollback
 - validation plan
 
-For deterministic current-state artifacts, prefer the helper scripts in `scripts/`:
+When terminal access is available, prefer the helper scripts in `scripts/` for deterministic current-state artifacts:
 - `python3 scripts/export_entity_inventory.py ...`
 - `python3 scripts/export_column_inventory.py ...`
 - `python3 scripts/build_overlap_report.py ...`

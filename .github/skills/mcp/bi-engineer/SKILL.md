@@ -2,7 +2,7 @@
 name: mcp-bi-engineer
 description: "Designs dashboard-ready analytical products through Nova MCP tools. Use when turning canonical indicators and execution entities into dashboard specs, metric cards, dataset contracts, and visualization QA outputs."
 license: MIT
-allowed-tools: "mcp__nova__search mcp__nova__search_indicator mcp__nova__search_recipes mcp__nova__get_recipe mcp__nova__run_recipe mcp__nova__get_entity mcp__nova__get_columns mcp__nova__get_sql mcp__nova__execute_sql mcp__nova__get_test_coverage mcp__nova__get_metadata_score mcp__nova__reload_manifest mcp__nova__health Read"
+allowed-tools: "mcp__nova__search mcp__nova__search_indicator mcp__nova__indicator_inventory mcp__nova__search_columns mcp__nova__column_inventory mcp__nova__search_recipes mcp__nova__get_recipe mcp__nova__run_recipe mcp__nova__get_entity mcp__nova__get_columns mcp__nova__get_sql mcp__nova__execute_sql mcp__nova__get_test_coverage mcp__nova__get_metadata_score mcp__nova__reload_manifest mcp__nova__health Read"
 metadata:
   owner: "dbt-nova"
   persona: "bi-engineer"
@@ -21,21 +21,23 @@ metadata:
 ## MCP surface
 
 - `search_indicator`: canonical KPI resolution
+- `indicator_inventory`: indicator-set inventory for dashboard sections
 - `search_recipes` / `get_recipe` / `run_recipe`: recurring reporting scaffolds
 - `get_entity` with `detail: "standard"`: compact semantic contract
-- `get_columns`: supported dimensions and filter fields
+- `search_columns` / `column_inventory` / `get_columns`: supported dimensions and filter fields
 - `get_sql`: execution logic inspection when needed
 - `execute_sql`: bounded validation of filters and dataset shape
 - `get_test_coverage` / `get_metadata_score`: optional trust signals for dashboard handoff
 
-## Load these shared references before substantive work
+## Load order
 
-- `../../shared/bi-engineer/references/workflow.md`
-- `../../shared/bi-engineer/references/dashboard-design-workflow.md`
-- `../../shared/bi-engineer/references/chart-selection-matrix.md`
-- `../../shared/bi-engineer/references/grain-and-aggregation-rules.md`
-- `../../shared/bi-engineer/references/filter-design-contracts.md`
-- `../../shared/bi-engineer/references/metric-card-patterns.md`
+- Read `../../shared/bi-engineer/references/workflow.md` first.
+- Load the specific design references only when the workflow reaches them:
+  - `../../shared/bi-engineer/references/dashboard-design-workflow.md`
+  - `../../shared/bi-engineer/references/chart-selection-matrix.md`
+  - `../../shared/bi-engineer/references/grain-and-aggregation-rules.md`
+  - `../../shared/bi-engineer/references/filter-design-contracts.md`
+  - `../../shared/bi-engineer/references/metric-card-patterns.md`
 
 ## Shared assets
 

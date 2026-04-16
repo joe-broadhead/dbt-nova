@@ -1,16 +1,17 @@
-# Nova Meta Authoring Workflow
+# Metadata Authoring Workflow
 
 Use this workflow when authoring or reviewing `meta.nova` so the final result is valid, deliberate, and discoverable through Nova.
 
 ## Deterministic sequence
 
 1. Classify the entity before editing.
-2. Choose the correct Nova surface for the intent.
-3. Validate the smallest possible scope first when a schema validator is available.
-4. Treat schema and local semantic failures as blockers.
-5. Refresh the manifest after compile/build.
-6. Verify authored behavior through search and compact contract checks.
-7. Widen scope only after the narrow target is clean.
+2. Inventory the existing semantic and structural definitions when the concept is repeated.
+3. Choose the correct Nova surface for the intent.
+4. Validate the smallest possible scope first when a schema validator is available.
+5. Treat schema and local semantic failures as blockers.
+6. Refresh the manifest after compile/build.
+7. Verify authored behavior through search and compact contract checks.
+8. Widen scope only after the narrow target is clean.
 
 ## Classification rule
 
@@ -22,6 +23,15 @@ Decide whether the entity is:
 - column needing semantic disambiguation
 
 If the classification is wrong, the metadata is usually wrong.
+
+## Repeated-concept rule
+
+When the business concept already appears across multiple models or columns:
+- use `indicator_inventory` to inspect existing measures and metrics
+- use `search_columns` or `column_inventory` to inspect column-level semantics
+- use `find_entity_overlap` or `compare_grains` when canonical placement is unclear
+
+Do not add a new canonical definition until you understand the existing repeated surface.
 
 ## Surface selection rule
 

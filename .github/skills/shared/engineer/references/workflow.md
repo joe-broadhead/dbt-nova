@@ -44,6 +44,9 @@ Do not skip blast-radius analysis for:
 - changes to shared execution models
 
 Use column lineage for critical columns when a metric or KPI depends on them.
+Use `compare_grains` when replacing one execution model with another or when a refactor could shift entity grain.
+
+When the change affects repeated columns or repeated semantic definitions, inspect them with `search_columns`, `column_inventory`, or `indicator_inventory` before editing SQL.
 
 ## Output requirement
 

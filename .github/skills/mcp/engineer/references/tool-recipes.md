@@ -4,10 +4,13 @@
 
 - Discovery
   - Search for candidate models
+  - Search repeated columns
+  - Inventory semantic definitions
 - Impact and lineage
   - Downstream impact
   - Lineage (up/down)
   - Column lineage
+  - Grain comparison
 - Inspection and validation
   - Inspect entity
   - Inspect columns
@@ -33,6 +36,22 @@
 ```
 
 Key fields: description, tags, meta.nova.
+
+### Search repeated columns
+**When:** The change touches a business field that may exist in several models.
+**Why:** Avoid inventing a new translation layer when the project already has a near-match.
+
+```json
+{"name":"search_columns","arguments":{"query":"market","resource_types":["model"],"limit":20,"offset":0}}
+```
+
+### Inventory semantic definitions
+**When:** The change touches repeated measures or KPI templates.
+**Why:** See existing semantic definitions before editing SQL or metadata.
+
+```json
+{"name":"indicator_inventory","arguments":{"resource_types":["model"],"indicator_types":["measure","metric"],"canonical_only":false,"limit":100,"offset":0}}
+```
 
 ## Impact and lineage
 
@@ -65,6 +84,14 @@ Key fields: upstream/downstream nodes.
 ```
 
 Key fields: match_reason, explanation.field_path, confidence.
+
+### Grain comparison
+**When:** You are refactoring or replacing one execution entity with another.
+**Why:** Detect accidental grain drift before shipping.
+
+```json
+{"name":"compare_grains","arguments":{"entity1":"model.package.model_name","entity2":"model.package.other_model"}}
+```
 
 ## Inspection and validation
 

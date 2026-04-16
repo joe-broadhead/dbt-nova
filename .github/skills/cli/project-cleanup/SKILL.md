@@ -23,19 +23,23 @@ metadata:
 
 ## CLI surface
 
-- `tool call search`, `find_by_path`, `list_entities`: scope inventory
+- `tool call modelling_consistency_report`: broad cleanup baseline
+- `tool call find_entity_overlap`, `search`, `find_by_path`, `list_entities`: scope inventory and overlap clustering
+- `tool call indicator_inventory`, `column_inventory`, `search_columns`: repeated semantics and repeated columns
 - `tool call get_entity`, `get_columns`, `get_context`: contract and repeated-concept inspection
-- `tool call diff_entities`: side-by-side overlap comparison
+- `tool call compare_grains`, `diff_entities`: side-by-side overlap comparison
 - `tool call get_lineage`, `get_impact`, `get_column_lineage`: structural dependency review
 - `tool call get_metadata_score`: metadata signal during cleanup prioritization
+- Prefer `scripts/export_entity_inventory.py`, `scripts/export_column_inventory.py`, and `scripts/build_overlap_report.py` when you need deterministic exported artifacts.
 
-## Load these shared references before substantive work
+## Load order
 
-- `../../shared/project-cleanup/references/workflow.md`
-- `../../shared/project-cleanup/references/overlap-triage.md`
-- `../../shared/project-cleanup/references/column-normalization-rules.md`
-- `../../shared/project-cleanup/references/semantic-duplication-patterns.md`
-- `../../shared/project-cleanup/references/cleanup-prioritization.md`
+- Read `../../shared/project-cleanup/references/workflow.md` first.
+- Load the cleanup references only when the workflow reaches them:
+  - `../../shared/project-cleanup/references/overlap-triage.md`
+  - `../../shared/project-cleanup/references/column-normalization-rules.md`
+  - `../../shared/project-cleanup/references/semantic-duplication-patterns.md`
+  - `../../shared/project-cleanup/references/cleanup-prioritization.md`
 
 ## Shared asset
 

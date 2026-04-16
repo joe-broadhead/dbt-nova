@@ -30,13 +30,14 @@ metadata:
 - `tool call get_metadata_score`, `get_undocumented`, `get_test_coverage`, and `get_entity`: blocker detail
 - `tool call search` with `persona: "governance"`: triage support only
 
-## Load these shared references before substantive work
+## Load order
 
-- `../../shared/governance/references/workflow.md`
-- `../../shared/governance/references/metadata-rubric.md`
-- `../../shared/common/references/manifest-refresh.md`
-- `../../shared/governance/assets/governance-audit-template.md`
-- `../../shared/governance/assets/remediation-queue-template.md`
+- Read `../../shared/governance/references/workflow.md` first.
+- Load `../../shared/governance/references/metadata-rubric.md` when you need scoring interpretation.
+- Load `../../shared/common/references/manifest-refresh.md` when you reach rerun readiness work.
+- Load the shared assets only when producing a formal audit handoff:
+  - `../../shared/governance/assets/governance-audit-template.md`
+  - `../../shared/governance/assets/remediation-queue-template.md`
 
 ## References
 
