@@ -1136,8 +1136,7 @@ async fn refresh_loop(
 pub(crate) fn now_ms() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_millis())
 }
 
 fn auto_instance_id(config: &DbtNovaConfig) -> String {

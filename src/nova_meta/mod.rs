@@ -1357,54 +1357,42 @@ fn validate_filter_operator(
         .map_or(0, Vec::len);
     let field_path = format!("{path}.operator");
 
-    match operator {
-        Some("between") => {
-            if values != 2 {
-                findings.push(semantic_error(
-                    target,
-                    "invalid_filter_values",
-                    "operator 'between' requires exactly 2 values".to_string(),
-                    Some(field_path),
-                ));
-            }
-        }
-        Some("is_null" | "is_not_null") => {
-            if values != 0 {
-                findings.push(semantic_error(
-                    target,
-                    "invalid_filter_values",
-                    "operator 'is_null' and 'is_not_null' cannot include values".to_string(),
-                    Some(field_path),
-                ));
-            }
-        }
-        Some("=" | "!=" | ">" | ">=" | "<" | "<=") => {
-            if values != 1 {
-                findings.push(semantic_error(
-                    target,
-                    "invalid_filter_values",
-                    "comparison operators require exactly 1 value".to_string(),
-                    Some(field_path),
-                ));
-            }
-        }
-        Some("in" | "not_in") => {
-            if values == 0 {
-                findings.push(semantic_error(
-                    target,
-                    "invalid_filter_values",
-                    "operator 'in' and 'not_in' require at least 1 value".to_string(),
-                    Some(field_path),
-                ));
-            }
-        }
-        Some(operator) if operator.trim().is_empty() => findings.push(semantic_error(
+    match (operator, values) {
+        (Some("between"), 2)
+        | (Some("is_null" | "is_not_null"), 0)
+        | (Some("=" | "!=" | ">" | ">=" | "<" | "<="), 1) => {}
+        (Some("in" | "not_in"), count) if count > 0 => {}
+        (Some("between"), _) => findings.push(semantic_error(
+            target,
+            "invalid_filter_values",
+            "operator 'between' requires exactly 2 values".to_string(),
+            Some(field_path),
+        )),
+        (Some("is_null" | "is_not_null"), _) => findings.push(semantic_error(
+            target,
+            "invalid_filter_values",
+            "operator 'is_null' and 'is_not_null' cannot include values".to_string(),
+            Some(field_path),
+        )),
+        (Some("=" | "!=" | ">" | ">=" | "<" | "<="), _) => findings.push(semantic_error(
+            target,
+            "invalid_filter_values",
+            "comparison operators require exactly 1 value".to_string(),
+            Some(field_path),
+        )),
+        (Some("in" | "not_in"), _) => findings.push(semantic_error(
+            target,
+            "invalid_filter_values",
+            "operator 'in' and 'not_in' require at least 1 value".to_string(),
+            Some(field_path),
+        )),
+        (Some(operator), _) if operator.trim().is_empty() => findings.push(semantic_error(
             target,
             "blank_operator",
             "recommended filter operator cannot be blank".to_string(),
             Some(field_path),
         )),
-        Some(operator) => findings.push(semantic_error(
+        (Some(operator), _) => findings.push(semantic_error(
             target,
             "unsupported_filter_operator",
             format!("unsupported recommended filter operator '{operator}'"),

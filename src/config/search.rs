@@ -593,9 +593,7 @@ impl SearchColdStartPolicy {
 }
 
 fn default_onnx_threads() -> usize {
-    available_parallelism()
-        .map(|threads| threads.get().min(4))
-        .unwrap_or(1)
+    available_parallelism().map_or(1, |threads| threads.get().min(4))
 }
 
 fn apply_search_limits_env(config: &mut SearchConfig) {

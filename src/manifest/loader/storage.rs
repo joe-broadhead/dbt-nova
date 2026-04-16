@@ -94,8 +94,7 @@ fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<()> {
 pub(super) fn current_time_ms() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_millis())
 }
 
 pub(super) fn acquire_build_lock(storage_dir: &Path, wait_secs: u64) -> Result<File> {
