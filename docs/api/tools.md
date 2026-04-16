@@ -19,6 +19,7 @@ Common:
 - `detail` (`standard` | `full`)
 - `include_highlights` (bool)
 - `include_sql` (bool, only for `detail=full`)
+- `explain` (bool, includes deterministic ranking/debug breakdowns)
 - `limit`, `offset`, `min_score`, `fuzzy`
 
 ```json
@@ -76,7 +77,226 @@ Common:
 
 When `detail: "standard"` and the query matches Nova measures or metrics, search
 results include a compact `semantic_preview` with the matched measure/metric
-name, description, expression, canonical flag, and match type.
+name, description, expression, canonical flag, and match type. For analyst KPI
+resolution, prefer `search_indicator` before broad `search`.
+
+When `explain: true`, each result row includes an `explain` block with retrieval
+and scoring factors, and the top-level response includes an `explain` payload
+with query tokens, retrievers used, and the active ranking config snapshot.
+
+### `search_indicator`
+Search Nova measures and metrics directly, then return the parent execution
+entity and grain context.
+
+Required:
+- `query`
+
+Common:
+- `indicator_types` (`["metric"]`, `["measure"]`, or omitted for both)
+- `resource_types` (filters parent entity types)
+- `persona` (string, defaults to `analyst`)
+- `explain` (bool, includes deterministic ranking/debug breakdowns)
+- `limit`, `offset`, `min_score`
+
+```json
+{"name":"search_indicator","arguments":{"query":"average order value","indicator_types":["metric"],"resource_types":["model"],"persona":"analyst","limit":5,"offset":0}}
+```
+
+Example response shape:
+
+```json
+{
+  "success": true,
+  "count": 1,
+  "persona": "analyst",
+  "suggestions": [],
+  "data": [
+    {
+      "indicator_name": "average_order_value",
+      "indicator_type": "metric",
+      "canonical": true,
+      "match_type": "name",
+      "score": 10.5,
+      "expression": "sum(gmv_amount) / nullif(count(distinct order_id), 0)",
+      "parent_unique_id": "model.package.orders_semantic_templates",
+      "parent_name": "orders_semantic_templates",
+      "parent_resource_type": "model",
+      "relation_name": "analytics.dbt_test.orders_semantic_templates",
+      "domains": ["commerce"],
+      "grain": {
+        "time_field": "order_date",
+        "dimensions": ["country_code", "sales_channel"]
+      }
+    }
+  ]
+}
+```
+
+When `explain: true`, indicator rows include a per-row `explain` block with the
+base semantic match score, parent coherence, RRF contribution, reranker bonus,
+and final score. The top-level response also includes an `explain` payload with
+query tokens, retrievers used, and the active indicator-ranking config snapshot.
+
+### `indicator_inventory`
+List Nova measures and metrics deterministically, with parent execution context.
+Use this when you need a flat semantic catalog instead of ranked search results.
+
+Common:
+- `indicator_types` (`["metric"]`, `["measure"]`, or omitted for both)
+- `resource_types` (filters parent entity types)
+- `canonical_only` (boolean, defaults to `false`)
+- `limit`, `offset`
+
+```json
+{"name":"indicator_inventory","arguments":{"indicator_types":["measure"],"resource_types":["model"],"canonical_only":true,"limit":100,"offset":0}}
+```
+
+Example response shape:
+
+```json
+{
+  "success": true,
+  "count": 1,
+  "data": [
+    {
+      "indicator_name": "gmv",
+      "indicator_type": "measure",
+      "canonical": true,
+      "synonyms": ["gross merchandise value"],
+      "expression": "sum(gmv_amount)",
+      "field": "gmv_amount",
+      "measure_type": "sum",
+      "parent_unique_id": "model.package.fact_orders_canonical",
+      "parent_name": "fact_orders_canonical",
+      "parent_resource_type": "model",
+      "relation_name": "analytics.dbt_test.fact_orders_canonical",
+      "domains": ["commerce"],
+      "grain": {
+        "time_field": "order_date",
+        "dimensions": ["country_code", "sales_channel"]
+      }
+    }
+  ]
+}
+```
+
+### `search_columns`
+Search columns directly by name, synonym, description, role, semantic type, or example values.
+
+Required:
+- `query`
+
+Common:
+- `resource_types` (filters parent entity types)
+- `roles`
+- `semantic_types`
+- `limit`, `offset`, `min_score`
+
+```json
+{"name":"search_columns","arguments":{"query":"alpha","resource_types":["model"],"limit":10,"offset":0}}
+```
+
+Example response shape:
+
+```json
+{
+  "success": true,
+  "count": 1,
+  "data": [
+    {
+      "column_name": "country_code",
+      "match_type": "example_value",
+      "score": 5.25,
+      "matched_value": "alpha",
+      "annotated": true,
+      "role": "dimension",
+      "semantic_type": "country_code",
+      "synonyms": ["market"],
+      "example_values": ["alpha", "beta"],
+      "parent_unique_id": "model.package.fact_orders_canonical",
+      "parent_name": "fact_orders_canonical",
+      "parent_resource_type": "model",
+      "domains": ["commerce"]
+    }
+  ]
+}
+```
+
+### `column_inventory`
+List columns deterministically across models or sources, with parent context and semantic hints.
+
+Common:
+- `resource_types` (filters parent entity types)
+- `roles`
+- `semantic_types`
+- `annotated_only` (boolean, defaults to `false`)
+- `limit`, `offset`
+
+```json
+{"name":"column_inventory","arguments":{"resource_types":["model"],"roles":["dimension"],"annotated_only":true,"limit":100,"offset":0}}
+```
+
+Example response shape:
+
+```json
+{
+  "success": true,
+  "count": 1,
+  "data": [
+    {
+      "column_name": "country_code",
+      "annotated": true,
+      "role": "dimension",
+      "semantic_type": "country_code",
+      "synonyms": ["market"],
+      "example_values": ["alpha", "beta"],
+      "parent_unique_id": "model.package.fact_orders_canonical",
+      "parent_name": "fact_orders_canonical",
+      "parent_resource_type": "model",
+      "domains": ["commerce"]
+    }
+  ]
+}
+```
+
+### `compare_grains`
+Compare effective grain between two entities, including entity-level and metric-level grain variants.
+
+Required:
+- `entity1`
+- `entity2`
+
+Optional:
+- `entity1_resource_type`
+- `entity2_resource_type`
+
+```json
+{"name":"compare_grains","arguments":{"entity1":"model.package.fact_orders_canonical","entity2":"model.package.orders_semantic_templates"}}
+```
+
+### `find_entity_overlap`
+Detect overlapping entities using shared semantic evidence such as domains, synonyms, indicators, semantic types, and grain hints.
+
+Common:
+- `id_or_name` and optional `resource_type` to focus overlap on one entity
+- `resource_types`
+- `limit`, `offset`, `min_score`
+
+```json
+{"name":"find_entity_overlap","arguments":{"resource_types":["model"],"limit":25,"offset":0}}
+```
+
+### `modelling_consistency_report`
+Audit project-level overlap, duplicate indicators, canonical conflicts, and grain drift.
+
+Common:
+- `resource_types`
+- `limit` (max rows per report section)
+- `min_score` (applies to overlap section)
+
+```json
+{"name":"modelling_consistency_report","arguments":{"resource_types":["model"],"limit":20}}
+```
 
 ### `get_entity`
 Fetch a single entity by `unique_id` or name.

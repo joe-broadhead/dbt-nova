@@ -160,8 +160,7 @@ pub(crate) fn manifest_signature(path: &Path, source_uri: &str) -> Result<Manife
         .unwrap_or(UNIX_EPOCH);
     let modified_ms = modified
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_millis());
     let content_hash = hash_file(path)?;
     Ok(ManifestSignature {
         path: path.to_string_lossy().to_string(),

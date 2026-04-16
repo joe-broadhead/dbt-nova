@@ -827,22 +827,56 @@ fn build_get_recipe_response(
 
 fn apply_recipe_query_filter(records: &mut Vec<RecipeRecord>, params: &SearchRecipesParams) {
     if !params.topic.trim().is_empty() {
-        let topic = params.topic.to_lowercase();
-        records.retain(|recipe| recipe.id.to_lowercase().contains(&topic));
+        let topic = normalize_recipe_search_text(&params.topic);
+        records.retain(|recipe| normalized_recipe_text_matches(&recipe.id, &topic));
     }
 
     if params.query.trim().is_empty() {
         return;
     }
 
-    let query = params.query.to_lowercase();
+    let query = normalize_recipe_search_text(&params.query);
     records.retain(|recipe| {
-        recipe.id.to_lowercase().contains(&query)
-            || recipe
-                .queries
-                .iter()
-                .any(|q| q.name.to_lowercase().contains(&query))
+        normalized_recipe_text_matches(&recipe.id, &query)
+            || recipe.queries.iter().any(|q| {
+                normalized_recipe_text_matches(&q.name, &query)
+                    || normalized_recipe_text_matches(q.path.to_string_lossy().as_ref(), &query)
+            })
     });
+}
+
+#[derive(Debug, Clone)]
+struct NormalizedRecipeSearchText {
+    compact: String,
+    tokens: Vec<String>,
+}
+
+fn normalize_recipe_search_text(value: &str) -> NormalizedRecipeSearchText {
+    let lower = value.trim().to_ascii_lowercase();
+    let compact: String = lower.chars().filter(char::is_ascii_alphanumeric).collect();
+    let tokens = lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(ToString::to_string)
+        .collect();
+    NormalizedRecipeSearchText { compact, tokens }
+}
+
+fn normalized_recipe_text_matches(haystack: &str, needle: &NormalizedRecipeSearchText) -> bool {
+    if needle.compact.is_empty() {
+        return true;
+    }
+
+    let haystack = normalize_recipe_search_text(haystack);
+    if haystack.compact.contains(&needle.compact) {
+        return true;
+    }
+
+    !needle.tokens.is_empty()
+        && needle
+            .tokens
+            .iter()
+            .all(|token| haystack.tokens.iter().any(|candidate| candidate == token))
 }
 
 fn recipe_contract_roots(payload: &JsonValue) -> Vec<&JsonValue> {

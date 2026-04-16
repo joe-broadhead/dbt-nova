@@ -7,6 +7,7 @@ pub mod config;
 pub mod dbt_types;
 pub mod error;
 pub mod manifest;
+pub mod nova_meta;
 pub mod params;
 pub mod responses;
 pub mod server;

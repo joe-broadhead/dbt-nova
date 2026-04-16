@@ -56,6 +56,24 @@ pub(crate) struct SemanticPreviewItem {
     pub field: Option<String>,
     pub canonical: bool,
     pub match_type: SemanticMatchType,
+    pub matched_token_count: usize,
+    pub query_token_count: usize,
+}
+
+impl SemanticPreviewItem {
+    #[must_use]
+    pub(crate) fn query_coverage(&self) -> f32 {
+        if self.query_token_count == 0 {
+            return 0.0;
+        }
+        count_to_f32(self.matched_token_count) / count_to_f32(self.query_token_count)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SemanticMatchInfo {
+    match_type: SemanticMatchType,
+    matched_token_count: usize,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -94,6 +112,15 @@ impl NovaSemanticMatches {
             .map(|item| item.match_type)
             .max_by_key(|match_type| match_type.rank())
     }
+
+    #[must_use]
+    pub(crate) fn best_query_coverage(&self) -> f32 {
+        self.measures
+            .iter()
+            .chain(self.metrics.iter())
+            .map(SemanticPreviewItem::query_coverage)
+            .fold(0.0f32, f32::max)
+    }
 }
 
 #[must_use]
@@ -130,11 +157,21 @@ pub(crate) fn match_nova_semantics(
     matches
 }
 
+fn count_to_f32(count: usize) -> f32 {
+    f32::from(u16::try_from(count).unwrap_or(u16::MAX))
+}
+
 fn compare_preview_items(left: &SemanticPreviewItem, right: &SemanticPreviewItem) -> Ordering {
     right
         .match_type
         .rank()
         .cmp(&left.match_type.rank())
+        .then_with(|| {
+            right
+                .matched_token_count
+                .cmp(&left.matched_token_count)
+                .then_with(|| right.query_token_count.cmp(&left.query_token_count))
+        })
         .then_with(|| right.canonical.cmp(&left.canonical))
         .then_with(|| left.name.cmp(&right.name))
 }
@@ -145,7 +182,7 @@ fn match_measure(
     token_set: &HashSet<&str>,
     min_word_len: usize,
 ) -> Option<SemanticPreviewItem> {
-    let match_type = best_match_type(
+    let match_info = best_match_info(
         token_set,
         min_word_len,
         &[
@@ -193,7 +230,9 @@ fn match_measure(
             .as_ref()
             .map(|value| value.as_str().to_string()),
         canonical: entity_canonical || measure.canonical,
-        match_type,
+        match_type: match_info.match_type,
+        matched_token_count: match_info.matched_token_count,
+        query_token_count: token_set.len(),
     })
 }
 
@@ -203,7 +242,7 @@ fn match_metric(
     token_set: &HashSet<&str>,
     min_word_len: usize,
 ) -> Option<SemanticPreviewItem> {
-    let match_type = best_match_type(
+    let match_info = best_match_info(
         token_set,
         min_word_len,
         &[
@@ -241,44 +280,80 @@ fn match_metric(
             .map(|value| value.as_str().to_string()),
         field: None,
         canonical: entity_canonical || metric.canonical,
-        match_type,
+        match_type: match_info.match_type,
+        matched_token_count: match_info.matched_token_count,
+        query_token_count: token_set.len(),
     })
 }
 
-fn best_match_type<'a>(
+fn best_match_info<'a>(
     token_set: &HashSet<&str>,
     min_word_len: usize,
     direct_values: &[(Option<&'a str>, SemanticMatchType)],
     synonyms: impl Iterator<Item = &'a str>,
-) -> Option<SemanticMatchType> {
-    if direct_values.iter().any(|(value, kind)| {
-        *kind == SemanticMatchType::Name
-            && value.is_some_and(|value| tokens_match(value, token_set, min_word_len))
-    }) {
-        return Some(SemanticMatchType::Name);
+) -> Option<SemanticMatchInfo> {
+    let name_match = direct_values
+        .iter()
+        .filter(|(_, kind)| *kind == SemanticMatchType::Name)
+        .filter_map(|(value, kind)| {
+            value.and_then(|value| {
+                let matched_token_count = token_match_count(value, token_set, min_word_len);
+                (matched_token_count > 0).then_some(SemanticMatchInfo {
+                    match_type: *kind,
+                    matched_token_count,
+                })
+            })
+        })
+        .max_by_key(|info| info.matched_token_count);
+    if name_match.is_some() {
+        return name_match;
     }
-    if synonyms
+
+    let synonym_match = synonyms
         .into_iter()
-        .any(|value| tokens_match(value, token_set, min_word_len))
-    {
-        return Some(SemanticMatchType::Synonym);
+        .filter_map(|value| {
+            let matched_token_count = token_match_count(value, token_set, min_word_len);
+            (matched_token_count > 0).then_some(SemanticMatchInfo {
+                match_type: SemanticMatchType::Synonym,
+                matched_token_count,
+            })
+        })
+        .max_by_key(|info| info.matched_token_count);
+    if synonym_match.is_some() {
+        return synonym_match;
     }
+
     direct_values
         .iter()
         .filter_map(|(value, kind)| value.map(|value| (value, *kind)))
         .filter(|(_, kind)| !matches!(kind, SemanticMatchType::Name | SemanticMatchType::Synonym))
-        .filter(|(value, _)| tokens_match(value, token_set, min_word_len))
-        .max_by_key(|(_, kind)| kind.rank())
-        .map(|(_, kind)| kind)
+        .filter_map(|(value, kind)| {
+            let matched_token_count = token_match_count(value, token_set, min_word_len);
+            (matched_token_count > 0).then_some(SemanticMatchInfo {
+                match_type: kind,
+                matched_token_count,
+            })
+        })
+        .max_by(|left, right| {
+            left.match_type
+                .rank()
+                .cmp(&right.match_type.rank())
+                .then_with(|| left.matched_token_count.cmp(&right.matched_token_count))
+        })
 }
 
-fn tokens_match(value: &str, token_set: &HashSet<&str>, min_word_len: usize) -> bool {
+fn token_match_count(value: &str, token_set: &HashSet<&str>, min_word_len: usize) -> usize {
     if value.is_empty() || token_set.is_empty() {
-        return false;
+        return 0;
     }
-    tokenize_alnum_lowercase(value, min_word_len)
+    let value_tokens: HashSet<String> = tokenize_alnum_lowercase(value, min_word_len)
         .iter()
-        .any(|token| token_set.contains(token.as_str()))
+        .cloned()
+        .collect();
+    token_set
+        .iter()
+        .filter(|token| value_tokens.contains(**token))
+        .count()
 }
 
 #[cfg(test)]
@@ -378,5 +453,71 @@ mod tests {
         assert_eq!(matches.metrics.len(), 1);
         assert!(matches.metrics[0].canonical);
         assert!(matches.has_canonical_match());
+    }
+
+    #[test]
+    fn match_nova_semantics_prefers_higher_query_coverage_with_same_match_type() {
+        let nova = rkyv::to_bytes::<rkyv::rancor::Error>(&NovaMeta {
+            role: None,
+            semantic_type: None,
+            synonyms: Vec::new(),
+            domains: Vec::new(),
+            use_cases: Vec::new(),
+            example_values: Vec::new(),
+            canonical: false,
+            tier: None,
+            grain: None,
+            measures: Vec::new(),
+            metric: None,
+            metrics: vec![
+                NovaMetric {
+                    name: "checkout_completion_rate".to_string(),
+                    description: Some(
+                        "Share of checkout-start sessions that reach order completion.".to_string(),
+                    ),
+                    expression: Some(
+                        "sum(order_completed) / nullif(sum(checkout_process_commenced), 0)"
+                            .to_string(),
+                    ),
+                    template: true,
+                    grain: None,
+                    recommended_filters: Vec::new(),
+                    synonyms: vec!["checkout success rate".to_string()],
+                    canonical: true,
+                },
+                NovaMetric {
+                    name: "add_to_cart_to_order_completion_rate".to_string(),
+                    description: Some(
+                        "Share of add-to-cart sessions that reach order completion.".to_string(),
+                    ),
+                    expression: Some(
+                        "sum(order_completed) / nullif(sum(product_added_to_cart), 0)".to_string(),
+                    ),
+                    template: true,
+                    grain: None,
+                    recommended_filters: Vec::new(),
+                    synonyms: vec!["cart conversion rate".to_string()],
+                    canonical: true,
+                },
+            ],
+            governance: None,
+            search: None,
+        })
+        .expect("serialize nova meta");
+        let archived =
+            rkyv::access::<crate::manifest::entity::ArchivedNovaMeta, rkyv::rancor::Error>(&nova)
+                .expect("access nova meta");
+        let tokens: HashSet<&str> = ["checkout", "completion", "rate"].into_iter().collect();
+
+        let matches = match_nova_semantics(archived, &tokens, 2);
+
+        assert_eq!(matches.metrics.len(), 2);
+        assert_eq!(matches.metrics[0].name, "checkout_completion_rate");
+        assert_eq!(matches.metrics[0].matched_token_count, 3);
+        assert_eq!(
+            matches.metrics[1].name,
+            "add_to_cart_to_order_completion_rate"
+        );
+        assert_eq!(matches.metrics[1].matched_token_count, 2);
     }
 }

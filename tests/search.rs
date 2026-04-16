@@ -23,6 +23,7 @@ async fn rejects_too_short_query() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -48,6 +49,7 @@ async fn rejects_offset_over_limit() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 50_000,
@@ -73,6 +75,7 @@ async fn include_full_false_returns_summary() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 5,
             offset: 0,
@@ -101,6 +104,7 @@ async fn analyst_search_has_high_signal_persona_payload() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 3,
             offset: 0,
@@ -156,6 +160,7 @@ async fn analyst_key_dimensions_excludes_metric_value_columns() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 3,
             offset: 0,
@@ -222,6 +227,7 @@ async fn search_respects_resource_type_filter_after_hybrid_fusion() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -268,6 +274,7 @@ async fn engineer_search_has_impact_focused_payload() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 3,
             offset: 0,
@@ -354,6 +361,7 @@ async fn engineer_payload_does_not_flag_docs_gap_when_coverage_is_100pct() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 3,
             offset: 0,
@@ -402,6 +410,7 @@ async fn governance_search_has_policy_payload() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 5,
             offset: 0,
@@ -494,6 +503,7 @@ async fn governance_payload_docs_gate_matches_100pct_coverage() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 3,
             offset: 0,

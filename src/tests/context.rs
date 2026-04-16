@@ -14,6 +14,7 @@ async fn test_get_context_basic() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 1,
             offset: 0,

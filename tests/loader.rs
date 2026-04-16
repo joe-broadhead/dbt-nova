@@ -40,6 +40,7 @@ async fn loads_minimal_manifest_and_indexes() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 5,
             offset: 0,

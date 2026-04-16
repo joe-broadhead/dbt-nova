@@ -50,6 +50,7 @@ fn search_params(query: &str, persona: Option<&str>) -> SearchParams {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -78,6 +79,33 @@ fn row_position(rows: &[&JsonValue], unique_id: &str) -> usize {
         .unwrap_or_else(|| panic!("missing row for {unique_id}"))
 }
 
+fn indicator_row<'a>(
+    rows: &'a [&JsonValue],
+    parent_unique_id: &str,
+    indicator_name: &str,
+) -> &'a JsonValue {
+    rows.iter()
+        .copied()
+        .find(|row| {
+            row.get("parent_unique_id").and_then(JsonValue::as_str) == Some(parent_unique_id)
+                && row.get("indicator_name").and_then(JsonValue::as_str) == Some(indicator_name)
+        })
+        .unwrap_or_else(|| panic!("missing indicator row for {parent_unique_id}:{indicator_name}"))
+}
+
+fn indicator_row_position(
+    rows: &[&JsonValue],
+    parent_unique_id: &str,
+    indicator_name: &str,
+) -> usize {
+    rows.iter()
+        .position(|row| {
+            row.get("parent_unique_id").and_then(JsonValue::as_str) == Some(parent_unique_id)
+                && row.get("indicator_name").and_then(JsonValue::as_str) == Some(indicator_name)
+        })
+        .unwrap_or_else(|| panic!("missing indicator row for {parent_unique_id}:{indicator_name}"))
+}
+
 // Search Tool Tests
 #[tokio::test(flavor = "multi_thread")]
 async fn test_search_by_name() {
@@ -91,6 +119,7 @@ async fn test_search_by_name() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -125,6 +154,7 @@ async fn test_search_filter_by_resource_type() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 50,
             offset: 0,
@@ -161,6 +191,7 @@ async fn test_search_include_full_false() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 5,
             offset: 0,
@@ -189,6 +220,7 @@ async fn test_search_respects_limit() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 5,
             offset: 0,
@@ -213,6 +245,7 @@ async fn test_search_invalid_query() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -241,6 +274,7 @@ async fn test_search_query_too_long() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -513,6 +547,380 @@ async fn test_search_metric_level_canonical_boosts_template_model() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_search_indicator_returns_canonical_measure_context() {
+    let searcher = semantic_preview_env();
+    let result = searcher
+        .search_indicator(&SearchIndicatorParams {
+            query: "gmv".to_string(),
+            resource_types: vec!["model".to_string()],
+            indicator_types: vec!["measure".to_string()],
+            persona: Some("analyst".to_string()),
+            pagination: PaginationParams {
+                limit: 10,
+                offset: 0,
+            },
+            min_score: None,
+            explain: false,
+        })
+        .await
+        .json();
+    let rows = result_rows(&result);
+
+    assert!(!rows.is_empty());
+    assert_eq!(
+        rows[0].get("indicator_name").and_then(JsonValue::as_str),
+        Some("gmv")
+    );
+    assert_eq!(
+        rows[0].get("indicator_type").and_then(JsonValue::as_str),
+        Some("measure")
+    );
+    assert_eq!(
+        rows[0].get("parent_unique_id").and_then(JsonValue::as_str),
+        Some("model.pkg.fact_orders_canonical")
+    );
+    assert_eq!(
+        rows[0].get("canonical").and_then(JsonValue::as_bool),
+        Some(true)
+    );
+    assert!(
+        rows[0].get("explain").is_none(),
+        "indicator explain should be omitted unless explicitly requested"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_search_indicator_prefers_generic_canonical_measure_for_generic_query() {
+    let searcher = semantic_preview_env();
+    let result = searcher
+        .search_indicator(&SearchIndicatorParams {
+            query: "what was gmv for alpha last week".to_string(),
+            resource_types: vec!["model".to_string()],
+            indicator_types: vec!["measure".to_string()],
+            persona: Some("analyst".to_string()),
+            pagination: PaginationParams {
+                limit: 10,
+                offset: 0,
+            },
+            min_score: None,
+            explain: false,
+        })
+        .await
+        .json();
+    let rows = result_rows(&result);
+
+    assert!(!rows.is_empty());
+    assert_eq!(
+        rows[0].get("indicator_name").and_then(JsonValue::as_str),
+        Some("gmv")
+    );
+    assert_eq!(
+        rows[0].get("parent_unique_id").and_then(JsonValue::as_str),
+        Some("model.pkg.fact_orders_canonical")
+    );
+    let parent_groups = result
+        .get("parent_groups")
+        .and_then(JsonValue::as_array)
+        .expect("expected parent_groups");
+    assert!(!parent_groups.is_empty());
+    assert_eq!(
+        parent_groups[0]
+            .get("parent_unique_id")
+            .and_then(JsonValue::as_str),
+        Some("model.pkg.fact_orders_canonical")
+    );
+    let support_signals = rows[0]
+        .get("support_signals")
+        .and_then(JsonValue::as_object)
+        .expect("expected support_signals");
+    assert_eq!(
+        support_signals
+            .get("matched_example_values")
+            .and_then(JsonValue::as_array)
+            .and_then(|values| values.first())
+            .and_then(JsonValue::as_str),
+        Some("alpha")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_search_indicator_returns_metric_with_parent_grain() {
+    let searcher = semantic_preview_env();
+    let result = searcher
+        .search_indicator(&SearchIndicatorParams {
+            query: "aov".to_string(),
+            resource_types: vec!["model".to_string()],
+            indicator_types: vec!["metric".to_string()],
+            persona: Some("analyst".to_string()),
+            pagination: PaginationParams {
+                limit: 10,
+                offset: 0,
+            },
+            min_score: None,
+            explain: false,
+        })
+        .await
+        .json();
+    let rows = result_rows(&result);
+
+    assert!(!rows.is_empty());
+    assert_eq!(
+        rows[0].get("indicator_name").and_then(JsonValue::as_str),
+        Some("average_order_value")
+    );
+    assert_eq!(
+        rows[0].get("indicator_type").and_then(JsonValue::as_str),
+        Some("metric")
+    );
+    assert_eq!(
+        rows[0].get("parent_unique_id").and_then(JsonValue::as_str),
+        Some("model.pkg.orders_semantic_templates")
+    );
+    assert_eq!(
+        rows[0]
+            .get("grain")
+            .and_then(|grain| grain.get("time_field"))
+            .and_then(JsonValue::as_str),
+        Some("order_date")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_indicator_inventory_lists_indicator_context_deterministically() {
+    let searcher = semantic_preview_env();
+    let result = searcher
+        .indicator_inventory(&IndicatorInventoryParams {
+            resource_types: vec!["model".to_string()],
+            indicator_types: vec!["measure".to_string()],
+            canonical_only: false,
+            pagination: PaginationParams {
+                limit: 10,
+                offset: 0,
+            },
+        })
+        .await
+        .json();
+    let rows = result_rows(&result);
+
+    assert!(!rows.is_empty());
+    let canonical_gmv = indicator_row(&rows, "model.pkg.fact_orders_canonical", "gmv");
+    assert_eq!(
+        canonical_gmv
+            .get("measure_type")
+            .and_then(JsonValue::as_str),
+        Some("sum")
+    );
+    assert_eq!(
+        canonical_gmv.get("field").and_then(JsonValue::as_str),
+        Some("gmv_amount")
+    );
+    assert_eq!(
+        canonical_gmv
+            .get("grain")
+            .and_then(|grain| grain.get("time_field"))
+            .and_then(JsonValue::as_str),
+        Some("order_date")
+    );
+    assert!(
+        indicator_row_position(&rows, "model.pkg.fact_orders_canonical", "gmv")
+            < indicator_row_position(&rows, "model.pkg.fact_orders_channel", "gmv")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_indicator_inventory_canonical_only_filters_noncanonical_rows() {
+    let searcher = semantic_preview_env();
+    let result = searcher
+        .indicator_inventory(&IndicatorInventoryParams {
+            resource_types: vec!["model".to_string()],
+            indicator_types: vec![],
+            canonical_only: true,
+            pagination: PaginationParams {
+                limit: 20,
+                offset: 0,
+            },
+        })
+        .await
+        .json();
+    let rows = result_rows(&result);
+
+    assert!(!rows.is_empty());
+    assert!(
+        rows.iter()
+            .all(|row| row.get("canonical").and_then(JsonValue::as_bool) == Some(true))
+    );
+    assert!(rows.iter().all(|row| {
+        row.get("parent_unique_id").and_then(JsonValue::as_str)
+            != Some("model.pkg.fact_orders_channel")
+    }));
+    assert!(
+        indicator_row(&rows, "model.pkg.fact_orders_canonical", "gmv")
+            .get("synonyms")
+            .and_then(JsonValue::as_array)
+            .is_some()
+    );
+    let entity_canonical = indicator_row(
+        &rows,
+        "model.pkg.fact_orders_entity_canonical_only",
+        "net_revenue",
+    );
+    assert_eq!(
+        entity_canonical
+            .get("canonical")
+            .and_then(JsonValue::as_bool),
+        Some(true)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_search_surfaces_metadata_support_signals() {
+    let searcher = semantic_preview_env();
+    let result = searcher
+        .search(&search_params(
+            "what was gmv for alpha last week",
+            Some("analyst"),
+        ))
+        .await
+        .json();
+    let rows = result_rows(&result);
+    assert_eq!(
+        rows[0].get("unique_id").and_then(JsonValue::as_str),
+        Some("model.pkg.fact_orders_canonical")
+    );
+    let top = row_by_unique_id(&rows, "model.pkg.fact_orders_canonical");
+    let support_signals = top
+        .get("support_signals")
+        .and_then(JsonValue::as_object)
+        .expect("expected support_signals");
+
+    assert_eq!(
+        support_signals
+            .get("matched_example_values")
+            .and_then(JsonValue::as_array)
+            .and_then(|values| values.first())
+            .and_then(JsonValue::as_str),
+        Some("alpha")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_search_explain_surfaces_retrieval_and_score_breakdown() {
+    let searcher = semantic_preview_env();
+    let mut params = search_params("what was gmv for alpha last week", Some("analyst"));
+    params.explain = true;
+    let result = searcher.search(&params).await.json();
+    let rows = result_rows(&result);
+    let top = row_by_unique_id(&rows, "model.pkg.fact_orders_canonical");
+    let explain = top
+        .get("explain")
+        .and_then(JsonValue::as_object)
+        .expect("expected row explain");
+    assert_eq!(
+        explain.get("canonical_entity").and_then(JsonValue::as_bool),
+        Some(true)
+    );
+    assert!(
+        explain
+            .get("retrieval")
+            .and_then(|value| value.get("retrievers"))
+            .and_then(|value| value.get("bm25"))
+            .and_then(|value| value.get("rank"))
+            .and_then(JsonValue::as_u64)
+            .is_some(),
+        "expected bm25 retrieval contribution"
+    );
+    assert_eq!(
+        explain.get("final_score").and_then(JsonValue::as_f64),
+        top.get("score").and_then(JsonValue::as_f64)
+    );
+
+    let payload = result
+        .get("explain")
+        .and_then(JsonValue::as_object)
+        .expect("expected top-level explain payload");
+    assert_eq!(
+        payload
+            .get("query_tokens")
+            .and_then(JsonValue::as_array)
+            .and_then(|tokens| tokens.first())
+            .and_then(JsonValue::as_str),
+        Some("what")
+    );
+    assert!(
+        payload
+            .get("retrievers_used")
+            .and_then(JsonValue::as_array)
+            .is_some_and(|retrievers| !retrievers.is_empty())
+    );
+    assert_eq!(
+        payload.get("reranker_applied").and_then(JsonValue::as_bool),
+        Some(false)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_search_indicator_explain_surfaces_rrf_breakdown() {
+    let searcher = semantic_preview_env();
+    let result = searcher
+        .search_indicator(&SearchIndicatorParams {
+            query: "what was gmv for alpha last week".to_string(),
+            resource_types: vec!["model".to_string()],
+            indicator_types: vec!["measure".to_string()],
+            persona: Some("analyst".to_string()),
+            pagination: PaginationParams {
+                limit: 10,
+                offset: 0,
+            },
+            min_score: None,
+            explain: true,
+        })
+        .await
+        .json();
+    let rows = result_rows(&result);
+    let top = indicator_row(&rows, "model.pkg.fact_orders_canonical", "gmv");
+    let explain = top
+        .get("explain")
+        .and_then(JsonValue::as_object)
+        .expect("expected indicator explain");
+    assert!(
+        explain
+            .get("rrf_bonus")
+            .and_then(JsonValue::as_f64)
+            .is_some(),
+        "expected rrf bonus"
+    );
+    assert!(
+        explain
+            .get("retrieval")
+            .and_then(|value| value.get("retrievers"))
+            .and_then(|value| value.get("indicator_local"))
+            .and_then(|value| value.get("rank"))
+            .and_then(JsonValue::as_u64)
+            .is_some(),
+        "expected indicator_local retrieval contribution"
+    );
+    assert_eq!(
+        explain.get("final_score").and_then(JsonValue::as_f64),
+        top.get("score").and_then(JsonValue::as_f64)
+    );
+
+    let payload = result
+        .get("explain")
+        .and_then(JsonValue::as_object)
+        .expect("expected top-level explain payload");
+    assert!(
+        payload
+            .get("retrievers_used")
+            .and_then(JsonValue::as_array)
+            .is_some_and(|retrievers| retrievers.len() >= 2)
+    );
+    assert_eq!(
+        payload.get("reranker_applied").and_then(JsonValue::as_bool),
+        Some(false)
+    );
+}
+
 fn governance_search_env(policy: GovernanceGateConfig) -> (ManifestSearch, TempDir) {
     let manifest_path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/nova_manifest.json");
@@ -575,6 +983,7 @@ async fn test_governance_persona_gate_policy_supports_advisory_mode() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -655,6 +1064,7 @@ async fn test_governance_persona_gate_policy_can_force_pass_band() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 1,
             offset: 0,

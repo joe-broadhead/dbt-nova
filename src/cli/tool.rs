@@ -15,11 +15,13 @@ use crate::cli::output::{CliEnvelope, error_envelope};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::search::ManifestSearch;
 use crate::params::{
-    BatchGetParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams, GetColumnLineageParams,
+    BatchGetParams, ColumnInventoryParams, CompareGrainsParams, DiffEntitiesParams,
+    ExecuteSqlParams, FindByPathParams, FindEntityOverlapParams, GetColumnLineageParams,
     GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams, GetLineageParams,
     GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
-    GetUndocumentedParams, ListEntitiesParams, ReloadManifestParams, RunRecipeParams, SearchParams,
-    SearchRecipesParams, ValidateDagParams,
+    GetUndocumentedParams, IndicatorInventoryParams, ListEntitiesParams,
+    ModellingConsistencyReportParams, ReloadManifestParams, RunRecipeParams, SearchColumnsParams,
+    SearchIndicatorParams, SearchParams, SearchRecipesParams, ValidateDagParams,
 };
 use crate::responses::SuccessResponse;
 
@@ -34,10 +36,38 @@ struct ToolRegistryEntry {
     dispatch: ToolDispatchFn,
 }
 
-const TOOL_REGISTRY: [ToolRegistryEntry; 26] = [
+const TOOL_REGISTRY: [ToolRegistryEntry; 33] = [
     ToolRegistryEntry {
         name: "search",
         dispatch: dispatch_search,
+    },
+    ToolRegistryEntry {
+        name: "search_indicator",
+        dispatch: dispatch_search_indicator,
+    },
+    ToolRegistryEntry {
+        name: "indicator_inventory",
+        dispatch: dispatch_indicator_inventory,
+    },
+    ToolRegistryEntry {
+        name: "search_columns",
+        dispatch: dispatch_search_columns,
+    },
+    ToolRegistryEntry {
+        name: "column_inventory",
+        dispatch: dispatch_column_inventory,
+    },
+    ToolRegistryEntry {
+        name: "compare_grains",
+        dispatch: dispatch_compare_grains,
+    },
+    ToolRegistryEntry {
+        name: "find_entity_overlap",
+        dispatch: dispatch_find_entity_overlap,
+    },
+    ToolRegistryEntry {
+        name: "modelling_consistency_report",
+        dispatch: dispatch_modelling_consistency_report,
     },
     ToolRegistryEntry {
         name: "get_entity",
@@ -446,6 +476,21 @@ async fn run_search_with_timeout<T>(
     }
 }
 
+macro_rules! timed_dispatch {
+    ($fn_name:ident, $tool_name:literal, $params_ty:ty, $method:ident) => {
+        fn $fn_name(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+            Box::pin(async move {
+                let decoded: $params_ty = decode_tool_params($tool_name, params)?;
+                run_search_with_timeout(
+                    searcher.config().search.search_timeout_ms,
+                    searcher.$method(&decoded),
+                )
+                .await
+            })
+        }
+    };
+}
+
 fn dispatch_search(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
     Box::pin(async move {
         let decoded: SearchParams = decode_tool_params("search", params)?;
@@ -456,6 +501,61 @@ fn dispatch_search(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'
         .await
     })
 }
+
+fn dispatch_search_indicator(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: SearchIndicatorParams = decode_tool_params("search_indicator", params)?;
+        run_search_with_timeout(
+            searcher.config().search.search_timeout_ms,
+            searcher.search_indicator(&decoded),
+        )
+        .await
+    })
+}
+
+timed_dispatch!(
+    dispatch_indicator_inventory,
+    "indicator_inventory",
+    IndicatorInventoryParams,
+    indicator_inventory
+);
+
+fn dispatch_search_columns(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: SearchColumnsParams = decode_tool_params("search_columns", params)?;
+        run_search_with_timeout(
+            searcher.config().search.search_timeout_ms,
+            searcher.search_columns(&decoded),
+        )
+        .await
+    })
+}
+
+timed_dispatch!(
+    dispatch_column_inventory,
+    "column_inventory",
+    ColumnInventoryParams,
+    column_inventory
+);
+
+timed_dispatch!(
+    dispatch_compare_grains,
+    "compare_grains",
+    CompareGrainsParams,
+    compare_grains
+);
+timed_dispatch!(
+    dispatch_find_entity_overlap,
+    "find_entity_overlap",
+    FindEntityOverlapParams,
+    find_entity_overlap
+);
+timed_dispatch!(
+    dispatch_modelling_consistency_report,
+    "modelling_consistency_report",
+    ModellingConsistencyReportParams,
+    modelling_consistency_report
+);
 
 typed_dispatch!(
     dispatch_get_entity,
@@ -823,6 +923,13 @@ mod tests {
     fn tool_registry_has_full_mcp_name_parity() {
         let expected = vec![
             "search",
+            "search_indicator",
+            "indicator_inventory",
+            "search_columns",
+            "column_inventory",
+            "compare_grains",
+            "find_entity_overlap",
+            "modelling_consistency_report",
             "get_entity",
             "list_entities",
             "get_lineage",

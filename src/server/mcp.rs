@@ -16,11 +16,13 @@ use tracing::instrument;
 use crate::error::DbtNovaError;
 use crate::manifest::search::{ManifestSearch, ManifestSearchHandle};
 use crate::params::{
-    BatchGetParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams, GetColumnLineageParams,
+    BatchGetParams, ColumnInventoryParams, CompareGrainsParams, DiffEntitiesParams,
+    ExecuteSqlParams, FindByPathParams, FindEntityOverlapParams, GetColumnLineageParams,
     GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams, GetLineageParams,
     GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
-    GetUndocumentedParams, ListEntitiesParams, ReloadManifestParams, RunRecipeParams, SearchParams,
-    SearchRecipesParams, ValidateDagParams,
+    GetUndocumentedParams, IndicatorInventoryParams, ListEntitiesParams,
+    ModellingConsistencyReportParams, ReloadManifestParams, RunRecipeParams, SearchColumnsParams,
+    SearchIndicatorParams, SearchParams, SearchRecipesParams, ValidateDagParams,
 };
 use crate::responses::SuccessResponse;
 use crate::server::health::build_manifest_health_payload;
@@ -52,7 +54,7 @@ impl ServerHandler for DbtNovaServer {
                 version: env!("CARGO_PKG_VERSION").into(),
                 ..Implementation::default()
             },
-            instructions: Some("DBT Manifest Search and Analysis MCP Server. Use 'search' for full-text search, 'get_entity' for complete entity data, 'get_lineage' for dependency analysis, and 'execute_sql' to run warehouse queries with the configured SQL provider.".into()),
+            instructions: Some("DBT Manifest Search and Analysis MCP Server. Use 'search' for full-text discovery, 'search_indicator' for canonical measures and metrics, 'get_entity' for complete entity data, and 'execute_sql' to run warehouse queries with the configured SQL provider.".into()),
         }
     }
 }
@@ -196,6 +198,54 @@ impl DbtNovaServer {
             return Ok(None);
         };
         concurrency.acquire(timeout).await
+    }
+
+    async fn handle_bounded_search<F, Fut>(
+        &self,
+        tool: &'static str,
+        persona: Option<&str>,
+        f: F,
+    ) -> String
+    where
+        F: FnOnce(Arc<ManifestSearch>) -> Fut,
+        Fut: Future<Output = Result<serde_json::Value, DbtNovaError>>,
+    {
+        let search_started = Instant::now();
+        let search_timeout_ms = match self.searcher.get().await {
+            Ok(searcher) => searcher.config().search.search_timeout_ms as u64,
+            Err(_) => 0,
+        };
+        let permit_timeout = remaining_timeout(search_started, search_timeout_ms);
+        let permit_result = if let Ok(searcher) = self.searcher.get().await {
+            self.acquire_search_permit(searcher.config(), permit_timeout)
+                .await
+        } else {
+            Ok(None)
+        };
+        let permit = match Self::permit_from_result(permit_result) {
+            Ok(permit) => permit,
+            Err(response) => return response,
+        };
+        let result = self
+            .handle_async(tool, persona, |searcher| async move {
+                let future = f(searcher);
+                if search_timeout_ms == 0 {
+                    return future.await;
+                }
+                let Some(remaining) = remaining_timeout(search_started, search_timeout_ms) else {
+                    return Err(search_timeout_error(search_timeout_ms));
+                };
+                if remaining.is_zero() {
+                    return Err(search_timeout_error(search_timeout_ms));
+                }
+                match tokio::time::timeout(remaining, future).await {
+                    Ok(result) => result,
+                    Err(_) => Err(search_timeout_error(search_timeout_ms)),
+                }
+            })
+            .await;
+        drop(permit);
+        result
     }
 }
 
@@ -385,48 +435,109 @@ impl DbtNovaServer {
     #[instrument(level = "info", skip(self, params))]
     async fn search(&self, params: Parameters<SearchParams>) -> String {
         let persona = params.0.persona.clone();
-        let search_started = Instant::now();
-        let search_timeout_ms = match self.searcher.get().await {
-            Ok(searcher) => searcher.config().search.search_timeout_ms as u64,
-            Err(_) => 0,
-        };
-        let permit_timeout = remaining_timeout(search_started, search_timeout_ms);
-        let permit_result = if let Ok(searcher) = self.searcher.get().await {
-            self.acquire_search_permit(searcher.config(), permit_timeout)
-                .await
-        } else {
-            Ok(None)
-        };
-        let permit = match Self::permit_from_result(permit_result) {
-            Ok(permit) => permit,
-            Err(response) => return response,
-        };
-        let result = self
-            .handle_async("search", persona.as_deref(), |searcher| async move {
-                if search_timeout_ms == 0 {
-                    return searcher.search(&params.0).await;
-                }
-                let Some(remaining) = remaining_timeout(search_started, search_timeout_ms) else {
-                    return Err(DbtNovaError::ServerError(format!(
-                        "Search timed out after {search_timeout_ms}ms"
-                    )));
-                };
-                if remaining.is_zero() {
-                    return Err(DbtNovaError::ServerError(format!(
-                        "Search timed out after {search_timeout_ms}ms"
-                    )));
-                }
-                let duration = remaining;
-                match tokio::time::timeout(duration, searcher.search(&params.0)).await {
-                    Ok(result) => result,
-                    Err(_) => Err(DbtNovaError::ServerError(format!(
-                        "Search timed out after {search_timeout_ms}ms"
-                    ))),
-                }
-            })
-            .await;
-        drop(permit);
-        result
+        self.handle_bounded_search("search", persona.as_deref(), |searcher| async move {
+            searcher.search(&params.0).await
+        })
+        .await
+    }
+
+    /// Resolve Nova measures and metrics that match the query.
+    #[tool(
+        name = "search_indicator",
+        description = "Analyst-focused semantic discovery. Search Nova measures and metrics by business term, synonym, field, description, or expression, and return the parent execution entity, grain, and match evidence."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn search_indicator(&self, params: Parameters<SearchIndicatorParams>) -> String {
+        let persona = params.0.persona.clone();
+        self.handle_bounded_search(
+            "search_indicator",
+            persona.as_deref(),
+            |searcher| async move { searcher.search_indicator(&params.0).await },
+        )
+        .await
+    }
+
+    /// List Nova measures and metrics deterministically with parent execution context.
+    #[tool(
+        name = "indicator_inventory",
+        description = "Inventory tool for Nova measures and metrics. List canonical or all indicators with parent entity, grain, domains, and core definitions when you need a deterministic semantic catalog."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn indicator_inventory(&self, params: Parameters<IndicatorInventoryParams>) -> String {
+        self.handle_bounded_search("indicator_inventory", None, |searcher| async move {
+            searcher.indicator_inventory(&params.0).await
+        })
+        .await
+    }
+
+    /// Search columns by semantic metadata and business hints.
+    #[tool(
+        name = "search_columns",
+        description = "Search columns by name, synonym, description, role, semantic_type, or example_values, and return the parent entity context for downstream modelling or analytics work."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn search_columns(&self, params: Parameters<SearchColumnsParams>) -> String {
+        self.handle_bounded_search("search_columns", None, |searcher| async move {
+            searcher.search_columns(&params.0).await
+        })
+        .await
+    }
+
+    /// List columns deterministically across entities.
+    #[tool(
+        name = "column_inventory",
+        description = "Inventory tool for columns. List columns across models or sources with role, semantic_type, synonyms, example values, and parent entity context."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn column_inventory(&self, params: Parameters<ColumnInventoryParams>) -> String {
+        self.handle_bounded_search("column_inventory", None, |searcher| async move {
+            searcher.column_inventory(&params.0).await
+        })
+        .await
+    }
+
+    /// Compare grain information between two entities.
+    #[tool(
+        name = "compare_grains",
+        description = "Compare effective grain between two entities, including time field, primary key, dimensions, and any grain variants sourced from entity-level or metric-level Nova metadata."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn compare_grains(&self, params: Parameters<CompareGrainsParams>) -> String {
+        self.handle_bounded_search("compare_grains", None, |searcher| async move {
+            searcher.compare_grains(&params.0).await
+        })
+        .await
+    }
+
+    /// Find overlapping entities using shared semantic evidence.
+    #[tool(
+        name = "find_entity_overlap",
+        description = "Detect overlapping entities using shared domains, synonyms, indicator names, semantic types, and grain hints. Useful for cleanup, canonicalization, and architecture reviews."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn find_entity_overlap(&self, params: Parameters<FindEntityOverlapParams>) -> String {
+        self.handle_bounded_search("find_entity_overlap", None, |searcher| async move {
+            searcher.find_entity_overlap(&params.0).await
+        })
+        .await
+    }
+
+    /// Project-level report for modelling consistency issues.
+    #[tool(
+        name = "modelling_consistency_report",
+        description = "Audit project-level overlap, duplicate indicators, canonical conflicts, and grain drift across entities. Use for cleanup and model architecture workflows."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn modelling_consistency_report(
+        &self,
+        params: Parameters<ModellingConsistencyReportParams>,
+    ) -> String {
+        self.handle_bounded_search(
+            "modelling_consistency_report",
+            None,
+            |searcher| async move { searcher.modelling_consistency_report(&params.0).await },
+        )
+        .await
     }
 
     /// Get complete entity data by `unique_id` or name. Returns ALL fields from the manifest.
@@ -849,6 +960,10 @@ fn remaining_timeout(start: Instant, timeout_ms: u64) -> Option<Duration> {
         .map(Duration::from_millis)
 }
 
+fn search_timeout_error(search_timeout_ms: u64) -> DbtNovaError {
+    DbtNovaError::ServerError(format!("Search timed out after {search_timeout_ms}ms"))
+}
+
 fn sql_queue_timeout(config: &crate::config::DbtNovaConfig) -> Option<Duration> {
     if config.sql_queue_timeout_ms == 0 {
         return None;
@@ -1006,6 +1121,45 @@ mod tests {
             .await;
         let err = second_attempt.expect_err("second SQL permit should be rejected");
         assert!(err.to_string().contains("SQL concurrency limit exceeded"));
+
+        drop(first_permit);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn search_concurrency_rejects_indicator_inventory_when_limit_is_saturated() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path());
+        config.search.search_max_concurrent = 1;
+        config.search.search_max_queue = 0;
+        config.search.search_timeout_ms = 50;
+
+        let handle = ManifestSearchHandle::spawn(config);
+        handle
+            .wait_ready()
+            .await
+            .expect("fixture manifest should load");
+        let server = DbtNovaServer::new(handle);
+        let searcher = server.searcher.get().await.expect("searcher ready");
+
+        let first_permit = server
+            .acquire_search_permit(searcher.config(), Some(Duration::from_millis(5)))
+            .await
+            .expect("first search permit")
+            .expect("permit should be enabled");
+
+        let response: serde_json::Value = serde_json::from_str(
+            &server
+                .indicator_inventory(Parameters(IndicatorInventoryParams::default()))
+                .await,
+        )
+        .expect("indicator inventory response JSON");
+        assert_eq!(response["success"], serde_json::json!(false));
+        assert!(
+            response["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Search concurrency limit exceeded")
+        );
 
         drop(first_permit);
     }

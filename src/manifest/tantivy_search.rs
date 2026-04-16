@@ -418,11 +418,9 @@ impl TantivySearcher {
                                 doc.add_text(fields.nova_pii, "pii");
                                 doc.add_text(fields.nova_pii, "true");
                             }
-                            JsonValue::String(s) => {
-                                if !s.is_empty() {
-                                    doc.add_text(fields.nova_pii, "pii");
-                                    doc.add_text(fields.nova_pii, s);
-                                }
+                            JsonValue::String(s) if !s.is_empty() => {
+                                doc.add_text(fields.nova_pii, "pii");
+                                doc.add_text(fields.nova_pii, s);
                             }
                             JsonValue::Array(values) => {
                                 doc.add_text(fields.nova_pii, "pii");

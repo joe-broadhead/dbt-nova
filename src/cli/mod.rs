@@ -9,6 +9,7 @@ pub mod audit_cmd;
 pub mod config_cmd;
 pub mod health_cmd;
 pub mod manifest;
+pub mod nova_meta_cmd;
 pub mod output;
 pub mod server_cmd;
 pub mod storage_cmd;
@@ -54,6 +55,9 @@ pub async fn dispatch(command: args::Command) -> DispatchResult {
         args::Command::Audit(audit_args) => match audit_args.command {
             args::AuditCommand::MetadataScore(metadata_args) => {
                 audit_cmd::run_metadata_score_command(&metadata_args).await
+            }
+            args::AuditCommand::NovaMeta(nova_meta_args) => {
+                nova_meta_cmd::run_nova_meta_command(&nova_meta_args)
             }
         },
         args::Command::Config(config_args) => match config_args.command {
@@ -282,6 +286,57 @@ mod tests {
             }),
         }))
         .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn dispatch_audit_nova_meta_succeeds_for_valid_fixture() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let models_dir = temp_dir.path().join("models");
+        fs::create_dir_all(&models_dir).expect("create models dir");
+        fs::write(
+            models_dir.join("orders.yml"),
+            r#"
+version: 2
+models:
+  - name: fct_orders
+    meta:
+      nova:
+        canonical: true
+        grain:
+          primary_key: ["order_id"]
+          time_field: order_date
+        measures:
+          - name: orders
+            type: count_distinct
+            expression: "count(distinct order_id)"
+            description: "Orders"
+            field: order_id
+    columns:
+      - name: order_id
+        meta:
+          nova:
+            role: identifier
+      - name: order_date
+        meta:
+          nova:
+            role: time
+"#,
+        )
+        .expect("write fixture");
+
+        let result = dispatch(super::args::Command::Audit(super::args::AuditArgs {
+            command: super::args::AuditCommand::NovaMeta(super::args::NovaMetaAuditArgs {
+                project_dir: Some(temp_dir.path().to_string_lossy().to_string()),
+                path: Vec::new(),
+                resource_kind: None,
+                resource_name: None,
+                column: None,
+                json: true,
+            }),
+        }))
+        .await;
+
         assert!(result.is_ok());
     }
 

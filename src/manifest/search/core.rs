@@ -1136,8 +1136,7 @@ async fn refresh_loop(
 pub(crate) fn now_ms() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_millis())
 }
 
 fn auto_instance_id(config: &DbtNovaConfig) -> String {
@@ -1183,15 +1182,9 @@ fn reset_bootstrap_applied_fields_for_reload(
 
     for field in applied_fields.iter().filter_map(JsonValue::as_str) {
         match field {
-            "manifest_uri" => {
-                if !explicit_manifest_source {
-                    next.manifest_uri.clear();
-                }
-            }
-            "storage_instance_id" => {
-                if !explicit_storage_instance_id {
-                    next.storage_instance_id.clear();
-                }
+            "manifest_uri" if !explicit_manifest_source => next.manifest_uri.clear(),
+            "storage_instance_id" if !explicit_storage_instance_id => {
+                next.storage_instance_id.clear();
             }
             "storage_artifact_uri" => {
                 next.storage_artifact_uri.clear();

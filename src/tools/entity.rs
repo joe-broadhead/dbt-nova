@@ -111,7 +111,7 @@ impl ManifestSearch {
 
         let column_list: Vec<JsonValue> = if let Some(obj) = columns.as_object() {
             let mut ordered: Vec<(&String, &JsonValue)> = obj.iter().collect();
-            ordered.sort_by(|(left_name, _), (right_name, _)| left_name.cmp(right_name));
+            ordered.sort_by_key(|(name, _)| *name);
             ordered
                 .into_iter()
                 .map(|(_, value)| value.clone())

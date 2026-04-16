@@ -66,6 +66,7 @@ pub enum DetailLevel {
 }
 
 /// Parameters for the search tool.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Deserialize, JsonSchema, Default)]
 pub struct SearchParams {
     /// Search query - matches names, descriptions, SQL code, file paths, column names.
@@ -95,6 +96,139 @@ pub struct SearchParams {
     /// Include raw/compiled SQL in full detail responses (default: false)
     #[serde(default)]
     pub include_sql: bool,
+    /// Include deterministic ranking/debug explanations in the response (default: false)
+    #[serde(default)]
+    pub explain: bool,
+}
+
+/// Parameters for the search_indicator tool.
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct SearchIndicatorParams {
+    /// Search query - resolves Nova measures and metrics by name, synonym, field, description, or expression.
+    #[serde(default)]
+    pub query: String,
+    /// Filter parent entities by resource types (for example: model, source).
+    #[serde(default)]
+    pub resource_types: Vec<String>,
+    /// Filter indicator types. Supported values: metric, measure.
+    #[serde(default)]
+    pub indicator_types: Vec<String>,
+    /// Optional search persona: "analyst", "engineer", "governance"
+    #[serde(default)]
+    pub persona: Option<String>,
+    #[serde(default, flatten)]
+    pub pagination: PaginationParams,
+    /// Minimum relevance score threshold (0.0+, default: no threshold).
+    #[serde(default)]
+    pub min_score: Option<f32>,
+    /// Include deterministic ranking/debug explanations in the response (default: false)
+    #[serde(default)]
+    pub explain: bool,
+}
+
+/// Parameters for the indicator_inventory tool.
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct IndicatorInventoryParams {
+    /// Filter parent entities by resource types (for example: model, source).
+    #[serde(default)]
+    pub resource_types: Vec<String>,
+    /// Filter indicator types. Supported values: metric, measure.
+    #[serde(default)]
+    pub indicator_types: Vec<String>,
+    /// Return only canonical indicators when true.
+    #[serde(default)]
+    pub canonical_only: bool,
+    #[serde(default, flatten)]
+    pub pagination: PaginationParams,
+}
+
+/// Parameters for the search_columns tool.
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct SearchColumnsParams {
+    /// Search query - resolves columns by name, synonym, description, role, semantic_type, or example_values.
+    #[serde(default)]
+    pub query: String,
+    /// Filter parent entities by resource types (for example: model, source).
+    #[serde(default)]
+    pub resource_types: Vec<String>,
+    /// Filter columns by role (for example: dimension, time, measure).
+    #[serde(default)]
+    pub roles: Vec<String>,
+    /// Filter columns by semantic_type.
+    #[serde(default)]
+    pub semantic_types: Vec<String>,
+    #[serde(default, flatten)]
+    pub pagination: PaginationParams,
+    /// Minimum relevance score threshold (0.0+, default: no threshold).
+    #[serde(default)]
+    pub min_score: Option<f32>,
+}
+
+/// Parameters for the column_inventory tool.
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct ColumnInventoryParams {
+    /// Filter parent entities by resource types (for example: model, source).
+    #[serde(default)]
+    pub resource_types: Vec<String>,
+    /// Filter columns by role (for example: dimension, time, measure).
+    #[serde(default)]
+    pub roles: Vec<String>,
+    /// Filter columns by semantic_type.
+    #[serde(default)]
+    pub semantic_types: Vec<String>,
+    /// Return only columns with Nova annotations (`role`, `semantic_type`, `synonyms`, or `example_values`) when true.
+    #[serde(default)]
+    pub annotated_only: bool,
+    #[serde(default, flatten)]
+    pub pagination: PaginationParams,
+}
+
+/// Parameters for the compare_grains tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CompareGrainsParams {
+    /// First entity unique ID or name
+    pub entity1: String,
+    /// Optional resource_type to disambiguate entity1 when using name
+    #[serde(default)]
+    pub entity1_resource_type: Option<String>,
+    /// Second entity unique ID or name
+    pub entity2: String,
+    /// Optional resource_type to disambiguate entity2 when using name
+    #[serde(default)]
+    pub entity2_resource_type: Option<String>,
+}
+
+/// Parameters for the find_entity_overlap tool.
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct FindEntityOverlapParams {
+    /// Optional focus entity unique ID or name. When set, only overlap pairs involving this entity are returned.
+    #[serde(default)]
+    pub id_or_name: Option<String>,
+    /// Optional resource_type to disambiguate `id_or_name` when using name.
+    #[serde(default)]
+    pub resource_type: Option<String>,
+    /// Filter candidate entities by resource types (for example: model, source).
+    #[serde(default)]
+    pub resource_types: Vec<String>,
+    #[serde(default, flatten)]
+    pub pagination: PaginationParams,
+    /// Minimum overlap score threshold (0.0+, default: no threshold).
+    #[serde(default)]
+    pub min_score: Option<f32>,
+}
+
+/// Parameters for the modelling_consistency_report tool.
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct ModellingConsistencyReportParams {
+    /// Filter candidate entities by resource types (for example: model, source).
+    #[serde(default)]
+    pub resource_types: Vec<String>,
+    /// Maximum results per report section.
+    #[serde(default, flatten)]
+    pub pagination: PaginationParams,
+    /// Minimum overlap score threshold for the overlap section (0.0+, default: no threshold).
+    #[serde(default)]
+    pub min_score: Option<f32>,
 }
 
 /// Parameters for the get_entity tool.

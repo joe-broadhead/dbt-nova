@@ -23,6 +23,7 @@ mod lineage;
 mod list_entities;
 mod manifest_loading;
 mod metadata_score;
+mod modeling;
 mod path_prefix;
 mod recipes;
 mod search;

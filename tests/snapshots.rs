@@ -106,6 +106,7 @@ async fn snapshot_search_standard_models() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 5,
             offset: 0,
