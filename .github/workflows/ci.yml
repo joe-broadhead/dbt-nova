@@ -125,6 +125,8 @@ jobs:
     env:
       DBT_NOVA_STRICT_SCHEMA: "1"
       COVERAGE_MIN_LINES: "65"
+      CARGO_BUILD_JOBS: "1"
+      RUSTFLAGS: "-C debuginfo=0"
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
