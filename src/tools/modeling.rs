@@ -105,29 +105,33 @@ impl ManifestSearch {
         let resource_filter = normalized_resource_type_filter(&params.resource_types);
         let profiles = self.collect_overlap_profiles(resource_filter.as_ref())?;
         let section_limit = self.page_limit(params.pagination.limit);
+        let section_offset = params.pagination.offset;
 
         let mut overlap = overlap_rows(&profiles, None);
         if let Some(min_score) = params.min_score {
             overlap.retain(|row| row.score >= min_score);
         }
         let overlap_count = overlap.len();
-        overlap.truncate(section_limit);
+        let overlap = paginate_section(overlap, section_offset, section_limit);
 
-        let duplicate_indicators = duplicate_indicator_rows(&profiles, section_limit);
-        let duplicate_indicator_count = duplicate_indicator_rows(&profiles, usize::MAX).len();
-        let canonical_conflicts: Vec<DuplicateIndicatorRow> =
-            duplicate_indicator_rows(&profiles, usize::MAX)
-                .into_iter()
-                .filter(|row| row.canonical_parent_count > 1)
-                .take(section_limit)
-                .collect();
-        let canonical_conflict_count = duplicate_indicator_rows(&profiles, usize::MAX)
+        let duplicate_indicator_rows = duplicate_indicator_rows(&profiles, usize::MAX);
+        let duplicate_indicator_count = duplicate_indicator_rows.len();
+        let duplicate_indicators = paginate_section(
+            duplicate_indicator_rows.clone(),
+            section_offset,
+            section_limit,
+        );
+        let canonical_conflict_rows: Vec<DuplicateIndicatorRow> = duplicate_indicator_rows
             .into_iter()
             .filter(|row| row.canonical_parent_count > 1)
-            .count();
+            .collect();
+        let canonical_conflict_count = canonical_conflict_rows.len();
+        let canonical_conflicts =
+            paginate_section(canonical_conflict_rows, section_offset, section_limit);
         let mut multi_grain_entities = multi_grain_entity_rows(&profiles);
         let multi_grain_entity_count = multi_grain_entities.len();
-        multi_grain_entities.truncate(section_limit);
+        multi_grain_entities =
+            paginate_section(multi_grain_entities, section_offset, section_limit);
 
         let report = ModellingConsistencyReport {
             entity_count: profiles.len(),
@@ -907,6 +911,10 @@ fn compare_duplicate_indicator_rows(
         })
         .then_with(|| left.indicator_type.cmp(&right.indicator_type))
         .then_with(|| left.indicator_name.cmp(&right.indicator_name))
+}
+
+fn paginate_section<T>(rows: Vec<T>, offset: usize, limit: usize) -> Vec<T> {
+    rows.into_iter().skip(offset).take(limit).collect()
 }
 
 #[cfg(test)]

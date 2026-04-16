@@ -3299,12 +3299,14 @@ fn compare_column_search_rows(left: &ColumnSearchRow, right: &ColumnSearchRow) -
 }
 
 fn compare_search_candidates(left: &SearchCandidate<'_>, right: &SearchCandidate<'_>) -> Ordering {
-    compare_scores_desc(
-        left.indicator_parent_score.unwrap_or_default(),
-        right.indicator_parent_score.unwrap_or_default(),
-    )
-    .then_with(|| compare_scores_desc(left.score, right.score))
-    .then_with(|| left.unique_id.cmp(&right.unique_id))
+    compare_scores_desc(left.score, right.score)
+        .then_with(|| {
+            compare_scores_desc(
+                left.indicator_parent_score.unwrap_or_default(),
+                right.indicator_parent_score.unwrap_or_default(),
+            )
+        })
+        .then_with(|| left.unique_id.cmp(&right.unique_id))
 }
 
 fn entity_column_meta_lookup(entity: &ArchivedEntity) -> HashMap<&str, &ArchivedColumnMetaSummary> {
@@ -4037,6 +4039,28 @@ mod candidate_tests {
             apply_parent_coherence_bonus(rows, &SearchConfig::default().indicator_ranking);
         assert_eq!(adjusted[0].parent_unique_id, "model.pkg.fact_orders");
         assert_eq!(adjusted[0].indicator_name, "gmv");
+    }
+
+    #[test]
+    fn compare_search_candidates_orders_by_final_score_before_parent_signal() {
+        let left = SearchCandidate {
+            unique_id: "model.pkg.high_score".to_string(),
+            entity: None,
+            score: 10.0,
+            support_signals: None,
+            indicator_parent_score: Some(0.2),
+            explain: None,
+        };
+        let right = SearchCandidate {
+            unique_id: "model.pkg.low_score".to_string(),
+            entity: None,
+            score: 8.0,
+            support_signals: None,
+            indicator_parent_score: Some(0.9),
+            explain: None,
+        };
+
+        assert_eq!(compare_search_candidates(&left, &right), Ordering::Less);
     }
 
     #[test]

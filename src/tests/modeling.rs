@@ -134,3 +134,45 @@ async fn test_modelling_consistency_report_surfaces_duplicate_indicators() {
         .expect("overlap_candidates");
     assert!(!overlap_candidates.is_empty());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_modelling_consistency_report_applies_section_offset() {
+    let searcher = modeling_env();
+    let page_1 = searcher
+        .modelling_consistency_report(&ModellingConsistencyReportParams {
+            resource_types: vec!["model".to_string()],
+            pagination: PaginationParams {
+                limit: 1,
+                offset: 0,
+            },
+            min_score: None,
+        })
+        .await
+        .json();
+    let page_2 = searcher
+        .modelling_consistency_report(&ModellingConsistencyReportParams {
+            resource_types: vec!["model".to_string()],
+            pagination: PaginationParams {
+                limit: 1,
+                offset: 1,
+            },
+            min_score: None,
+        })
+        .await
+        .json();
+
+    let overlap_page_1 = page_1
+        .get("data")
+        .and_then(|data| data.get("overlap_candidates"))
+        .and_then(JsonValue::as_array)
+        .expect("page_1 overlap_candidates");
+    let overlap_page_2 = page_2
+        .get("data")
+        .and_then(|data| data.get("overlap_candidates"))
+        .and_then(JsonValue::as_array)
+        .expect("page_2 overlap_candidates");
+
+    assert_eq!(overlap_page_1.len(), 1);
+    assert_eq!(overlap_page_2.len(), 1);
+    assert_ne!(overlap_page_1[0], overlap_page_2[0]);
+}
