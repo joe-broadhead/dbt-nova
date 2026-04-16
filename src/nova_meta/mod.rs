@@ -731,7 +731,7 @@ fn validate_entity_scope_rules(
     nova: &JsonMap<String, JsonValue>,
 ) -> Vec<NovaMetaFinding> {
     let mut findings = Vec::new();
-    let columns = &target.declared_columns;
+    let columns = validates_field_references(target).then_some(&target.declared_columns);
 
     if nova.contains_key("metric") && nova.contains_key("metrics") {
         findings.push(semantic_error(
@@ -775,7 +775,7 @@ fn validate_grain(
     target: &NovaMetaTarget,
     base_path: &str,
     grain: &JsonMap<String, JsonValue>,
-    columns: &BTreeSet<String>,
+    columns: Option<&BTreeSet<String>>,
 ) -> Vec<NovaMetaFinding> {
     let mut findings = Vec::new();
     let primary_keys = string_array(grain.get("primary_key"));
@@ -848,7 +848,7 @@ fn validate_grain(
 fn validate_measures(
     target: &NovaMetaTarget,
     measures: &[JsonValue],
-    columns: &BTreeSet<String>,
+    columns: Option<&BTreeSet<String>>,
 ) -> Vec<NovaMetaFinding> {
     let mut findings = Vec::new();
     for (index, measure) in measures.iter().enumerate() {
@@ -897,7 +897,7 @@ fn validate_metric(
     target: &NovaMetaTarget,
     base_path: &str,
     metric: &JsonMap<String, JsonValue>,
-    columns: &BTreeSet<String>,
+    columns: Option<&BTreeSet<String>>,
 ) -> Vec<NovaMetaFinding> {
     let mut findings = Vec::new();
     findings.extend(validate_required_non_blank_string(
@@ -1258,7 +1258,7 @@ fn validate_governance_rules(
 
 fn validate_field_exists(
     target: &NovaMetaTarget,
-    columns: &BTreeSet<String>,
+    columns: Option<&BTreeSet<String>>,
     field: Option<&str>,
     path: &str,
 ) -> Vec<NovaMetaFinding> {
@@ -1273,6 +1273,9 @@ fn validate_field_exists(
             Some(path.to_string()),
         )];
     }
+    let Some(columns) = columns else {
+        return Vec::new();
+    };
     if columns.contains(field) {
         return Vec::new();
     }
@@ -1355,40 +1358,66 @@ fn validate_filter_operator(
     let field_path = format!("{path}.operator");
 
     match operator {
-        Some("between") if values != 2 => findings.push(semantic_error(
-            target,
-            "invalid_filter_values",
-            "operator 'between' requires exactly 2 values".to_string(),
-            Some(field_path),
-        )),
-        Some("is_null" | "is_not_null") if values != 0 => findings.push(semantic_error(
-            target,
-            "invalid_filter_values",
-            "operator 'is_null' and 'is_not_null' cannot include values".to_string(),
-            Some(field_path),
-        )),
-        Some("=" | "!=" | ">" | ">=" | "<" | "<=") if values != 1 => findings.push(semantic_error(
-            target,
-            "invalid_filter_values",
-            "comparison operators require exactly 1 value".to_string(),
-            Some(field_path),
-        )),
-        Some("in" | "not_in") if values == 0 => findings.push(semantic_error(
-            target,
-            "invalid_filter_values",
-            "operator 'in' and 'not_in' require at least 1 value".to_string(),
-            Some(field_path),
-        )),
+        Some("between") => {
+            if values != 2 {
+                findings.push(semantic_error(
+                    target,
+                    "invalid_filter_values",
+                    "operator 'between' requires exactly 2 values".to_string(),
+                    Some(field_path),
+                ));
+            }
+        }
+        Some("is_null" | "is_not_null") => {
+            if values != 0 {
+                findings.push(semantic_error(
+                    target,
+                    "invalid_filter_values",
+                    "operator 'is_null' and 'is_not_null' cannot include values".to_string(),
+                    Some(field_path),
+                ));
+            }
+        }
+        Some("=" | "!=" | ">" | ">=" | "<" | "<=") => {
+            if values != 1 {
+                findings.push(semantic_error(
+                    target,
+                    "invalid_filter_values",
+                    "comparison operators require exactly 1 value".to_string(),
+                    Some(field_path),
+                ));
+            }
+        }
+        Some("in" | "not_in") => {
+            if values == 0 {
+                findings.push(semantic_error(
+                    target,
+                    "invalid_filter_values",
+                    "operator 'in' and 'not_in' require at least 1 value".to_string(),
+                    Some(field_path),
+                ));
+            }
+        }
         Some(operator) if operator.trim().is_empty() => findings.push(semantic_error(
             target,
             "blank_operator",
             "recommended filter operator cannot be blank".to_string(),
             Some(field_path),
         )),
+        Some(operator) => findings.push(semantic_error(
+            target,
+            "unsupported_filter_operator",
+            format!("unsupported recommended filter operator '{operator}'"),
+            Some(field_path),
+        )),
         _ => {}
     }
 
     findings
+}
+
+fn validates_field_references(target: &NovaMetaTarget) -> bool {
+    target.definition.resource_kind != NovaMetaResourceKind::Metric
 }
 
 fn semantic_error(
@@ -1658,6 +1687,92 @@ models:
                 .findings
                 .iter()
                 .any(|finding| finding.code == "invalid_filter_values")
+        );
+    }
+
+    #[test]
+    fn validate_nova_meta_rejects_unsupported_filter_operator() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        write_fixture(
+            &temp_dir,
+            "models/orders.yml",
+            r#"
+version: 2
+models:
+  - name: fct_orders
+    meta:
+      nova:
+        metric:
+          name: conversion_rate
+          template: true
+          expression: "sum(orders)"
+          grain:
+            dimensions: ["order_id"]
+          recommended_filters:
+            - field: order_id
+              operator: gte
+              values: ["100"]
+    columns:
+      - name: order_id
+        "#,
+        );
+
+        let report = validate_nova_meta(&NovaMetaValidationOptions {
+            project_dir: temp_dir.path().to_path_buf(),
+            paths: Vec::new(),
+            selector: NovaMetaTargetSelector::default(),
+        });
+
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.code == "unsupported_filter_operator")
+        );
+    }
+
+    #[test]
+    fn validate_nova_meta_skips_field_existence_checks_for_metric_resources() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        write_fixture(
+            &temp_dir,
+            "models/metrics.yml",
+            r#"
+version: 2
+metrics:
+  - name: orders_conversion
+    meta:
+      nova:
+        metric:
+          name: conversion_rate
+          template: true
+          expression: "sum(orders) / nullif(sum(sessions), 0)"
+          grain:
+            time_field: metric_date
+            dimensions: ["country_code"]
+          recommended_filters:
+            - field: channel
+              operator: "="
+              values: ["web"]
+        "#,
+        );
+
+        let report = validate_nova_meta(&NovaMetaValidationOptions {
+            project_dir: temp_dir.path().to_path_buf(),
+            paths: Vec::new(),
+            selector: NovaMetaTargetSelector {
+                resource_kind: Some(NovaMetaResourceKind::Metric),
+                resource_name: Some("orders_conversion".to_string()),
+                column: None,
+            },
+        });
+
+        assert_eq!(report.error_count, 0);
+        assert!(
+            !report
+                .findings
+                .iter()
+                .any(|finding| finding.code == "missing_referenced_field")
         );
     }
 
