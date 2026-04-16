@@ -33,6 +33,13 @@ This keeps the real workflow logic in one place while letting each transport wra
 - command/tool syntax
 - boundaries where CLI and MCP differ
 
+The shared layer also holds reusable output templates for current and upcoming skills, including:
+- analyst evidence and report templates
+- engineer ship checklists
+- governance audit and remediation queue templates
+- BI engineer dashboard, metric card, dataset contract, and viz QA templates
+- KPI investigation, refactor-plan, and overlap-audit templates for future debugger/architecture/cleanup skills
+
 ## Install in common tools
 
 ### Installer shortcut (`~/.agents/skills`)

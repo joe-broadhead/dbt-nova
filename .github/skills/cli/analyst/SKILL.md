@@ -33,11 +33,13 @@ metadata:
 ## Load these shared references before substantive work
 
 - `../../shared/analyst/references/workflow.md`
+- `../../shared/analyst/assets/evidence-block.md`
 - `../../shared/analyst/assets/report-template.md`
 
 ## References
 
 - `../../shared/analyst/references/workflow.md`
+- `../../shared/analyst/assets/evidence-block.md`
 - `../../shared/analyst/assets/report-template.md`
 - `docs/getting-started/cli.md`
 - `docs/api/tools.md`

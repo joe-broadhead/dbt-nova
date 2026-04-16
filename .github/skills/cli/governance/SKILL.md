@@ -36,6 +36,7 @@ metadata:
 - `../../shared/governance/references/metadata-rubric.md`
 - `../../shared/common/references/manifest-refresh.md`
 - `../../shared/governance/assets/governance-audit-template.md`
+- `../../shared/governance/assets/remediation-queue-template.md`
 
 ## References
 
@@ -43,6 +44,7 @@ metadata:
 - `../../shared/governance/references/metadata-rubric.md`
 - `../../shared/common/references/manifest-refresh.md`
 - `../../shared/governance/assets/governance-audit-template.md`
+- `../../shared/governance/assets/remediation-queue-template.md`
 - `docs/getting-started/cli.md`
 - `docs/features/metadata-audit.md`
 - `docs/features/metadata-scoring.md`

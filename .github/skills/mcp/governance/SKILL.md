@@ -32,4 +32,5 @@ metadata:
 - `../../shared/governance/references/metadata-rubric.md`
 - `../../shared/common/references/manifest-refresh.md`
 - `../../shared/governance/assets/governance-audit-template.md`
+- `../../shared/governance/assets/remediation-queue-template.md`
 - `references/tool-recipes.md`
