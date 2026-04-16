@@ -756,6 +756,17 @@ async fn test_indicator_inventory_canonical_only_filters_noncanonical_rows() {
             .and_then(JsonValue::as_array)
             .is_some()
     );
+    let entity_canonical = indicator_row(
+        &rows,
+        "model.pkg.fact_orders_entity_canonical_only",
+        "net_revenue",
+    );
+    assert_eq!(
+        entity_canonical
+            .get("canonical")
+            .and_then(JsonValue::as_bool),
+        Some(true)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

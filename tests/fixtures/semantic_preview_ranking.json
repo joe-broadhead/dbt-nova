@@ -126,6 +126,51 @@
         }
       }
     },
+    "model.pkg.fact_orders_entity_canonical_only": {
+      "name": "fact_orders_entity_canonical_only",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "description": "Canonical order revenue model with entity-level canonical metadata only.",
+      "path": "models/marts/fact_orders_entity_canonical_only.sql",
+      "original_file_path": "models/marts/fact_orders_entity_canonical_only.sql",
+      "alias": "fact_orders_entity_canonical_only",
+      "config": {"enabled": true},
+      "raw_code": "select 1 as order_id, 10 as net_revenue_amount",
+      "compiled_code": "select 1 as order_id, 10 as net_revenue_amount",
+      "columns": {
+        "order_id": {"name": "order_id", "description": "Order id."},
+        "net_revenue_amount": {
+          "name": "net_revenue_amount",
+          "description": "Net revenue amount."
+        },
+        "order_date": {
+          "name": "order_date",
+          "description": "Order date."
+        }
+      },
+      "meta": {
+        "nova": {
+          "canonical": true,
+          "domains": ["commerce"],
+          "grain": {
+            "primary_key": ["order_id"],
+            "time_field": "order_date"
+          },
+          "measures": [
+            {
+              "name": "net_revenue",
+              "description": "Net revenue after discounts.",
+              "expression": "sum(net_revenue_amount)",
+              "type": "sum",
+              "field": "net_revenue_amount",
+              "synonyms": ["net sales"]
+            }
+          ]
+        }
+      }
+    },
     "model.pkg.promotions_gmv_specialized": {
       "name": "promotions_gmv_specialized",
       "resource_type": "model",
@@ -281,6 +326,7 @@
   "parent_map": {
     "model.pkg.fact_orders_canonical": [],
     "model.pkg.fact_orders_channel": [],
+    "model.pkg.fact_orders_entity_canonical_only": [],
     "model.pkg.promotions_gmv_specialized": [],
     "model.pkg.crc_gmv_specialized": [],
     "model.pkg.orders_semantic_templates": [],

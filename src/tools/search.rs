@@ -903,26 +903,38 @@ impl ManifestSearch {
 
             if indicator_type_selected(indicator_filter, "measure") {
                 for measure in nova.measures.iter() {
-                    if canonical_only && !measure.canonical {
+                    let canonical =
+                        inventory_indicator_is_canonical(nova.canonical, measure.canonical);
+                    if canonical_only && !canonical {
                         continue;
                     }
                     rows.push(build_measure_inventory_row(
-                        unique_id, entity, nova, measure,
+                        unique_id, entity, nova, measure, canonical,
                     ));
                 }
             }
 
             if indicator_type_selected(indicator_filter, "metric") {
-                if let Some(metric) = nova.metric.as_ref()
-                    && (!canonical_only || metric.canonical)
-                {
-                    rows.push(build_metric_inventory_row(unique_id, entity, nova, metric));
+                if let Some(metric) = nova.metric.as_ref() {
+                    let canonical =
+                        inventory_indicator_is_canonical(nova.canonical, metric.canonical);
+                    if canonical_only && !canonical {
+                        // skip
+                    } else {
+                        rows.push(build_metric_inventory_row(
+                            unique_id, entity, nova, metric, canonical,
+                        ));
+                    }
                 }
                 for metric in nova.metrics.iter() {
-                    if canonical_only && !metric.canonical {
+                    let canonical =
+                        inventory_indicator_is_canonical(nova.canonical, metric.canonical);
+                    if canonical_only && !canonical {
                         continue;
                     }
-                    rows.push(build_metric_inventory_row(unique_id, entity, nova, metric));
+                    rows.push(build_metric_inventory_row(
+                        unique_id, entity, nova, metric, canonical,
+                    ));
                 }
             }
         }
@@ -2284,11 +2296,12 @@ fn build_measure_inventory_row(
     entity: &ArchivedEntity,
     nova: &ArchivedNovaMeta,
     measure: &ArchivedNovaMeasure,
+    canonical: bool,
 ) -> IndicatorInventoryRow {
     IndicatorInventoryRow {
         indicator_name: measure.name.as_str().to_string(),
         indicator_type: "measure".to_string(),
-        canonical: measure.canonical,
+        canonical,
         synonyms: measure
             .synonyms
             .iter()
@@ -2382,11 +2395,12 @@ fn build_metric_inventory_row(
     entity: &ArchivedEntity,
     nova: &ArchivedNovaMeta,
     metric: &ArchivedNovaMetric,
+    canonical: bool,
 ) -> IndicatorInventoryRow {
     IndicatorInventoryRow {
         indicator_name: metric.name.as_str().to_string(),
         indicator_type: "metric".to_string(),
-        canonical: metric.canonical,
+        canonical,
         synonyms: metric
             .synonyms
             .iter()
@@ -2416,6 +2430,10 @@ fn build_metric_inventory_row(
             .collect(),
         grain: grain_summary(metric.grain.as_ref().or(nova.grain.as_ref())),
     }
+}
+
+fn inventory_indicator_is_canonical(entity_canonical: bool, indicator_canonical: bool) -> bool {
+    entity_canonical || indicator_canonical
 }
 
 fn build_column_inventory_row(

@@ -755,11 +755,19 @@ fn multi_grain_entity_rows(profiles: &[EntityOverlapProfile]) -> Vec<MultiGrainE
 }
 
 fn grain_signature_key(grain: &GrainVariant) -> String {
+    let mut primary_key = grain.primary_key.clone();
+    primary_key.sort();
+    primary_key.dedup();
+
+    let mut dimensions = grain.dimensions.clone();
+    dimensions.sort();
+    dimensions.dedup();
+
     format!(
         "pk={};time={};dim={}",
-        grain.primary_key.join(","),
+        primary_key.join(","),
         grain.time_field.clone().unwrap_or_default(),
-        grain.dimensions.join(",")
+        dimensions.join(",")
     )
 }
 
@@ -977,6 +985,40 @@ mod tests {
         assert!(comparison.exact_match);
         assert!(comparison.same_time_field);
         assert_eq!(comparison.shared_primary_key, vec!["order_id".to_string()]);
+        assert_eq!(
+            comparison.shared_dimensions,
+            vec!["country_code".to_string(), "sales_channel".to_string()]
+        );
+    }
+
+    #[test]
+    fn compare_entity_grains_treats_reordered_fields_as_exact_match() {
+        let left = profile_with(
+            "model.pkg.left",
+            &[],
+            vec![grain_variant(
+                &["order_id", "line_id"],
+                Some("order_date"),
+                &["country_code", "sales_channel"],
+            )],
+        );
+        let right = profile_with(
+            "model.pkg.right",
+            &[],
+            vec![grain_variant(
+                &["line_id", "order_id"],
+                Some("order_date"),
+                &["sales_channel", "country_code"],
+            )],
+        );
+
+        let comparison = compare_entity_grains(&left, &right);
+        assert!(comparison.exact_match);
+        assert!(comparison.same_time_field);
+        assert_eq!(
+            comparison.shared_primary_key,
+            vec!["line_id".to_string(), "order_id".to_string()]
+        );
         assert_eq!(
             comparison.shared_dimensions,
             vec!["country_code".to_string(), "sales_channel".to_string()]
