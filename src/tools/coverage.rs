@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use serde_json::Value as JsonValue;
 
 use crate::error::Result;
+use crate::manifest::entity::column_primary_key_bool;
 use crate::manifest::search::ManifestSearch;
 use crate::params::{DEFAULT_TEST_COVERAGE_COLUMNS_LIMIT, GetTestCoverageParams};
 use crate::responses::SuccessResponse;
@@ -95,11 +96,7 @@ impl ManifestSearch {
 
         if let Some(cols) = entity_json.get("columns").and_then(|c| c.as_object()) {
             for (col_name, col_info) in cols {
-                let is_pk = col_info
-                    .get("meta")
-                    .and_then(|m| m.get("primary_key"))
-                    .and_then(JsonValue::as_bool)
-                    .unwrap_or(false);
+                let is_pk = column_primary_key_bool(col_info);
 
                 if is_pk {
                     let key = format!("{}:{col_name}", &entity_id);

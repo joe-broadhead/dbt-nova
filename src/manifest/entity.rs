@@ -293,6 +293,59 @@ fn get_string(value: &serde_json::Value, key: &str) -> Option<String> {
     value.get(key).and_then(|v| v.as_str()).map(str::to_string)
 }
 
+#[must_use]
+pub fn entity_meta_field_json<'a>(value: &'a JsonValue, field: &str) -> Option<&'a JsonValue> {
+    value
+        .get("meta")
+        .and_then(|meta| meta.get(field))
+        .or_else(|| {
+            value
+                .get("config")
+                .and_then(|config| config.get("meta"))
+                .and_then(|meta| meta.get(field))
+        })
+}
+
+#[must_use]
+pub fn entity_nova_meta_json(value: &JsonValue) -> Option<&JsonValue> {
+    entity_meta_field_json(value, "nova")
+}
+
+#[must_use]
+pub fn column_meta_json(column: &JsonValue) -> Option<&JsonValue> {
+    column
+        .get("meta")
+        .or_else(|| column.get("config").and_then(|config| config.get("meta")))
+}
+
+#[must_use]
+pub fn column_meta_field_json<'a>(column: &'a JsonValue, field: &str) -> Option<&'a JsonValue> {
+    column
+        .get("meta")
+        .and_then(|meta| meta.get(field))
+        .or_else(|| {
+            column
+                .get("config")
+                .and_then(|config| config.get("meta"))
+                .and_then(|meta| meta.get(field))
+        })
+}
+
+#[must_use]
+pub fn column_nova_meta_json(column: &JsonValue) -> Option<&JsonValue> {
+    column_meta_field_json(column, "nova")
+}
+
+#[must_use]
+pub fn column_primary_key_json(column: &JsonValue) -> Option<&JsonValue> {
+    column_meta_field_json(column, "primary_key")
+}
+
+#[must_use]
+pub fn column_primary_key_bool(column: &JsonValue) -> bool {
+    parse_bool_like(column_primary_key_json(column)).unwrap_or(false)
+}
+
 fn get_tags(value: &serde_json::Value) -> Vec<String> {
     let Some(tags) = value.get("tags") else {
         return Vec::new();
@@ -362,10 +415,7 @@ fn get_column_meta(value: &serde_json::Value, column_names: &[String]) -> Vec<Co
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string);
-        let nova = column
-            .get("meta")
-            .and_then(|m| m.get("nova"))
-            .and_then(|v| v.as_object());
+        let nova = column_nova_meta_json(column).and_then(JsonValue::as_object);
         let role = nova
             .and_then(|n| n.get("role"))
             .and_then(|v| v.as_str())
@@ -394,14 +444,7 @@ fn get_column_meta(value: &serde_json::Value, column_names: &[String]) -> Vec<Co
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let primary_key = column
-            .get("meta")
-            .and_then(|m| m.get("primary_key"))
-            .and_then(|v| {
-                v.as_bool()
-                    .or_else(|| v.as_str().map(|s| s.eq_ignore_ascii_case("true")))
-            })
-            .unwrap_or(false);
+        let primary_key = column_primary_key_bool(column);
 
         if description.is_none()
             && role.is_none()
@@ -462,10 +505,7 @@ fn has_compiled_sql(value: &serde_json::Value) -> bool {
 
 #[allow(clippy::too_many_lines)]
 fn get_nova_meta(value: &serde_json::Value) -> Option<NovaMeta> {
-    let nova = value
-        .get("meta")
-        .and_then(|m| m.get("nova"))
-        .and_then(|v| v.as_object())?;
+    let nova = entity_nova_meta_json(value).and_then(JsonValue::as_object)?;
 
     let role = nova
         .get("role")
@@ -796,5 +836,53 @@ mod tests {
         assert!(meta.measures[0].canonical);
         assert_eq!(meta.metrics.len(), 1);
         assert!(meta.metrics[0].canonical);
+    }
+
+    #[test]
+    fn entity_nova_meta_prefers_legacy_meta_over_config_meta() {
+        let entity = serde_json::json!({
+            "meta": {
+                "nova": {
+                    "role": "dimension"
+                }
+            },
+            "config": {
+                "meta": {
+                    "nova": {
+                        "role": "measure"
+                    }
+                }
+            }
+        });
+
+        let nova = entity_nova_meta_json(&entity).expect("expected nova metadata");
+        assert_eq!(
+            nova.get("role").and_then(JsonValue::as_str),
+            Some("dimension")
+        );
+    }
+
+    #[test]
+    fn column_meta_helpers_fallback_to_config_meta() {
+        let column = serde_json::json!({
+            "name": "order_id",
+            "config": {
+                "meta": {
+                    "primary_key": true,
+                    "nova": {
+                        "role": "identifier"
+                    }
+                }
+            }
+        });
+
+        assert!(column_meta_json(&column).is_some());
+        assert!(column_primary_key_bool(&column));
+        assert_eq!(
+            column_nova_meta_json(&column)
+                .and_then(|nova| nova.get("role"))
+                .and_then(JsonValue::as_str),
+            Some("identifier")
+        );
     }
 }

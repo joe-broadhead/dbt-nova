@@ -1,5 +1,6 @@
 use serde_json::Value as JsonValue;
 
+use crate::manifest::entity::{column_nova_meta_json, entity_nova_meta_json};
 use crate::manifest::search::ManifestSearch;
 
 use crate::tools::metadata_score::CategoryBreakdown;
@@ -18,7 +19,7 @@ impl ManifestSearch {
         include_recommendations: bool,
         recommendations: &mut Vec<JsonValue>,
     ) -> CategoryBreakdown {
-        let nova = entity_json.get("meta").and_then(|m| m.get("nova"));
+        let nova = entity_nova_meta_json(entity_json);
         let columns = entity_json
             .get("columns")
             .and_then(|c| c.as_object())
@@ -298,7 +299,7 @@ fn column_semantic_coverage(
     }
     let mut with_semantic = 0usize;
     for column in columns.values() {
-        let nova = column.get("meta").and_then(|m| m.get("nova"));
+        let nova = column_nova_meta_json(column);
         if nova.and_then(|n| n.get("role")).is_some()
             || nova.and_then(|n| n.get("semantic_type")).is_some()
         {

@@ -1,5 +1,6 @@
 use serde_json::Value as JsonValue;
 
+use crate::manifest::entity::{column_nova_meta_json, column_primary_key_bool};
 use crate::manifest::search::ManifestSearch;
 
 use crate::tools::metadata_score::CategoryBreakdown;
@@ -387,13 +388,8 @@ fn column_has_tests(search: &ManifestSearch, unique_id: &str, column_name: &str)
 }
 
 fn column_role(col: &JsonValue) -> Option<String> {
-    let meta = col.get("meta").and_then(|m| m.as_object());
-    let is_pk = meta
-        .and_then(|m| m.get("primary_key"))
-        .and_then(JsonValue::as_bool)
-        .unwrap_or(false);
-    let role = meta
-        .and_then(|m| m.get("nova"))
+    let is_pk = column_primary_key_bool(col);
+    let role = column_nova_meta_json(col)
         .and_then(|n| n.get("role"))
         .and_then(JsonValue::as_str)
         .map(str::to_string);
@@ -435,11 +431,7 @@ fn summarize_constraints(columns: &serde_json::Map<String, JsonValue>) -> Constr
 fn primary_keys(columns: &serde_json::Map<String, JsonValue>) -> (Vec<String>, bool) {
     let mut pk_cols = Vec::new();
     for (name, col) in columns {
-        let is_pk = col
-            .get("meta")
-            .and_then(|m| m.get("primary_key"))
-            .and_then(JsonValue::as_bool)
-            .unwrap_or(false);
+        let is_pk = column_primary_key_bool(col);
         if is_pk {
             pk_cols.push(name.clone());
         }

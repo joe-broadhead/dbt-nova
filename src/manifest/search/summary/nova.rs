@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use serde_json::Value as JsonValue;
 
+use crate::manifest::entity::entity_nova_meta_json;
 use crate::manifest::entity::{ArchivedNovaGrain, ArchivedNovaMeta};
 use crate::manifest::search::{SemanticPreviewItem, match_nova_semantics};
 
@@ -29,9 +30,7 @@ impl ManifestSearch {
         required_fields.sort();
         required_fields.dedup();
 
-        let nova_json = entity_json
-            .get("meta")
-            .and_then(|m| m.get("nova"))
+        let nova_json = entity_nova_meta_json(entity_json)
             .cloned()
             .unwrap_or(JsonValue::Null);
         if nova_json.is_null() {

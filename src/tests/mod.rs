@@ -8,6 +8,7 @@ mod batch_get;
 mod column_lineage;
 mod columns;
 pub(crate) mod common;
+mod config_meta;
 mod context;
 mod coverage;
 mod deep_metadata;

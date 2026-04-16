@@ -1,0 +1,101 @@
+{
+  "metadata": {
+    "dbt_version": "1.11.6",
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json"
+  },
+  "nodes": {
+    "model.pkg.config_meta_model": {
+      "name": "config_meta_model",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "db",
+      "schema": "sch",
+      "description": "Order summary model backed only by config.meta metadata.",
+      "raw_code": "select order_id, market_code, order_amount from source_table",
+      "config": {
+        "meta": {
+          "owner": "analytics",
+          "nova": {
+            "canonical": true,
+            "synonyms": ["orders rollup"],
+            "domains": ["commerce"],
+            "use_cases": ["weekly reporting"],
+            "grain": {
+              "primary_key": ["order_id"],
+              "dimensions": ["market_code"]
+            },
+            "measures": [
+              {
+                "name": "gross_sales",
+                "field": "order_amount",
+                "synonyms": ["revenue"],
+                "canonical": true
+              }
+            ],
+            "governance": {
+              "sensitivity": "internal",
+              "compliance": ["gdpr"]
+            }
+          }
+        }
+      },
+      "columns": {
+        "market_code": {
+          "name": "market_code",
+          "data_type": "string",
+          "description": "Market code",
+          "config": {
+            "meta": {
+              "nova": {
+                "role": "dimension",
+                "semantic_type": "market",
+                "example_values": ["ES", "FR"]
+              }
+            }
+          }
+        },
+        "order_amount": {
+          "name": "order_amount",
+          "data_type": "numeric",
+          "description": "Gross sales amount",
+          "config": {
+            "meta": {
+              "nova": {
+                "role": "measure",
+                "semantic_type": "currency_amount"
+              }
+            }
+          }
+        },
+        "order_id": {
+          "name": "order_id",
+          "data_type": "string",
+          "description": "Order identifier",
+          "config": {
+            "meta": {
+              "primary_key": true,
+              "nova": {
+                "role": "identifier",
+                "semantic_type": "order_id",
+                "synonyms": ["purchase_id"]
+              }
+            }
+          }
+        }
+      },
+      "tags": ["finance"],
+      "original_file_path": "models/config_meta_model.sql",
+      "path": "models/config_meta_model.sql"
+    }
+  },
+  "sources": {},
+  "macros": {},
+  "docs": {},
+  "groups": {},
+  "exposures": {},
+  "metrics": {},
+  "parent_map": {
+    "model.pkg.config_meta_model": []
+  },
+  "child_map": {}
+}

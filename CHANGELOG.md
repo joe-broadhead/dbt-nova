@@ -58,6 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reusable metadata audit workflows now resolve `selection_mode=changed` from
   immutable pull-request SHAs when available, so reruns stay stable after the
   base branch has advanced.
+- Manifest metadata readers now fall back from legacy `meta` to dbt 1.11+
+  `config.meta` for Nova entity/column metadata, primary-key detection, search
+  indexing, and metadata scoring, while preserving legacy-field precedence when
+  both shapes are present.
 - Public docs, examples, and fixtures were sanitized to remove private
   manifest-specific vocabulary from the public repository.
 - Hosted HTTP startup/bind fallback handling is more robust: invalid `PORT` fallback is ignored, MCP paths are normalized/validated, and reserved probe paths are rejected.
