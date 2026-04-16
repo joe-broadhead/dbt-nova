@@ -8,11 +8,13 @@ We ship two built-in skill bundles under `.github/skills/`:
 
 - `.github/skills/mcp/`
   - `mcp-analyst`
+  - `mcp-bi-engineer`
   - `mcp-engineer`
   - `mcp-governance`
   - `mcp-nova-meta-authoring`
 - `.github/skills/cli/`
   - `cli-analyst`
+  - `cli-bi-engineer`
   - `cli-engineer`
   - `cli-governance`
   - `cli-nova-meta-authoring`
@@ -70,6 +72,8 @@ Codex supports Agent Skills for both the CLI and IDE extensions. You can install
 mkdir -p .codex/skills
 cp -R .github/skills/mcp/analyst .codex/skills/mcp-analyst
 cp -R .github/skills/cli/analyst .codex/skills/cli-analyst
+cp -R .github/skills/mcp/bi-engineer .codex/skills/mcp-bi-engineer
+cp -R .github/skills/cli/bi-engineer .codex/skills/cli-bi-engineer
 cp -R .github/skills/mcp/engineer .codex/skills/mcp-engineer
 cp -R .github/skills/cli/engineer .codex/skills/cli-engineer
 cp -R .github/skills/mcp/governance .codex/skills/mcp-governance
@@ -97,6 +101,8 @@ zip -r mcp-analyst.skill.zip analyst
 mkdir -p ~/.claude/skills
 cp -R /path/to/repo/.github/skills/mcp/analyst ~/.claude/skills/mcp-analyst
 cp -R /path/to/repo/.github/skills/cli/analyst ~/.claude/skills/cli-analyst
+cp -R /path/to/repo/.github/skills/mcp/bi-engineer ~/.claude/skills/mcp-bi-engineer
+cp -R /path/to/repo/.github/skills/cli/bi-engineer ~/.claude/skills/cli-bi-engineer
 cp -R /path/to/repo/.github/skills/mcp/engineer ~/.claude/skills/mcp-engineer
 cp -R /path/to/repo/.github/skills/cli/engineer ~/.claude/skills/cli-engineer
 cp -R /path/to/repo/.github/skills/mcp/governance ~/.claude/skills/mcp-governance
@@ -115,6 +121,8 @@ Gemini CLI discovers skills from three tiers: workspace (`.gemini/skills/`), use
 mkdir -p .gemini/skills
 cp -R .github/skills/mcp/analyst .gemini/skills/mcp-analyst
 cp -R .github/skills/cli/analyst .gemini/skills/cli-analyst
+cp -R .github/skills/mcp/bi-engineer .gemini/skills/mcp-bi-engineer
+cp -R .github/skills/cli/bi-engineer .gemini/skills/cli-bi-engineer
 cp -R .github/skills/mcp/engineer .gemini/skills/mcp-engineer
 cp -R .github/skills/cli/engineer .gemini/skills/cli-engineer
 cp -R .github/skills/mcp/governance .gemini/skills/mcp-governance
