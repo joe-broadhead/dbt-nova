@@ -248,6 +248,45 @@ Example response shape:
 }
 ```
 
+### `compare_grains`
+Compare effective grain between two entities, including entity-level and metric-level grain variants.
+
+Required:
+- `entity1`
+- `entity2`
+
+Optional:
+- `entity1_resource_type`
+- `entity2_resource_type`
+
+```json
+{"name":"compare_grains","arguments":{"entity1":"model.package.base__sales_enriched_sql","entity2":"model.package.orders_semantic_templates"}}
+```
+
+### `find_entity_overlap`
+Detect overlapping entities using shared semantic evidence such as domains, synonyms, indicators, semantic types, and grain hints.
+
+Common:
+- `id_or_name` and optional `resource_type` to focus overlap on one entity
+- `resource_types`
+- `limit`, `offset`, `min_score`
+
+```json
+{"name":"find_entity_overlap","arguments":{"resource_types":["model"],"limit":25,"offset":0}}
+```
+
+### `modelling_consistency_report`
+Audit project-level overlap, duplicate indicators, canonical conflicts, and grain drift.
+
+Common:
+- `resource_types`
+- `limit` (max rows per report section)
+- `min_score` (applies to overlap section)
+
+```json
+{"name":"modelling_consistency_report","arguments":{"resource_types":["model"],"limit":20}}
+```
+
 ### `get_entity`
 Fetch a single entity by `unique_id` or name.
 

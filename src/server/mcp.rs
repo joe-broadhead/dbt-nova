@@ -16,12 +16,13 @@ use tracing::instrument;
 use crate::error::DbtNovaError;
 use crate::manifest::search::{ManifestSearch, ManifestSearchHandle};
 use crate::params::{
-    BatchGetParams, ColumnInventoryParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams,
-    GetColumnLineageParams, GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams,
-    GetLineageParams, GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
-    GetUndocumentedParams, IndicatorInventoryParams, ListEntitiesParams, ReloadManifestParams,
-    RunRecipeParams, SearchColumnsParams, SearchIndicatorParams, SearchParams, SearchRecipesParams,
-    ValidateDagParams,
+    BatchGetParams, ColumnInventoryParams, CompareGrainsParams, DiffEntitiesParams,
+    ExecuteSqlParams, FindByPathParams, FindEntityOverlapParams, GetColumnLineageParams,
+    GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams, GetLineageParams,
+    GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
+    GetUndocumentedParams, IndicatorInventoryParams, ListEntitiesParams,
+    ModellingConsistencyReportParams, ReloadManifestParams, RunRecipeParams, SearchColumnsParams,
+    SearchIndicatorParams, SearchParams, SearchRecipesParams, ValidateDagParams,
 };
 use crate::responses::SuccessResponse;
 use crate::server::health::build_manifest_health_payload;
@@ -561,6 +562,50 @@ impl DbtNovaServer {
         self.handle_async("column_inventory", None, |searcher| async move {
             searcher.column_inventory(&params.0).await
         })
+        .await
+    }
+
+    /// Compare grain information between two entities.
+    #[tool(
+        name = "compare_grains",
+        description = "Compare effective grain between two entities, including time field, primary key, dimensions, and any grain variants sourced from entity-level or metric-level Nova metadata."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn compare_grains(&self, params: Parameters<CompareGrainsParams>) -> String {
+        self.handle_async("compare_grains", None, |searcher| async move {
+            searcher.compare_grains(&params.0).await
+        })
+        .await
+    }
+
+    /// Find overlapping entities using shared semantic evidence.
+    #[tool(
+        name = "find_entity_overlap",
+        description = "Detect overlapping entities using shared domains, synonyms, indicator names, semantic types, and grain hints. Useful for cleanup, canonicalization, and architecture reviews."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn find_entity_overlap(&self, params: Parameters<FindEntityOverlapParams>) -> String {
+        self.handle_async("find_entity_overlap", None, |searcher| async move {
+            searcher.find_entity_overlap(&params.0).await
+        })
+        .await
+    }
+
+    /// Project-level report for modelling consistency issues.
+    #[tool(
+        name = "modelling_consistency_report",
+        description = "Audit project-level overlap, duplicate indicators, canonical conflicts, and grain drift across entities. Use for cleanup and model architecture workflows."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn modelling_consistency_report(
+        &self,
+        params: Parameters<ModellingConsistencyReportParams>,
+    ) -> String {
+        self.handle_async(
+            "modelling_consistency_report",
+            None,
+            |searcher| async move { searcher.modelling_consistency_report(&params.0).await },
+        )
         .await
     }
 

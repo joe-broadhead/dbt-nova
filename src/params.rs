@@ -176,6 +176,54 @@ pub struct ColumnInventoryParams {
     pub pagination: PaginationParams,
 }
 
+/// Parameters for the compare_grains tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CompareGrainsParams {
+    /// First entity unique ID or name
+    pub entity1: String,
+    /// Optional resource_type to disambiguate entity1 when using name
+    #[serde(default)]
+    pub entity1_resource_type: Option<String>,
+    /// Second entity unique ID or name
+    pub entity2: String,
+    /// Optional resource_type to disambiguate entity2 when using name
+    #[serde(default)]
+    pub entity2_resource_type: Option<String>,
+}
+
+/// Parameters for the find_entity_overlap tool.
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct FindEntityOverlapParams {
+    /// Optional focus entity unique ID or name. When set, only overlap pairs involving this entity are returned.
+    #[serde(default)]
+    pub id_or_name: Option<String>,
+    /// Optional resource_type to disambiguate `id_or_name` when using name.
+    #[serde(default)]
+    pub resource_type: Option<String>,
+    /// Filter candidate entities by resource types (for example: model, source).
+    #[serde(default)]
+    pub resource_types: Vec<String>,
+    #[serde(default, flatten)]
+    pub pagination: PaginationParams,
+    /// Minimum overlap score threshold (0.0+, default: no threshold).
+    #[serde(default)]
+    pub min_score: Option<f32>,
+}
+
+/// Parameters for the modelling_consistency_report tool.
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct ModellingConsistencyReportParams {
+    /// Filter candidate entities by resource types (for example: model, source).
+    #[serde(default)]
+    pub resource_types: Vec<String>,
+    /// Maximum results per report section.
+    #[serde(default, flatten)]
+    pub pagination: PaginationParams,
+    /// Minimum overlap score threshold for the overlap section (0.0+, default: no threshold).
+    #[serde(default)]
+    pub min_score: Option<f32>,
+}
+
 /// Parameters for the get_entity tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetEntityParams {

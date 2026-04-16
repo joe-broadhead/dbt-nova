@@ -15,12 +15,13 @@ use crate::cli::output::{CliEnvelope, error_envelope};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::search::ManifestSearch;
 use crate::params::{
-    BatchGetParams, ColumnInventoryParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams,
-    GetColumnLineageParams, GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams,
-    GetLineageParams, GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
-    GetUndocumentedParams, IndicatorInventoryParams, ListEntitiesParams, ReloadManifestParams,
-    RunRecipeParams, SearchColumnsParams, SearchIndicatorParams, SearchParams, SearchRecipesParams,
-    ValidateDagParams,
+    BatchGetParams, ColumnInventoryParams, CompareGrainsParams, DiffEntitiesParams,
+    ExecuteSqlParams, FindByPathParams, FindEntityOverlapParams, GetColumnLineageParams,
+    GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams, GetLineageParams,
+    GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
+    GetUndocumentedParams, IndicatorInventoryParams, ListEntitiesParams,
+    ModellingConsistencyReportParams, ReloadManifestParams, RunRecipeParams, SearchColumnsParams,
+    SearchIndicatorParams, SearchParams, SearchRecipesParams, ValidateDagParams,
 };
 use crate::responses::SuccessResponse;
 
@@ -35,7 +36,7 @@ struct ToolRegistryEntry {
     dispatch: ToolDispatchFn,
 }
 
-const TOOL_REGISTRY: [ToolRegistryEntry; 30] = [
+const TOOL_REGISTRY: [ToolRegistryEntry; 33] = [
     ToolRegistryEntry {
         name: "search",
         dispatch: dispatch_search,
@@ -55,6 +56,18 @@ const TOOL_REGISTRY: [ToolRegistryEntry; 30] = [
     ToolRegistryEntry {
         name: "column_inventory",
         dispatch: dispatch_column_inventory,
+    },
+    ToolRegistryEntry {
+        name: "compare_grains",
+        dispatch: dispatch_compare_grains,
+    },
+    ToolRegistryEntry {
+        name: "find_entity_overlap",
+        dispatch: dispatch_find_entity_overlap,
+    },
+    ToolRegistryEntry {
+        name: "modelling_consistency_report",
+        dispatch: dispatch_modelling_consistency_report,
     },
     ToolRegistryEntry {
         name: "get_entity",
@@ -511,6 +524,25 @@ fn dispatch_column_inventory(searcher: &ManifestSearch, params: JsonValue) -> To
 }
 
 typed_dispatch!(
+    dispatch_compare_grains,
+    "compare_grains",
+    CompareGrainsParams,
+    compare_grains
+);
+typed_dispatch!(
+    dispatch_find_entity_overlap,
+    "find_entity_overlap",
+    FindEntityOverlapParams,
+    find_entity_overlap
+);
+typed_dispatch!(
+    dispatch_modelling_consistency_report,
+    "modelling_consistency_report",
+    ModellingConsistencyReportParams,
+    modelling_consistency_report
+);
+
+typed_dispatch!(
     dispatch_get_entity,
     "get_entity",
     GetEntityParams,
@@ -880,6 +912,9 @@ mod tests {
             "indicator_inventory",
             "search_columns",
             "column_inventory",
+            "compare_grains",
+            "find_entity_overlap",
+            "modelling_consistency_report",
             "get_entity",
             "list_entities",
             "get_lineage",
