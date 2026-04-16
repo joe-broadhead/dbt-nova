@@ -126,6 +126,49 @@ Example response shape:
 }
 ```
 
+### `indicator_inventory`
+List Nova measures and metrics deterministically, with parent execution context.
+Use this when you need a flat semantic catalog instead of ranked search results.
+
+Common:
+- `indicator_types` (`["metric"]`, `["measure"]`, or omitted for both)
+- `resource_types` (filters parent entity types)
+- `canonical_only` (boolean, defaults to `false`)
+- `limit`, `offset`
+
+```json
+{"name":"indicator_inventory","arguments":{"indicator_types":["measure"],"resource_types":["model"],"canonical_only":true,"limit":100,"offset":0}}
+```
+
+Example response shape:
+
+```json
+{
+  "success": true,
+  "count": 1,
+  "data": [
+    {
+      "indicator_name": "gmv",
+      "indicator_type": "measure",
+      "canonical": true,
+      "synonyms": ["gross merchandise value"],
+      "expression": "sum(gmv_amount)",
+      "field": "gmv_amount",
+      "measure_type": "sum",
+      "parent_unique_id": "model.package.base__sales_enriched_sql",
+      "parent_name": "base__sales_enriched_sql",
+      "parent_resource_type": "model",
+      "relation_name": "analytics.sales.base__sales_enriched",
+      "domains": ["sales", "commerce"],
+      "grain": {
+        "time_field": "order_date",
+        "dimensions": ["country_code", "channel"]
+      }
+    }
+  ]
+}
+```
+
 ### `get_entity`
 Fetch a single entity by `unique_id` or name.
 

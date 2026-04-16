@@ -19,7 +19,9 @@ use crate::manifest::search::{
 };
 use crate::manifest::tantivy_search::{SearchHit, SearchRequest, SearchScope, TantivySearcher};
 use crate::manifest::vector_search::embedding_text_from_archived;
-use crate::params::{DetailLevel, ListEntitiesParams, SearchIndicatorParams, SearchParams};
+use crate::params::{
+    DetailLevel, IndicatorInventoryParams, ListEntitiesParams, SearchIndicatorParams, SearchParams,
+};
 use crate::responses::{SearchResponse, SuccessResponse};
 use crate::utils::{SearchPersona, has_query_syntax, tokenize_alnum_lowercase};
 use tracing::{debug, instrument, warn};
@@ -344,6 +346,49 @@ impl ManifestSearch {
         self.build_indicator_search_response(params, persona, rows)
     }
 
+    /// List Nova measures and metrics deterministically.
+    ///
+    /// # Errors
+    /// Returns an error if indicator filtering is invalid or pagination exceeds configured limits.
+    #[instrument(skip(self, params), fields(tool = "indicator_inventory", limit = params.pagination.limit, offset = params.pagination.offset))]
+    pub async fn indicator_inventory(
+        &self,
+        params: &IndicatorInventoryParams,
+    ) -> Result<JsonValue> {
+        if params.pagination.offset > self.config.search.max_offset {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "Offset exceeds maximum of {}",
+                self.config.search.max_offset
+            )));
+        }
+
+        let resource_filter = normalized_resource_type_filter(&params.resource_types);
+        let indicator_filter = normalized_indicator_type_filter(&params.indicator_types)?;
+        let rows = self.indicator_inventory_rows(
+            resource_filter.as_ref(),
+            indicator_filter.as_ref(),
+            params.canonical_only,
+        )?;
+        let total = rows.len();
+        let limit = self.page_limit(params.pagination.limit);
+        let start = params.pagination.offset.min(total);
+        let end = (start + limit).min(total);
+        let results: Vec<JsonValue> = rows
+            .into_iter()
+            .skip(start)
+            .take(end.saturating_sub(start))
+            .map(serde_json::to_value)
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|error| DbtNovaError::ServerError(error.to_string()))?;
+
+        let count = results.len();
+        let mut response = SuccessResponse::new(results, count).with_total(total);
+        if total > end {
+            response = response.with_truncated(true);
+        }
+        Ok(serde_json::to_value(response)?)
+    }
+
     fn prepare_indicator_search(
         &self,
         params: &SearchIndicatorParams,
@@ -649,6 +694,55 @@ impl ManifestSearch {
         }
 
         rows.sort_by(compare_indicator_rows);
+        Ok(rows)
+    }
+
+    fn indicator_inventory_rows(
+        &self,
+        resource_filter: Option<&HashSet<String>>,
+        indicator_filter: Option<&HashSet<String>>,
+        canonical_only: bool,
+    ) -> Result<Vec<IndicatorInventoryRow>> {
+        let mut rows = Vec::new();
+
+        for unique_id in self.entities.ids() {
+            let Some(entity) = self.get_entity_archived(unique_id)? else {
+                continue;
+            };
+            if !resource_type_allowed_for_search(entity.resource_type_str(), resource_filter) {
+                continue;
+            }
+            let Some(nova) = entity.nova_meta() else {
+                continue;
+            };
+
+            if indicator_type_selected(indicator_filter, "measure") {
+                for measure in nova.measures.iter() {
+                    if canonical_only && !measure.canonical {
+                        continue;
+                    }
+                    rows.push(build_measure_inventory_row(
+                        unique_id, entity, nova, measure,
+                    ));
+                }
+            }
+
+            if indicator_type_selected(indicator_filter, "metric") {
+                if let Some(metric) = nova.metric.as_ref() {
+                    if !canonical_only || metric.canonical {
+                        rows.push(build_metric_inventory_row(unique_id, entity, nova, metric));
+                    }
+                }
+                for metric in nova.metrics.iter() {
+                    if canonical_only && !metric.canonical {
+                        continue;
+                    }
+                    rows.push(build_metric_inventory_row(unique_id, entity, nova, metric));
+                }
+            }
+        }
+
+        rows.sort_by(compare_indicator_inventory_rows);
         Ok(rows)
     }
 
@@ -1206,6 +1300,33 @@ struct IndicatorSearchRow {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct IndicatorInventoryRow {
+    indicator_name: String,
+    indicator_type: String,
+    canonical: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    synonyms: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expression: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    field: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    measure_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    template: Option<bool>,
+    parent_unique_id: String,
+    parent_name: String,
+    parent_resource_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    relation_name: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    domains: Vec<String>,
+    grain: IndicatorGrainSummary,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct IndicatorParentGroupItem {
     indicator_name: String,
     indicator_type: String,
@@ -1450,6 +1571,55 @@ fn build_measure_indicator_row(
     }
 }
 
+fn build_measure_inventory_row(
+    unique_id: &str,
+    entity: &ArchivedEntity,
+    nova: &ArchivedNovaMeta,
+    measure: &ArchivedNovaMeasure,
+) -> IndicatorInventoryRow {
+    IndicatorInventoryRow {
+        indicator_name: measure.name.as_str().to_string(),
+        indicator_type: "measure".to_string(),
+        canonical: measure.canonical,
+        synonyms: measure
+            .synonyms
+            .iter()
+            .map(|value| value.as_str().to_string())
+            .collect(),
+        description: measure
+            .description
+            .as_ref()
+            .map(rkyv::string::ArchivedString::as_str)
+            .map(str::to_string),
+        expression: measure
+            .expression
+            .as_ref()
+            .map(rkyv::string::ArchivedString::as_str)
+            .map(str::to_string),
+        field: measure
+            .field
+            .as_ref()
+            .map(rkyv::string::ArchivedString::as_str)
+            .map(str::to_string),
+        measure_type: measure
+            .measure_type
+            .as_ref()
+            .map(rkyv::string::ArchivedString::as_str)
+            .map(str::to_string),
+        template: None,
+        parent_unique_id: unique_id.to_string(),
+        parent_name: entity.name_str().unwrap_or(unique_id).to_string(),
+        parent_resource_type: entity.resource_type_str().unwrap_or("unknown").to_string(),
+        relation_name: entity.relation_name_str().map(str::to_string),
+        domains: nova
+            .domains
+            .iter()
+            .map(|value| value.as_str().to_string())
+            .collect(),
+        grain: grain_summary(nova.grain.as_ref()),
+    }
+}
+
 fn build_metric_indicator_row(
     context: &IndicatorSearchContext<'_>,
     metric: &ArchivedNovaMetric,
@@ -1492,6 +1662,47 @@ fn build_metric_indicator_row(
             .collect(),
         grain: grain_summary(metric.grain.as_ref().or(context.nova.grain.as_ref())),
         support_signals: context.support_signals.clone(),
+    }
+}
+
+fn build_metric_inventory_row(
+    unique_id: &str,
+    entity: &ArchivedEntity,
+    nova: &ArchivedNovaMeta,
+    metric: &ArchivedNovaMetric,
+) -> IndicatorInventoryRow {
+    IndicatorInventoryRow {
+        indicator_name: metric.name.as_str().to_string(),
+        indicator_type: "metric".to_string(),
+        canonical: metric.canonical,
+        synonyms: metric
+            .synonyms
+            .iter()
+            .map(|value| value.as_str().to_string())
+            .collect(),
+        description: metric
+            .description
+            .as_ref()
+            .map(rkyv::string::ArchivedString::as_str)
+            .map(str::to_string),
+        expression: metric
+            .expression
+            .as_ref()
+            .map(rkyv::string::ArchivedString::as_str)
+            .map(str::to_string),
+        field: None,
+        measure_type: None,
+        template: Some(metric.template),
+        parent_unique_id: unique_id.to_string(),
+        parent_name: entity.name_str().unwrap_or(unique_id).to_string(),
+        parent_resource_type: entity.resource_type_str().unwrap_or("unknown").to_string(),
+        relation_name: entity.relation_name_str().map(str::to_string),
+        domains: nova
+            .domains
+            .iter()
+            .map(|value| value.as_str().to_string())
+            .collect(),
+        grain: grain_summary(metric.grain.as_ref().or(nova.grain.as_ref())),
     }
 }
 
@@ -2121,6 +2332,18 @@ fn compare_scores_desc(left: f32, right: f32) -> Ordering {
 
 fn compare_indicator_rows(left: &IndicatorSearchRow, right: &IndicatorSearchRow) -> Ordering {
     compare_scores_desc(left.score, right.score)
+        .then_with(|| left.parent_unique_id.cmp(&right.parent_unique_id))
+        .then_with(|| left.indicator_type.cmp(&right.indicator_type))
+        .then_with(|| left.indicator_name.cmp(&right.indicator_name))
+}
+
+fn compare_indicator_inventory_rows(
+    left: &IndicatorInventoryRow,
+    right: &IndicatorInventoryRow,
+) -> Ordering {
+    right
+        .canonical
+        .cmp(&left.canonical)
         .then_with(|| left.parent_unique_id.cmp(&right.parent_unique_id))
         .then_with(|| left.indicator_type.cmp(&right.indicator_type))
         .then_with(|| left.indicator_name.cmp(&right.indicator_name))

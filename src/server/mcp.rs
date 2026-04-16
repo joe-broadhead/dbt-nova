@@ -19,8 +19,8 @@ use crate::params::{
     BatchGetParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams, GetColumnLineageParams,
     GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams, GetLineageParams,
     GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
-    GetUndocumentedParams, ListEntitiesParams, ReloadManifestParams, RunRecipeParams,
-    SearchIndicatorParams, SearchParams, SearchRecipesParams, ValidateDagParams,
+    GetUndocumentedParams, IndicatorInventoryParams, ListEntitiesParams, ReloadManifestParams,
+    RunRecipeParams, SearchIndicatorParams, SearchParams, SearchRecipesParams, ValidateDagParams,
 };
 use crate::responses::SuccessResponse;
 use crate::server::health::build_manifest_health_payload;
@@ -485,6 +485,19 @@ impl DbtNovaServer {
             .await;
         drop(permit);
         result
+    }
+
+    /// List Nova measures and metrics deterministically with parent execution context.
+    #[tool(
+        name = "indicator_inventory",
+        description = "Inventory tool for Nova measures and metrics. List canonical or all indicators with parent entity, grain, domains, and core definitions when you need a deterministic semantic catalog."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn indicator_inventory(&self, params: Parameters<IndicatorInventoryParams>) -> String {
+        self.handle_async("indicator_inventory", None, |searcher| async move {
+            searcher.indicator_inventory(&params.0).await
+        })
+        .await
     }
 
     /// Get complete entity data by `unique_id` or name. Returns ALL fields from the manifest.

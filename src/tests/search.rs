@@ -78,6 +78,33 @@ fn row_position(rows: &[&JsonValue], unique_id: &str) -> usize {
         .unwrap_or_else(|| panic!("missing row for {unique_id}"))
 }
 
+fn indicator_row<'a>(
+    rows: &'a [&JsonValue],
+    parent_unique_id: &str,
+    indicator_name: &str,
+) -> &'a JsonValue {
+    rows.iter()
+        .copied()
+        .find(|row| {
+            row.get("parent_unique_id").and_then(JsonValue::as_str) == Some(parent_unique_id)
+                && row.get("indicator_name").and_then(JsonValue::as_str) == Some(indicator_name)
+        })
+        .unwrap_or_else(|| panic!("missing indicator row for {parent_unique_id}:{indicator_name}"))
+}
+
+fn indicator_row_position(
+    rows: &[&JsonValue],
+    parent_unique_id: &str,
+    indicator_name: &str,
+) -> usize {
+    rows.iter()
+        .position(|row| {
+            row.get("parent_unique_id").and_then(JsonValue::as_str) == Some(parent_unique_id)
+                && row.get("indicator_name").and_then(JsonValue::as_str) == Some(indicator_name)
+        })
+        .unwrap_or_else(|| panic!("missing indicator row for {parent_unique_id}:{indicator_name}"))
+}
+
 // Search Tool Tests
 #[tokio::test(flavor = "multi_thread")]
 async fn test_search_by_name() {
@@ -642,6 +669,82 @@ async fn test_search_indicator_returns_metric_with_parent_grain() {
             .and_then(|grain| grain.get("time_field"))
             .and_then(JsonValue::as_str),
         Some("order_date")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_indicator_inventory_lists_indicator_context_deterministically() {
+    let searcher = semantic_preview_env();
+    let result = searcher
+        .indicator_inventory(&IndicatorInventoryParams {
+            resource_types: vec!["model".to_string()],
+            indicator_types: vec!["measure".to_string()],
+            canonical_only: false,
+            pagination: PaginationParams {
+                limit: 10,
+                offset: 0,
+            },
+        })
+        .await
+        .json();
+    let rows = result_rows(&result);
+
+    assert!(!rows.is_empty());
+    let canonical_gmv = indicator_row(&rows, "model.pkg.fact_orders_canonical", "gmv");
+    assert_eq!(
+        canonical_gmv
+            .get("measure_type")
+            .and_then(JsonValue::as_str),
+        Some("sum")
+    );
+    assert_eq!(
+        canonical_gmv.get("field").and_then(JsonValue::as_str),
+        Some("gmv_amount")
+    );
+    assert_eq!(
+        canonical_gmv
+            .get("grain")
+            .and_then(|grain| grain.get("time_field"))
+            .and_then(JsonValue::as_str),
+        Some("order_date")
+    );
+    assert!(
+        indicator_row_position(&rows, "model.pkg.fact_orders_canonical", "gmv")
+            < indicator_row_position(&rows, "model.pkg.fact_orders_channel", "gmv")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_indicator_inventory_canonical_only_filters_noncanonical_rows() {
+    let searcher = semantic_preview_env();
+    let result = searcher
+        .indicator_inventory(&IndicatorInventoryParams {
+            resource_types: vec!["model".to_string()],
+            indicator_types: vec![],
+            canonical_only: true,
+            pagination: PaginationParams {
+                limit: 20,
+                offset: 0,
+            },
+        })
+        .await
+        .json();
+    let rows = result_rows(&result);
+
+    assert!(!rows.is_empty());
+    assert!(
+        rows.iter()
+            .all(|row| row.get("canonical").and_then(JsonValue::as_bool) == Some(true))
+    );
+    assert!(rows.iter().all(|row| {
+        row.get("parent_unique_id").and_then(JsonValue::as_str)
+            != Some("model.pkg.fact_orders_channel")
+    }));
+    assert!(
+        indicator_row(&rows, "model.pkg.fact_orders_canonical", "gmv")
+            .get("synonyms")
+            .and_then(JsonValue::as_array)
+            .is_some()
     );
 }
 

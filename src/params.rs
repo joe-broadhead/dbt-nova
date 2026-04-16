@@ -119,6 +119,22 @@ pub struct SearchIndicatorParams {
     pub min_score: Option<f32>,
 }
 
+/// Parameters for the indicator_inventory tool.
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct IndicatorInventoryParams {
+    /// Filter parent entities by resource types (for example: model, source).
+    #[serde(default)]
+    pub resource_types: Vec<String>,
+    /// Filter indicator types. Supported values: metric, measure.
+    #[serde(default)]
+    pub indicator_types: Vec<String>,
+    /// Return only canonical indicators when true.
+    #[serde(default)]
+    pub canonical_only: bool,
+    #[serde(default, flatten)]
+    pub pagination: PaginationParams,
+}
+
 /// Parameters for the get_entity tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetEntityParams {

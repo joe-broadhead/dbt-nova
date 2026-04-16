@@ -18,8 +18,8 @@ use crate::params::{
     BatchGetParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams, GetColumnLineageParams,
     GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams, GetLineageParams,
     GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
-    GetUndocumentedParams, ListEntitiesParams, ReloadManifestParams, RunRecipeParams,
-    SearchIndicatorParams, SearchParams, SearchRecipesParams, ValidateDagParams,
+    GetUndocumentedParams, IndicatorInventoryParams, ListEntitiesParams, ReloadManifestParams,
+    RunRecipeParams, SearchIndicatorParams, SearchParams, SearchRecipesParams, ValidateDagParams,
 };
 use crate::responses::SuccessResponse;
 
@@ -34,7 +34,7 @@ struct ToolRegistryEntry {
     dispatch: ToolDispatchFn,
 }
 
-const TOOL_REGISTRY: [ToolRegistryEntry; 27] = [
+const TOOL_REGISTRY: [ToolRegistryEntry; 28] = [
     ToolRegistryEntry {
         name: "search",
         dispatch: dispatch_search,
@@ -42,6 +42,10 @@ const TOOL_REGISTRY: [ToolRegistryEntry; 27] = [
     ToolRegistryEntry {
         name: "search_indicator",
         dispatch: dispatch_search_indicator,
+    },
+    ToolRegistryEntry {
+        name: "indicator_inventory",
+        dispatch: dispatch_indicator_inventory,
     },
     ToolRegistryEntry {
         name: "get_entity",
@@ -472,6 +476,13 @@ fn dispatch_search_indicator(searcher: &ManifestSearch, params: JsonValue) -> To
     })
 }
 
+fn dispatch_indicator_inventory(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: IndicatorInventoryParams = decode_tool_params("indicator_inventory", params)?;
+        searcher.indicator_inventory(&decoded).await
+    })
+}
+
 typed_dispatch!(
     dispatch_get_entity,
     "get_entity",
@@ -839,6 +850,7 @@ mod tests {
         let expected = vec![
             "search",
             "search_indicator",
+            "indicator_inventory",
             "get_entity",
             "list_entities",
             "get_lineage",
