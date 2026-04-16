@@ -7,7 +7,9 @@ use serde_json::Value as JsonValue;
 use tracing::instrument;
 
 use crate::error::{DbtNovaError, Result};
-use crate::manifest::entity::{ArchivedEntity, ArchivedNovaGrain, ArchivedNovaMeta};
+use crate::manifest::entity::{
+    ArchivedEntity, ArchivedNovaGrain, ArchivedNovaMeta, ArchivedNovaMetric,
+};
 use crate::manifest::search::ManifestSearch;
 use crate::params::{
     CompareGrainsParams, FindEntityOverlapParams, ModellingConsistencyReportParams,
@@ -301,7 +303,14 @@ struct EntityOverlapProfile {
     domains: BTreeSet<String>,
     indicator_names: BTreeSet<String>,
     typed_indicators: BTreeSet<(String, String)>,
+    indicator_profiles: BTreeMap<(String, String), IndicatorOverlapIndicatorProfile>,
     column_semantic_types: BTreeSet<String>,
+    grain_variants: Vec<GrainVariant>,
+}
+
+#[derive(Clone)]
+struct IndicatorOverlapIndicatorProfile {
+    canonical: bool,
     grain_variants: Vec<GrainVariant>,
 }
 
@@ -324,10 +333,6 @@ impl EntityOverlapProfile {
             relation_name: self.relation_name.clone(),
             canonical: self.canonical,
         }
-    }
-
-    fn preferred_grain(&self) -> Option<&GrainVariant> {
-        self.grain_variants.first()
     }
 }
 
@@ -369,29 +374,15 @@ fn build_entity_profile(
 
     let mut indicator_names = BTreeSet::new();
     let mut typed_indicators = BTreeSet::new();
-    if let Some(nova) = nova {
-        for measure in nova.measures.iter() {
-            let name = normalize_value(measure.name.as_str());
-            if !name.is_empty() {
-                indicator_names.insert(name.clone());
-                typed_indicators.insert(("measure".to_string(), name));
-            }
-        }
-        if let Some(metric) = nova.metric.as_ref() {
-            let name = normalize_value(metric.name.as_str());
-            if !name.is_empty() {
-                indicator_names.insert(name.clone());
-                typed_indicators.insert(("metric".to_string(), name));
-            }
-        }
-        for metric in nova.metrics.iter() {
-            let name = normalize_value(metric.name.as_str());
-            if !name.is_empty() {
-                indicator_names.insert(name.clone());
-                typed_indicators.insert(("metric".to_string(), name));
-            }
-        }
-    }
+    let entity_canonical = nova.is_some_and(|nova| nova.canonical);
+    let entity_grain_variants = build_entity_grain_variants(nova);
+    let indicator_profiles = build_indicator_profiles(
+        nova,
+        entity_canonical,
+        &entity_grain_variants,
+        &mut indicator_names,
+        &mut typed_indicators,
+    );
 
     let column_semantic_types = entity
         .column_meta()
@@ -413,8 +404,130 @@ fn build_entity_profile(
         domains,
         indicator_names,
         typed_indicators,
+        indicator_profiles,
         column_semantic_types,
         grain_variants: build_grain_variants(nova),
+    }
+}
+
+fn build_indicator_profiles(
+    nova: Option<&ArchivedNovaMeta>,
+    entity_canonical: bool,
+    entity_grain_variants: &[GrainVariant],
+    indicator_names: &mut BTreeSet<String>,
+    typed_indicators: &mut BTreeSet<(String, String)>,
+) -> BTreeMap<(String, String), IndicatorOverlapIndicatorProfile> {
+    let mut indicator_profiles = BTreeMap::new();
+    let Some(nova) = nova else {
+        return indicator_profiles;
+    };
+
+    for measure in nova.measures.iter() {
+        let name = normalize_value(measure.name.as_str());
+        if name.is_empty() {
+            continue;
+        }
+        indicator_names.insert(name.clone());
+        let key = ("measure".to_string(), name);
+        typed_indicators.insert(key.clone());
+        indicator_profiles.insert(
+            key,
+            IndicatorOverlapIndicatorProfile {
+                canonical: entity_canonical || measure.canonical,
+                grain_variants: entity_grain_variants.to_vec(),
+            },
+        );
+    }
+
+    if let Some(metric) = nova.metric.as_ref() {
+        insert_metric_indicator_profile(
+            metric,
+            entity_canonical,
+            entity_grain_variants,
+            indicator_names,
+            typed_indicators,
+            &mut indicator_profiles,
+        );
+    }
+    for metric in nova.metrics.iter() {
+        insert_metric_indicator_profile(
+            metric,
+            entity_canonical,
+            entity_grain_variants,
+            indicator_names,
+            typed_indicators,
+            &mut indicator_profiles,
+        );
+    }
+
+    indicator_profiles
+}
+
+fn insert_metric_indicator_profile(
+    metric: &ArchivedNovaMetric,
+    entity_canonical: bool,
+    entity_grain_variants: &[GrainVariant],
+    indicator_names: &mut BTreeSet<String>,
+    typed_indicators: &mut BTreeSet<(String, String)>,
+    indicator_profiles: &mut BTreeMap<(String, String), IndicatorOverlapIndicatorProfile>,
+) {
+    let name = normalize_value(metric.name.as_str());
+    if name.is_empty() {
+        return;
+    }
+    indicator_names.insert(name.clone());
+    let key = ("metric".to_string(), name);
+    typed_indicators.insert(key.clone());
+    indicator_profiles.insert(
+        key,
+        IndicatorOverlapIndicatorProfile {
+            canonical: entity_canonical || metric.canonical,
+            grain_variants: metric_grain_variants(metric, entity_grain_variants),
+        },
+    );
+}
+
+fn build_entity_grain_variants(nova: Option<&ArchivedNovaMeta>) -> Vec<GrainVariant> {
+    nova.and_then(|nova| nova.grain.as_ref())
+        .map(|grain| vec![grain_variant_from_archived("entity".to_string(), grain)])
+        .unwrap_or_default()
+}
+
+fn metric_grain_variants(
+    metric: &ArchivedNovaMetric,
+    entity_grain_variants: &[GrainVariant],
+) -> Vec<GrainVariant> {
+    metric.grain.as_ref().map_or_else(
+        || entity_grain_variants.to_vec(),
+        |grain| {
+            vec![grain_variant_from_archived(
+                metric.name.as_str().to_string(),
+                grain,
+            )]
+        },
+    )
+}
+
+fn grain_variant_from_archived(source: String, grain: &ArchivedNovaGrain) -> GrainVariant {
+    GrainVariant {
+        sources: vec![source],
+        primary_key: grain
+            .primary_key
+            .iter()
+            .map(ArchivedString::as_str)
+            .map(str::to_string)
+            .collect(),
+        time_field: grain
+            .time_field
+            .as_ref()
+            .map(ArchivedString::as_str)
+            .map(str::to_string),
+        dimensions: grain
+            .dimensions
+            .iter()
+            .map(ArchivedString::as_str)
+            .map(str::to_string)
+            .collect(),
     }
 }
 
@@ -427,26 +540,7 @@ fn build_grain_variants(nova: Option<&ArchivedNovaMeta>) -> Vec<GrainVariant> {
     let mut positions: HashMap<String, usize> = HashMap::new();
 
     let mut push_variant = |source: String, grain: &ArchivedNovaGrain| {
-        let candidate = GrainVariant {
-            sources: vec![source],
-            primary_key: grain
-                .primary_key
-                .iter()
-                .map(ArchivedString::as_str)
-                .map(str::to_string)
-                .collect(),
-            time_field: grain
-                .time_field
-                .as_ref()
-                .map(ArchivedString::as_str)
-                .map(str::to_string),
-            dimensions: grain
-                .dimensions
-                .iter()
-                .map(ArchivedString::as_str)
-                .map(str::to_string)
-                .collect(),
-        };
+        let candidate = grain_variant_from_archived(source, grain);
         let key = grain_signature_key(&candidate);
         if let Some(index) = positions.get(&key).copied() {
             if !variants[index]
@@ -698,14 +792,31 @@ fn duplicate_indicator_rows(
         if parents.len() < 2 {
             continue;
         }
-        let canonical_parent_count = parents.iter().filter(|profile| profile.canonical).count();
+        let indicator_key = (indicator_type.clone(), indicator_name.clone());
+        let canonical_parent_count = parents
+            .iter()
+            .filter(|profile| {
+                profile
+                    .indicator_profiles
+                    .get(&indicator_key)
+                    .is_some_and(|details| details.canonical)
+            })
+            .count();
         let parents_without_grain = parents
             .iter()
-            .filter(|profile| profile.preferred_grain().is_none())
+            .filter(|profile| {
+                profile
+                    .indicator_profiles
+                    .get(&indicator_key)
+                    .is_none_or(|details| details.grain_variants.is_empty())
+            })
             .count();
         let mut grain_signatures: BTreeMap<String, GrainVariant> = BTreeMap::new();
         for profile in &parents {
-            for grain in &profile.grain_variants {
+            let Some(details) = profile.indicator_profiles.get(&indicator_key) else {
+                continue;
+            };
+            for grain in &details.grain_variants {
                 grain_signatures
                     .entry(grain_signature_key(grain))
                     .or_insert_with(|| grain.clone());
@@ -727,7 +838,10 @@ fn duplicate_indicator_rows(
                     name: profile.name.clone(),
                     resource_type: profile.resource_type.clone(),
                     relation_name: profile.relation_name.clone(),
-                    canonical: profile.canonical,
+                    canonical: profile
+                        .indicator_profiles
+                        .get(&indicator_key)
+                        .is_some_and(|details| details.canonical),
                 })
                 .collect(),
             grain_signatures: grain_signatures.into_values().collect(),
@@ -960,9 +1074,32 @@ mod tests {
             domains: BTreeSet::new(),
             indicator_names: BTreeSet::new(),
             typed_indicators: BTreeSet::new(),
+            indicator_profiles: BTreeMap::new(),
             column_semantic_types: BTreeSet::new(),
             grain_variants,
         }
+    }
+
+    fn profile_with_indicator(
+        unique_id: &str,
+        indicator_type: &str,
+        indicator_name: &str,
+        canonical: bool,
+        entity_grain_variants: Vec<GrainVariant>,
+        indicator_grain_variants: Vec<GrainVariant>,
+    ) -> EntityOverlapProfile {
+        let mut profile = profile_with(unique_id, &[], entity_grain_variants);
+        let key = (indicator_type.to_string(), normalize_value(indicator_name));
+        profile.indicator_names.insert(key.1.clone());
+        profile.typed_indicators.insert(key.clone());
+        profile.indicator_profiles.insert(
+            key,
+            IndicatorOverlapIndicatorProfile {
+                canonical,
+                grain_variants: indicator_grain_variants,
+            },
+        );
+        profile
     }
 
     #[test]
@@ -1065,5 +1202,91 @@ mod tests {
         let pairs = overlap_candidate_pairs(&profiles);
         assert!(pairs.contains(&(0, 1)));
         assert!(!pairs.contains(&(0, 2)));
+    }
+
+    #[test]
+    fn duplicate_indicator_rows_use_indicator_specific_grains() {
+        let profiles = vec![
+            profile_with_indicator(
+                "model.pkg.left",
+                "metric",
+                "conversion_rate",
+                false,
+                vec![
+                    grain_variant(&["session_id"], Some("session_date"), &["platform_name"]),
+                    grain_variant(&["order_id"], Some("order_date"), &["country_code"]),
+                ],
+                vec![grain_variant(
+                    &["order_id"],
+                    Some("order_date"),
+                    &["country_code"],
+                )],
+            ),
+            profile_with_indicator(
+                "model.pkg.right",
+                "metric",
+                "conversion_rate",
+                false,
+                vec![grain_variant(
+                    &["order_id"],
+                    Some("order_date"),
+                    &["country_code"],
+                )],
+                vec![grain_variant(
+                    &["order_id"],
+                    Some("order_date"),
+                    &["country_code"],
+                )],
+            ),
+        ];
+
+        let rows = duplicate_indicator_rows(&profiles, 10);
+        assert_eq!(rows.len(), 1);
+        assert!(!rows[0].inconsistent_grains);
+        assert_eq!(rows[0].grain_signatures.len(), 1);
+    }
+
+    #[test]
+    fn duplicate_indicator_rows_count_indicator_level_canonical_flags() {
+        let profiles = vec![
+            profile_with_indicator(
+                "model.pkg.left",
+                "measure",
+                "gmv",
+                true,
+                vec![grain_variant(
+                    &["order_id"],
+                    Some("order_date"),
+                    &["country_code"],
+                )],
+                vec![grain_variant(
+                    &["order_id"],
+                    Some("order_date"),
+                    &["country_code"],
+                )],
+            ),
+            profile_with_indicator(
+                "model.pkg.right",
+                "measure",
+                "gmv",
+                false,
+                vec![grain_variant(
+                    &["order_id"],
+                    Some("order_date"),
+                    &["country_code"],
+                )],
+                vec![grain_variant(
+                    &["order_id"],
+                    Some("order_date"),
+                    &["country_code"],
+                )],
+            ),
+        ];
+
+        let rows = duplicate_indicator_rows(&profiles, 10);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].canonical_parent_count, 1);
+        assert_eq!(rows[0].parents.len(), 2);
+        assert!(rows[0].parents.iter().any(|parent| parent.canonical));
     }
 }
