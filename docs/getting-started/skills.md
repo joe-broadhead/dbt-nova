@@ -14,6 +14,7 @@ We ship two built-in skill bundles under `.github/skills/`:
   - `mcp-kpi-debugger`
   - `mcp-model-architect`
   - `mcp-nova-meta-authoring`
+  - `mcp-project-cleanup`
 - `.github/skills/cli/`
   - `cli-analyst`
   - `cli-bi-engineer`
@@ -22,6 +23,7 @@ We ship two built-in skill bundles under `.github/skills/`:
   - `cli-kpi-debugger`
   - `cli-model-architect`
   - `cli-nova-meta-authoring`
+  - `cli-project-cleanup`
 - `.github/skills/shared/`
   - transport-agnostic references and assets used by both bundles
 
@@ -88,6 +90,8 @@ cp -R .github/skills/mcp/model-architect .codex/skills/mcp-model-architect
 cp -R .github/skills/cli/model-architect .codex/skills/cli-model-architect
 cp -R .github/skills/mcp/nova-meta-authoring .codex/skills/mcp-nova-meta-authoring
 cp -R .github/skills/cli/nova-meta-authoring .codex/skills/cli-nova-meta-authoring
+cp -R .github/skills/mcp/project-cleanup .codex/skills/mcp-project-cleanup
+cp -R .github/skills/cli/project-cleanup .codex/skills/cli-project-cleanup
 ```
 
 Restart Codex after installing new skills. You can invoke a skill explicitly with `$skill-name` or let Codex select it automatically.
@@ -121,6 +125,8 @@ cp -R /path/to/repo/.github/skills/mcp/model-architect ~/.claude/skills/mcp-mode
 cp -R /path/to/repo/.github/skills/cli/model-architect ~/.claude/skills/cli-model-architect
 cp -R /path/to/repo/.github/skills/mcp/nova-meta-authoring ~/.claude/skills/mcp-nova-meta-authoring
 cp -R /path/to/repo/.github/skills/cli/nova-meta-authoring ~/.claude/skills/cli-nova-meta-authoring
+cp -R /path/to/repo/.github/skills/mcp/project-cleanup ~/.claude/skills/mcp-project-cleanup
+cp -R /path/to/repo/.github/skills/cli/project-cleanup ~/.claude/skills/cli-project-cleanup
 ```
 
 ### Gemini CLI
@@ -145,6 +151,8 @@ cp -R .github/skills/mcp/model-architect .gemini/skills/mcp-model-architect
 cp -R .github/skills/cli/model-architect .gemini/skills/cli-model-architect
 cp -R .github/skills/mcp/nova-meta-authoring .gemini/skills/mcp-nova-meta-authoring
 cp -R .github/skills/cli/nova-meta-authoring .gemini/skills/cli-nova-meta-authoring
+cp -R .github/skills/mcp/project-cleanup .gemini/skills/mcp-project-cleanup
+cp -R .github/skills/cli/project-cleanup .gemini/skills/cli-project-cleanup
 ```
 
 Then reload skills:
