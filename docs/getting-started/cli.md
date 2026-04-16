@@ -94,7 +94,7 @@ dbt-nova tool call search \
 
 ```bash
 dbt-nova tool call search_indicator \
-  --params-json '{"query":"checkout completion rate","indicator_types":["metric"],"persona":"analyst","limit":5}' \
+  --params-json '{"query":"average order value","indicator_types":["metric"],"persona":"analyst","limit":5}' \
   --manifest-path /path/to/target/manifest.json \
   --json
 ```

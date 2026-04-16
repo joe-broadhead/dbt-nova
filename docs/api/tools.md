@@ -99,7 +99,7 @@ Common:
 - `limit`, `offset`, `min_score`
 
 ```json
-{"name":"search_indicator","arguments":{"query":"checkout completion rate","indicator_types":["metric"],"resource_types":["model"],"persona":"analyst","limit":5,"offset":0}}
+{"name":"search_indicator","arguments":{"query":"average order value","indicator_types":["metric"],"resource_types":["model"],"persona":"analyst","limit":5,"offset":0}}
 ```
 
 Example response shape:
@@ -112,20 +112,20 @@ Example response shape:
   "suggestions": [],
   "data": [
     {
-      "indicator_name": "checkout_completion_rate",
+      "indicator_name": "average_order_value",
       "indicator_type": "metric",
       "canonical": true,
       "match_type": "name",
       "score": 10.5,
-      "expression": "sum(order_completed) / nullif(sum(checkout_process_commenced), 0)",
-      "parent_unique_id": "model.package.base__amplitude_sessions_sql",
-      "parent_name": "base__amplitude_sessions_sql",
+      "expression": "sum(gmv_amount) / nullif(count(distinct order_id), 0)",
+      "parent_unique_id": "model.package.orders_semantic_templates",
+      "parent_name": "orders_semantic_templates",
       "parent_resource_type": "model",
-      "relation_name": "analytics.omnicommerce.base__amplitude_sessions",
-      "domains": ["ecommerce", "digital_analytics"],
+      "relation_name": "analytics.dbt_test.orders_semantic_templates",
+      "domains": ["commerce"],
       "grain": {
-        "time_field": "session_date",
-        "dimensions": ["country_code", "platform_name"]
+        "time_field": "order_date",
+        "dimensions": ["country_code", "sales_channel"]
       }
     }
   ]
@@ -166,14 +166,14 @@ Example response shape:
       "expression": "sum(gmv_amount)",
       "field": "gmv_amount",
       "measure_type": "sum",
-      "parent_unique_id": "model.package.base__sales_enriched_sql",
-      "parent_name": "base__sales_enriched_sql",
+      "parent_unique_id": "model.package.fact_orders_canonical",
+      "parent_name": "fact_orders_canonical",
       "parent_resource_type": "model",
-      "relation_name": "analytics.sales.base__sales_enriched",
-      "domains": ["sales", "commerce"],
+      "relation_name": "analytics.dbt_test.fact_orders_canonical",
+      "domains": ["commerce"],
       "grain": {
         "time_field": "order_date",
-        "dimensions": ["country_code", "channel"]
+        "dimensions": ["country_code", "sales_channel"]
       }
     }
   ]
@@ -193,7 +193,7 @@ Common:
 - `limit`, `offset`, `min_score`
 
 ```json
-{"name":"search_columns","arguments":{"query":"spain","resource_types":["model"],"limit":10,"offset":0}}
+{"name":"search_columns","arguments":{"query":"alpha","resource_types":["model"],"limit":10,"offset":0}}
 ```
 
 Example response shape:
@@ -207,16 +207,16 @@ Example response shape:
       "column_name": "country_code",
       "match_type": "example_value",
       "score": 5.25,
-      "matched_value": "spain",
+      "matched_value": "alpha",
       "annotated": true,
       "role": "dimension",
       "semantic_type": "country_code",
       "synonyms": ["market"],
-      "example_values": ["spain", "france"],
-      "parent_unique_id": "model.package.base__sales_enriched_sql",
-      "parent_name": "base__sales_enriched_sql",
+      "example_values": ["alpha", "beta"],
+      "parent_unique_id": "model.package.fact_orders_canonical",
+      "parent_name": "fact_orders_canonical",
       "parent_resource_type": "model",
-      "domains": ["sales", "commerce"]
+      "domains": ["commerce"]
     }
   ]
 }
@@ -249,11 +249,11 @@ Example response shape:
       "role": "dimension",
       "semantic_type": "country_code",
       "synonyms": ["market"],
-      "example_values": ["spain", "france"],
-      "parent_unique_id": "model.package.base__sales_enriched_sql",
-      "parent_name": "base__sales_enriched_sql",
+      "example_values": ["alpha", "beta"],
+      "parent_unique_id": "model.package.fact_orders_canonical",
+      "parent_name": "fact_orders_canonical",
       "parent_resource_type": "model",
-      "domains": ["sales", "commerce"]
+      "domains": ["commerce"]
     }
   ]
 }
@@ -271,7 +271,7 @@ Optional:
 - `entity2_resource_type`
 
 ```json
-{"name":"compare_grains","arguments":{"entity1":"model.package.base__sales_enriched_sql","entity2":"model.package.orders_semantic_templates"}}
+{"name":"compare_grains","arguments":{"entity1":"model.package.fact_orders_canonical","entity2":"model.package.orders_semantic_templates"}}
 ```
 
 ### `find_entity_overlap`

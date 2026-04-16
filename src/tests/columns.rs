@@ -195,7 +195,7 @@ async fn test_search_columns_matches_example_values() {
     let searcher = column_semantics_env();
     let result = searcher
         .search_columns(&SearchColumnsParams {
-            query: "spain".to_string(),
+            query: "alpha".to_string(),
             resource_types: vec!["model".to_string()],
             roles: vec![],
             semantic_types: vec![],
@@ -220,7 +220,7 @@ async fn test_search_columns_matches_example_values() {
     );
     assert_eq!(
         rows[0].get("matched_value").and_then(JsonValue::as_str),
-        Some("spain")
+        Some("alpha")
     );
 }
 

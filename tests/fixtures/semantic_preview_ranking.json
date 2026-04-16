@@ -29,7 +29,7 @@
               "role": "dimension",
               "semantic_type": "country_code",
               "synonyms": ["market"],
-              "example_values": ["spain", "france"]
+              "example_values": ["alpha", "beta"]
             }
           }
         },
@@ -104,7 +104,7 @@
               "role": "dimension",
               "semantic_type": "country_code",
               "synonyms": ["market"],
-              "example_values": ["spain", "france"]
+              "example_values": ["alpha", "beta"]
             }
           }
         }

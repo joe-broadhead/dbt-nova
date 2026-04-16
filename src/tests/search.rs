@@ -591,7 +591,7 @@ async fn test_search_indicator_prefers_generic_canonical_measure_for_generic_que
     let searcher = semantic_preview_env();
     let result = searcher
         .search_indicator(&SearchIndicatorParams {
-            query: "what was gmv for spain last week".to_string(),
+            query: "what was gmv for alpha last week".to_string(),
             resource_types: vec!["model".to_string()],
             indicator_types: vec!["measure".to_string()],
             persona: Some("analyst".to_string()),
@@ -636,7 +636,7 @@ async fn test_search_indicator_prefers_generic_canonical_measure_for_generic_que
             .and_then(JsonValue::as_array)
             .and_then(|values| values.first())
             .and_then(JsonValue::as_str),
-        Some("spain")
+        Some("alpha")
     );
 }
 
@@ -763,7 +763,7 @@ async fn test_search_surfaces_metadata_support_signals() {
     let searcher = semantic_preview_env();
     let result = searcher
         .search(&search_params(
-            "what was gmv for spain last week",
+            "what was gmv for alpha last week",
             Some("analyst"),
         ))
         .await
@@ -785,14 +785,14 @@ async fn test_search_surfaces_metadata_support_signals() {
             .and_then(JsonValue::as_array)
             .and_then(|values| values.first())
             .and_then(JsonValue::as_str),
-        Some("spain")
+        Some("alpha")
     );
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_search_explain_surfaces_retrieval_and_score_breakdown() {
     let searcher = semantic_preview_env();
-    let mut params = search_params("what was gmv for spain last week", Some("analyst"));
+    let mut params = search_params("what was gmv for alpha last week", Some("analyst"));
     params.explain = true;
     let result = searcher.search(&params).await.json();
     let rows = result_rows(&result);
@@ -849,7 +849,7 @@ async fn test_search_indicator_explain_surfaces_rrf_breakdown() {
     let searcher = semantic_preview_env();
     let result = searcher
         .search_indicator(&SearchIndicatorParams {
-            query: "what was gmv for spain last week".to_string(),
+            query: "what was gmv for alpha last week".to_string(),
             resource_types: vec!["model".to_string()],
             indicator_types: vec!["measure".to_string()],
             persona: Some("analyst".to_string()),

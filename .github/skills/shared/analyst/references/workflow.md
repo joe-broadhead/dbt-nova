@@ -87,7 +87,7 @@ Default to raw SQL unless the manifest definitely contains compiled SQL.
 ## Filter validation rule
 
 Validate actual warehouse values before writing final filters.
-Do not assume mappings like `UK -> GB` or `Spain -> ES` without checking live values.
+Do not assume friendly labels map directly to raw warehouse codes without checking live values.
 
 Use the chosen relation and actual filter column in a bounded validation query before final aggregation.
 

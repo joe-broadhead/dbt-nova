@@ -3750,33 +3750,33 @@ mod candidate_tests {
     #[test]
     fn indicator_embedding_text_includes_indicator_and_parent_context() {
         let row = IndicatorSearchRow {
-            indicator_name: "checkout_completion_rate".to_string(),
+            indicator_name: "average_order_value".to_string(),
             indicator_type: "metric".to_string(),
             canonical: true,
             match_type: "name".to_string(),
             score: 1.0,
-            description: Some("Share of checkout starts that complete".to_string()),
-            expression: Some("sum(order_completed) / nullif(sum(checkout_started), 0)".to_string()),
+            description: Some("Average order value across completed orders".to_string()),
+            expression: Some("sum(gmv_amount) / nullif(count(distinct order_id), 0)".to_string()),
             field: None,
-            parent_unique_id: "model.pkg.base__amplitude_sessions_sql".to_string(),
-            parent_name: "base__amplitude_sessions_sql".to_string(),
+            parent_unique_id: "model.pkg.orders_semantic_templates".to_string(),
+            parent_name: "orders_semantic_templates".to_string(),
             parent_resource_type: "model".to_string(),
             relation_name: None,
-            domains: vec!["ecommerce".to_string(), "web_analytics".to_string()],
+            domains: vec!["commerce".to_string()],
             grain: IndicatorGrainSummary {
                 primary_key: Vec::new(),
-                time_field: Some("session_date".to_string()),
-                dimensions: vec!["country_code".to_string(), "platform_name".to_string()],
+                time_field: Some("order_date".to_string()),
+                dimensions: vec!["country_code".to_string(), "sales_channel".to_string()],
             },
             support_signals: None,
             explain: None,
         };
 
         let text = indicator_embedding_text(&row);
-        assert!(text.contains("indicator_name: checkout_completion_rate"));
-        assert!(text.contains("parent_name: base__amplitude_sessions_sql"));
-        assert!(text.contains("time_field: session_date"));
-        assert!(text.contains("domains: ecommerce, web_analytics"));
+        assert!(text.contains("indicator_name: average_order_value"));
+        assert!(text.contains("parent_name: orders_semantic_templates"));
+        assert!(text.contains("time_field: order_date"));
+        assert!(text.contains("domains: commerce"));
     }
 
     #[test]
@@ -3956,7 +3956,7 @@ mod candidate_tests {
                     column_names: vec![],
                     column_roles: vec![],
                     column_semantic_types: vec![],
-                    example_values: vec!["spain".to_string()],
+                    example_values: vec!["alpha".to_string()],
                 }),
                 explain: None,
             },
@@ -3987,7 +3987,7 @@ mod candidate_tests {
                     column_names: vec![],
                     column_roles: vec![],
                     column_semantic_types: vec![],
-                    example_values: vec!["spain".to_string()],
+                    example_values: vec!["alpha".to_string()],
                 }),
                 explain: None,
             },
@@ -4051,7 +4051,7 @@ mod candidate_tests {
                     column_names: vec![],
                     column_roles: vec![],
                     column_semantic_types: vec![],
-                    example_values: vec!["spain".to_string(), "france".to_string()],
+                    example_values: vec!["alpha".to_string(), "beta".to_string()],
                 }),
                 explain: None,
             },
@@ -4083,9 +4083,9 @@ mod candidate_tests {
                     column_roles: vec![],
                     column_semantic_types: vec![],
                     example_values: vec![
-                        "italy".to_string(),
-                        "germany".to_string(),
-                        "netherlands".to_string(),
+                        "gamma".to_string(),
+                        "delta".to_string(),
+                        "epsilon".to_string(),
                     ],
                 }),
                 explain: None,
@@ -4109,8 +4109,8 @@ mod candidate_tests {
             vec!["revenue_reporting".to_string()]
         );
         assert_eq!(support_signals.example_values.len(), 4);
-        assert_eq!(support_signals.example_values[0], "spain");
-        assert_eq!(support_signals.example_values[3], "germany");
+        assert_eq!(support_signals.example_values[0], "alpha");
+        assert_eq!(support_signals.example_values[3], "delta");
     }
 }
 
