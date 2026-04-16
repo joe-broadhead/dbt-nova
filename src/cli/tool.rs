@@ -476,6 +476,21 @@ async fn run_search_with_timeout<T>(
     }
 }
 
+macro_rules! timed_dispatch {
+    ($fn_name:ident, $tool_name:literal, $params_ty:ty, $method:ident) => {
+        fn $fn_name(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+            Box::pin(async move {
+                let decoded: $params_ty = decode_tool_params($tool_name, params)?;
+                run_search_with_timeout(
+                    searcher.config().search.search_timeout_ms,
+                    searcher.$method(&decoded),
+                )
+                .await
+            })
+        }
+    };
+}
+
 fn dispatch_search(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
     Box::pin(async move {
         let decoded: SearchParams = decode_tool_params("search", params)?;
@@ -498,12 +513,12 @@ fn dispatch_search_indicator(searcher: &ManifestSearch, params: JsonValue) -> To
     })
 }
 
-fn dispatch_indicator_inventory(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
-    Box::pin(async move {
-        let decoded: IndicatorInventoryParams = decode_tool_params("indicator_inventory", params)?;
-        searcher.indicator_inventory(&decoded).await
-    })
-}
+timed_dispatch!(
+    dispatch_indicator_inventory,
+    "indicator_inventory",
+    IndicatorInventoryParams,
+    indicator_inventory
+);
 
 fn dispatch_search_columns(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
     Box::pin(async move {
@@ -516,26 +531,26 @@ fn dispatch_search_columns(searcher: &ManifestSearch, params: JsonValue) -> Tool
     })
 }
 
-fn dispatch_column_inventory(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
-    Box::pin(async move {
-        let decoded: ColumnInventoryParams = decode_tool_params("column_inventory", params)?;
-        searcher.column_inventory(&decoded).await
-    })
-}
+timed_dispatch!(
+    dispatch_column_inventory,
+    "column_inventory",
+    ColumnInventoryParams,
+    column_inventory
+);
 
-typed_dispatch!(
+timed_dispatch!(
     dispatch_compare_grains,
     "compare_grains",
     CompareGrainsParams,
     compare_grains
 );
-typed_dispatch!(
+timed_dispatch!(
     dispatch_find_entity_overlap,
     "find_entity_overlap",
     FindEntityOverlapParams,
     find_entity_overlap
 );
-typed_dispatch!(
+timed_dispatch!(
     dispatch_modelling_consistency_report,
     "modelling_consistency_report",
     ModellingConsistencyReportParams,

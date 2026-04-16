@@ -18,7 +18,7 @@ def parse_args() -> argparse.Namespace:
         "--resource-type",
         dest="resource_types",
         action="append",
-        default=["model"],
+        default=None,
         help="Repeat to include multiple resource types. Defaults to model.",
     )
     parser.add_argument(
@@ -42,7 +42,10 @@ def parse_args() -> argparse.Namespace:
         help="Output format.",
     )
     parser.add_argument("--output", help="Write output to a file instead of stdout.")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not args.resource_types:
+        args.resource_types = ["model"]
+    return args
 
 
 def manifest_summary(args: argparse.Namespace) -> dict[str, Any]:
