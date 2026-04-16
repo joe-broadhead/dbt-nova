@@ -12,6 +12,7 @@ pub struct PersonaWeights {
     pub fuzzy: f32,
     pub vector: f32,
     pub sparse: f32,
+    pub indicator: f32,
     pub measures: f32,
     pub metrics: f32,
     pub synonyms: f32,
@@ -29,6 +30,7 @@ impl Default for PersonaWeights {
             fuzzy: 1.0,
             vector: 1.0,
             sparse: 1.0,
+            indicator: 1.0,
             measures: 1.0,
             metrics: 1.0,
             synonyms: 1.0,
@@ -59,6 +61,7 @@ impl PersonaWeights {
                 "fuzzy" => self.fuzzy = parsed,
                 "vector" => self.vector = parsed,
                 "sparse" => self.sparse = parsed,
+                "indicator" => self.indicator = parsed,
                 "measures" => self.measures = parsed,
                 "metrics" => self.metrics = parsed,
                 "synonyms" => self.synonyms = parsed,
@@ -134,6 +137,7 @@ impl Default for PersonaProfile<PersonaWeights> {
                 fuzzy: 1.0,
                 vector: 1.5,
                 sparse: 1.2,
+                indicator: 1.6,
                 measures: 1.3,
                 metrics: 1.4,
                 synonyms: 1.2,
@@ -148,6 +152,7 @@ impl Default for PersonaProfile<PersonaWeights> {
                 fuzzy: 0.8,
                 vector: 0.8,
                 sparse: 1.0,
+                indicator: 1.0,
                 measures: 0.9,
                 metrics: 0.9,
                 synonyms: 0.9,
@@ -162,6 +167,7 @@ impl Default for PersonaProfile<PersonaWeights> {
                 fuzzy: 1.0,
                 vector: 1.0,
                 sparse: 1.3,
+                indicator: 1.0,
                 measures: 0.9,
                 metrics: 0.9,
                 synonyms: 1.0,
@@ -206,6 +212,98 @@ impl Default for AnalystSemanticConfig {
             missing_grain_multiplier: 0.97,
             min_multiplier: 0.85,
             max_multiplier: 1.35,
+        }
+    }
+}
+
+/// Tunable weights for indicator-specific ranking and grouped search output.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(default)]
+pub struct IndicatorRankingConfig {
+    pub enable_parent_coherence: bool,
+    pub parent_group_max_groups: usize,
+    pub parent_group_max_indicators: usize,
+    pub generic_label_bonus_one_token: f32,
+    pub generic_label_bonus_two_tokens: f32,
+    pub generic_label_bonus_three_plus_tokens: f32,
+    pub parent_synonym_bonus_one_token: f32,
+    pub parent_synonym_bonus_two_tokens: f32,
+    pub parent_synonym_bonus_three_plus_tokens: f32,
+    pub semantic_label_precision_scale: f32,
+    pub semantic_label_precision_canonical_bonus: f32,
+    pub parent_coherence_indicator_diversity_bonus: f32,
+    pub parent_coherence_canonical_indicator_bonus: f32,
+    pub parent_coherence_strong_match_bonus: f32,
+    pub parent_coherence_support_surface_bonus: f32,
+    pub parent_coherence_time_field_bonus: f32,
+    pub parent_coherence_dimension_bonus: f32,
+    pub parent_coherence_max_bonus: f32,
+    pub search_parent_indicator_bonus_scale: f32,
+    pub search_missing_indicator_parent_multiplier: f32,
+    pub search_parent_indicator_top_k: usize,
+    pub indicator_rrf_score_weight: f32,
+    pub indicator_reranker_score_weight: f32,
+}
+
+impl Default for IndicatorRankingConfig {
+    fn default() -> Self {
+        Self {
+            enable_parent_coherence: true,
+            parent_group_max_groups: 5,
+            parent_group_max_indicators: 4,
+            generic_label_bonus_one_token: 2.5,
+            generic_label_bonus_two_tokens: 1.5,
+            generic_label_bonus_three_plus_tokens: 0.75,
+            parent_synonym_bonus_one_token: 1.5,
+            parent_synonym_bonus_two_tokens: 1.0,
+            parent_synonym_bonus_three_plus_tokens: 0.5,
+            semantic_label_precision_scale: 0.14,
+            semantic_label_precision_canonical_bonus: 0.12,
+            parent_coherence_indicator_diversity_bonus: 0.28,
+            parent_coherence_canonical_indicator_bonus: 0.14,
+            parent_coherence_strong_match_bonus: 0.08,
+            parent_coherence_support_surface_bonus: 0.06,
+            parent_coherence_time_field_bonus: 0.06,
+            parent_coherence_dimension_bonus: 0.06,
+            parent_coherence_max_bonus: 0.95,
+            search_parent_indicator_bonus_scale: 0.55,
+            search_missing_indicator_parent_multiplier: 0.75,
+            search_parent_indicator_top_k: 3,
+            indicator_rrf_score_weight: 1.0,
+            indicator_reranker_score_weight: 1.0,
+        }
+    }
+}
+
+/// Tunable weights for metadata-derived support signals used in ranking and output.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(default)]
+pub struct MetadataSupportConfig {
+    pub parent_synonym_weight: f32,
+    pub domain_weight: f32,
+    pub use_case_weight: f32,
+    pub dimension_weight: f32,
+    pub column_name_weight: f32,
+    pub column_role_weight: f32,
+    pub semantic_type_weight: f32,
+    pub example_value_weight: f32,
+    pub max_bonus: f32,
+    pub max_values_per_field: usize,
+}
+
+impl Default for MetadataSupportConfig {
+    fn default() -> Self {
+        Self {
+            parent_synonym_weight: 0.4,
+            domain_weight: 0.35,
+            use_case_weight: 0.25,
+            dimension_weight: 0.45,
+            column_name_weight: 0.2,
+            column_role_weight: 0.2,
+            semantic_type_weight: 0.35,
+            example_value_weight: 0.5,
+            max_bonus: 1.25,
+            max_values_per_field: 4,
         }
     }
 }
@@ -309,6 +407,10 @@ pub struct SearchConfig {
     pub nova_canonical_match_bonus: f32,
     /// Boost applied to exact matches for engineer persona
     pub engineer_exact_match_multiplier: f32,
+    /// Indicator-specific ranking and grouping knobs.
+    pub indicator_ranking: IndicatorRankingConfig,
+    /// Metadata-support signal weights and output caps.
+    pub metadata_support: MetadataSupportConfig,
     /// Enable hybrid search with reciprocal rank fusion
     pub enable_rrf: bool,
     /// RRF smoothing constant
@@ -422,6 +524,8 @@ impl Default for SearchConfig {
             nova_canonical_match_multiplier: 1.35,
             nova_canonical_match_bonus: 2.5,
             engineer_exact_match_multiplier: 2.0,
+            indicator_ranking: IndicatorRankingConfig::default(),
+            metadata_support: MetadataSupportConfig::default(),
             enable_rrf: true,
             rrf_k: 60.0,
             rrf_overfetch: 3,
@@ -1225,6 +1329,254 @@ fn apply_nova_semantic_env(config: &mut SearchConfig) {
     );
 }
 
+fn apply_indicator_ranking_grouping_env(config: &mut SearchConfig) {
+    crate::env_config!(
+        config,
+        indicator_ranking.enable_parent_coherence,
+        "DBT_NOVA_SEARCH_INDICATOR_ENABLE_PARENT_COHERENCE",
+        parse_bool
+    );
+    crate::env_config!(
+        config,
+        indicator_ranking.parent_group_max_groups,
+        "DBT_NOVA_SEARCH_INDICATOR_PARENT_GROUP_MAX_GROUPS",
+        parse_usize,
+        |v: &usize| *v > 0
+    );
+    crate::env_config!(
+        config,
+        indicator_ranking.parent_group_max_indicators,
+        "DBT_NOVA_SEARCH_INDICATOR_PARENT_GROUP_MAX_INDICATORS",
+        parse_usize,
+        |v: &usize| *v > 0
+    );
+}
+
+fn apply_indicator_ranking_bonus_env(config: &mut SearchConfig) {
+    crate::env_config!(
+        config,
+        indicator_ranking.generic_label_bonus_one_token,
+        "DBT_NOVA_SEARCH_INDICATOR_GENERIC_LABEL_BONUS_ONE_TOKEN",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        indicator_ranking.generic_label_bonus_two_tokens,
+        "DBT_NOVA_SEARCH_INDICATOR_GENERIC_LABEL_BONUS_TWO_TOKENS",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        indicator_ranking.generic_label_bonus_three_plus_tokens,
+        "DBT_NOVA_SEARCH_INDICATOR_GENERIC_LABEL_BONUS_THREE_PLUS_TOKENS",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        indicator_ranking.parent_synonym_bonus_one_token,
+        "DBT_NOVA_SEARCH_INDICATOR_PARENT_SYNONYM_BONUS_ONE_TOKEN",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        indicator_ranking.parent_synonym_bonus_two_tokens,
+        "DBT_NOVA_SEARCH_INDICATOR_PARENT_SYNONYM_BONUS_TWO_TOKENS",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        indicator_ranking.parent_synonym_bonus_three_plus_tokens,
+        "DBT_NOVA_SEARCH_INDICATOR_PARENT_SYNONYM_BONUS_THREE_PLUS_TOKENS",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        indicator_ranking.semantic_label_precision_scale,
+        "DBT_NOVA_SEARCH_INDICATOR_SEMANTIC_LABEL_PRECISION_SCALE",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        indicator_ranking.semantic_label_precision_canonical_bonus,
+        "DBT_NOVA_SEARCH_INDICATOR_SEMANTIC_LABEL_PRECISION_CANONICAL_BONUS",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+}
+
+fn apply_indicator_ranking_coherence_env(config: &mut SearchConfig) {
+    crate::env_config!(
+        config,
+        indicator_ranking.parent_coherence_indicator_diversity_bonus,
+        "DBT_NOVA_SEARCH_INDICATOR_PARENT_COHERENCE_DIVERSITY_BONUS",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        indicator_ranking.parent_coherence_canonical_indicator_bonus,
+        "DBT_NOVA_SEARCH_INDICATOR_PARENT_COHERENCE_CANONICAL_BONUS",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        indicator_ranking.parent_coherence_strong_match_bonus,
+        "DBT_NOVA_SEARCH_INDICATOR_PARENT_COHERENCE_STRONG_MATCH_BONUS",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        indicator_ranking.parent_coherence_support_surface_bonus,
+        "DBT_NOVA_SEARCH_INDICATOR_PARENT_COHERENCE_SUPPORT_SURFACE_BONUS",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        indicator_ranking.parent_coherence_time_field_bonus,
+        "DBT_NOVA_SEARCH_INDICATOR_PARENT_COHERENCE_TIME_FIELD_BONUS",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        indicator_ranking.parent_coherence_dimension_bonus,
+        "DBT_NOVA_SEARCH_INDICATOR_PARENT_COHERENCE_DIMENSION_BONUS",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        indicator_ranking.parent_coherence_max_bonus,
+        "DBT_NOVA_SEARCH_INDICATOR_PARENT_COHERENCE_MAX_BONUS",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        indicator_ranking.search_parent_indicator_bonus_scale,
+        "DBT_NOVA_SEARCH_INDICATOR_SEARCH_PARENT_BONUS_SCALE",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        indicator_ranking.search_missing_indicator_parent_multiplier,
+        "DBT_NOVA_SEARCH_INDICATOR_SEARCH_MISSING_PARENT_MULTIPLIER",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        indicator_ranking.search_parent_indicator_top_k,
+        "DBT_NOVA_SEARCH_INDICATOR_SEARCH_PARENT_TOP_K",
+        parse_usize,
+        |v: &usize| *v > 0
+    );
+    crate::env_config!(
+        config,
+        indicator_ranking.indicator_rrf_score_weight,
+        "DBT_NOVA_SEARCH_INDICATOR_RRF_SCORE_WEIGHT",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        indicator_ranking.indicator_reranker_score_weight,
+        "DBT_NOVA_SEARCH_INDICATOR_RERANKER_SCORE_WEIGHT",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+}
+
+fn apply_indicator_ranking_env(config: &mut SearchConfig) {
+    apply_indicator_ranking_grouping_env(config);
+    apply_indicator_ranking_bonus_env(config);
+    apply_indicator_ranking_coherence_env(config);
+}
+
+fn apply_metadata_support_env(config: &mut SearchConfig) {
+    crate::env_config!(
+        config,
+        metadata_support.parent_synonym_weight,
+        "DBT_NOVA_SEARCH_METADATA_SUPPORT_PARENT_SYNONYM_WEIGHT",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        metadata_support.domain_weight,
+        "DBT_NOVA_SEARCH_METADATA_SUPPORT_DOMAIN_WEIGHT",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        metadata_support.use_case_weight,
+        "DBT_NOVA_SEARCH_METADATA_SUPPORT_USE_CASE_WEIGHT",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        metadata_support.dimension_weight,
+        "DBT_NOVA_SEARCH_METADATA_SUPPORT_DIMENSION_WEIGHT",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        metadata_support.column_name_weight,
+        "DBT_NOVA_SEARCH_METADATA_SUPPORT_COLUMN_NAME_WEIGHT",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        metadata_support.column_role_weight,
+        "DBT_NOVA_SEARCH_METADATA_SUPPORT_COLUMN_ROLE_WEIGHT",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        metadata_support.semantic_type_weight,
+        "DBT_NOVA_SEARCH_METADATA_SUPPORT_SEMANTIC_TYPE_WEIGHT",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        metadata_support.example_value_weight,
+        "DBT_NOVA_SEARCH_METADATA_SUPPORT_EXAMPLE_VALUE_WEIGHT",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        metadata_support.max_bonus,
+        "DBT_NOVA_SEARCH_METADATA_SUPPORT_MAX_BONUS",
+        parse_f32,
+        |v: &f32| *v >= 0.0
+    );
+    crate::env_config!(
+        config,
+        metadata_support.max_values_per_field,
+        "DBT_NOVA_SEARCH_METADATA_SUPPORT_MAX_VALUES_PER_FIELD",
+        parse_usize,
+        |v: &usize| *v > 0
+    );
+}
+
 fn apply_search_env(config: &mut SearchConfig) {
     apply_search_limits_env(config);
     apply_search_index_env(config);
@@ -1236,6 +1588,8 @@ fn apply_search_env(config: &mut SearchConfig) {
     apply_persona_env(config);
     apply_field_boosts_env(config);
     apply_semantic_scoring_env(config);
+    apply_indicator_ranking_env(config);
+    apply_metadata_support_env(config);
 }
 
 #[cfg(test)]
@@ -1338,5 +1692,99 @@ mod tests {
 
         assert_eq!(config.embedding_batch_size, 24);
         assert_eq!(config.sparse_embedding_batch_size, 12);
+    }
+
+    #[test]
+    fn indicator_ranking_env_overrides_apply() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [
+            (
+                "DBT_NOVA_SEARCH_INDICATOR_PARENT_GROUP_MAX_GROUPS",
+                Some("7"),
+            ),
+            (
+                "DBT_NOVA_SEARCH_INDICATOR_RERANKER_SCORE_WEIGHT",
+                Some("0.25"),
+            ),
+        ];
+        let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let config = SearchConfig::from_env();
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        assert_eq!(config.indicator_ranking.parent_group_max_groups, 7);
+        assert!(
+            (config.indicator_ranking.indicator_reranker_score_weight - 0.25).abs() < f32::EPSILON
+        );
+    }
+
+    #[test]
+    fn metadata_support_env_overrides_apply() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [
+            (
+                "DBT_NOVA_SEARCH_METADATA_SUPPORT_MAX_VALUES_PER_FIELD",
+                Some("6"),
+            ),
+            (
+                "DBT_NOVA_SEARCH_METADATA_SUPPORT_EXAMPLE_VALUE_WEIGHT",
+                Some("0.75"),
+            ),
+        ];
+        let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let config = SearchConfig::from_env();
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        assert_eq!(config.metadata_support.max_values_per_field, 6);
+        assert!((config.metadata_support.example_value_weight - 0.75).abs() < f32::EPSILON);
     }
 }

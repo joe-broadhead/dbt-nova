@@ -4,22 +4,24 @@ Agent Skills are a lightweight, open format for packaging task-specific workflow
 
 ## Skills included in this repo
 
-We ship four built-in skills under `.github/skills/`:
+We ship two built-in skill bundles under `.github/skills/`:
 
-- `analyst` — business analysis and reporting workflows
-- `engineer` — dbt model development and quality gates
-- `governance` — metadata audits and A-grade enforcement
-- `nova-meta-authoring` — adding and reviewing high-signal `meta.nova` in dbt projects
+- `.github/skills/mcp/`
+  - `mcp-analyst`
+  - `mcp-engineer`
+  - `mcp-governance`
+  - `mcp-nova-meta-authoring`
+- `.github/skills/cli/`
+  - `cli-analyst`
+  - `cli-engineer`
+  - `cli-governance`
+  - `cli-nova-meta-authoring`
 
-Each skill follows the Agent Skills spec and includes references and templates for deeper guidance.
-The analyst skill includes a deterministic metric-resolution workflow:
-metric discovery -> entity selection -> time/geo column resolution -> filter-value validation -> final SQL.
-The engineer skill mirrors this deterministic pattern:
-discovery -> impact analysis -> input validation -> quality gates -> readiness scoring -> ship checklist.
-The governance skill now mirrors this deterministic pattern:
-preflight -> scope freeze -> paged scoring -> blocker classification -> remediation -> recheck.
-The Nova meta authoring skill adds a metadata-design workflow:
-classify entity -> choose the right Nova surface -> choose canonical definitions -> validate search behavior.
+Use the `mcp-*` skills when the agent can call Nova MCP tools directly.
+Use the `cli-*` skills when the agent only has terminal access to `dbt-nova` commands such as
+`tool call`, `manifest load`, `health check`, `audit metadata-score`, and `audit nova-meta`.
+
+Each skill follows the Agent Skills spec and includes task-specific workflows for one transport.
 
 ## Install in common tools
 
@@ -35,6 +37,8 @@ curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scrip
 
 Set `DBT_NOVA_SKILLS_DIR` to use a different destination (for example
 `~/.codex/skills` or `~/.claude/skills`).
+The installer flattens bundle paths into unique skill names such as
+`mcp-analyst` and `cli-analyst`.
 
 ### Codex (CLI and IDE)
 
@@ -47,10 +51,14 @@ Codex supports Agent Skills for both the CLI and IDE extensions. You can install
 
 ```bash
 mkdir -p .codex/skills
-cp -R .github/skills/analyst .codex/skills/analyst
-cp -R .github/skills/engineer .codex/skills/engineer
-cp -R .github/skills/governance .codex/skills/governance
-cp -R .github/skills/nova-meta-authoring .codex/skills/nova-meta-authoring
+cp -R .github/skills/mcp/analyst .codex/skills/mcp-analyst
+cp -R .github/skills/cli/analyst .codex/skills/cli-analyst
+cp -R .github/skills/mcp/engineer .codex/skills/mcp-engineer
+cp -R .github/skills/cli/engineer .codex/skills/cli-engineer
+cp -R .github/skills/mcp/governance .codex/skills/mcp-governance
+cp -R .github/skills/cli/governance .codex/skills/cli-governance
+cp -R .github/skills/mcp/nova-meta-authoring .codex/skills/mcp-nova-meta-authoring
+cp -R .github/skills/cli/nova-meta-authoring .codex/skills/cli-nova-meta-authoring
 ```
 
 Restart Codex after installing new skills. You can invoke a skill explicitly with `$skill-name` or let Codex select it automatically.
@@ -62,18 +70,22 @@ Anthropic supports Agent Skills across Claude apps, Claude Code, and the API. Sk
 **Recommended (Claude apps):** zip a single skill directory and upload it.
 
 ```bash
-cd .github/skills
-zip -r analyst.skill.zip analyst
+cd .github/skills/mcp
+zip -r mcp-analyst.skill.zip analyst
 ```
 
 **Recommended (Claude Code / personal):**
 
 ```bash
 mkdir -p ~/.claude/skills
-cp -R /path/to/repo/.github/skills/analyst ~/.claude/skills/analyst
-cp -R /path/to/repo/.github/skills/engineer ~/.claude/skills/engineer
-cp -R /path/to/repo/.github/skills/governance ~/.claude/skills/governance
-cp -R /path/to/repo/.github/skills/nova-meta-authoring ~/.claude/skills/nova-meta-authoring
+cp -R /path/to/repo/.github/skills/mcp/analyst ~/.claude/skills/mcp-analyst
+cp -R /path/to/repo/.github/skills/cli/analyst ~/.claude/skills/cli-analyst
+cp -R /path/to/repo/.github/skills/mcp/engineer ~/.claude/skills/mcp-engineer
+cp -R /path/to/repo/.github/skills/cli/engineer ~/.claude/skills/cli-engineer
+cp -R /path/to/repo/.github/skills/mcp/governance ~/.claude/skills/mcp-governance
+cp -R /path/to/repo/.github/skills/cli/governance ~/.claude/skills/cli-governance
+cp -R /path/to/repo/.github/skills/mcp/nova-meta-authoring ~/.claude/skills/mcp-nova-meta-authoring
+cp -R /path/to/repo/.github/skills/cli/nova-meta-authoring ~/.claude/skills/cli-nova-meta-authoring
 ```
 
 ### Gemini CLI
@@ -84,10 +96,14 @@ Gemini CLI discovers skills from three tiers: workspace (`.gemini/skills/`), use
 
 ```bash
 mkdir -p .gemini/skills
-cp -R .github/skills/analyst .gemini/skills/analyst
-cp -R .github/skills/engineer .gemini/skills/engineer
-cp -R .github/skills/governance .gemini/skills/governance
-cp -R .github/skills/nova-meta-authoring .gemini/skills/nova-meta-authoring
+cp -R .github/skills/mcp/analyst .gemini/skills/mcp-analyst
+cp -R .github/skills/cli/analyst .gemini/skills/cli-analyst
+cp -R .github/skills/mcp/engineer .gemini/skills/mcp-engineer
+cp -R .github/skills/cli/engineer .gemini/skills/cli-engineer
+cp -R .github/skills/mcp/governance .gemini/skills/mcp-governance
+cp -R .github/skills/cli/governance .gemini/skills/cli-governance
+cp -R .github/skills/mcp/nova-meta-authoring .gemini/skills/mcp-nova-meta-authoring
+cp -R .github/skills/cli/nova-meta-authoring .gemini/skills/cli-nova-meta-authoring
 ```
 
 Then reload skills:
@@ -108,8 +124,8 @@ gemini skills install /path/to/skill --scope workspace
 Use the reference tooling from the Agent Skills project to validate your skills:
 
 ```bash
-skills-ref validate .github/skills/analyst
-skills-ref validate .github/skills/nova-meta-authoring
+skills-ref validate .github/skills/mcp/analyst
+skills-ref validate .github/skills/cli/nova-meta-authoring
 ```
 
 ## Further reading

@@ -77,8 +77,9 @@ client process reuses that cache.
 
 ### Optional: Install Agent Skills to `~/.agents/skills`
 
-To install the built-in skills (`analyst`, `engineer`, `governance`, `nova-meta-authoring`) into the
-standard Agent Skills user directory:
+To install the built-in skills (both `mcp-*` and `cli-*` variants for analyst,
+engineer, governance, and Nova meta authoring) into the standard Agent Skills
+user directory:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \

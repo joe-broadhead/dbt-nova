@@ -103,6 +103,7 @@ pub struct ColumnMetaSummary {
     pub description: Option<String>,
     pub role: Option<String>,
     pub semantic_type: Option<String>,
+    pub example_values: Vec<String>,
     pub primary_key: bool,
 }
 
@@ -376,6 +377,19 @@ fn get_column_meta(value: &serde_json::Value, column_names: &[String]) -> Vec<Co
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string);
+        let example_values = nova
+            .and_then(|n| n.get("example_values"))
+            .and_then(|v| v.as_array())
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|value| value.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let primary_key = column
             .get("meta")
             .and_then(|m| m.get("primary_key"))
@@ -385,7 +399,12 @@ fn get_column_meta(value: &serde_json::Value, column_names: &[String]) -> Vec<Co
             })
             .unwrap_or(false);
 
-        if description.is_none() && role.is_none() && semantic_type.is_none() && !primary_key {
+        if description.is_none()
+            && role.is_none()
+            && semantic_type.is_none()
+            && example_values.is_empty()
+            && !primary_key
+        {
             continue;
         }
         out.push(ColumnMetaSummary {
@@ -393,6 +412,7 @@ fn get_column_meta(value: &serde_json::Value, column_names: &[String]) -> Vec<Co
             description,
             role,
             semantic_type,
+            example_values,
             primary_key,
         });
     }

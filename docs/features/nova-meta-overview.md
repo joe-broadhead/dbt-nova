@@ -135,8 +135,41 @@ score → identify gaps → fix meta → re‑score.
 
 ## Validation
 
-The schema is versioned in `schemas/nova/v0.json`. Use it to validate
-`meta.nova` blocks in CI or during review.
+The schema is versioned in `schemas/nova/v0.json`. Use
+`dbt-nova audit nova-meta` to validate `meta.nova` blocks in CI or during
+review.
+
+Project-wide validation:
+
+```bash
+dbt-nova audit nova-meta --project-dir .
+```
+
+Single-file validation:
+
+```bash
+dbt-nova audit nova-meta --project-dir . --path models/marts/orders.yml
+```
+
+Single-resource validation while authoring:
+
+```bash
+dbt-nova audit nova-meta \
+  --project-dir . \
+  --resource-kind model \
+  --resource-name fct_orders
+```
+
+The validator enforces both:
+
+- schema conformance against `schemas/nova/v0.json`
+- local semantic checks such as field existence, duplicate semantic names,
+  grain overlap, and invalid `recommended_filters` value combinations
+
+Project-wide scans skip common generated and vendor directories by default,
+including `.git`, `.venv`, `venv`, `target`, `dbt_packages`, and
+`node_modules`. Use `--path` to validate a specific file or subtree inside one
+of those directories when needed.
 
 ## Best Practices
 

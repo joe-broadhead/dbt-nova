@@ -232,6 +232,9 @@ install_skills_from_ref() {
   local skills_source=""
   local skill_count=0
   local skill_name=""
+  local skill_file=""
+  local skill_dir=""
+  local skill_rel=""
 
   download_repo_archive "${ref}" "${archive_path}"
   mkdir -p "${extract_dir}"
@@ -243,12 +246,14 @@ install_skills_from_ref() {
   fi
 
   mkdir -p "${skills_dest}"
-  while IFS= read -r -d '' skill_dir; do
-    skill_name="$(basename "${skill_dir}")"
+  while IFS= read -r -d '' skill_file; do
+    skill_dir="$(dirname "${skill_file}")"
+    skill_rel="${skill_dir#"${skills_source}/"}"
+    skill_name="${skill_rel//\//-}"
     rm -rf "${skills_dest}/${skill_name}"
     cp -R "${skill_dir}" "${skills_dest}/${skill_name}"
     skill_count=$((skill_count + 1))
-  done < <(find "${skills_source}" -mindepth 1 -maxdepth 1 -type d -print0)
+  done < <(find "${skills_source}" -type f -name "SKILL.md" -print0)
 
   if (( skill_count < 1 )); then
     echo "No skills were found to install for ref '${ref}'." >&2

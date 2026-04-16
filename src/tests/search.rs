@@ -513,6 +513,169 @@ async fn test_search_metric_level_canonical_boosts_template_model() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_search_indicator_returns_canonical_measure_context() {
+    let searcher = semantic_preview_env();
+    let result = searcher
+        .search_indicator(&SearchIndicatorParams {
+            query: "gmv".to_string(),
+            resource_types: vec!["model".to_string()],
+            indicator_types: vec!["measure".to_string()],
+            persona: Some("analyst".to_string()),
+            pagination: PaginationParams {
+                limit: 10,
+                offset: 0,
+            },
+            min_score: None,
+        })
+        .await
+        .json();
+    let rows = result_rows(&result);
+
+    assert!(!rows.is_empty());
+    assert_eq!(
+        rows[0].get("indicator_name").and_then(JsonValue::as_str),
+        Some("gmv")
+    );
+    assert_eq!(
+        rows[0].get("indicator_type").and_then(JsonValue::as_str),
+        Some("measure")
+    );
+    assert_eq!(
+        rows[0].get("parent_unique_id").and_then(JsonValue::as_str),
+        Some("model.pkg.fact_orders_canonical")
+    );
+    assert_eq!(
+        rows[0].get("canonical").and_then(JsonValue::as_bool),
+        Some(true)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_search_indicator_prefers_generic_canonical_measure_for_generic_query() {
+    let searcher = semantic_preview_env();
+    let result = searcher
+        .search_indicator(&SearchIndicatorParams {
+            query: "what was gmv for spain last week".to_string(),
+            resource_types: vec!["model".to_string()],
+            indicator_types: vec!["measure".to_string()],
+            persona: Some("analyst".to_string()),
+            pagination: PaginationParams {
+                limit: 10,
+                offset: 0,
+            },
+            min_score: None,
+        })
+        .await
+        .json();
+    let rows = result_rows(&result);
+
+    assert!(!rows.is_empty());
+    assert_eq!(
+        rows[0].get("indicator_name").and_then(JsonValue::as_str),
+        Some("gmv")
+    );
+    assert_eq!(
+        rows[0].get("parent_unique_id").and_then(JsonValue::as_str),
+        Some("model.pkg.fact_orders_canonical")
+    );
+    let parent_groups = result
+        .get("parent_groups")
+        .and_then(JsonValue::as_array)
+        .expect("expected parent_groups");
+    assert!(!parent_groups.is_empty());
+    assert_eq!(
+        parent_groups[0]
+            .get("parent_unique_id")
+            .and_then(JsonValue::as_str),
+        Some("model.pkg.fact_orders_canonical")
+    );
+    let support_signals = rows[0]
+        .get("support_signals")
+        .and_then(JsonValue::as_object)
+        .expect("expected support_signals");
+    assert_eq!(
+        support_signals
+            .get("matched_example_values")
+            .and_then(JsonValue::as_array)
+            .and_then(|values| values.first())
+            .and_then(JsonValue::as_str),
+        Some("spain")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_search_indicator_returns_metric_with_parent_grain() {
+    let searcher = semantic_preview_env();
+    let result = searcher
+        .search_indicator(&SearchIndicatorParams {
+            query: "aov".to_string(),
+            resource_types: vec!["model".to_string()],
+            indicator_types: vec!["metric".to_string()],
+            persona: Some("analyst".to_string()),
+            pagination: PaginationParams {
+                limit: 10,
+                offset: 0,
+            },
+            min_score: None,
+        })
+        .await
+        .json();
+    let rows = result_rows(&result);
+
+    assert!(!rows.is_empty());
+    assert_eq!(
+        rows[0].get("indicator_name").and_then(JsonValue::as_str),
+        Some("average_order_value")
+    );
+    assert_eq!(
+        rows[0].get("indicator_type").and_then(JsonValue::as_str),
+        Some("metric")
+    );
+    assert_eq!(
+        rows[0].get("parent_unique_id").and_then(JsonValue::as_str),
+        Some("model.pkg.orders_semantic_templates")
+    );
+    assert_eq!(
+        rows[0]
+            .get("grain")
+            .and_then(|grain| grain.get("time_field"))
+            .and_then(JsonValue::as_str),
+        Some("order_date")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_search_surfaces_metadata_support_signals() {
+    let searcher = semantic_preview_env();
+    let result = searcher
+        .search(&search_params(
+            "what was gmv for spain last week",
+            Some("analyst"),
+        ))
+        .await
+        .json();
+    let rows = result_rows(&result);
+    assert_eq!(
+        rows[0].get("unique_id").and_then(JsonValue::as_str),
+        Some("model.pkg.fact_orders_canonical")
+    );
+    let top = row_by_unique_id(&rows, "model.pkg.fact_orders_canonical");
+    let support_signals = top
+        .get("support_signals")
+        .and_then(JsonValue::as_object)
+        .expect("expected support_signals");
+
+    assert_eq!(
+        support_signals
+            .get("matched_example_values")
+            .and_then(JsonValue::as_array)
+            .and_then(|values| values.first())
+            .and_then(JsonValue::as_str),
+        Some("spain")
+    );
+}
+
 fn governance_search_env(policy: GovernanceGateConfig) -> (ManifestSearch, TempDir) {
     let manifest_path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/nova_manifest.json");

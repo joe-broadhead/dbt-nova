@@ -17,7 +17,7 @@ use crate::utils::unique_suffix;
 const ENTITY_DATA_FILENAME: &str = "entities.bin";
 const ENTITY_INDEX_FILENAME: &str = "entities.idx";
 const ENTITY_CHECKSUM_FILENAME: &str = "entities.checksum.json";
-const ENTITY_SCHEMA_VERSION: u32 = 6;
+const ENTITY_SCHEMA_VERSION: u32 = 7;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct EntityChecksums {

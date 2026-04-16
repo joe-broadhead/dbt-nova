@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
 #[command(name = "dbt-nova", version, about = "dbt-nova CLI")]
@@ -161,7 +161,32 @@ pub struct AuditArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum AuditCommand {
-    MetadataScore(MetadataAuditArgs),
+    MetadataScore(Box<MetadataAuditArgs>),
+    NovaMeta(NovaMetaAuditArgs),
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum NovaMetaResourceKindArg {
+    Model,
+    Source,
+    Table,
+    Metric,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct NovaMetaAuditArgs {
+    #[arg(long, value_name = "DIR")]
+    pub project_dir: Option<String>,
+    #[arg(long, value_name = "PATH", action = ArgAction::Append)]
+    pub path: Vec<String>,
+    #[arg(long, value_enum)]
+    pub resource_kind: Option<NovaMetaResourceKindArg>,
+    #[arg(long, value_name = "NAME")]
+    pub resource_name: Option<String>,
+    #[arg(long, value_name = "COLUMN", requires = "resource_name")]
+    pub column: Option<String>,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq, Default)]
@@ -311,8 +336,8 @@ mod tests {
 
     use super::{
         AuditCommand, Cli, Command, ConfigCommand, HealthCommand, ManifestCommand,
-        MetadataAuditSelectionModeArg, ServerCommand, ServerTransportArg, StorageCommand,
-        ToolCommand,
+        MetadataAuditSelectionModeArg, NovaMetaResourceKindArg, ServerCommand, ServerTransportArg,
+        StorageCommand, ToolCommand,
     };
 
     #[test]
@@ -354,10 +379,11 @@ mod tests {
 
     #[test]
     fn cli_parses_all_top_level_groups() {
-        let groups: [&[&str]; 6] = [
+        let groups: [&[&str]; 7] = [
             &["dbt-nova", "manifest", "load"],
             &["dbt-nova", "tool", "call", "search"],
             &["dbt-nova", "audit", "metadata-score"],
+            &["dbt-nova", "audit", "nova-meta"],
             &["dbt-nova", "config", "show"],
             &["dbt-nova", "storage", "inspect"],
             &["dbt-nova", "health", "check"],
@@ -546,7 +572,9 @@ mod tests {
         let command = cli.command.expect("command");
         match command {
             Command::Audit(audit) => {
-                let AuditCommand::MetadataScore(args) = audit.command;
+                let AuditCommand::MetadataScore(args) = audit.command else {
+                    panic!("expected metadata-score command");
+                };
                 assert_eq!(args.selection_mode, MetadataAuditSelectionModeArg::Changed);
                 assert_eq!(
                     args.changed_files_json.as_deref(),
@@ -589,9 +617,46 @@ mod tests {
         let command = cli.command.expect("command");
         match command {
             Command::Audit(audit) => {
-                let AuditCommand::MetadataScore(args) = audit.command;
+                let AuditCommand::MetadataScore(args) = audit.command else {
+                    panic!("expected metadata-score command");
+                };
                 assert_eq!(args.include_breakdown, Some(false));
                 assert_eq!(args.include_recommendations, Some(true));
+            }
+            _ => panic!("expected audit command"),
+        }
+    }
+
+    #[test]
+    fn audit_nova_meta_parses_targeting_flags() {
+        let cli = Cli::parse_from([
+            "dbt-nova",
+            "audit",
+            "nova-meta",
+            "--project-dir",
+            ".",
+            "--path",
+            "models/marts/orders.yml",
+            "--resource-kind",
+            "model",
+            "--resource-name",
+            "fct_orders",
+            "--column",
+            "order_date",
+            "--json",
+        ]);
+        let command = cli.command.expect("command");
+        match command {
+            Command::Audit(audit) => {
+                let AuditCommand::NovaMeta(args) = audit.command else {
+                    panic!("expected nova-meta command");
+                };
+                assert_eq!(args.project_dir.as_deref(), Some("."));
+                assert_eq!(args.path, vec!["models/marts/orders.yml"]);
+                assert_eq!(args.resource_kind, Some(NovaMetaResourceKindArg::Model));
+                assert_eq!(args.resource_name.as_deref(), Some("fct_orders"));
+                assert_eq!(args.column.as_deref(), Some("order_date"));
+                assert!(args.json);
             }
             _ => panic!("expected audit command"),
         }

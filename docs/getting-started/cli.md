@@ -15,6 +15,7 @@ dbt-nova
 ├── manifest warm [--manifest-path|--manifest-uri] [--storage-instance-id] [--vector] [--sparse] [--reranker] [--force] [--json]
 ├── tool call <tool_name> [--params-json|--params-file|--params-stdin] [--manifest-path|--manifest-uri] [--storage-instance-id] [--cleanup-storage-on-start] [--read-only] [--json]
 ├── audit metadata-score [--selection-mode] [--changed-files-json|--changed-files-file] [--entity-ids-json|--entity-ids-file] [--resource-types-json] [--personas-json] [--thresholds-json|--thresholds-file] [--manifest-path|--manifest-uri] [--storage-instance-id] [--report-json-path] [--report-md-path] [--fail-on-no-targets] [--json]
+├── audit nova-meta [--project-dir] [--path <PATH>...] [--resource-kind] [--resource-name] [--column] [--json]
 ├── config show [--defaults] [--json]
 ├── config validate [--json]
 ├── storage inspect [--storage-instance-id] [--json]
@@ -89,6 +90,15 @@ dbt-nova tool call search \
   --manifest-path /path/to/target/manifest.json
 ```
 
+### Resolve canonical measures and metrics directly
+
+```bash
+dbt-nova tool call search_indicator \
+  --params-json '{"query":"checkout completion rate","indicator_types":["metric"],"persona":"analyst","limit":5}' \
+  --manifest-path /path/to/target/manifest.json \
+  --json
+```
+
 ### Metadata audit for changed models
 
 ```bash
@@ -102,6 +112,39 @@ dbt-nova audit metadata-score \
   --report-json-path out/metadata-audit.json \
   --report-md-path out/metadata-audit.md \
   --json
+```
+
+### Validate `meta.nova` across a dbt project
+
+```bash
+dbt-nova audit nova-meta \
+  --project-dir /path/to/dbt/project \
+  --json
+```
+
+### Validate a single YAML file while authoring Nova meta
+
+```bash
+dbt-nova audit nova-meta \
+  --project-dir /path/to/dbt/project \
+  --path models/marts/orders.yml
+```
+
+### Validate one model or one column only
+
+```bash
+dbt-nova audit nova-meta \
+  --project-dir /path/to/dbt/project \
+  --resource-kind model \
+  --resource-name fct_orders
+```
+
+```bash
+dbt-nova audit nova-meta \
+  --project-dir /path/to/dbt/project \
+  --resource-kind model \
+  --resource-name fct_orders \
+  --column order_date
 ```
 
 ### Health diagnostics
@@ -173,6 +216,16 @@ Top-level health `status` can be `degraded` when the manifest is loaded but one 
 semantic components are not yet query-ready. Use `ready_for_traffic` for automation gates.
 
 On errors (`status: "error"`), `error` contains the standard Nova error payload.
+
+`audit nova-meta` validates discovered `meta.nova` blocks against
+`schemas/nova/v0.json` and applies additional local semantic checks such as
+field references, duplicate semantic names, and invalid filter/value
+combinations.
+
+When scanning a project root, it skips common generated and vendor directories
+by default, including `.git`, `.venv`, `venv`, `target`, `dbt_packages`, and
+`node_modules`. Use explicit `--path` values when you intentionally want to
+validate inside one of those trees.
 
 Exit codes:
 

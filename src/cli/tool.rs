@@ -18,8 +18,8 @@ use crate::params::{
     BatchGetParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams, GetColumnLineageParams,
     GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams, GetLineageParams,
     GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
-    GetUndocumentedParams, ListEntitiesParams, ReloadManifestParams, RunRecipeParams, SearchParams,
-    SearchRecipesParams, ValidateDagParams,
+    GetUndocumentedParams, ListEntitiesParams, ReloadManifestParams, RunRecipeParams,
+    SearchIndicatorParams, SearchParams, SearchRecipesParams, ValidateDagParams,
 };
 use crate::responses::SuccessResponse;
 
@@ -34,10 +34,14 @@ struct ToolRegistryEntry {
     dispatch: ToolDispatchFn,
 }
 
-const TOOL_REGISTRY: [ToolRegistryEntry; 26] = [
+const TOOL_REGISTRY: [ToolRegistryEntry; 27] = [
     ToolRegistryEntry {
         name: "search",
         dispatch: dispatch_search,
+    },
+    ToolRegistryEntry {
+        name: "search_indicator",
+        dispatch: dispatch_search_indicator,
     },
     ToolRegistryEntry {
         name: "get_entity",
@@ -457,6 +461,17 @@ fn dispatch_search(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'
     })
 }
 
+fn dispatch_search_indicator(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: SearchIndicatorParams = decode_tool_params("search_indicator", params)?;
+        run_search_with_timeout(
+            searcher.config().search.search_timeout_ms,
+            searcher.search_indicator(&decoded),
+        )
+        .await
+    })
+}
+
 typed_dispatch!(
     dispatch_get_entity,
     "get_entity",
@@ -823,6 +838,7 @@ mod tests {
     fn tool_registry_has_full_mcp_name_parity() {
         let expected = vec![
             "search",
+            "search_indicator",
             "get_entity",
             "list_entities",
             "get_lineage",

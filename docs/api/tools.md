@@ -76,7 +76,55 @@ Common:
 
 When `detail: "standard"` and the query matches Nova measures or metrics, search
 results include a compact `semantic_preview` with the matched measure/metric
-name, description, expression, canonical flag, and match type.
+name, description, expression, canonical flag, and match type. For analyst KPI
+resolution, prefer `search_indicator` before broad `search`.
+
+### `search_indicator`
+Search Nova measures and metrics directly, then return the parent execution
+entity and grain context.
+
+Required:
+- `query`
+
+Common:
+- `indicator_types` (`["metric"]`, `["measure"]`, or omitted for both)
+- `resource_types` (filters parent entity types)
+- `persona` (string, defaults to `analyst`)
+- `limit`, `offset`, `min_score`
+
+```json
+{"name":"search_indicator","arguments":{"query":"checkout completion rate","indicator_types":["metric"],"resource_types":["model"],"persona":"analyst","limit":5,"offset":0}}
+```
+
+Example response shape:
+
+```json
+{
+  "success": true,
+  "count": 1,
+  "persona": "analyst",
+  "suggestions": [],
+  "data": [
+    {
+      "indicator_name": "checkout_completion_rate",
+      "indicator_type": "metric",
+      "canonical": true,
+      "match_type": "name",
+      "score": 10.5,
+      "expression": "sum(order_completed) / nullif(sum(checkout_process_commenced), 0)",
+      "parent_unique_id": "model.package.base__amplitude_sessions_sql",
+      "parent_name": "base__amplitude_sessions_sql",
+      "parent_resource_type": "model",
+      "relation_name": "analytics.omnicommerce.base__amplitude_sessions",
+      "domains": ["ecommerce", "digital_analytics"],
+      "grain": {
+        "time_field": "session_date",
+        "dimensions": ["country_code", "platform_name"]
+      }
+    }
+  ]
+}
+```
 
 ### `get_entity`
 Fetch a single entity by `unique_id` or name.

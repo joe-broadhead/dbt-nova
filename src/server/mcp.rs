@@ -19,8 +19,8 @@ use crate::params::{
     BatchGetParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams, GetColumnLineageParams,
     GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams, GetLineageParams,
     GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
-    GetUndocumentedParams, ListEntitiesParams, ReloadManifestParams, RunRecipeParams, SearchParams,
-    SearchRecipesParams, ValidateDagParams,
+    GetUndocumentedParams, ListEntitiesParams, ReloadManifestParams, RunRecipeParams,
+    SearchIndicatorParams, SearchParams, SearchRecipesParams, ValidateDagParams,
 };
 use crate::responses::SuccessResponse;
 use crate::server::health::build_manifest_health_payload;
@@ -52,7 +52,7 @@ impl ServerHandler for DbtNovaServer {
                 version: env!("CARGO_PKG_VERSION").into(),
                 ..Implementation::default()
             },
-            instructions: Some("DBT Manifest Search and Analysis MCP Server. Use 'search' for full-text search, 'get_entity' for complete entity data, 'get_lineage' for dependency analysis, and 'execute_sql' to run warehouse queries with the configured SQL provider.".into()),
+            instructions: Some("DBT Manifest Search and Analysis MCP Server. Use 'search' for full-text discovery, 'search_indicator' for canonical measures and metrics, 'get_entity' for complete entity data, and 'execute_sql' to run warehouse queries with the configured SQL provider.".into()),
         }
     }
 }
@@ -424,6 +424,64 @@ impl DbtNovaServer {
                     ))),
                 }
             })
+            .await;
+        drop(permit);
+        result
+    }
+
+    /// Resolve Nova measures and metrics that match the query.
+    #[tool(
+        name = "search_indicator",
+        description = "Analyst-focused semantic discovery. Search Nova measures and metrics by business term, synonym, field, description, or expression, and return the parent execution entity, grain, and match evidence."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn search_indicator(&self, params: Parameters<SearchIndicatorParams>) -> String {
+        let persona = params.0.persona.clone();
+        let search_started = Instant::now();
+        let search_timeout_ms = match self.searcher.get().await {
+            Ok(searcher) => searcher.config().search.search_timeout_ms as u64,
+            Err(_) => 0,
+        };
+        let permit_timeout = remaining_timeout(search_started, search_timeout_ms);
+        let permit_result = if let Ok(searcher) = self.searcher.get().await {
+            self.acquire_search_permit(searcher.config(), permit_timeout)
+                .await
+        } else {
+            Ok(None)
+        };
+        let permit = match Self::permit_from_result(permit_result) {
+            Ok(permit) => permit,
+            Err(response) => return response,
+        };
+        let result = self
+            .handle_async(
+                "search_indicator",
+                persona.as_deref(),
+                |searcher| async move {
+                    if search_timeout_ms == 0 {
+                        return searcher.search_indicator(&params.0).await;
+                    }
+                    let Some(remaining) = remaining_timeout(search_started, search_timeout_ms)
+                    else {
+                        return Err(DbtNovaError::ServerError(format!(
+                            "Search timed out after {search_timeout_ms}ms"
+                        )));
+                    };
+                    if remaining.is_zero() {
+                        return Err(DbtNovaError::ServerError(format!(
+                            "Search timed out after {search_timeout_ms}ms"
+                        )));
+                    }
+                    match tokio::time::timeout(remaining, searcher.search_indicator(&params.0))
+                        .await
+                    {
+                        Ok(result) => result,
+                        Err(_) => Err(DbtNovaError::ServerError(format!(
+                            "Search timed out after {search_timeout_ms}ms"
+                        ))),
+                    }
+                },
+            )
             .await;
         drop(permit);
         result

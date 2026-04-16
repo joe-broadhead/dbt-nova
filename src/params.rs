@@ -97,6 +97,28 @@ pub struct SearchParams {
     pub include_sql: bool,
 }
 
+/// Parameters for the search_indicator tool.
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct SearchIndicatorParams {
+    /// Search query - resolves Nova measures and metrics by name, synonym, field, description, or expression.
+    #[serde(default)]
+    pub query: String,
+    /// Filter parent entities by resource types (for example: model, source).
+    #[serde(default)]
+    pub resource_types: Vec<String>,
+    /// Filter indicator types. Supported values: metric, measure.
+    #[serde(default)]
+    pub indicator_types: Vec<String>,
+    /// Optional search persona: "analyst", "engineer", "governance"
+    #[serde(default)]
+    pub persona: Option<String>,
+    #[serde(default, flatten)]
+    pub pagination: PaginationParams,
+    /// Minimum relevance score threshold (0.0+, default: no threshold).
+    #[serde(default)]
+    pub min_score: Option<f32>,
+}
+
 /// Parameters for the get_entity tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetEntityParams {

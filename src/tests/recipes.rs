@@ -111,6 +111,74 @@ async fn test_search_recipes_query_filter_applies_to_query_names() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_search_recipes_query_filter_normalizes_spaces_and_separators() {
+    let searcher = get_searcher_with_fixture("recipes_by_analysis.json");
+    let params = SearchRecipesParams {
+        query: "weekly report".to_string(),
+        topic: String::new(),
+        include_queries: false,
+        pagination: PaginationParams {
+            limit: 20,
+            offset: 0,
+        },
+    };
+    let result = searcher.search_recipes(&params).await.json();
+    let success = result
+        .get("success")
+        .expect("response missing 'success'")
+        .as_bool()
+        .expect("'success' should be boolean");
+    assert!(
+        success,
+        "Expected normalized search_recipes to succeed: {:?}",
+        result.get("error")
+    );
+    let data = result
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .expect("search_recipes should return array data");
+    assert_eq!(data.len(), 1);
+    assert_eq!(
+        data[0].get("id").and_then(|id| id.as_str()),
+        Some("marketplace/weekly_report")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_search_recipes_topic_filter_normalizes_spaces_and_separators() {
+    let searcher = get_searcher_with_fixture("recipes_by_analysis.json");
+    let params = SearchRecipesParams {
+        query: String::new(),
+        topic: "marketplace weekly".to_string(),
+        include_queries: false,
+        pagination: PaginationParams {
+            limit: 20,
+            offset: 0,
+        },
+    };
+    let result = searcher.search_recipes(&params).await.json();
+    let success = result
+        .get("success")
+        .expect("response missing 'success'")
+        .as_bool()
+        .expect("'success' should be boolean");
+    assert!(
+        success,
+        "Expected normalized topic filter to succeed: {:?}",
+        result.get("error")
+    );
+    let data = result
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .expect("search_recipes should return array data");
+    assert_eq!(data.len(), 1);
+    assert_eq!(
+        data[0].get("id").and_then(|id| id.as_str()),
+        Some("marketplace/weekly_report")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_get_recipe_with_basename_and_sql_payload() {
     let searcher = get_searcher_with_fixture("recipes_by_analysis.json");
     let mut parameters = HashMap::new();

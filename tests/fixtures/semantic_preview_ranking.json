@@ -20,14 +20,46 @@
       "compiled_code": "select 1 as order_id, 10 as gmv_amount",
       "columns": {
         "order_id": {"name": "order_id", "description": "Order id."},
-        "gmv_amount": {"name": "gmv_amount", "description": "GMV amount."}
+        "gmv_amount": {"name": "gmv_amount", "description": "GMV amount."},
+        "country_code": {
+          "name": "country_code",
+          "description": "Country code.",
+          "meta": {
+            "nova": {
+              "role": "dimension",
+              "semantic_type": "country_code",
+              "example_values": ["spain", "france"]
+            }
+          }
+        },
+        "sales_channel": {
+          "name": "sales_channel",
+          "description": "Sales channel.",
+          "meta": {
+            "nova": {
+              "role": "dimension",
+              "semantic_type": "sales_channel",
+              "example_values": ["online", "store"]
+            }
+          }
+        },
+        "order_date": {
+          "name": "order_date",
+          "description": "Order date.",
+          "meta": {
+            "nova": {
+              "role": "time",
+              "semantic_type": "date"
+            }
+          }
+        }
       },
       "meta": {
         "nova": {
           "canonical": true,
           "domains": ["commerce"],
           "use_cases": ["revenue_reporting"],
-          "synonyms": ["order revenue"],
+          "synonyms": ["order revenue", "gmv"],
           "grain": {
             "primary_key": ["order_id"],
             "time_field": "order_date",
@@ -62,7 +94,18 @@
       "compiled_code": "select 1 as order_id, 10 as gmv_amount",
       "columns": {
         "order_id": {"name": "order_id", "description": "Order id."},
-        "gmv_amount": {"name": "gmv_amount", "description": "GMV amount."}
+        "gmv_amount": {"name": "gmv_amount", "description": "GMV amount."},
+        "country_code": {
+          "name": "country_code",
+          "description": "Country code.",
+          "meta": {
+            "nova": {
+              "role": "dimension",
+              "semantic_type": "country_code",
+              "example_values": ["spain", "france"]
+            }
+          }
+        }
       },
       "meta": {
         "nova": {
@@ -76,6 +119,76 @@
               "type": "sum",
               "field": "gmv_amount",
               "synonyms": ["gross merchandise value"]
+            }
+          ]
+        }
+      }
+    },
+    "model.pkg.promotions_gmv_specialized": {
+      "name": "promotions_gmv_specialized",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "description": "Promotion reporting model with GMV measures for commercial analysis.",
+      "path": "models/marts/promotions_gmv_specialized.sql",
+      "original_file_path": "models/marts/promotions_gmv_specialized.sql",
+      "alias": "promotions_gmv_specialized",
+      "config": {"enabled": true},
+      "raw_code": "select 1 as promotion_id, 10 as gmv_amount",
+      "compiled_code": "select 1 as promotion_id, 10 as gmv_amount",
+      "columns": {
+        "promotion_id": {"name": "promotion_id", "description": "Promotion id."},
+        "gmv_amount": {"name": "gmv_amount", "description": "GMV amount."}
+      },
+      "meta": {
+        "nova": {
+          "canonical": true,
+          "domains": ["commerce", "promotions"],
+          "measures": [
+            {
+              "name": "promoted_gmv",
+              "canonical": true,
+              "description": "GMV linked to promoted orders.",
+              "expression": "sum(gmv_amount)",
+              "type": "sum",
+              "field": "gmv_amount",
+              "synonyms": ["promotion gmv"]
+            }
+          ]
+        }
+      }
+    },
+    "model.pkg.crc_gmv_specialized": {
+      "name": "crc_gmv_specialized",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "analytics",
+      "schema": "dbt_test",
+      "description": "Customer service GMV model for linked transaction analysis.",
+      "path": "models/intermediate/crc_gmv_specialized.sql",
+      "original_file_path": "models/intermediate/crc_gmv_specialized.sql",
+      "alias": "crc_gmv_specialized",
+      "config": {"enabled": true},
+      "raw_code": "select 1 as case_id, 10 as gmv_amount",
+      "compiled_code": "select 1 as case_id, 10 as gmv_amount",
+      "columns": {
+        "case_id": {"name": "case_id", "description": "Case id."},
+        "gmv_amount": {"name": "gmv_amount", "description": "GMV amount."}
+      },
+      "meta": {
+        "nova": {
+          "canonical": true,
+          "domains": ["commerce", "service_operations"],
+          "measures": [
+            {
+              "name": "crc_linked_ordered_gmv",
+              "canonical": true,
+              "description": "GMV linked to customer cases.",
+              "expression": "sum(gmv_amount)",
+              "type": "sum",
+              "field": "gmv_amount",
+              "synonyms": ["customer case gmv"]
             }
           ]
         }
@@ -166,6 +279,8 @@
   "parent_map": {
     "model.pkg.fact_orders_canonical": [],
     "model.pkg.fact_orders_channel": [],
+    "model.pkg.promotions_gmv_specialized": [],
+    "model.pkg.crc_gmv_specialized": [],
     "model.pkg.orders_semantic_templates": [],
     "model.pkg.orders_semantic_secondary": [],
     "metric.pkg.gmv": []
