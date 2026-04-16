@@ -153,6 +153,7 @@ async fn test_search_returns_full_nested_meta_when_include_full() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 5,
             offset: 0,

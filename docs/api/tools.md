@@ -19,6 +19,7 @@ Common:
 - `detail` (`standard` | `full`)
 - `include_highlights` (bool)
 - `include_sql` (bool, only for `detail=full`)
+- `explain` (bool, includes deterministic ranking/debug breakdowns)
 - `limit`, `offset`, `min_score`, `fuzzy`
 
 ```json
@@ -79,6 +80,10 @@ results include a compact `semantic_preview` with the matched measure/metric
 name, description, expression, canonical flag, and match type. For analyst KPI
 resolution, prefer `search_indicator` before broad `search`.
 
+When `explain: true`, each result row includes an `explain` block with retrieval
+and scoring factors, and the top-level response includes an `explain` payload
+with query tokens, retrievers used, and the active ranking config snapshot.
+
 ### `search_indicator`
 Search Nova measures and metrics directly, then return the parent execution
 entity and grain context.
@@ -90,6 +95,7 @@ Common:
 - `indicator_types` (`["metric"]`, `["measure"]`, or omitted for both)
 - `resource_types` (filters parent entity types)
 - `persona` (string, defaults to `analyst`)
+- `explain` (bool, includes deterministic ranking/debug breakdowns)
 - `limit`, `offset`, `min_score`
 
 ```json
@@ -125,6 +131,11 @@ Example response shape:
   ]
 }
 ```
+
+When `explain: true`, indicator rows include a per-row `explain` block with the
+base semantic match score, parent coherence, RRF contribution, reranker bonus,
+and final score. The top-level response also includes an `explain` payload with
+query tokens, retrievers used, and the active indicator-ranking config snapshot.
 
 ### `indicator_inventory`
 List Nova measures and metrics deterministically, with parent execution context.

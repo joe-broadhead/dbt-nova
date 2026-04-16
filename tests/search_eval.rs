@@ -493,6 +493,7 @@ async fn evaluate_profile(
             fuzzy: false,
             include_highlights: false,
             include_sql: false,
+            explain: false,
             pagination: PaginationParams {
                 limit: top_k.max(1),
                 offset: 0,

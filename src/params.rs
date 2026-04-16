@@ -66,6 +66,7 @@ pub enum DetailLevel {
 }
 
 /// Parameters for the search tool.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Deserialize, JsonSchema, Default)]
 pub struct SearchParams {
     /// Search query - matches names, descriptions, SQL code, file paths, column names.
@@ -95,6 +96,9 @@ pub struct SearchParams {
     /// Include raw/compiled SQL in full detail responses (default: false)
     #[serde(default)]
     pub include_sql: bool,
+    /// Include deterministic ranking/debug explanations in the response (default: false)
+    #[serde(default)]
+    pub explain: bool,
 }
 
 /// Parameters for the search_indicator tool.
@@ -117,6 +121,9 @@ pub struct SearchIndicatorParams {
     /// Minimum relevance score threshold (0.0+, default: no threshold).
     #[serde(default)]
     pub min_score: Option<f32>,
+    /// Include deterministic ranking/debug explanations in the response (default: false)
+    #[serde(default)]
+    pub explain: bool,
 }
 
 /// Parameters for the indicator_inventory tool.

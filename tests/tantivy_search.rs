@@ -119,6 +119,7 @@ async fn tantivy_search_by_name() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -149,6 +150,7 @@ async fn tantivy_search_by_alias() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -180,6 +182,7 @@ async fn tantivy_search_by_description() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -211,6 +214,7 @@ async fn tantivy_search_by_column_name() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -242,6 +246,7 @@ async fn tantivy_search_by_tags() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -273,6 +278,7 @@ async fn tantivy_search_by_file_path() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -308,6 +314,7 @@ async fn tantivy_search_by_sql_code() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -335,6 +342,7 @@ async fn tantivy_search_filter_by_resource_type() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -364,6 +372,7 @@ async fn tantivy_search_multi_word_query() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -392,6 +401,7 @@ async fn tantivy_search_or_query() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -424,6 +434,7 @@ async fn tantivy_search_phrase_query() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -455,6 +466,7 @@ async fn tantivy_search_field_query() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -486,6 +498,7 @@ async fn tantivy_search_prefix_wildcard() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -518,6 +531,7 @@ async fn tantivy_search_stemming() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -544,6 +558,7 @@ async fn tantivy_search_ngram_partial() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -583,6 +598,7 @@ async fn tantivy_search_with_min_score() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -613,6 +629,7 @@ async fn tantivy_search_respects_limit() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 1,
             offset: 0,
@@ -639,6 +656,7 @@ async fn tantivy_search_results_sorted_by_score() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -673,6 +691,7 @@ async fn tantivy_search_include_full_false() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -709,6 +728,7 @@ async fn tantivy_searchhighlights() {
         fuzzy: false,
         include_highlights: true,
         include_sql: true,
+        explain: false,
         pagination: PaginationParams {
             limit: 5,
             offset: 0,
@@ -750,6 +770,7 @@ async fn tantivy_search_suggestions() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 5,
             offset: 0,
@@ -776,6 +797,7 @@ async fn tantivy_search_macro_sql() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -806,6 +828,7 @@ async fn tantivy_search_doc_contents() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -836,6 +859,7 @@ async fn tantivy_search_empty_query_rejected() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,
@@ -860,6 +884,7 @@ async fn tantivy_search_short_query_rejected() {
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
+        explain: false,
         pagination: PaginationParams {
             limit: 10,
             offset: 0,

@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use rkyv::string::ArchivedString;
@@ -125,6 +125,10 @@ impl ManifestSearch {
             .await?;
         let mut fused_hits = fused_bundle.hits;
         let indicator_parent_scores = fused_bundle.indicator_parent_scores;
+        let retrieval_explain = fused_bundle.retrieval_explain;
+        let retrievers_used = fused_bundle.retrievers_used;
+        let mut reranker_scores: HashMap<String, f32> = HashMap::new();
+        let mut reranker_applied = false;
 
         if self.config.search.enable_reranker
             && let Some(reranker) = &self.reranker
@@ -157,6 +161,7 @@ impl ManifestSearch {
                                     if let Some(id) = ids.get(idx).cloned()
                                         && seen.insert(id.clone())
                                     {
+                                        reranker_scores.insert(id.clone(), score);
                                         reordered.push((id, score));
                                     }
                                 }
@@ -166,6 +171,7 @@ impl ManifestSearch {
                                     }
                                 }
                                 fused_hits = reordered;
+                                reranker_applied = true;
                             }
                             Err(err) => {
                                 self.reranker_breaker.on_failure().await;
@@ -195,7 +201,23 @@ impl ManifestSearch {
             if !suggestions.is_empty() {
                 response = response.with_suggestions(suggestions);
             }
-            return Ok(serde_json::to_value(response)?);
+            let mut response_json = serde_json::to_value(response)?;
+            if params.explain
+                && let Some(obj) = response_json.as_object_mut()
+            {
+                obj.insert(
+                    "explain".to_string(),
+                    serde_json::to_value(build_search_explain_payload(
+                        &tokens,
+                        query_has_syntax,
+                        persona,
+                        &self.config.search,
+                        retrievers_used,
+                        reranker_applied,
+                    ))?,
+                );
+            }
+            return Ok(response_json);
         }
 
         let total_hits = fused_hits.len();
@@ -241,13 +263,17 @@ impl ManifestSearch {
                     has_indicator_parent_scores: !indicator_parent_scores.is_empty(),
                     indicator_parent_score: indicator_parent_scores.get(&id).copied(),
                 },
+                retrieval_explain.get(&id).cloned(),
+                reranker_scores.get(&id).copied(),
+                params.explain,
             );
             candidates.push(SearchCandidate {
                 indicator_parent_score: indicator_parent_scores.get(&id).copied(),
                 unique_id: id,
                 entity,
-                score: adjusted,
+                score: adjusted.score,
                 support_signals,
+                explain: adjusted.explain,
             });
         }
         candidates.sort_by(compare_search_candidates);
@@ -286,6 +312,12 @@ impl ManifestSearch {
                                 serde_json::to_value(support_signals).unwrap_or(JsonValue::Null),
                             );
                         }
+                        if let Some(explain) = candidate.explain {
+                            obj.insert(
+                                "explain".to_string(),
+                                serde_json::to_value(explain).unwrap_or(JsonValue::Null),
+                            );
+                        }
                     }
                     results.push(entity_json);
                 }
@@ -307,6 +339,12 @@ impl ManifestSearch {
                             serde_json::to_value(support_signals).unwrap_or(JsonValue::Null),
                         );
                     }
+                    if let Some(explain) = candidate.explain {
+                        obj.insert(
+                            "explain".to_string(),
+                            serde_json::to_value(explain).unwrap_or(JsonValue::Null),
+                        );
+                    }
                 }
                 results.push(summary);
             }
@@ -326,7 +364,23 @@ impl ManifestSearch {
         if !analysis_hints.is_empty() {
             response = response.with_analysis_hints(analysis_hints);
         }
-        Ok(serde_json::to_value(response)?)
+        let mut response_json = serde_json::to_value(response)?;
+        if params.explain
+            && let Some(obj) = response_json.as_object_mut()
+        {
+            obj.insert(
+                "explain".to_string(),
+                serde_json::to_value(build_search_explain_payload(
+                    &tokens,
+                    query_has_syntax,
+                    persona,
+                    &self.config.search,
+                    retrievers_used,
+                    reranker_applied,
+                ))?,
+            );
+        }
+        Ok(response_json)
     }
 
     /// Resolve Nova measures and metrics that match the query.
@@ -345,7 +399,7 @@ impl ManifestSearch {
         rows = self
             .rank_indicator_rows(params, query_has_syntax, persona, rows)
             .await?;
-        self.build_indicator_search_response(params, persona, rows)
+        self.build_indicator_search_response(params, persona, query_has_syntax, &tokens, rows)
     }
 
     /// List Nova measures and metrics deterministically.
@@ -599,8 +653,25 @@ impl ManifestSearch {
         &self,
         params: &SearchIndicatorParams,
         persona: SearchPersona,
+        query_has_syntax: bool,
+        tokens: &[String],
         rows: Vec<IndicatorSearchRow>,
     ) -> Result<JsonValue> {
+        let explain_payload = params.explain.then(|| {
+            build_search_explain_payload(
+                tokens,
+                query_has_syntax,
+                persona,
+                &self.config.search,
+                indicator_retrievers_used(&rows, self.config.search.enable_rrf),
+                rows.iter().any(|row| {
+                    row.explain
+                        .as_ref()
+                        .and_then(|explain| explain.reranker_bonus)
+                        .is_some()
+                }),
+            )
+        });
         let parent_groups = build_indicator_parent_groups(
             &rows,
             &self.config.search.indicator_ranking,
@@ -630,6 +701,9 @@ impl ManifestSearch {
                 "parent_groups".to_string(),
                 serde_json::to_value(parent_groups)?,
             );
+            if let Some(explain) = explain_payload {
+                obj.insert("explain".to_string(), serde_json::to_value(explain)?);
+            }
         }
         Ok(response_json)
     }
@@ -655,6 +729,7 @@ impl ManifestSearch {
             fuzzy: false,
             include_highlights: false,
             include_sql: false,
+            explain: false,
         };
         let persona_weights = persona_weights(persona, &self.config.search);
         let primary_results = run_tantivy_search(
@@ -690,7 +765,7 @@ impl ManifestSearch {
             return Ok(rows);
         }
 
-        let fused_scores = weighted_rrf(
+        let fused_scores = weighted_rrf_with_explain(
             &[
                 ("indicator_local", local_ranking),
                 ("indicator_parent", parent_ranking),
@@ -698,7 +773,7 @@ impl ManifestSearch {
             &persona_weights,
             self.config.search.rrf_k,
         );
-        let fused_score_map: HashMap<String, f32> = fused_scores.into_iter().collect();
+        let fused_score_map: HashMap<String, RetrievalExplain> = fused_scores.into_iter().collect();
 
         let rrf_weight = self
             .config
@@ -706,8 +781,14 @@ impl ManifestSearch {
             .indicator_ranking
             .indicator_rrf_score_weight;
         for row in &mut rows {
-            if let Some(rrf_score) = fused_score_map.get(&indicator_row_key(row)) {
-                row.score += *rrf_score * rrf_weight;
+            if let Some(rrf_explain) = fused_score_map.get(&indicator_row_key(row)) {
+                let bonus = rrf_explain.total_score * rrf_weight;
+                row.score += bonus;
+                if let Some(explain) = &mut row.explain {
+                    explain.rrf_bonus = Some(bonus);
+                    explain.retrieval = Some(rrf_explain.clone());
+                    explain.final_score = row.score;
+                }
             }
         }
         rows.sort_by(compare_indicator_rows);
@@ -832,10 +913,10 @@ impl ManifestSearch {
             }
 
             if indicator_type_selected(indicator_filter, "metric") {
-                if let Some(metric) = nova.metric.as_ref() {
-                    if !canonical_only || metric.canonical {
-                        rows.push(build_metric_inventory_row(unique_id, entity, nova, metric));
-                    }
+                if let Some(metric) = nova.metric.as_ref()
+                    && (!canonical_only || metric.canonical)
+                {
+                    rows.push(build_metric_inventory_row(unique_id, entity, nova, metric));
                 }
                 for metric in nova.metrics.iter() {
                     if canonical_only && !metric.canonical {
@@ -951,12 +1032,36 @@ impl ManifestSearch {
         primary_results: &[SearchHit],
     ) -> Result<FusedHitBundle> {
         if !self.config.search.enable_rrf {
+            let hits: Vec<(String, f32)> = primary_results
+                .iter()
+                .map(|hit| (hit.unique_id.clone(), hit.score))
+                .collect();
+            let retrieval_explain = primary_results
+                .iter()
+                .enumerate()
+                .map(|(index, hit)| {
+                    let mut retrievers = BTreeMap::new();
+                    retrievers.insert(
+                        "primary".to_string(),
+                        RetrieverContribution {
+                            rank: index + 1,
+                            score: hit.score,
+                        },
+                    );
+                    (
+                        hit.unique_id.clone(),
+                        RetrievalExplain {
+                            total_score: hit.score,
+                            retrievers,
+                        },
+                    )
+                })
+                .collect();
             return Ok(FusedHitBundle {
-                hits: primary_results
-                    .iter()
-                    .map(|hit| (hit.unique_id.clone(), hit.score))
-                    .collect(),
+                hits,
                 indicator_parent_scores: HashMap::new(),
+                retrieval_explain,
+                retrievers_used: vec!["primary".to_string()],
             });
         }
 
@@ -1106,30 +1211,129 @@ impl ManifestSearch {
             }
         }
 
+        let retrievers_used = rankings
+            .iter()
+            .map(|(name, _)| (*name).to_string())
+            .collect::<Vec<_>>();
+        let weighted =
+            weighted_rrf_with_explain(&rankings, &persona_weights, self.config.search.rrf_k);
+        let hits = weighted
+            .iter()
+            .map(|(id, explain)| (id.clone(), explain.total_score))
+            .collect();
+        let retrieval_explain = weighted.into_iter().collect();
+
         Ok(FusedHitBundle {
-            hits: weighted_rrf(&rankings, &persona_weights, self.config.search.rrf_k),
+            hits,
             indicator_parent_scores,
+            retrieval_explain,
+            retrievers_used,
         })
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     fn adjust_score_with_meta(
         &self,
         unique_id: &str,
         score: f32,
         entity: Option<&ArchivedEntity>,
         context: SearchScoreContext<'_>,
-    ) -> f32 {
+        retrieval_explain: Option<RetrievalExplain>,
+        reranker_score: Option<f32>,
+        explain: bool,
+    ) -> SearchScoreOutcome {
         if score <= 0.0 {
-            return score;
+            return SearchScoreOutcome {
+                score,
+                explain: explain.then_some(SearchScoreExplain {
+                    base_score: score,
+                    retrieval: retrieval_explain,
+                    pre_rerank_retrieval_score: None,
+                    reranker_score,
+                    exact_match: false,
+                    resource_type_multiplier: 1.0,
+                    staging_deboost_factor: None,
+                    missing_nova_multiplier: None,
+                    candidate_false_multiplier: None,
+                    measure_match: false,
+                    metric_match: false,
+                    synonym_match: false,
+                    canonical_entity: false,
+                    canonical_semantic_match: false,
+                    engineer_exact_match_multiplier: None,
+                    canonical_entity_multiplier: None,
+                    measure_match_multiplier: None,
+                    metric_match_multiplier: None,
+                    synonym_match_multiplier: None,
+                    strongest_match_type: None,
+                    semantic_match_multiplier: None,
+                    query_coverage_multiplier: None,
+                    semantic_canonical_match_multiplier: None,
+                    semantic_canonical_match_bonus: None,
+                    canonical_match_multiplier: None,
+                    canonical_match_bonus: None,
+                    analyst_semantic_multiplier: None,
+                    semantic_label_precision_factor: None,
+                    metadata_support_factor: None,
+                    indicator_parent_factor: None,
+                    docs_multiplier: None,
+                    tests_multiplier: None,
+                    tags_multiplier: None,
+                    path_multiplier: None,
+                    final_score: score,
+                }),
+            };
         }
 
         let mut adjusted = score;
         let weights = persona_weights(context.persona, &self.config.search);
+        let mut explain_payload = explain.then_some(SearchScoreExplain {
+            base_score: score,
+            pre_rerank_retrieval_score: retrieval_explain.as_ref().map(|value| value.total_score),
+            retrieval: retrieval_explain,
+            reranker_score,
+            exact_match: false,
+            resource_type_multiplier: 1.0,
+            staging_deboost_factor: None,
+            missing_nova_multiplier: None,
+            candidate_false_multiplier: None,
+            measure_match: false,
+            metric_match: false,
+            synonym_match: false,
+            canonical_entity: false,
+            canonical_semantic_match: false,
+            engineer_exact_match_multiplier: None,
+            canonical_entity_multiplier: None,
+            measure_match_multiplier: None,
+            metric_match_multiplier: None,
+            synonym_match_multiplier: None,
+            strongest_match_type: None,
+            semantic_match_multiplier: None,
+            query_coverage_multiplier: None,
+            semantic_canonical_match_multiplier: None,
+            semantic_canonical_match_bonus: None,
+            canonical_match_multiplier: None,
+            canonical_match_bonus: None,
+            analyst_semantic_multiplier: None,
+            semantic_label_precision_factor: None,
+            metadata_support_factor: None,
+            indicator_parent_factor: None,
+            docs_multiplier: None,
+            tests_multiplier: None,
+            tags_multiplier: None,
+            path_multiplier: None,
+            final_score: score,
+        });
         let Some(entity) = entity else {
-            return adjusted;
+            return SearchScoreOutcome {
+                score: adjusted,
+                explain: explain_payload,
+            };
         };
         let exact_match = query_exact_match(context.query_text, unique_id, entity);
+        if let Some(debug) = &mut explain_payload {
+            debug.exact_match = exact_match;
+        }
 
         let deboost = self.config.search.staging_deboost_factor;
         if deboost < 1.0
@@ -1141,32 +1345,64 @@ impl ManifestSearch {
             })
         {
             adjusted *= deboost;
+            if let Some(debug) = &mut explain_payload {
+                debug.staging_deboost_factor = Some(deboost);
+            }
         }
 
         if context.persona == SearchPersona::Engineer && exact_match {
             adjusted *= self.config.search.engineer_exact_match_multiplier;
+            if let Some(debug) = &mut explain_payload {
+                debug.engineer_exact_match_multiplier =
+                    Some(self.config.search.engineer_exact_match_multiplier);
+            }
         }
 
         let resource_type = entity.resource_type_str().unwrap_or("");
-        adjusted *= persona_resource_type_multiplier(context.persona, resource_type);
+        let resource_type_multiplier =
+            persona_resource_type_multiplier(context.persona, resource_type);
+        adjusted *= resource_type_multiplier;
+        if let Some(debug) = &mut explain_payload {
+            debug.resource_type_multiplier = resource_type_multiplier;
+        }
 
         if context.token_set.is_empty() {
-            return adjusted;
+            if let Some(debug) = &mut explain_payload {
+                debug.final_score = adjusted;
+            }
+            return SearchScoreOutcome {
+                score: adjusted,
+                explain: explain_payload,
+            };
         }
 
         let Some(nova) = entity.nova_meta() else {
             if context.persona == SearchPersona::Analyst {
                 adjusted *= 0.93;
+                if let Some(debug) = &mut explain_payload {
+                    debug.missing_nova_multiplier = Some(0.93);
+                }
             }
-            return adjusted;
+            if let Some(debug) = &mut explain_payload {
+                debug.final_score = adjusted;
+            }
+            return SearchScoreOutcome {
+                score: adjusted,
+                explain: explain_payload,
+            };
         };
 
-        adjusted *= candidate_false_multiplier(
+        let candidate_false_multiplier = candidate_false_multiplier(
             context.persona,
             candidate_flag_for_persona(nova, context.persona),
             exact_match,
             &self.config.search,
         );
+        adjusted *= candidate_false_multiplier;
+        if let Some(debug) = &mut explain_payload {
+            debug.candidate_false_multiplier = non_neutral_option(candidate_false_multiplier);
+            debug.canonical_entity = nova.canonical;
+        }
 
         let semantic_matches = match_nova_semantics(nova, context.token_set, context.min_word_len);
         let measure_match = semantic_matches.has_measure_match();
@@ -1179,63 +1415,123 @@ impl ManifestSearch {
                 break;
             }
         }
+        if let Some(debug) = &mut explain_payload {
+            debug.measure_match = measure_match;
+            debug.metric_match = metric_match;
+            debug.synonym_match = synonym_match;
+            debug.canonical_semantic_match = semantic_matches.has_canonical_match();
+        }
 
         if measure_match {
-            adjusted *= self.config.search.nova_measure_match_multiplier * weights.measures;
+            let measure_multiplier =
+                self.config.search.nova_measure_match_multiplier * weights.measures;
+            adjusted *= measure_multiplier;
+            if let Some(debug) = &mut explain_payload {
+                debug.measure_match_multiplier = Some(measure_multiplier);
+            }
         }
         if metric_match {
-            adjusted *= self.config.search.nova_metric_match_multiplier * weights.metrics;
+            let metric_multiplier =
+                self.config.search.nova_metric_match_multiplier * weights.metrics;
+            adjusted *= metric_multiplier;
+            if let Some(debug) = &mut explain_payload {
+                debug.metric_match_multiplier = Some(metric_multiplier);
+            }
         }
         if let Some(match_type) = semantic_matches.strongest_match_type() {
-            adjusted *= persona_semantic_match_multiplier(context.persona, &self.config.search);
-            adjusted *= match_type.multiplier(&self.config.search);
+            let semantic_match_multiplier =
+                persona_semantic_match_multiplier(context.persona, &self.config.search)
+                    * match_type.multiplier(&self.config.search);
+            adjusted *= semantic_match_multiplier;
+            if let Some(debug) = &mut explain_payload {
+                debug.strongest_match_type = Some(match_type.as_str().to_string());
+                debug.semantic_match_multiplier = Some(semantic_match_multiplier);
+            }
         }
         if context.persona == SearchPersona::Analyst {
-            adjusted *= analyst_query_coverage_multiplier(
+            let query_coverage_multiplier = analyst_query_coverage_multiplier(
                 semantic_matches.best_query_coverage(),
                 context.token_set.len(),
             );
+            adjusted *= query_coverage_multiplier;
+            if let Some(debug) = &mut explain_payload {
+                debug.query_coverage_multiplier = Some(query_coverage_multiplier);
+            }
         }
         if synonym_match {
-            adjusted *= self.config.search.nova_synonym_match_multiplier * weights.synonyms;
+            let synonym_match_multiplier =
+                self.config.search.nova_synonym_match_multiplier * weights.synonyms;
+            adjusted *= synonym_match_multiplier;
+            if let Some(debug) = &mut explain_payload {
+                debug.synonym_match_multiplier = Some(synonym_match_multiplier);
+            }
         }
         let canonical = nova.canonical;
         if canonical {
             adjusted *= self.config.search.nova_canonical_multiplier;
+            if let Some(debug) = &mut explain_payload {
+                debug.canonical_entity_multiplier =
+                    Some(self.config.search.nova_canonical_multiplier);
+            }
         }
         if semantic_matches.has_canonical_match() {
             adjusted *= self.config.search.nova_semantic_canonical_match_multiplier;
             adjusted += self.config.search.nova_semantic_canonical_match_bonus;
+            if let Some(debug) = &mut explain_payload {
+                debug.semantic_canonical_match_multiplier =
+                    Some(self.config.search.nova_semantic_canonical_match_multiplier);
+                debug.semantic_canonical_match_bonus =
+                    Some(self.config.search.nova_semantic_canonical_match_bonus);
+            }
         }
         if canonical && (measure_match || metric_match || synonym_match) {
             adjusted *= self.config.search.nova_canonical_match_multiplier;
             adjusted += self.config.search.nova_canonical_match_bonus;
+            if let Some(debug) = &mut explain_payload {
+                debug.canonical_match_multiplier =
+                    Some(self.config.search.nova_canonical_match_multiplier);
+                debug.canonical_match_bonus = Some(self.config.search.nova_canonical_match_bonus);
+            }
         }
 
         if context.persona == SearchPersona::Analyst {
-            adjusted *= analyst_semantic_multiplier(
+            let analyst_semantic_multiplier = analyst_semantic_multiplier(
                 nova,
                 context.token_set,
                 context.min_word_len,
                 &self.config.search.analyst_semantic,
             );
-            adjusted *= 1.0
+            adjusted *= analyst_semantic_multiplier;
+            let semantic_label_precision_factor = 1.0
                 + semantic_label_precision_bonus(
                     &semantic_matches,
                     context.token_set,
                     context.min_word_len,
                     &self.config.search.indicator_ranking,
                 );
-            adjusted *= 1.0
+            adjusted *= semantic_label_precision_factor;
+            let metadata_support_factor = 1.0
                 + metadata_support_bonus(
                     context.support_signals,
                     &self.config.search.metadata_support,
                 );
+            adjusted *= metadata_support_factor;
             if context.has_indicator_parent_scores {
                 let ranking_config = &self.config.search.indicator_ranking;
                 let indicator_parent_score = context.indicator_parent_score.unwrap_or_default();
-                adjusted *= ranking_config.search_missing_indicator_parent_multiplier
+                let indicator_parent_factor = ranking_config
+                    .search_missing_indicator_parent_multiplier
                     + (indicator_parent_score * ranking_config.search_parent_indicator_bonus_scale);
+                adjusted *= indicator_parent_factor;
+                if let Some(debug) = &mut explain_payload {
+                    debug.indicator_parent_factor = Some(indicator_parent_factor);
+                }
+            }
+            if let Some(debug) = &mut explain_payload {
+                debug.analyst_semantic_multiplier = Some(analyst_semantic_multiplier);
+                debug.semantic_label_precision_factor =
+                    non_neutral_option(semantic_label_precision_factor);
+                debug.metadata_support_factor = non_neutral_option(metadata_support_factor);
             }
         }
 
@@ -1246,17 +1542,26 @@ impl ManifestSearch {
             let has_docs = entity.doc_blocks_present();
             if has_desc || has_docs {
                 adjusted *= weights.docs;
+                if let Some(debug) = &mut explain_payload {
+                    debug.docs_multiplier = Some(weights.docs);
+                }
             }
         }
 
         if !is_neutral_multiplier(weights.tests) && self.tests_by_entity.contains_key(unique_id) {
             adjusted *= weights.tests;
+            if let Some(debug) = &mut explain_payload {
+                debug.tests_multiplier = Some(weights.tests);
+            }
         }
 
         if !is_neutral_multiplier(weights.tags) {
             let has_tags = entity.tags_iter().next().is_some();
             if has_tags {
                 adjusted *= weights.tags;
+                if let Some(debug) = &mut explain_payload {
+                    debug.tags_multiplier = Some(weights.tags);
+                }
             }
         }
 
@@ -1264,10 +1569,20 @@ impl ManifestSearch {
             let path = entity.original_file_path_str().unwrap_or("");
             if tokens_match(path, context.token_set, context.min_word_len) {
                 adjusted *= weights.path;
+                if let Some(debug) = &mut explain_payload {
+                    debug.path_multiplier = Some(weights.path);
+                }
             }
         }
 
-        adjusted
+        if let Some(debug) = &mut explain_payload {
+            debug.final_score = adjusted;
+        }
+
+        SearchScoreOutcome {
+            score: adjusted,
+            explain: explain_payload,
+        }
     }
 
     async fn build_suggestions(
@@ -1491,6 +1806,8 @@ struct IndicatorSearchRow {
     grain: IndicatorGrainSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     support_signals: Option<MetadataSupportSignals>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    explain: Option<IndicatorScoreExplain>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1629,6 +1946,132 @@ struct MetadataSupportSignals {
     example_values: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct RetrieverContribution {
+    rank: usize,
+    score: f32,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+struct RetrievalExplain {
+    total_score: f32,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    retrievers: BTreeMap<String, RetrieverContribution>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[allow(clippy::struct_excessive_bools)]
+struct SearchScoreExplain {
+    base_score: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retrieval: Option<RetrievalExplain>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pre_rerank_retrieval_score: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reranker_score: Option<f32>,
+    exact_match: bool,
+    resource_type_multiplier: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    staging_deboost_factor: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    missing_nova_multiplier: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    candidate_false_multiplier: Option<f32>,
+    measure_match: bool,
+    metric_match: bool,
+    synonym_match: bool,
+    canonical_entity: bool,
+    canonical_semantic_match: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    engineer_exact_match_multiplier: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    canonical_entity_multiplier: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    measure_match_multiplier: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metric_match_multiplier: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    synonym_match_multiplier: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    strongest_match_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    semantic_match_multiplier: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    query_coverage_multiplier: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    semantic_canonical_match_multiplier: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    semantic_canonical_match_bonus: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    canonical_match_multiplier: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    canonical_match_bonus: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    analyst_semantic_multiplier: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    semantic_label_precision_factor: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata_support_factor: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    indicator_parent_factor: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    docs_multiplier: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tests_multiplier: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tags_multiplier: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path_multiplier: Option<f32>,
+    final_score: f32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct IndicatorScoreExplain {
+    match_base: f32,
+    query_coverage: f32,
+    base_match_score: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    generic_label_bonus: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_synonym_bonus: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata_support_bonus: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    time_field_bonus: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dimension_bonus: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_coherence_bonus: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rrf_bonus: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reranker_bonus: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retrieval: Option<RetrievalExplain>,
+    final_score: f32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SearchExplainConfigSnapshot {
+    rrf_k: f32,
+    rerank_top_n: usize,
+    persona_weights: PersonaWeights,
+    indicator_ranking: IndicatorRankingConfig,
+    metadata_support: MetadataSupportConfig,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[allow(clippy::struct_excessive_bools)]
+struct SearchExplainPayload {
+    query_tokens: Vec<String>,
+    query_has_syntax: bool,
+    rrf_enabled: bool,
+    reranker_enabled: bool,
+    reranker_applied: bool,
+    retrievers_used: Vec<String>,
+    config: SearchExplainConfigSnapshot,
+}
+
 impl MetadataSupportSignals {
     fn surface_count(&self) -> usize {
         usize::from(!self.parent_synonyms.is_empty())
@@ -1684,6 +2127,12 @@ struct SearchCandidate<'a> {
     score: f32,
     support_signals: Option<MetadataSupportSignals>,
     indicator_parent_score: Option<f32>,
+    explain: Option<SearchScoreExplain>,
+}
+
+struct SearchScoreOutcome {
+    score: f32,
+    explain: Option<SearchScoreExplain>,
 }
 
 type PreparedIndicatorSearch = (
@@ -1727,6 +2176,8 @@ struct ColumnSearchMatch<'a> {
 struct FusedHitBundle {
     hits: Vec<(String, f32)>,
     indicator_parent_scores: HashMap<String, f32>,
+    retrieval_explain: HashMap<String, RetrievalExplain>,
+    retrievers_used: Vec<String>,
 }
 
 #[derive(Default)]
@@ -1782,12 +2233,13 @@ fn build_measure_indicator_row(
     measure: &ArchivedNovaMeasure,
     matched: &crate::manifest::search::SemanticPreviewItem,
 ) -> IndicatorSearchRow {
+    let explain = indicator_match_explain(context, measure.name.as_str(), matched);
     IndicatorSearchRow {
         indicator_name: measure.name.as_str().to_string(),
         indicator_type: "measure".to_string(),
         canonical: matched.canonical,
         match_type: matched.match_type.as_str().to_string(),
-        score: indicator_match_score(context, measure.name.as_str(), matched),
+        score: explain.final_score,
         description: measure
             .description
             .as_ref()
@@ -1823,6 +2275,7 @@ fn build_measure_indicator_row(
             .collect(),
         grain: grain_summary(context.nova.grain.as_ref()),
         support_signals: context.support_signals.clone(),
+        explain: Some(explain),
     }
 }
 
@@ -1880,12 +2333,15 @@ fn build_metric_indicator_row(
     metric: &ArchivedNovaMetric,
     matched: &crate::manifest::search::SemanticPreviewItem,
 ) -> IndicatorSearchRow {
+    let preferred_grain = metric.grain.as_ref().or(context.nova.grain.as_ref());
+    let explain =
+        indicator_match_explain_with_grain(context, metric.name.as_str(), matched, preferred_grain);
     IndicatorSearchRow {
         indicator_name: metric.name.as_str().to_string(),
         indicator_type: "metric".to_string(),
         canonical: matched.canonical,
         match_type: matched.match_type.as_str().to_string(),
-        score: indicator_match_score(context, metric.name.as_str(), matched),
+        score: explain.final_score,
         description: metric
             .description
             .as_ref()
@@ -1915,8 +2371,9 @@ fn build_metric_indicator_row(
             .iter()
             .map(|value| value.as_str().to_string())
             .collect(),
-        grain: grain_summary(metric.grain.as_ref().or(context.nova.grain.as_ref())),
+        grain: grain_summary(preferred_grain),
         support_signals: context.support_signals.clone(),
+        explain: Some(explain),
     }
 }
 
@@ -2011,6 +2468,7 @@ fn build_column_inventory_row(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_column_search_row(
     unique_id: &str,
     entity: &ArchivedEntity,
@@ -2097,11 +2555,25 @@ fn grain_summary(grain: Option<&ArchivedNovaGrain>) -> IndicatorGrainSummary {
     }
 }
 
-fn indicator_match_score(
+fn indicator_match_explain(
     context: &IndicatorSearchContext<'_>,
     indicator_name: &str,
     matched: &crate::manifest::search::SemanticPreviewItem,
-) -> f32 {
+) -> IndicatorScoreExplain {
+    indicator_match_explain_with_grain(
+        context,
+        indicator_name,
+        matched,
+        preferred_grain_for_scoring(context.nova),
+    )
+}
+
+fn indicator_match_explain_with_grain(
+    context: &IndicatorSearchContext<'_>,
+    indicator_name: &str,
+    matched: &crate::manifest::search::SemanticPreviewItem,
+    preferred_grain: Option<&ArchivedNovaGrain>,
+) -> IndicatorScoreExplain {
     let coverage = if context.query_token_count == 0 {
         0.0
     } else {
@@ -2114,40 +2586,48 @@ fn indicator_match_score(
         SemanticMatchType::Description => 2.0,
         SemanticMatchType::Expression => 1.0,
     };
-    let preferred_grain = preferred_grain_for_scoring(context.nova);
     let mut score = match_base + (coverage * 4.0);
+    let generic_label_bonus = generic_indicator_label_match_bonus(
+        indicator_name,
+        context.token_set,
+        context.min_word_len,
+        context.indicator_config,
+    );
+    let parent_synonym_bonus = parent_synonym_match_bonus(
+        context.nova,
+        context.token_set,
+        context.min_word_len,
+        context.indicator_config,
+    );
+    let metadata_support_bonus =
+        metadata_support_bonus(context.support_signals.as_ref(), context.metadata_config);
+    let time_field_bonus = preferred_grain
+        .and_then(|grain| {
+            grain
+                .time_field
+                .as_ref()
+                .map(rkyv::string::ArchivedString::as_str)
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty())
+                .then_some(0.5)
+        })
+        .unwrap_or_default();
+    let dimension_bonus = if preferred_grain.is_some_and(|grain| !grain.dimensions.is_empty()) {
+        0.25
+    } else {
+        0.0
+    };
     if matched.canonical {
         score += 1.5;
     }
     if context.nova.canonical {
         score += 0.75;
     }
-    score += generic_indicator_label_match_bonus(
-        indicator_name,
-        context.token_set,
-        context.min_word_len,
-        context.indicator_config,
-    );
-    score += parent_synonym_match_bonus(
-        context.nova,
-        context.token_set,
-        context.min_word_len,
-        context.indicator_config,
-    );
-    score += metadata_support_bonus(context.support_signals.as_ref(), context.metadata_config);
-    if preferred_grain.is_some_and(|grain| {
-        grain
-            .time_field
-            .as_ref()
-            .map(rkyv::string::ArchivedString::as_str)
-            .map(str::trim)
-            .is_some_and(|value| !value.is_empty())
-    }) {
-        score += 0.5;
-    }
-    if preferred_grain.is_some_and(|grain| !grain.dimensions.is_empty()) {
-        score += 0.25;
-    }
+    score += generic_label_bonus;
+    score += parent_synonym_bonus;
+    score += metadata_support_bonus;
+    score += time_field_bonus;
+    score += dimension_bonus;
     if context
         .entity
         .description_str()
@@ -2155,7 +2635,21 @@ fn indicator_match_score(
     {
         score += 0.1;
     }
-    score
+    IndicatorScoreExplain {
+        match_base,
+        query_coverage: coverage,
+        base_match_score: score,
+        generic_label_bonus: non_zero_option(generic_label_bonus),
+        parent_synonym_bonus: non_zero_option(parent_synonym_bonus),
+        metadata_support_bonus: non_zero_option(metadata_support_bonus),
+        time_field_bonus: non_zero_option(time_field_bonus),
+        dimension_bonus: non_zero_option(dimension_bonus),
+        parent_coherence_bonus: None,
+        rrf_bonus: None,
+        reranker_bonus: None,
+        retrieval: None,
+        final_score: score,
+    }
 }
 
 fn generic_indicator_label_match_bonus(
@@ -2275,7 +2769,12 @@ fn apply_parent_coherence_bonus(
 
     for row in &mut rows {
         if let Some(coherence) = coherence_by_parent.get(&row.parent_unique_id) {
-            row.score += coherence.bonus(config);
+            let bonus = coherence.bonus(config);
+            row.score += bonus;
+            if let Some(explain) = &mut row.explain {
+                explain.parent_coherence_bonus = non_zero_option(bonus);
+                explain.final_score = row.score;
+            }
         }
     }
 
@@ -2426,6 +2925,50 @@ fn merge_signal_values(target: &mut Vec<String>, source: &[String], max_values_p
     for value in source {
         push_unique_string(target, value.clone(), max_values_per_field);
     }
+}
+
+fn build_search_explain_payload(
+    tokens: &[String],
+    query_has_syntax: bool,
+    persona: SearchPersona,
+    config: &SearchConfig,
+    retrievers_used: Vec<String>,
+    reranker_applied: bool,
+) -> SearchExplainPayload {
+    SearchExplainPayload {
+        query_tokens: tokens.to_vec(),
+        query_has_syntax,
+        rrf_enabled: config.enable_rrf,
+        reranker_enabled: config.enable_reranker,
+        reranker_applied,
+        retrievers_used,
+        config: SearchExplainConfigSnapshot {
+            rrf_k: config.rrf_k,
+            rerank_top_n: config.rerank_top_n,
+            persona_weights: persona_weights(persona, config),
+            indicator_ranking: config.indicator_ranking,
+            metadata_support: config.metadata_support,
+        },
+    }
+}
+
+fn indicator_retrievers_used(rows: &[IndicatorSearchRow], rrf_enabled: bool) -> Vec<String> {
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    if !rrf_enabled {
+        return vec!["indicator_local".to_string()];
+    }
+    rows.iter()
+        .find_map(|row| {
+            row.explain
+                .as_ref()
+                .and_then(|explain| explain.retrieval.as_ref())
+        })
+        .map_or_else(
+            || vec!["indicator_local".to_string()],
+            |retrieval| retrieval.retrievers.keys().cloned().collect(),
+        )
 }
 
 fn strip_sql_fields(value: &mut JsonValue) {
@@ -2690,6 +3233,14 @@ fn usize_to_f32(value: usize) -> f32 {
     f32::from(u16::try_from(value).unwrap_or(u16::MAX))
 }
 
+fn non_zero_option(value: f32) -> Option<f32> {
+    (value.abs() > f32::EPSILON).then_some(value)
+}
+
+fn non_neutral_option(value: f32) -> Option<f32> {
+    ((value - 1.0).abs() > f32::EPSILON).then_some(value)
+}
+
 fn compare_scores_desc(left: f32, right: f32) -> Ordering {
     right.partial_cmp(&left).unwrap_or(Ordering::Equal)
 }
@@ -2738,9 +3289,7 @@ fn compare_search_candidates(left: &SearchCandidate<'_>, right: &SearchCandidate
     .then_with(|| left.unique_id.cmp(&right.unique_id))
 }
 
-fn entity_column_meta_lookup<'a>(
-    entity: &'a ArchivedEntity,
-) -> HashMap<&'a str, &'a ArchivedColumnMetaSummary> {
+fn entity_column_meta_lookup(entity: &ArchivedEntity) -> HashMap<&str, &ArchivedColumnMetaSummary> {
     entity
         .column_meta()
         .iter()
@@ -3220,6 +3769,7 @@ mod candidate_tests {
                 dimensions: vec!["country_code".to_string(), "platform_name".to_string()],
             },
             support_signals: None,
+            explain: None,
         };
 
         let text = indicator_embedding_text(&row);
@@ -3252,6 +3802,7 @@ mod candidate_tests {
                     dimensions: Vec::new(),
                 },
                 support_signals: None,
+                explain: None,
             },
             IndicatorSearchRow {
                 indicator_name: "second".to_string(),
@@ -3273,6 +3824,7 @@ mod candidate_tests {
                     dimensions: Vec::new(),
                 },
                 support_signals: None,
+                explain: None,
             },
             IndicatorSearchRow {
                 indicator_name: "third".to_string(),
@@ -3294,6 +3846,7 @@ mod candidate_tests {
                     dimensions: Vec::new(),
                 },
                 support_signals: None,
+                explain: None,
             },
         ];
 
@@ -3335,6 +3888,7 @@ mod candidate_tests {
                     dimensions: Vec::new(),
                 },
                 support_signals: None,
+                explain: None,
             },
             IndicatorSearchRow {
                 indicator_name: "gmv_cancelled".to_string(),
@@ -3356,6 +3910,7 @@ mod candidate_tests {
                     dimensions: Vec::new(),
                 },
                 support_signals: None,
+                explain: None,
             },
         ];
 
@@ -3403,6 +3958,7 @@ mod candidate_tests {
                     column_semantic_types: vec![],
                     example_values: vec!["spain".to_string()],
                 }),
+                explain: None,
             },
             IndicatorSearchRow {
                 indicator_name: "net_sales".to_string(),
@@ -3433,6 +3989,7 @@ mod candidate_tests {
                     column_semantic_types: vec![],
                     example_values: vec!["spain".to_string()],
                 }),
+                explain: None,
             },
             IndicatorSearchRow {
                 indicator_name: "promoted_gmv".to_string(),
@@ -3454,6 +4011,7 @@ mod candidate_tests {
                     dimensions: Vec::new(),
                 },
                 support_signals: None,
+                explain: None,
             },
         ];
 
@@ -3495,6 +4053,7 @@ mod candidate_tests {
                     column_semantic_types: vec![],
                     example_values: vec!["spain".to_string(), "france".to_string()],
                 }),
+                explain: None,
             },
             IndicatorSearchRow {
                 indicator_name: "net_sales".to_string(),
@@ -3529,6 +4088,7 @@ mod candidate_tests {
                         "netherlands".to_string(),
                     ],
                 }),
+                explain: None,
             },
         ];
 
@@ -3622,6 +4182,11 @@ fn reorder_indicator_rows_with_reranker(
         .map(|(idx, mut row)| {
             let rerank_score = rerank_scores.get(&idx).copied().unwrap_or_default();
             row.score += rerank_score * config.indicator_reranker_score_weight;
+            if let Some(explain) = &mut row.explain {
+                explain.reranker_bonus =
+                    non_zero_option(rerank_score * config.indicator_reranker_score_weight);
+                explain.final_score = row.score;
+            }
             (idx, rerank_score, row)
         })
         .collect();
@@ -3739,22 +4304,31 @@ fn retriever_weight(weights: &PersonaWeights, name: &str) -> f32 {
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn weighted_rrf(
+fn weighted_rrf_with_explain(
     rankings: &[(&str, Vec<String>)],
     weights: &PersonaWeights,
     k: f32,
-) -> Vec<(String, f32)> {
-    let mut scores: HashMap<String, f32> = HashMap::new();
+) -> Vec<(String, RetrievalExplain)> {
+    let mut scores: HashMap<String, RetrievalExplain> = HashMap::new();
     for (name, ranking) in rankings {
         let weight = retriever_weight(weights, name);
         for (rank, id) in ranking.iter().enumerate() {
             let rrf_score = weight / (k + usize_to_f32(rank) + 1.0);
-            *scores.entry(id.clone()).or_default() += rrf_score;
+            let entry = scores.entry(id.clone()).or_default();
+            entry.total_score += rrf_score;
+            entry.retrievers.insert(
+                (*name).to_string(),
+                RetrieverContribution {
+                    rank: rank + 1,
+                    score: rrf_score,
+                },
+            );
         }
     }
-    let mut results: Vec<(String, f32)> = scores.into_iter().collect();
+    let mut results: Vec<(String, RetrievalExplain)> = scores.into_iter().collect();
     results.sort_by(|left, right| {
-        compare_scores_desc(left.1, right.1).then_with(|| left.0.cmp(&right.0))
+        compare_scores_desc(left.1.total_score, right.1.total_score)
+            .then_with(|| left.0.cmp(&right.0))
     });
     results
 }
@@ -3774,6 +4348,7 @@ mod tests {
                 score: 10.0,
                 support_signals: None,
                 indicator_parent_score: None,
+                explain: None,
             },
             SearchCandidate {
                 unique_id: "model.analytics.sessions".to_string(),
@@ -3781,6 +4356,7 @@ mod tests {
                 score: 9.4,
                 support_signals: None,
                 indicator_parent_score: None,
+                explain: None,
             },
         ];
         let hint = analyst_near_tie_hint(&candidates).expect("near tie hint");
@@ -3797,6 +4373,7 @@ mod tests {
                 score: 10.0,
                 support_signals: None,
                 indicator_parent_score: None,
+                explain: None,
             },
             SearchCandidate {
                 unique_id: "model.analytics.sessions".to_string(),
@@ -3804,6 +4381,7 @@ mod tests {
                 score: 6.5,
                 support_signals: None,
                 indicator_parent_score: None,
+                explain: None,
             },
         ];
         assert!(analyst_near_tie_hint(&candidates).is_none());

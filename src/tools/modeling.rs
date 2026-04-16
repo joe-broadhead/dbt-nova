@@ -212,6 +212,7 @@ struct GrainComparison {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[allow(clippy::struct_field_names)]
 struct EntityOverlapEvidence {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     shared_name_tokens: Vec<String>,
@@ -537,7 +538,7 @@ fn overlap_rows(
             continue;
         }
         let shared_value_count = evidence.shared_value_count();
-        let score = (surface_overlap_count * 10 + shared_value_count) as f32;
+        let score = score_from_overlap(surface_overlap_count, shared_value_count);
         rows.push(EntityOverlapRow {
             entity1: left.entity_ref(),
             entity2: right.entity_ref(),
@@ -752,6 +753,11 @@ fn sorted_intersection(values1: &BTreeSet<String>, values2: &BTreeSet<String>) -
 
 fn sorted_difference(values1: &BTreeSet<String>, values2: &BTreeSet<String>) -> Vec<String> {
     values1.difference(values2).cloned().collect()
+}
+
+fn score_from_overlap(surface_overlap_count: usize, shared_value_count: usize) -> f32 {
+    let combined = surface_overlap_count.saturating_mul(10) + shared_value_count;
+    f32::from(u16::try_from(combined).unwrap_or(u16::MAX))
 }
 
 fn normalize_value(value: &str) -> String {
