@@ -319,6 +319,22 @@ pub fn column_meta_json(column: &JsonValue) -> Option<&JsonValue> {
 }
 
 #[must_use]
+pub fn normalized_column_meta_json(column: &JsonValue) -> Option<JsonValue> {
+    let legacy = column.get("meta");
+    let config = column.get("config").and_then(|config| config.get("meta"));
+
+    match (legacy, config) {
+        (Some(JsonValue::Object(legacy_obj)), Some(JsonValue::Object(config_obj))) => {
+            let mut merged = JsonValue::Object(config_obj.clone());
+            merge_json_value(&mut merged, &JsonValue::Object(legacy_obj.clone()));
+            Some(merged)
+        }
+        (Some(value), _) | (None, Some(value)) => Some(value.clone()),
+        (None, None) => None,
+    }
+}
+
+#[must_use]
 pub fn column_meta_field_json<'a>(column: &'a JsonValue, field: &str) -> Option<&'a JsonValue> {
     column
         .get("meta")
@@ -344,6 +360,22 @@ pub fn column_primary_key_json(column: &JsonValue) -> Option<&JsonValue> {
 #[must_use]
 pub fn column_primary_key_bool(column: &JsonValue) -> bool {
     parse_bool_like(column_primary_key_json(column)).unwrap_or(false)
+}
+
+fn merge_json_value(target: &mut JsonValue, overlay: &JsonValue) {
+    match (target, overlay) {
+        (JsonValue::Object(target_obj), JsonValue::Object(overlay_obj)) => {
+            for (key, overlay_value) in overlay_obj {
+                match target_obj.get_mut(key) {
+                    Some(target_value) => merge_json_value(target_value, overlay_value),
+                    None => {
+                        target_obj.insert(key.clone(), overlay_value.clone());
+                    }
+                }
+            }
+        }
+        (target_value, overlay_value) => *target_value = overlay_value.clone(),
+    }
 }
 
 fn get_tags(value: &serde_json::Value) -> Vec<String> {

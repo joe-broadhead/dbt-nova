@@ -32,6 +32,7 @@ async fn test_get_columns_supports_config_meta_primary_key() {
         order_id["meta"]["nova"]["role"].as_str(),
         Some("identifier")
     );
+    assert_eq!(order_id["meta"]["primary_key"].as_bool(), Some(true));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -92,5 +93,44 @@ async fn test_search_supports_config_meta_only_nova_metadata() {
     assert_eq!(
         rows.first().and_then(|row| row["unique_id"].as_str()),
         Some("model.pkg.config_meta_model")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_get_context_merges_legacy_and_config_column_meta() {
+    let searcher = config_meta_searcher();
+    let result = searcher
+        .get_context(&GetContextParams {
+            id_or_name: "config_meta_model".to_string(),
+            resource_type: None,
+            include_columns: true,
+            include_tests: false,
+            include_upstream: false,
+            include_downstream: false,
+            include_docs: false,
+            include_sql: false,
+            context_mode: ContextMode::Standard,
+            limits: ContextLimits {
+                lineage_depth: 1,
+                upstream_limit: 5,
+                downstream_limit: 5,
+            },
+        })
+        .await
+        .json();
+
+    assert_eq!(result["success"].as_bool(), Some(true));
+    let columns = result["data"]["entity"]["columns"]
+        .as_array()
+        .expect("expected columns array");
+    let order_id = columns
+        .iter()
+        .find(|column| column["name"].as_str() == Some("order_id"))
+        .expect("missing order_id column");
+
+    assert_eq!(order_id["meta"]["primary_key"].as_bool(), Some(true));
+    assert_eq!(
+        order_id["meta"]["nova"]["role"].as_str(),
+        Some("identifier")
     );
 }

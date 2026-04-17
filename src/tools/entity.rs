@@ -1,7 +1,7 @@
 use serde_json::Value as JsonValue;
 
 use crate::error::{DbtNovaError, Result};
-use crate::manifest::entity::column_meta_json;
+use crate::manifest::entity::normalized_column_meta_json;
 use crate::manifest::search::ManifestSearch;
 use crate::params::{BatchGetParams, DetailLevel, GetColumnsParams, GetEntityParams, GetSqlParams};
 use crate::responses::SuccessResponse;
@@ -218,8 +218,7 @@ fn sql_contains_templating(sql: &str) -> bool {
 fn normalized_column_json(column: &JsonValue) -> JsonValue {
     let mut normalized = column.clone();
     if let Some(obj) = normalized.as_object_mut()
-        && !obj.contains_key("meta")
-        && let Some(meta) = column_meta_json(column).cloned()
+        && let Some(meta) = normalized_column_meta_json(column)
     {
         obj.insert("meta".to_string(), meta);
     }

@@ -4,7 +4,9 @@ use serde::Serialize;
 use serde_json::Value as JsonValue;
 
 use crate::error::{DbtNovaError, Result};
-use crate::manifest::entity::{Entity, NovaMeta, column_meta_json, column_primary_key_bool};
+use crate::manifest::entity::{
+    Entity, NovaMeta, column_primary_key_bool, normalized_column_meta_json,
+};
 use crate::manifest::search::ManifestSearch;
 use crate::params::{ContextMode, GetContextParams};
 use crate::responses::SuccessResponse;
@@ -339,7 +341,7 @@ impl ManifestSearch {
                     .get("data_type")
                     .and_then(|v| v.as_str())
                     .map(String::from),
-                meta: column_meta_json(col_info).cloned(),
+                meta: normalized_column_meta_json(col_info),
                 tests: col_tests,
             });
         }
