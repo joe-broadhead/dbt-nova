@@ -330,8 +330,11 @@ pub fn column_meta_json(column: &JsonValue) -> Option<&JsonValue> {
 
 #[must_use]
 pub fn normalized_column_meta_json(column: &JsonValue) -> Option<JsonValue> {
-    let legacy = column.get("meta");
-    let config = column.get("config").and_then(|config| config.get("meta"));
+    let legacy = column.get("meta").filter(|meta| !meta.is_null());
+    let config = column
+        .get("config")
+        .and_then(|config| config.get("meta"))
+        .filter(|meta| !meta.is_null());
 
     match (legacy, config) {
         (Some(JsonValue::Object(legacy_obj)), Some(JsonValue::Object(config_obj))) => {
@@ -1095,5 +1098,26 @@ mod tests {
                 .and_then(|values| values.first()),
             Some(&JsonValue::String("purchase_id".to_string()))
         );
+    }
+
+    #[test]
+    fn normalized_column_meta_falls_back_when_legacy_meta_is_null() {
+        let column = serde_json::json!({
+            "meta": null,
+            "config": {
+                "meta": {
+                    "primary_key": true,
+                    "nova": {
+                        "role": "identifier",
+                        "semantic_type": "order_id"
+                    }
+                }
+            }
+        });
+
+        let meta = normalized_column_meta_json(&column).expect("expected config meta fallback");
+        assert_eq!(meta["primary_key"].as_bool(), Some(true));
+        assert_eq!(meta["nova"]["role"].as_str(), Some("identifier"));
+        assert_eq!(meta["nova"]["semantic_type"].as_str(), Some("order_id"));
     }
 }
