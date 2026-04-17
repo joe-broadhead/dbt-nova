@@ -300,11 +300,13 @@ pub fn entity_meta_field_json<'a>(value: &'a JsonValue, field: &str) -> Option<&
     value
         .get("meta")
         .and_then(|meta| meta.get(field))
+        .filter(|meta| !meta.is_null())
         .or_else(|| {
             value
                 .get("config")
                 .and_then(|config| config.get("meta"))
                 .and_then(|meta| meta.get(field))
+                .filter(|meta| !meta.is_null())
         })
 }
 
@@ -347,11 +349,13 @@ pub fn column_meta_field_json<'a>(column: &'a JsonValue, field: &str) -> Option<
     column
         .get("meta")
         .and_then(|meta| meta.get(field))
+        .filter(|meta| !meta.is_null())
         .or_else(|| {
             column
                 .get("config")
                 .and_then(|config| config.get("meta"))
                 .and_then(|meta| meta.get(field))
+                .filter(|meta| !meta.is_null())
         })
 }
 
@@ -377,6 +381,9 @@ pub fn column_primary_key_bool(column: &JsonValue) -> bool {
 }
 
 fn merge_json_value(target: &mut JsonValue, overlay: &JsonValue) {
+    if overlay.is_null() {
+        return;
+    }
     match (target, overlay) {
         (JsonValue::Object(target_obj), JsonValue::Object(overlay_obj)) => {
             for (key, overlay_value) in overlay_obj {
@@ -396,6 +403,8 @@ fn merged_meta_value_json<'a>(
     legacy: Option<&'a JsonValue>,
     config: Option<&'a JsonValue>,
 ) -> Option<Cow<'a, JsonValue>> {
+    let legacy = legacy.filter(|value| !value.is_null());
+    let config = config.filter(|value| !value.is_null());
     match (legacy, config) {
         (Some(JsonValue::Object(legacy_obj)), Some(JsonValue::Object(config_obj))) => {
             let mut merged = JsonValue::Object(config_obj.clone());
@@ -951,6 +960,34 @@ mod tests {
     }
 
     #[test]
+    fn column_meta_helpers_ignore_null_legacy_fields() {
+        let column = serde_json::json!({
+            "name": "order_id",
+            "meta": {
+                "primary_key": null,
+                "nova": null
+            },
+            "config": {
+                "meta": {
+                    "primary_key": true,
+                    "nova": {
+                        "role": "identifier"
+                    }
+                }
+            }
+        });
+
+        assert!(column_primary_key_bool(&column));
+        assert_eq!(
+            column_nova_meta_json(&column)
+                .as_deref()
+                .and_then(|nova| nova.get("role"))
+                .and_then(JsonValue::as_str),
+            Some("identifier")
+        );
+    }
+
+    #[test]
     fn entity_nova_meta_merges_partial_legacy_and_config_objects() {
         let entity = serde_json::json!({
             "meta": {
@@ -980,6 +1017,25 @@ mod tests {
     }
 
     #[test]
+    fn entity_nova_meta_falls_back_when_legacy_nova_is_null() {
+        let entity = serde_json::json!({
+            "meta": {
+                "nova": null
+            },
+            "config": {
+                "meta": {
+                    "nova": {
+                        "role": "dimension"
+                    }
+                }
+            }
+        });
+
+        let nova = entity_nova_meta_json(&entity).expect("expected nova metadata");
+        assert_eq!(nova["role"].as_str(), Some("dimension"));
+    }
+
+    #[test]
     fn column_nova_meta_merges_partial_legacy_and_config_objects() {
         let column = serde_json::json!({
             "meta": {
@@ -1002,6 +1058,39 @@ mod tests {
         assert_eq!(nova["semantic_type"].as_str(), Some("order_id"));
         assert_eq!(
             nova["synonyms"]
+                .as_array()
+                .and_then(|values| values.first()),
+            Some(&JsonValue::String("purchase_id".to_string()))
+        );
+    }
+
+    #[test]
+    fn normalized_column_meta_ignores_null_legacy_values() {
+        let column = serde_json::json!({
+            "meta": {
+                "primary_key": null,
+                "nova": {
+                    "role": "identifier",
+                    "semantic_type": null
+                }
+            },
+            "config": {
+                "meta": {
+                    "primary_key": true,
+                    "nova": {
+                        "semantic_type": "order_id",
+                        "synonyms": ["purchase_id"]
+                    }
+                }
+            }
+        });
+
+        let meta = normalized_column_meta_json(&column).expect("expected merged meta");
+        assert_eq!(meta["primary_key"].as_bool(), Some(true));
+        assert_eq!(meta["nova"]["role"].as_str(), Some("identifier"));
+        assert_eq!(meta["nova"]["semantic_type"].as_str(), Some("order_id"));
+        assert_eq!(
+            meta["nova"]["synonyms"]
                 .as_array()
                 .and_then(|values| values.first()),
             Some(&JsonValue::String("purchase_id".to_string()))
