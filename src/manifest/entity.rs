@@ -325,6 +325,7 @@ pub fn entity_nova_meta_json(value: &JsonValue) -> Option<Cow<'_, JsonValue>> {
 pub fn column_meta_json(column: &JsonValue) -> Option<&JsonValue> {
     column
         .get("meta")
+        .filter(|meta| !meta.is_null())
         .or_else(|| column.get("config").and_then(|config| config.get("meta")))
 }
 
@@ -988,6 +989,22 @@ mod tests {
                 .and_then(JsonValue::as_str),
             Some("identifier")
         );
+    }
+
+    #[test]
+    fn column_meta_json_falls_back_when_legacy_meta_is_null() {
+        let column = serde_json::json!({
+            "name": "order_id",
+            "meta": null,
+            "config": {
+                "meta": {
+                    "primary_key": true
+                }
+            }
+        });
+
+        let meta = column_meta_json(&column).expect("expected config meta fallback");
+        assert_eq!(meta["primary_key"].as_bool(), Some(true));
     }
 
     #[test]

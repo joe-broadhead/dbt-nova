@@ -72,12 +72,14 @@
           "data_type": "string",
           "description": "Order identifier",
           "meta": {
-            "primary_key": true
+            "nova": {
+              "role": "identifier"
+            }
           },
           "config": {
             "meta": {
+              "primary_key": true,
               "nova": {
-                "role": "identifier",
                 "semantic_type": "order_id",
                 "synonyms": ["purchase_id"]
               }
