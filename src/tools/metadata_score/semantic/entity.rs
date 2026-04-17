@@ -27,7 +27,7 @@ impl ManifestSearch {
             .unwrap_or_default();
         let expects_columns = expects_columns(resource_type);
         let scores = collect_semantic_scores(
-            nova,
+            nova.as_deref(),
             &columns,
             expects_columns,
             include_recommendations,
@@ -300,8 +300,11 @@ fn column_semantic_coverage(
     let mut with_semantic = 0usize;
     for column in columns.values() {
         let nova = column_nova_meta_json(column);
-        if nova.and_then(|n| n.get("role")).is_some()
-            || nova.and_then(|n| n.get("semantic_type")).is_some()
+        if nova.as_deref().and_then(|n| n.get("role")).is_some()
+            || nova
+                .as_deref()
+                .and_then(|n| n.get("semantic_type"))
+                .is_some()
         {
             with_semantic += 1;
         }

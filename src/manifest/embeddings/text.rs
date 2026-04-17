@@ -304,6 +304,7 @@ impl EmbeddingSource for JsonValue {
         let Some(nova) = entity_nova_meta_json(self) else {
             return;
         };
+        let nova = nova.as_ref();
         visit_string_array(nova, "synonyms", f);
         visit_string_array(nova, "domains", f);
         visit_string_array(nova, "use_cases", f);

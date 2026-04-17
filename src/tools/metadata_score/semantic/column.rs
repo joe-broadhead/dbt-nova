@@ -17,9 +17,12 @@ impl ManifestSearch {
     ) -> CategoryBreakdown {
         let nova = column_nova_meta_json(column_info);
 
-        let role_present = nova.and_then(|n| n.get("role")).is_some();
-        let semantic_present = nova.and_then(|n| n.get("semantic_type")).is_some();
-        let synonyms_count = array_len(nova, "synonyms");
+        let role_present = nova.as_deref().and_then(|n| n.get("role")).is_some();
+        let semantic_present = nova
+            .as_deref()
+            .and_then(|n| n.get("semantic_type"))
+            .is_some();
+        let synonyms_count = array_len(nova.as_deref(), "synonyms");
 
         let role_score = if role_present { 30 } else { 0 };
         if include_recommendations && role_score == 0 {

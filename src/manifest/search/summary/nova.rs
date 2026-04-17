@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 
 use serde_json::Value as JsonValue;
@@ -30,9 +31,7 @@ impl ManifestSearch {
         required_fields.sort();
         required_fields.dedup();
 
-        let nova_json = entity_nova_meta_json(entity_json)
-            .cloned()
-            .unwrap_or(JsonValue::Null);
+        let nova_json = entity_nova_meta_json(entity_json).map_or(JsonValue::Null, Cow::into_owned);
         if nova_json.is_null() {
             return required_fields;
         }

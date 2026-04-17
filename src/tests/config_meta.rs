@@ -33,6 +33,14 @@ async fn test_get_columns_supports_config_meta_primary_key() {
         Some("identifier")
     );
     assert_eq!(order_id["meta"]["primary_key"].as_bool(), Some(true));
+    assert_eq!(
+        order_id["meta"]["nova"]["semantic_type"].as_str(),
+        Some("order_id")
+    );
+    assert_eq!(
+        order_id["meta"]["nova"]["synonyms"].as_array(),
+        Some(&vec![JsonValue::String("purchase_id".to_string())])
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -97,6 +105,36 @@ async fn test_search_supports_config_meta_only_nova_metadata() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_search_supports_mixed_legacy_and_config_column_nova_metadata() {
+    let searcher = config_meta_searcher();
+    let result = searcher
+        .search(&SearchParams {
+            query: "purchase_id".to_string(),
+            resource_types: vec!["model".to_string()],
+            persona: None,
+            detail: DetailLevel::Standard,
+            min_score: None,
+            fuzzy: false,
+            include_highlights: false,
+            include_sql: false,
+            explain: false,
+            pagination: PaginationParams {
+                limit: 5,
+                offset: 0,
+            },
+        })
+        .await
+        .json();
+
+    assert_eq!(result["success"].as_bool(), Some(true));
+    let rows = result["data"].as_array().expect("expected data array");
+    assert_eq!(
+        rows.first().and_then(|row| row["unique_id"].as_str()),
+        Some("model.pkg.config_meta_model")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_get_context_merges_legacy_and_config_column_meta() {
     let searcher = config_meta_searcher();
     let result = searcher
@@ -132,5 +170,13 @@ async fn test_get_context_merges_legacy_and_config_column_meta() {
     assert_eq!(
         order_id["meta"]["nova"]["role"].as_str(),
         Some("identifier")
+    );
+    assert_eq!(
+        order_id["meta"]["nova"]["semantic_type"].as_str(),
+        Some("order_id")
+    );
+    assert_eq!(
+        order_id["meta"]["nova"]["synonyms"].as_array(),
+        Some(&vec![JsonValue::String("purchase_id".to_string())])
     );
 }

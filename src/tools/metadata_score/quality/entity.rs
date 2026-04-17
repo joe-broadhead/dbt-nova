@@ -390,6 +390,7 @@ fn column_has_tests(search: &ManifestSearch, unique_id: &str, column_name: &str)
 fn column_role(col: &JsonValue) -> Option<String> {
     let is_pk = column_primary_key_bool(col);
     let role = column_nova_meta_json(col)
+        .as_deref()
         .and_then(|n| n.get("role"))
         .and_then(JsonValue::as_str)
         .map(str::to_string);

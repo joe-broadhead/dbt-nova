@@ -15,7 +15,8 @@ impl ManifestSearch {
         include_recommendations: bool,
         recommendations: &mut Vec<JsonValue>,
     ) -> CategoryBreakdown {
-        let governance = column_nova_meta_json(column_info).and_then(|n| n.get("governance"));
+        let nova_json = column_nova_meta_json(column_info);
+        let governance = nova_json.as_deref().and_then(|n| n.get("governance"));
 
         let sensitivity = governance
             .and_then(|g| g.get("sensitivity"))

@@ -18,6 +18,7 @@ impl ManifestSearch {
         let nova = entity_nova_meta_json(entity_json);
 
         let sensitivity = nova
+            .as_deref()
             .and_then(|n| n.get("governance"))
             .and_then(|g| g.get("sensitivity"))
             .and_then(|s| s.as_str());
@@ -33,6 +34,7 @@ impl ManifestSearch {
         }
 
         let pii = nova
+            .as_deref()
             .and_then(|n| n.get("governance"))
             .and_then(|g| g.get("pii"));
         let pii_score = if pii.is_some() { 30 } else { 0 };
@@ -47,6 +49,7 @@ impl ManifestSearch {
         }
 
         let compliance_count = nova
+            .as_deref()
             .and_then(|n| n.get("governance"))
             .and_then(|g| g.get("compliance"))
             .and_then(JsonValue::as_array)
