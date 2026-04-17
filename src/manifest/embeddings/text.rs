@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use serde_json::Value as JsonValue;
 
 use crate::config::SearchConfig;
-use crate::manifest::entity::{ArchivedEntity, Entity};
+use crate::manifest::entity::{ArchivedEntity, Entity, entity_nova_meta_json};
 
 #[must_use]
 pub fn embedding_text(entity: &Entity, config: &SearchConfig) -> String {
@@ -301,9 +301,10 @@ impl EmbeddingSource for JsonValue {
     }
 
     fn visit_nova_meta(&self, f: &mut dyn FnMut(&str)) {
-        let Some(nova) = self.get("meta").and_then(|v| v.get("nova")) else {
+        let Some(nova) = entity_nova_meta_json(self) else {
             return;
         };
+        let nova = nova.as_ref();
         visit_string_array(nova, "synonyms", f);
         visit_string_array(nova, "domains", f);
         visit_string_array(nova, "use_cases", f);

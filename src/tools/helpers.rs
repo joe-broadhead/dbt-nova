@@ -1,5 +1,7 @@
 use serde_json::Value as JsonValue;
 
+use crate::manifest::entity::column_primary_key_bool;
+
 pub fn dependency_hints_from_json(entity_json: &JsonValue) -> (JsonValue, usize) {
     let depends_on_nodes = entity_json
         .get("depends_on")
@@ -25,17 +27,14 @@ pub fn dependency_hints_from_json(entity_json: &JsonValue) -> (JsonValue, usize)
     )
 }
 
+#[must_use]
 pub fn primary_key_columns_from_columns(columns: &JsonValue) -> Vec<String> {
     let mut primary_keys = Vec::new();
     let Some(obj) = columns.as_object() else {
         return primary_keys;
     };
     for (name, column) in obj {
-        let is_primary = column
-            .get("meta")
-            .and_then(|meta| meta.get("primary_key"))
-            .and_then(JsonValue::as_bool)
-            .unwrap_or(false);
+        let is_primary = column_primary_key_bool(column);
         if is_primary {
             primary_keys.push(name.clone());
         }
@@ -43,6 +42,7 @@ pub fn primary_key_columns_from_columns(columns: &JsonValue) -> Vec<String> {
     primary_keys
 }
 
+#[must_use]
 pub fn primary_key_columns_from_entity(entity_json: &JsonValue) -> Vec<String> {
     entity_json
         .get("columns")

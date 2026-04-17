@@ -1,5 +1,7 @@
 use serde_json::Value as JsonValue;
 
+use crate::manifest::entity::entity_meta_field_json;
+
 #[must_use]
 #[allow(clippy::cast_precision_loss)]
 pub(crate) fn average_score<I>(scores: I) -> u8
@@ -105,7 +107,7 @@ pub(crate) fn array_len(nova: Option<&JsonValue>, key: &str) -> usize {
 
 #[must_use]
 pub(crate) fn has_owner(entity_json: &JsonValue) -> bool {
-    let meta_owner = entity_json.get("meta").and_then(|m| m.get("owner"));
+    let meta_owner = entity_meta_field_json(entity_json, "owner");
 
     if let Some(owner) = meta_owner {
         match owner {

@@ -19,6 +19,7 @@ use tantivy::{Index, IndexReader, IndexWriter, Term};
 
 use crate::config::SearchConfig;
 use crate::error::{DbtNovaError, Result};
+use crate::manifest::entity::{column_nova_meta_json, entity_nova_meta_json};
 use crate::manifest::store::EntityStore;
 use crate::utils::{SearchPersona, has_query_syntax, tokenize_alnum_lowercase};
 use tracing::{debug, info, instrument, warn};
@@ -196,10 +197,9 @@ impl TantivySearcher {
                 let mut tokens: Vec<String> = Vec::new();
                 for (name, col) in cols {
                     tokens.push(name.clone());
-                    if let Some(nova) = col
-                        .get("meta")
-                        .and_then(|m| m.get("nova"))
-                        .and_then(|v| v.as_object())
+                    if let Some(nova) = column_nova_meta_json(col)
+                        .as_deref()
+                        .and_then(JsonValue::as_object)
                     {
                         if let Some(semantic) = nova.get("semantic_type").and_then(|v| v.as_str()) {
                             tokens.push(semantic.to_string());
@@ -274,10 +274,9 @@ impl TantivySearcher {
                 doc.add_text(fields.package_name, pkg);
             }
 
-            if let Some(nova) = entity_json
-                .get("meta")
-                .and_then(|m| m.get("nova"))
-                .and_then(|v| v.as_object())
+            if let Some(nova) = entity_nova_meta_json(&entity_json)
+                .as_deref()
+                .and_then(JsonValue::as_object)
             {
                 if let Some(syns) = nova.get("synonyms").and_then(|v| v.as_array()) {
                     for syn in syns {
