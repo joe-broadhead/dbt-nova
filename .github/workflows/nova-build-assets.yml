@@ -72,6 +72,26 @@ on:
         required: false
         type: string
         default: "none"
+      search_warm_strategy:
+        description: "How semantic caches are warmed when publishing models: staged or full"
+        required: false
+        type: string
+        default: "staged"
+      search_onnx_threads:
+        description: "ONNX threads used during semantic warm and readiness checks"
+        required: false
+        type: number
+        default: 2
+      search_embedding_batch_size:
+        description: "Dense embedding batch size used during semantic warm"
+        required: false
+        type: number
+        default: 16
+      search_sparse_embedding_batch_size:
+        description: "Sparse embedding batch size used during semantic warm"
+        required: false
+        type: number
+        default: 8
       artifact_name_prefix:
         description: "Prefix used when naming output artifacts"
         required: false
@@ -246,6 +266,26 @@ on:
         required: false
         type: string
         default: "none"
+      search_warm_strategy:
+        description: "How semantic caches are warmed when publishing models: staged or full"
+        required: false
+        type: string
+        default: "staged"
+      search_onnx_threads:
+        description: "ONNX threads used during semantic warm and readiness checks"
+        required: false
+        type: number
+        default: 2
+      search_embedding_batch_size:
+        description: "Dense embedding batch size used during semantic warm"
+        required: false
+        type: number
+        default: 16
+      search_sparse_embedding_batch_size:
+        description: "Sparse embedding batch size used during semantic warm"
+        required: false
+        type: number
+        default: 8
       artifact_name_prefix:
         description: "Prefix used when naming output artifacts"
         required: false
@@ -328,6 +368,10 @@ jobs:
       models_distribution_mode: ${{ steps.resolve.outputs.models_distribution_mode }}
       publish_models_archive: ${{ steps.resolve.outputs.publish_models_archive }}
       include_models_in_bootstrap: ${{ steps.resolve.outputs.include_models_in_bootstrap }}
+      search_warm_strategy: ${{ steps.resolve.outputs.search_warm_strategy }}
+      search_onnx_threads: ${{ steps.resolve.outputs.search_onnx_threads }}
+      search_embedding_batch_size: ${{ steps.resolve.outputs.search_embedding_batch_size }}
+      search_sparse_embedding_batch_size: ${{ steps.resolve.outputs.search_sparse_embedding_batch_size }}
       dbt_env_json: ${{ steps.resolve.outputs.dbt_env_json }}
       dbt_secret_env_map_json: ${{ steps.resolve.outputs.dbt_secret_env_map_json }}
       dbt_invocation_mode: ${{ steps.resolve.outputs.dbt_invocation_mode }}
@@ -352,6 +396,10 @@ jobs:
           INPUT_DBT_ENV_JSON: ${{ inputs.dbt_env_json }}
           INPUT_DBT_SECRET_ENV_MAP_JSON: ${{ inputs.dbt_secret_env_map_json }}
           INPUT_MODELS_DISTRIBUTION_MODE: ${{ inputs.models_distribution_mode }}
+          INPUT_SEARCH_WARM_STRATEGY: ${{ inputs.search_warm_strategy }}
+          INPUT_SEARCH_ONNX_THREADS: ${{ inputs.search_onnx_threads }}
+          INPUT_SEARCH_EMBEDDING_BATCH_SIZE: ${{ inputs.search_embedding_batch_size }}
+          INPUT_SEARCH_SPARSE_EMBEDDING_BATCH_SIZE: ${{ inputs.search_sparse_embedding_batch_size }}
           INPUT_ARTIFACT_NAME_PREFIX: ${{ inputs.artifact_name_prefix }}
           INPUT_RETENTION_DAYS: ${{ inputs.retention_days }}
           INPUT_PUBLISH_TARGETS: ${{ inputs.publish_targets }}
@@ -385,6 +433,10 @@ jobs:
           dbt_env_json="${INPUT_DBT_ENV_JSON}"
           dbt_secret_env_map_json="${INPUT_DBT_SECRET_ENV_MAP_JSON}"
           models_distribution_mode="${INPUT_MODELS_DISTRIBUTION_MODE}"
+          search_warm_strategy="${INPUT_SEARCH_WARM_STRATEGY}"
+          search_onnx_threads="${INPUT_SEARCH_ONNX_THREADS}"
+          search_embedding_batch_size="${INPUT_SEARCH_EMBEDDING_BATCH_SIZE}"
+          search_sparse_embedding_batch_size="${INPUT_SEARCH_SPARSE_EMBEDDING_BATCH_SIZE}"
           artifact_name_prefix="${INPUT_ARTIFACT_NAME_PREFIX}"
           retention_days="${INPUT_RETENTION_DAYS}"
           publish_targets_raw="${INPUT_PUBLISH_TARGETS}"
@@ -670,6 +722,25 @@ jobs:
           publish_gcs_prefix="${publish_gcs_prefix%/}"
           publish_dbfs_prefix="${publish_dbfs_prefix%/}"
 
+          search_warm_strategy="$(echo "${search_warm_strategy}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+          if [[ -z "${search_warm_strategy}" ]]; then
+            search_warm_strategy="staged"
+          fi
+          case "${search_warm_strategy}" in
+            staged|full) ;;
+            *)
+              echo "search_warm_strategy must be one of: staged, full."
+              exit 1
+              ;;
+          esac
+          for numeric_input_name in search_onnx_threads search_embedding_batch_size search_sparse_embedding_batch_size; do
+            numeric_value="${!numeric_input_name}"
+            if ! [[ "${numeric_value}" =~ ^[0-9]+$ ]] || (( numeric_value < 1 )); then
+              echo "${numeric_input_name} must be an integer greater than 0."
+              exit 1
+            fi
+          done
+
           if [[ -z "${installer_repository}" || -z "${installer_ref}" ]]; then
             if [[ -n "${JOB_WORKFLOW_REF:-}" && "${JOB_WORKFLOW_REF}" == *"/.github/workflows/"* && "${JOB_WORKFLOW_REF}" == *"@"* ]]; then
               job_workflow_repository="${JOB_WORKFLOW_REF%%/.github/workflows/*}"
@@ -747,6 +818,10 @@ jobs:
           echo "models_distribution_mode=${models_distribution_mode}" >> "$GITHUB_OUTPUT"
           echo "publish_models_archive=${publish_models_archive}" >> "$GITHUB_OUTPUT"
           echo "include_models_in_bootstrap=${include_models_in_bootstrap}" >> "$GITHUB_OUTPUT"
+          echo "search_warm_strategy=${search_warm_strategy}" >> "$GITHUB_OUTPUT"
+          echo "search_onnx_threads=${search_onnx_threads}" >> "$GITHUB_OUTPUT"
+          echo "search_embedding_batch_size=${search_embedding_batch_size}" >> "$GITHUB_OUTPUT"
+          echo "search_sparse_embedding_batch_size=${search_sparse_embedding_batch_size}" >> "$GITHUB_OUTPUT"
           echo "dbt_env_json=${dbt_env_json}" >> "$GITHUB_OUTPUT"
           echo "dbt_secret_env_map_json=${dbt_secret_env_map_json}" >> "$GITHUB_OUTPUT"
           echo "dbt_invocation_mode=${dbt_invocation_mode}" >> "$GITHUB_OUTPUT"
@@ -775,6 +850,10 @@ jobs:
           - models_distribution_mode: `${{ steps.resolve.outputs.models_distribution_mode }}`
           - publish_models_archive: `${{ steps.resolve.outputs.publish_models_archive }}`
           - include_models_in_bootstrap: `${{ steps.resolve.outputs.include_models_in_bootstrap }}`
+          - search_warm_strategy: `${{ steps.resolve.outputs.search_warm_strategy }}`
+          - search_onnx_threads: `${{ steps.resolve.outputs.search_onnx_threads }}`
+          - search_embedding_batch_size: `${{ steps.resolve.outputs.search_embedding_batch_size }}`
+          - search_sparse_embedding_batch_size: `${{ steps.resolve.outputs.search_sparse_embedding_batch_size }}`
           - dbt_env_json: `${{ steps.resolve.outputs.dbt_env_json }}`
           - dbt_secret_env_map_json: `${{ steps.resolve.outputs.dbt_secret_env_map_json }}`
           - dbt_invocation_mode: `${{ steps.resolve.outputs.dbt_invocation_mode }}`
@@ -818,6 +897,9 @@ jobs:
       DBT_NOVA_PUBLISH_DRY_RUN: ${{ needs.prepare.outputs.publish_dry_run }}
       DBT_NOVA_MODELS_DISTRIBUTION_MODE: ${{ needs.prepare.outputs.models_distribution_mode }}
       DBT_NOVA_INCLUDE_MODELS_IN_BOOTSTRAP: ${{ needs.prepare.outputs.include_models_in_bootstrap }}
+      DBT_NOVA_SEARCH_ONNX_THREADS: ${{ needs.prepare.outputs.search_onnx_threads }}
+      DBT_NOVA_SEARCH_EMBEDDING_BATCH_SIZE: ${{ needs.prepare.outputs.search_embedding_batch_size }}
+      DBT_NOVA_SEARCH_SPARSE_EMBEDDING_BATCH_SIZE: ${{ needs.prepare.outputs.search_sparse_embedding_batch_size }}
     steps:
       - name: Checkout caller repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -1053,6 +1135,7 @@ jobs:
           INPUT_MANIFEST_PATH: ${{ needs.prepare.outputs.manifest_path }}
           INPUT_MANIFEST_URI: ${{ needs.prepare.outputs.manifest_uri }}
           INPUT_PUBLISH_MODELS_ARCHIVE: ${{ needs.prepare.outputs.publish_models_archive }}
+          INPUT_SEARCH_WARM_STRATEGY: ${{ needs.prepare.outputs.search_warm_strategy }}
           INPUT_ARTIFACT_NAME_STORAGE: ${{ needs.prepare.outputs.artifact_name_storage }}
           INPUT_ARTIFACT_NAME_MODELS: ${{ needs.prepare.outputs.artifact_name_models }}
         run: |
@@ -1076,9 +1159,43 @@ jobs:
           jq -e '.status == "success"' out/manifest-load.json >/dev/null
 
           if [[ "${INPUT_PUBLISH_MODELS_ARCHIVE}" == "true" ]]; then
-            dbt-nova manifest warm "${manifest_args[@]}" --storage-instance-id "${DBT_NOVA_STORAGE_INSTANCE_ID}" --vector --sparse --reranker --json | tee out/manifest-warm.json
-            jq -e '.status == "success"' out/manifest-warm.json >/dev/null
-            jq -e '.data.persisted.vector == true and .data.persisted.sparse == true and .data.ready.vector == true and .data.ready.sparse == true and .data.ready.reranker == true' out/manifest-warm.json >/dev/null
+            if [[ "${INPUT_SEARCH_WARM_STRATEGY}" == "staged" ]]; then
+              dbt-nova manifest warm "${manifest_args[@]}" --storage-instance-id "${DBT_NOVA_STORAGE_INSTANCE_ID}" --vector --json | tee out/manifest-warm-vector.json
+              jq -e '.status == "success"' out/manifest-warm-vector.json >/dev/null
+              jq -e '.data.persisted.vector == true and .data.ready.vector == true' out/manifest-warm-vector.json >/dev/null
+
+              dbt-nova manifest warm "${manifest_args[@]}" --storage-instance-id "${DBT_NOVA_STORAGE_INSTANCE_ID}" --sparse --json | tee out/manifest-warm-sparse.json
+              jq -e '.status == "success"' out/manifest-warm-sparse.json >/dev/null
+              jq -e '.data.persisted.sparse == true and .data.ready.sparse == true' out/manifest-warm-sparse.json >/dev/null
+
+              dbt-nova manifest warm "${manifest_args[@]}" --storage-instance-id "${DBT_NOVA_STORAGE_INSTANCE_ID}" --reranker --json | tee out/manifest-warm-reranker.json
+              jq -e '.status == "success"' out/manifest-warm-reranker.json >/dev/null
+              jq -e '.data.ready.reranker == true' out/manifest-warm-reranker.json >/dev/null
+
+              jq -n \
+                --slurpfile vector out/manifest-warm-vector.json \
+                --slurpfile sparse out/manifest-warm-sparse.json \
+                --slurpfile reranker out/manifest-warm-reranker.json \
+                '{
+                  status: "success",
+                  data: {
+                    strategy: "staged",
+                    persisted: {
+                      vector: ($vector[0].data.persisted.vector // false),
+                      sparse: ($sparse[0].data.persisted.sparse // false)
+                    },
+                    ready: {
+                      vector: ($vector[0].data.ready.vector // false),
+                      sparse: ($sparse[0].data.ready.sparse // false),
+                      reranker: ($reranker[0].data.ready.reranker // false)
+                    }
+                  }
+                }' > out/manifest-warm.json
+            else
+              dbt-nova manifest warm "${manifest_args[@]}" --storage-instance-id "${DBT_NOVA_STORAGE_INSTANCE_ID}" --vector --sparse --reranker --json | tee out/manifest-warm.json
+              jq -e '.status == "success"' out/manifest-warm.json >/dev/null
+              jq -e '.data.persisted.vector == true and .data.persisted.sparse == true and .data.ready.vector == true and .data.ready.sparse == true and .data.ready.reranker == true' out/manifest-warm.json >/dev/null
+            fi
           fi
 
           manifest_hash="$(jq -r '.data.manifest_hash // empty' out/manifest-load.json)"
