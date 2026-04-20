@@ -944,6 +944,45 @@ where
     })
 }
 
+fn run_async_fetch_blocking<F, Fut, T>(factory: F) -> Result<T>
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<T>> + Send + 'static,
+    T: Send + 'static,
+{
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        return match handle.runtime_flavor() {
+            tokio::runtime::RuntimeFlavor::CurrentThread => {
+                let (tx, rx) = std::sync::mpsc::sync_channel(1);
+                std::thread::spawn(move || {
+                    let result = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|e| {
+                            DbtNovaError::ServerError(format!("Failed to init runtime: {e}"))
+                        })
+                        .and_then(|rt| rt.block_on(factory()));
+                    let _ = tx.send(result);
+                });
+                rx.recv().map_err(|e| {
+                    DbtNovaError::ServerError(format!(
+                        "Failed to receive async fetch result from worker thread: {e}"
+                    ))
+                })?
+            }
+            tokio::runtime::RuntimeFlavor::MultiThread | _ => {
+                tokio::task::block_in_place(|| handle.block_on(factory()))
+            }
+        };
+    }
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| DbtNovaError::ServerError(format!("Failed to init runtime: {e}")))?;
+    rt.block_on(factory())
+}
+
 #[cfg(feature = "s3")]
 fn fetch_s3_manifest_sdk(
     rest: &str,
@@ -951,21 +990,11 @@ fn fetch_s3_manifest_sdk(
     config: &DbtNovaConfig,
 ) -> Result<ManifestResolution> {
     let (bucket, key) = split_bucket_key(rest)?;
-    let runtime: std::sync::OnceLock<std::result::Result<tokio::runtime::Runtime, String>> =
-        std::sync::OnceLock::new();
-
+    let timeout_secs = config.manifest_http_timeout_secs;
     fetch_sdk_manifest_with_cache("S3", uri, config, || {
-        let rt = runtime
-            .get_or_init(|| {
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .map_err(|e| format!("Failed to init runtime: {e}"))
-            })
-            .as_ref()
-            .map_err(|e| DbtNovaError::ServerError(e.clone()))?;
-
-        rt.block_on(async {
+        let bucket = bucket.clone();
+        let key = key.clone();
+        run_async_fetch_blocking(move || async move {
             let fetch = async {
                 let shared = aws_config::defaults(aws_config::BehaviorVersion::latest())
                     .load()
@@ -986,13 +1015,10 @@ fn fetch_s3_manifest_sdk(
                     .into_bytes();
                 Ok::<_, DbtNovaError>(data.to_vec())
             };
-            if config.manifest_http_timeout_secs > 0 {
-                tokio::time::timeout(
-                    Duration::from_secs(config.manifest_http_timeout_secs),
-                    fetch,
-                )
-                .await
-                .map_err(|_| DbtNovaError::ServerError("S3 download timed out".to_string()))?
+            if timeout_secs > 0 {
+                tokio::time::timeout(Duration::from_secs(timeout_secs), fetch)
+                    .await
+                    .map_err(|_| DbtNovaError::ServerError("S3 download timed out".to_string()))?
             } else {
                 fetch.await
             }
@@ -1007,21 +1033,11 @@ fn fetch_gcs_manifest_sdk(
     config: &DbtNovaConfig,
 ) -> Result<ManifestResolution> {
     let (bucket, object) = split_bucket_key(rest)?;
-    let runtime: std::sync::OnceLock<std::result::Result<tokio::runtime::Runtime, String>> =
-        std::sync::OnceLock::new();
-
+    let timeout_secs = config.manifest_http_timeout_secs;
     fetch_sdk_manifest_with_cache("GCS", uri, config, || {
-        let rt = runtime
-            .get_or_init(|| {
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .map_err(|e| format!("Failed to init runtime: {e}"))
-            })
-            .as_ref()
-            .map_err(|e| DbtNovaError::ServerError(e.clone()))?;
-
-        rt.block_on(async {
+        let bucket = bucket.clone();
+        let object = object.clone();
+        run_async_fetch_blocking(move || async move {
             let fetch = async {
                 let gcs_config = google_cloud_storage::client::ClientConfig::default()
                     .with_auth()
@@ -1041,13 +1057,10 @@ fn fetch_gcs_manifest_sdk(
                     .await
                     .map_err(|e| DbtNovaError::ServerError(format!("GCS download failed: {e}")))
             };
-            if config.manifest_http_timeout_secs > 0 {
-                tokio::time::timeout(
-                    Duration::from_secs(config.manifest_http_timeout_secs),
-                    fetch,
-                )
-                .await
-                .map_err(|_| DbtNovaError::ServerError("GCS download timed out".to_string()))?
+            if timeout_secs > 0 {
+                tokio::time::timeout(Duration::from_secs(timeout_secs), fetch)
+                    .await
+                    .map_err(|_| DbtNovaError::ServerError("GCS download timed out".to_string()))?
             } else {
                 fetch.await
             }
