@@ -118,3 +118,23 @@ fn sdk_fetch_pipeline_falls_back_to_cache_on_size_limit() {
     let stored = fs::read_to_string(&resolution.local_path).expect("read cache");
     assert_eq!(stored, "{}");
 }
+
+#[cfg(any(feature = "s3", feature = "gcs"))]
+#[test]
+fn async_fetch_blocking_runs_inside_existing_runtime() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+
+    let value = runtime
+        .block_on(async {
+            run_async_fetch_blocking(|| async {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                Ok::<_, DbtNovaError>(41usize)
+            })
+        })
+        .expect("nested runtime-safe fetch");
+
+    assert_eq!(value, 41);
+}

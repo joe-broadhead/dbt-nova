@@ -944,6 +944,22 @@ where
     })
 }
 
+fn run_async_fetch_blocking<F, Fut, T>(factory: F) -> Result<T>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        return tokio::task::block_in_place(|| handle.block_on(factory()));
+    }
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| DbtNovaError::ServerError(format!("Failed to init runtime: {e}")))?;
+    rt.block_on(factory())
+}
+
 #[cfg(feature = "s3")]
 fn fetch_s3_manifest_sdk(
     rest: &str,
@@ -951,21 +967,10 @@ fn fetch_s3_manifest_sdk(
     config: &DbtNovaConfig,
 ) -> Result<ManifestResolution> {
     let (bucket, key) = split_bucket_key(rest)?;
-    let runtime: std::sync::OnceLock<std::result::Result<tokio::runtime::Runtime, String>> =
-        std::sync::OnceLock::new();
-
     fetch_sdk_manifest_with_cache("S3", uri, config, || {
-        let rt = runtime
-            .get_or_init(|| {
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .map_err(|e| format!("Failed to init runtime: {e}"))
-            })
-            .as_ref()
-            .map_err(|e| DbtNovaError::ServerError(e.clone()))?;
-
-        rt.block_on(async {
+        let bucket = bucket.clone();
+        let key = key.clone();
+        run_async_fetch_blocking(move || async move {
             let fetch = async {
                 let shared = aws_config::defaults(aws_config::BehaviorVersion::latest())
                     .load()
@@ -1007,21 +1012,10 @@ fn fetch_gcs_manifest_sdk(
     config: &DbtNovaConfig,
 ) -> Result<ManifestResolution> {
     let (bucket, object) = split_bucket_key(rest)?;
-    let runtime: std::sync::OnceLock<std::result::Result<tokio::runtime::Runtime, String>> =
-        std::sync::OnceLock::new();
-
     fetch_sdk_manifest_with_cache("GCS", uri, config, || {
-        let rt = runtime
-            .get_or_init(|| {
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .map_err(|e| format!("Failed to init runtime: {e}"))
-            })
-            .as_ref()
-            .map_err(|e| DbtNovaError::ServerError(e.clone()))?;
-
-        rt.block_on(async {
+        let bucket = bucket.clone();
+        let object = object.clone();
+        run_async_fetch_blocking(move || async move {
             let fetch = async {
                 let gcs_config = google_cloud_storage::client::ClientConfig::default()
                     .with_auth()
