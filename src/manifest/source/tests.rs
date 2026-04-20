@@ -138,3 +138,23 @@ fn async_fetch_blocking_runs_inside_existing_runtime() {
 
     assert_eq!(value, 41);
 }
+
+#[cfg(any(feature = "s3", feature = "gcs"))]
+#[test]
+fn async_fetch_blocking_runs_inside_current_thread_runtime() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+
+    let value = runtime
+        .block_on(async {
+            run_async_fetch_blocking(|| async {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                Ok::<_, DbtNovaError>(73usize)
+            })
+        })
+        .expect("nested current-thread runtime-safe fetch");
+
+    assert_eq!(value, 73);
+}
