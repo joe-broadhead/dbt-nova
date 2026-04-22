@@ -23,8 +23,9 @@ Before tagging:
 - [ ] `release/<version>` branch cut from `master`
 - [ ] `CHANGELOG.md` updated for the version
 - [ ] `Cargo.toml` version bumped
-- [ ] `cargo test` passes
-- [ ] `cargo clippy -- -W clippy::all -W clippy::pedantic` passes
+- [ ] `Cargo.toml` version matches the intended tag exactly
+- [ ] `cargo test --all-features` passes
+- [ ] `cargo clippy --locked --all-targets --all-features -- -D warnings` passes
 - [ ] `cargo fmt --check` passes
 - [ ] Docs build clean (`mkdocs build --strict`)
 - [ ] Release PR approved and merged to `master`
@@ -41,7 +42,7 @@ This repo uses four GitHub Actions workflows for releases and documentation:
 1. **Prepare Release** (`.github/workflows/release-prepare.yml`)
    - Trigger: manual (`workflow_dispatch`)
    - Inputs: `version` (must be semantic `x.y.z`, e.g. `1.2.3`)
-   - Actions: creates `release/<version>` off `master` and opens a PR to `master`
+   - Actions: validates `Cargo.toml` + `CHANGELOG.md` for that version, creates `release/<version>` off `master`, and opens a PR to `master`
 
 2. **Tag Release** (`.github/workflows/release-tag.yml`)
    - Trigger: PR merged into `master`
@@ -57,6 +58,7 @@ This repo uses four GitHub Actions workflows for releases and documentation:
      but was pushed in a way that did not trigger downstream workflows)
    - Actions:
      - validates tag is on `master`
+     - validates the crate version and changelog entry match the tag
      - runs one all-features test gate on Linux before packaging
      - builds and publishes slim assets for `linux-x86_64` (Cloud Run)
        and `macos-arm64` (standard Apple Silicon macOS)

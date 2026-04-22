@@ -20,6 +20,22 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Validate release metadata
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          if [ "${cargo_version}" != "${VERSION}" ]; then
+            echo "Cargo.toml version (${cargo_version}) does not match requested release version (${VERSION})."
+            exit 1
+          fi
+
+          if ! grep -q "^## \[${VERSION}\]" CHANGELOG.md; then
+            echo "CHANGELOG.md is missing a ## [${VERSION}] entry."
+            exit 1
+          fi
+
       - name: Create release branch
         env:
           VERSION: ${{ inputs.version }}

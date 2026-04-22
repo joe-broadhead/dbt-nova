@@ -13,8 +13,9 @@ Operational defaults:
 
 - **File:** `.github/workflows/ci.yml`
 - **Trigger:** push on `master` and all pull requests
-- **Action:** `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`,
-  `cargo test --locked`, `cargo check --locked --no-default-features --all-targets`,
+- **Action:** `cargo fmt --check`, `cargo clippy --locked --all-targets --all-features -- -D warnings`,
+  `cargo test --locked --all-features`, `cargo check --locked --no-default-features --all-targets`,
+  `cargo check --locked --all-features` on Rust `1.93.0` (MSRV),
   `DBT_NOVA_EVAL_ENABLE_HYBRID=0 DBT_NOVA_EVAL_ENABLE_LIFECYCLE=0 DBT_NOVA_EVAL_ALLOW_EMBEDDING_DOWNLOAD=0 cargo test --locked --test search_eval compare_lexical_vs_hybrid_search_quality -- --ignored`,
   `cargo llvm-cov --locked --all-features --workspace --summary-only`,
   `mkdocs build --strict` (with `docs/requirements.txt`), `scripts/check_advisory_ignores.sh`,
@@ -27,6 +28,7 @@ Operational defaults:
   - native remote consumer behavior via `file://` artifact URIs
   - negative-path behavior (missing/mismatched storage + invalid metadata)
 - **Note:** sets `DBT_NOVA_STRICT_SCHEMA=1` so schema parsing failures break the build
+- **Note:** release artifacts ship with default features enabled, so lint/test jobs now exercise `--all-features` for parity.
 
 ### Reusable Nova Asset Workflow
 
@@ -118,6 +120,7 @@ Operational defaults:
 - **Trigger:** `v*` tag push (or manual `workflow_dispatch` with `tag` input)
 - **Action:**
   - validates tag is on `master`
+  - validates `Cargo.toml` and `CHANGELOG.md` match the release tag version
   - runs one all-features Linux test gate
   - builds and publishes **slim** assets for `linux-x86_64` and `macos-arm64`
   - builds, smokes, and publishes a `linux/amd64` OCI image to
@@ -162,15 +165,16 @@ Additional secret required:
 Run these before opening a release PR:
 
 ```bash
-cargo test --locked
+cargo test --locked --all-features
 cargo check --locked --no-default-features --all-targets
-cargo clippy --locked --all-targets -- -W clippy::all -W clippy::pedantic
+cargo check --locked --all-features
+cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo fmt --check
 scripts/check_config_reference.sh
 scripts/check_dependency_watchlist.sh
 pip install -r docs/requirements.txt
 mkdocs build --strict
-cargo deny check
+cargo deny check advisories licenses sources
 ```
 
 ## Release Flow Diagram
@@ -189,7 +193,7 @@ flowchart TD
 
 - [ ] Create `hotfix/<version>` from `master`
 - [ ] Add fix and update tests/docs as needed
-- [ ] Ensure `cargo test` passes
+- [ ] Ensure `cargo test --all-features` passes
 - [ ] Open PR to `master` and merge
 - [ ] Tag auto-created (`v<version>`)
 - [ ] Verify release assets and docs deploy

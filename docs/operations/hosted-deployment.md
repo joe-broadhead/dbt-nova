@@ -3,6 +3,12 @@
 Use streamable HTTP mode when you want to run `dbt-nova` as a containerized MCP
 service on platforms like Cloud Run.
 
+## Authentication Requirement
+
+Hosted `streamable_http` mode has no built-in authentication or authorization.
+If you expose it beyond loopback, you must place it behind an authenticating
+reverse proxy or platform auth layer first.
+
 ## Hosted Profile
 
 Recommended runtime env:
@@ -11,6 +17,7 @@ Recommended runtime env:
 export DBT_NOVA_SERVER_TRANSPORT=streamable_http
 export PORT=8080
 export DBT_NOVA_HTTP_PATH=/mcp
+export DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true
 export DBT_NOVA_STORAGE_DIR=/tmp/dbt-nova
 export DBT_NOVA_EMBEDDINGS_CACHE_DIR=/tmp/dbt-nova/models
 export DBT_NOVA_BOOTSTRAP_URI='https://example.invalid/bootstrap.json'
@@ -26,10 +33,16 @@ unset DBT_NOVA_STORAGE_READ_ONLY
 Why these defaults matter:
 
 - `PORT` lets Nova bind correctly on Cloud Run-style platforms.
+- `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` is required for non-loopback hosted binds and documents that an authenticating reverse proxy is in front of Nova.
 - `DBT_NOVA_STORAGE_DIR=/tmp/dbt-nova` gives artifact hydration a writable local filesystem.
 - `DBT_NOVA_EMBEDDINGS_CACHE_DIR=/tmp/dbt-nova/models` keeps model cache resolution deterministic.
 - `DBT_NOVA_BOOTSTRAP_URI` should point at the stable bootstrap alias published by the reusable asset workflow.
 - First start should **not** use strict read-only mode. Nova may need to materialize prebuilt assets locally before it can serve traffic.
+
+Storage note:
+
+- `/tmp/dbt-nova` is suitable for ephemeral containers.
+- For persistence across restarts, mount a writable volume and point `DBT_NOVA_STORAGE_DIR` and `DBT_NOVA_EMBEDDINGS_CACHE_DIR` at that volume instead.
 
 ## Probe Endpoints
 
@@ -71,6 +84,7 @@ Run it locally:
 
 ```bash
 docker run --rm -p 8080:8080 \
+  -e DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true \
   -e DBT_NOVA_BOOTSTRAP_URI='https://example.invalid/bootstrap.json' \
   -e DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing \
   dbt-nova:latest
@@ -120,6 +134,7 @@ If bootstrap omits `models_artifact_uri`, you must do one of these:
 
 1. Publish prebuilt assets and a stable bootstrap alias.
 2. Set `DBT_NOVA_BOOTSTRAP_URI` to that stable alias.
-3. Keep `DBT_NOVA_STORAGE_DIR` and `DBT_NOVA_EMBEDDINGS_CACHE_DIR` writable.
-4. Use `/healthz` for liveness and `/readyz` for readiness.
-5. Do not enable strict read-only mode until local artifacts already exist.
+3. Put dbt-nova behind an authenticating reverse proxy and set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true`.
+4. Keep `DBT_NOVA_STORAGE_DIR` and `DBT_NOVA_EMBEDDINGS_CACHE_DIR` writable.
+5. Use `/healthz` for liveness and `/readyz` for readiness.
+6. Do not enable strict read-only mode until local artifacts already exist.

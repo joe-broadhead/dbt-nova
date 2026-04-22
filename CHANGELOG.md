@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-04-18
 ### Added
 
 - CLI-only `dbt-nova audit nova-meta` validation for `meta.nova`, with project/file/resource/column targeting, JSON output, schema validation against `schemas/nova/v0.json`, and local semantic checks for references, grain consistency, duplicate definitions, and filter-operator rules.
@@ -41,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Metadata audit and reusable asset workflows now support the shared `DBT_NOVA_SECRET_BUNDLE_JSON` secret-bundle contract for cross-repo dbt execution.
 - Analyst search now prefers matched canonical Nova measures and metrics more strongly, including cases where the same business term appears across multiple models or alongside standalone dbt `metric` entities.
 - Release automation now pushes the exact smoke-tested OCI image instead of rebuilding a separate image during release.
+- Release preparation and tagged releases now validate `Cargo.toml` and `CHANGELOG.md`
+  against the requested version/tag so published binaries, OCI images, and release notes
+  stay aligned.
+- CI now lints and tests `--all-features`, and adds an explicit Rust 1.93 MSRV check to
+  match the declared minimum supported toolchain.
 - Monthly fuzz maintenance now uses a shared Rust cache and a larger timeout budget so nightly fuzz targets spend time fuzzing instead of recompiling.
 
 ### Fixed
@@ -65,6 +71,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Public docs, examples, and fixtures were sanitized to remove private
   manifest-specific vocabulary from the public repository.
 - Hosted HTTP startup/bind fallback handling is more robust: invalid `PORT` fallback is ignored, MCP paths are normalized/validated, and reserved probe paths are rejected.
+- Non-loopback hosted HTTP binds now fail fast unless operators explicitly acknowledge
+  that dbt-nova is behind an authenticating reverse proxy via
+  `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true`, and startup logs now warn clearly that the
+  built-in streamable HTTP transport has no authentication layer.
 - Cold-start search model failures now degrade safely by disabling broken empty search indexes instead of leaving startup wedged.
 - Metadata audit tests now use isolated storage roots under parallel execution, and the reusable audit workflow no longer cancels sibling invocations on the same ref.
 - Documentation and dependency maintenance issues that broke docs or security checks were corrected (`Pygments` compatibility and `tar` advisory updates).
@@ -75,6 +85,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bundle-aware skill installation, the shared skill architecture, new persona skills,
   and updated analyst/engineering/governance workflows.
 - Added and refreshed docs for hosted deployment, streamable HTTP mode, prebuilt bootstrap/artifact hydration, metadata audit workflows, OCI release behavior, persona-specific search candidate metadata/ranking, and canonical Nova metric/measure search behavior.
+- Added explicit security guidance that hosted streamable HTTP deployments must be
+  fronted by an authenticating proxy, along with updated hosted examples, release docs,
+  and contributor docs for `RELEASE_TAG_TOKEN` and version/tag release flow checks.
 
 ## [0.0.3] - 2026-03-19
 

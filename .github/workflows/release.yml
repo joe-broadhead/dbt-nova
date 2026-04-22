@@ -64,6 +64,24 @@ jobs:
             exit 1
           fi
 
+      - name: Ensure crate metadata matches tag
+        env:
+          RELEASE_TAG: ${{ steps.resolve_tag.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          release_version="${RELEASE_TAG#v}"
+          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+
+          if [ "${cargo_version}" != "${release_version}" ]; then
+            echo "Cargo.toml version (${cargo_version}) does not match release tag (${release_version})."
+            exit 1
+          fi
+
+          if ! grep -q "^## \[${release_version}\]" CHANGELOG.md; then
+            echo "CHANGELOG.md is missing a ## [${release_version}] entry."
+            exit 1
+          fi
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
 
@@ -222,6 +240,7 @@ jobs:
             -p 8080:8080 \
             -v "$PWD/tests/fixtures:/fixtures:ro" \
             -e DBT_MANIFEST_PATH=/fixtures/nova_manifest.json \
+            -e DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true \
             -e DBT_NOVA_SEARCH_ENABLE_VECTOR=false \
             -e DBT_NOVA_SEARCH_ENABLE_SPARSE=false \
             -e DBT_NOVA_SEARCH_ENABLE_RERANKER=false \
