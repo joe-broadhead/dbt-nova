@@ -332,6 +332,26 @@ def unique_displayed_duplicate_indicator_count(inconsistencies: dict[str, Any]) 
     return len(indicators)
 
 
+def report_summary(
+    args: argparse.Namespace,
+    clusters: list[dict[str, Any]],
+    inconsistencies: dict[str, Any],
+    overlap_candidate_count: int,
+) -> dict[str, Any]:
+    return {
+        "entity_count": count_entities(args),
+        "overlap_candidate_count": overlap_candidate_count,
+        "displayed_overlap_cluster_count": len(clusters),
+        "displayed_duplicate_indicator_count": unique_displayed_duplicate_indicator_count(
+            inconsistencies
+        ),
+        "displayed_canonical_conflict_count": len(inconsistencies["canonical_conflicts"]),
+        "displayed_multi_grain_entity_count": len(inconsistencies["multi_grain_entities"]),
+        "displayed_discovery_risk_count": len(inconsistencies["discovery_risks"]),
+        "inconsistency_count_scope": "displayed_overlap_clusters",
+    }
+
+
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
     summary = manifest_summary(args)
     candidates, overlap_candidate_count = load_overlap_candidates(args)
@@ -339,18 +359,12 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     inconsistencies = inconsistency_sections(clusters)
     return {
         "scope": summary,
-        "summary": {
-            "entity_count": count_entities(args),
-            "overlap_candidate_count": overlap_candidate_count,
-            "displayed_overlap_cluster_count": len(clusters),
-            "displayed_duplicate_indicator_count": unique_displayed_duplicate_indicator_count(
-                inconsistencies
-            ),
-            "displayed_canonical_conflict_count": len(inconsistencies["canonical_conflicts"]),
-            "displayed_multi_grain_entity_count": len(inconsistencies["multi_grain_entities"]),
-            "displayed_discovery_risk_count": len(inconsistencies["discovery_risks"]),
-            "inconsistency_count_scope": "displayed_overlap_clusters",
-        },
+        "summary": report_summary(
+            args,
+            clusters,
+            inconsistencies,
+            overlap_candidate_count,
+        ),
         "overlap_clusters": clusters,
         "inconsistencies": inconsistencies,
         "cleanup_queue": cleanup_queue(inconsistencies, clusters),
