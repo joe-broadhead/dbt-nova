@@ -30,9 +30,9 @@ curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scrip
   DBT_NOVA_WARMUP_REQUIRED_MODELS=3 \
   bash -s -- --slim --warm-models --non-interactive
 
-# Optional: install one Agent Skills bundle into ~/.agents/skills
+# Optional: install all built-in Agent Skills into ~/.agents/skills
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  bash -s -- --slim --install-skills --skills-bundle mcp --non-interactive
+  bash -s -- --slim --install-skills --non-interactive
 ```
 
 === "macOS (Apple Silicon)"

@@ -157,11 +157,12 @@ curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scrip
 # DBT_NOVA_WARMUP_CHECKSUM_FILE=/path/to/checksums.txt \
 #   bash scripts/warm_models.sh
 
-# Optional: install one built-in persona skill bundle to ~/.agents/skills
+# Optional: install all built-in persona skills to ~/.agents/skills
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  bash -s -- --slim --install-skills --skills-bundle mcp --non-interactive
+  bash -s -- --slim --install-skills --non-interactive
 
-# Use --skills-bundle cli instead for terminal-only agent setups.
+# Optional: install a single standalone skill
+# bash -s -- --slim --install-skills --skill analyst --non-interactive
 
 export DBT_MANIFEST_PATH=/path/to/manifest.json
 export PATH="$HOME/.local/bin:$PATH"

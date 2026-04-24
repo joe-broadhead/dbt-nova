@@ -150,13 +150,13 @@ Useful overrides:
 - `DBT_NOVA_WARMUP_REQUIRED_MODELS=3`
 - `DBT_NOVA_INSTALL_SKILLS=1`
 - `DBT_NOVA_SKILLS_DIR=/custom/skills/path`
-- `DBT_NOVA_SKILLS_BUNDLE=cli|mcp`
+- `DBT_NOVA_SKILL_NAME=analyst`
 - `DBT_NOVA_INSTALL_NONINTERACTIVE=1`
 - `DBT_NOVA_INSTALL_DIR=/custom/path`
 - `DBT_NOVA_VERIFY_CHECKSUM=1|0`
 - `DBT_NOVA_VERIFY_SIGNATURE=1|0`
 - `DBT_NOVA_COSIGN_BINARY=cosign`
-- `--bundled`, `--slim`, `--warm-models`, `--install-skills`, `--skills-bundle <cli|mcp>`, `--skills-dir <path>`, `--non-interactive`, `--install-dir <path>`
+- `--bundled`, `--slim`, `--warm-models`, `--install-skills`, `--skill <name>`, `--skills-dir <path>`, `--non-interactive`, `--install-dir <path>`
 
 ## Packaging Notes
 

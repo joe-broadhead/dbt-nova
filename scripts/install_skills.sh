@@ -38,6 +38,18 @@ validate_bundle() {
   esac
 }
 
+validate_skill_name_segment() {
+  local skill_name="$1"
+  if [[ -z "${skill_name}" ]]; then
+    echo "Skill name cannot be empty." >&2
+    return 1
+  fi
+  if ! [[ "${skill_name}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    echo "Invalid skill name '${skill_name}'. Use a single safe path segment." >&2
+    return 1
+  fi
+}
+
 list_installable_skills() {
   local source_root="$1"
   find "${source_root}" -mindepth 1 -maxdepth 1 -type d \
@@ -51,10 +63,7 @@ list_installable_skills() {
 validate_skill_name() {
   local source_root="$1"
   local skill_name="$2"
-  if [[ -z "${skill_name}" ]]; then
-    echo "Skill name cannot be empty." >&2
-    return 1
-  fi
+  validate_skill_name_segment "${skill_name}"
   if [[ ! -d "${source_root}/${skill_name}" ]]; then
     echo "Standalone skill '${skill_name}' not found in ${source_root}." >&2
     return 1

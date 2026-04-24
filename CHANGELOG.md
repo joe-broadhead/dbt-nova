@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `search_indicator`, `indicator_inventory`, `search_columns`, `column_inventory`,
   `compare_grains`, `find_entity_overlap`, and `modelling_consistency_report`.
 - Deterministic search explain/debug mode for `search` and `search_indicator`, including ranking-factor and retriever contribution output.
-- New shared skill architecture under `.github/skills/shared/` plus new persona skills for BI engineering, KPI debugging, model architecture, project cleanup, and metadata authoring across both CLI and MCP bundles.
+- New standalone persona-first skill architecture under `.github/skills/` for analyst, BI engineering, engineering, governance, KPI debugging, model architecture, project cleanup, and metadata authoring workflows across MCP and CLI transports.
 - Helper workflow scripts for architecture and cleanup work:
   `scripts/export_entity_inventory.py`, `scripts/export_column_inventory.py`,
   `scripts/build_overlap_report.py`, and `scripts/install_skills.sh`.
@@ -33,9 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   all participate in ranking for both `search` and `search_indicator`.
 - Search/modeling inventory and consistency tools now respect the same search
   concurrency and timeout guardrails as the main search surface.
-- Skill installation is now bundle-aware (`cli` or `mcp`, not both in the same
-  destination), and installed skills are rewritten as standalone packages with
-  vendored shared references and assets.
+- Skill installation now supports standalone persona-first skills directly,
+  with deprecated `cli`/`mcp` bundle selectors mapped for compatibility.
 - CI hardening now includes lower-memory lint/coverage/test settings and extra
   runner disk cleanup for the `test` job.
 - Reusable asset publishing now supports GitHub OIDC for GCS targets, refreshes GCS access tokens during longer uploads, uses `gcloud storage cp` for large transfers, and applies higher publish timeout budgets.
@@ -82,8 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 
 - Added and refreshed docs for the new search/modeling tools, CLI `audit nova-meta`,
-  bundle-aware skill installation, the shared skill architecture, new persona skills,
-  and updated analyst/engineering/governance workflows.
+  standalone skill installation, new persona skills, and updated
+  analyst/engineering/governance workflows.
 - Added and refreshed docs for hosted deployment, streamable HTTP mode, prebuilt bootstrap/artifact hydration, metadata audit workflows, OCI release behavior, persona-specific search candidate metadata/ranking, and canonical Nova metric/measure search behavior.
 - Added explicit security guidance that hosted streamable HTTP deployments must be
   fronted by an authenticating proxy, along with updated hosted examples, release docs,
