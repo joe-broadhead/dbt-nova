@@ -9,7 +9,7 @@ use rmcp::transport::{
 use serde_json::json;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::cli::args::{ServerStartArgs, ServerTransportArg};
 use crate::config::{DbtNovaConfig, ServerTransport};
@@ -138,6 +138,9 @@ async fn start_with_config_and_shutdown(
     }
 
     prepare_storage(&config)?;
+    if config.server_transport == ServerTransport::StreamableHttp {
+        log_streamable_http_auth_posture(&config);
+    }
 
     let transport = config.server_transport;
     let http_settings = HttpServerSettings::from_config(&config);
@@ -160,6 +163,24 @@ async fn start_with_config_and_shutdown(
         ServerTransport::StreamableHttp => {
             serve_streamable_http(server, searcher, http_settings, shutdown).await
         }
+    }
+}
+
+fn log_streamable_http_auth_posture(config: &DbtNovaConfig) {
+    if config.http_transport_binds_non_loopback() {
+        warn!(
+            http_host = %config.http_host,
+            http_port = config.http_port,
+            http_path = %config.http_path,
+            "streamable HTTP transport has no built-in authentication; ensure an authenticating reverse proxy is enforcing access before exposing this endpoint"
+        );
+    } else {
+        warn!(
+            http_host = %config.http_host,
+            http_port = config.http_port,
+            http_path = %config.http_path,
+            "streamable HTTP transport has no built-in authentication; keep this listener bound to loopback or place it behind an authenticating reverse proxy before exposure"
+        );
     }
 }
 

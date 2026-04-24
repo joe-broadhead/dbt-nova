@@ -7,7 +7,32 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from _nova_cli import default_nova_bin, dump_json, dump_text, manifest_identity, run_nova_tool
+from _nova_cli import (
+    default_nova_bin,
+    dump_json,
+    dump_text,
+    manifest_identity,
+    paginated_tool_rows,
+    run_nova_tool,
+)
+
+
+KNOWN_RESOURCE_TYPES = {
+    "analysis",
+    "doc",
+    "exposure",
+    "group",
+    "macro",
+    "metric",
+    "model",
+    "saved_query",
+    "seed",
+    "semantic_model",
+    "snapshot",
+    "source",
+    "test",
+    "unit_test",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -56,41 +81,62 @@ def manifest_summary(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def load_consistency_report(args: argparse.Namespace) -> dict[str, Any]:
-    payload = run_nova_tool(
-        args.nova_bin,
-        args.manifest_path,
-        "modelling_consistency_report",
-        {
-            "resource_types": sorted(set(args.resource_types)),
-            "limit": args.limit,
-        },
-    )
-    data = payload["result"].get("data")
-    if not isinstance(data, dict):
-        raise RuntimeError("modelling_consistency_report returned an invalid payload")
-    return data
-
-
-def load_overlap_candidates(args: argparse.Namespace, report: dict[str, Any]) -> list[dict[str, Any]]:
-    if not args.focus_entity:
-        return list(report.get("overlap_candidates", []))
+def load_overlap_candidates(args: argparse.Namespace) -> tuple[list[dict[str, Any]], int]:
+    params: dict[str, Any] = {
+        "resource_types": sorted(set(args.resource_types)),
+        "limit": args.limit,
+        "offset": 0,
+    }
+    if args.focus_entity:
+        params["id_or_name"] = args.focus_entity
+        params["resource_type"] = args.focus_resource_type
     payload = run_nova_tool(
         args.nova_bin,
         args.manifest_path,
         "find_entity_overlap",
-        {
-            "id_or_name": args.focus_entity,
-            "resource_type": args.focus_resource_type,
-            "resource_types": sorted(set(args.resource_types)),
-            "limit": args.limit,
-            "offset": 0,
-        },
+        params,
     )
     data = payload["result"].get("data", [])
     if not isinstance(data, list):
         raise RuntimeError("find_entity_overlap returned an invalid payload")
-    return data
+    total_available = payload["result"].get("total_available")
+    if total_available is None:
+        total_available = len(data)
+    if not isinstance(total_available, int):
+        raise RuntimeError("find_entity_overlap returned an invalid total_available value")
+    return data, total_available
+
+
+def is_absent_resource_type_error(resource_type: str, exc: RuntimeError) -> bool:
+    normalized = resource_type.strip().lower()
+    if normalized not in KNOWN_RESOURCE_TYPES:
+        return False
+    message = str(exc).lower()
+    return (
+        f"resource_type '{normalized}'" in message
+        and (
+            "is invalid; allowed values:" in message
+            or "resolved but was not indexed" in message
+        )
+    )
+
+
+def count_entities(args: argparse.Namespace) -> int:
+    total = 0
+    for resource_type in sorted(set(args.resource_types)):
+        try:
+            rows = paginated_tool_rows(
+                args.nova_bin,
+                args.manifest_path,
+                "list_entities",
+                {"resource_type": resource_type, "detail": "standard"},
+            )
+        except RuntimeError as exc:
+            if is_absent_resource_type_error(resource_type, exc):
+                continue
+            raise
+        total += len(rows)
+    return total
 
 
 def load_columns(
@@ -186,12 +232,23 @@ def overlap_clusters(args: argparse.Namespace, candidates: list[dict[str, Any]])
     return clusters
 
 
-def inconsistency_sections(report: dict[str, Any], clusters: list[dict[str, Any]]) -> dict[str, Any]:
-    duplicate_indicators = list(report.get("duplicate_indicators", []))
-    canonical_conflicts = list(report.get("canonical_indicator_conflicts", []))
-    multi_grain = list(report.get("entities_with_multiple_grain_variants", []))
+def inconsistency_sections(clusters: list[dict[str, Any]]) -> dict[str, Any]:
+    repeated_indicator_clusters: list[dict[str, Any]] = []
+    canonical_conflicts: list[dict[str, Any]] = []
+    multi_grain: list[dict[str, Any]] = []
     discovery_risks: list[dict[str, Any]] = []
     for cluster in clusters:
+        if cluster["repeated_indicators"]:
+            repeated_indicator_clusters.append(
+                {
+                    "cluster_id": cluster["cluster_id"],
+                    "indicators": cluster["repeated_indicators"],
+                    "entities": [
+                        cluster["entity1"]["unique_id"],
+                        cluster["entity2"]["unique_id"],
+                    ],
+                }
+            )
         if cluster["canonical_candidate"] is None:
             discovery_risks.append(
                 {
@@ -203,34 +260,45 @@ def inconsistency_sections(report: dict[str, Any], clusters: list[dict[str, Any]
                     "reason": "no single canonical candidate is obvious from overlap metadata",
                 }
             )
-    for row in duplicate_indicators:
-        if row.get("canonical_parent_count") != 1:
-            discovery_risks.append(
+        if cluster["entity1"].get("canonical") and cluster["entity2"].get("canonical"):
+            canonical_conflicts.append(
                 {
-                    "indicator_name": row.get("indicator_name"),
-                    "indicator_type": row.get("indicator_type"),
-                    "reason": "duplicate indicator is not anchored to exactly one canonical parent",
+                    "cluster_id": cluster["cluster_id"],
+                    "entities": [
+                        cluster["entity1"]["unique_id"],
+                        cluster["entity2"]["unique_id"],
+                    ],
+                    "reason": "both overlap candidates are marked canonical",
+                }
+            )
+        grain = cluster["grain_comparison"]
+        if not grain.get("exact_match", False) or not grain.get("same_time_field", False):
+            multi_grain.append(
+                {
+                    "cluster_id": cluster["cluster_id"],
+                    "entities": [
+                        cluster["entity1"]["unique_id"],
+                        cluster["entity2"]["unique_id"],
+                    ],
+                    "reason": "overlap candidates do not share the same effective grain",
                 }
             )
     return {
-        "duplicate_indicators": duplicate_indicators,
+        "duplicate_indicators": repeated_indicator_clusters,
         "canonical_conflicts": canonical_conflicts,
         "multi_grain_entities": multi_grain,
         "discovery_risks": discovery_risks,
     }
 
 
-def cleanup_queue(report: dict[str, Any], inconsistencies: dict[str, Any], clusters: list[dict[str, Any]]) -> dict[str, list[str]]:
+def cleanup_queue(inconsistencies: dict[str, Any], clusters: list[dict[str, Any]]) -> dict[str, list[str]]:
     immediate: list[str] = []
     for row in inconsistencies["canonical_conflicts"]:
-        immediate.append(
-            f"Resolve canonical conflict for {row.get('indicator_type')} `{row.get('indicator_name')}`."
-        )
+        entity1, entity2 = row.get("entities", ["candidate-1", "candidate-2"])
+        immediate.append(f"Resolve canonical conflict between `{entity1}` and `{entity2}`.")
     for row in inconsistencies["duplicate_indicators"]:
-        if row.get("inconsistent_grains") or row.get("canonical_parent_count") != 1:
-            immediate.append(
-                f"Unify duplicate {row.get('indicator_type')} `{row.get('indicator_name')}` across {row.get('parent_count')} parents."
-            )
+        indicators = ", ".join(row.get("indicators", [])) or "repeated indicators"
+        immediate.append(f"Review repeated indicator surface for cluster {row.get('cluster_id')}: `{indicators}`.")
 
     next_actions: list[str] = []
     for cluster in clusters:
@@ -246,9 +314,8 @@ def cleanup_queue(report: dict[str, Any], inconsistencies: dict[str, Any], clust
 
     later: list[str] = []
     for row in inconsistencies["multi_grain_entities"]:
-        entity = row.get("entity", {})
         later.append(
-            f"Normalize grain variants for `{entity.get('unique_id')}` across {row.get('grain_variant_count')} variants."
+            f"Normalize grain mismatch in overlap cluster {row.get('cluster_id')}."
         )
 
     return {
@@ -258,24 +325,49 @@ def cleanup_queue(report: dict[str, Any], inconsistencies: dict[str, Any], clust
     }
 
 
+def unique_displayed_duplicate_indicator_count(inconsistencies: dict[str, Any]) -> int:
+    indicators: set[str] = set()
+    for row in inconsistencies["duplicate_indicators"]:
+        indicators.update(str(indicator) for indicator in row.get("indicators", []))
+    return len(indicators)
+
+
+def report_summary(
+    args: argparse.Namespace,
+    clusters: list[dict[str, Any]],
+    inconsistencies: dict[str, Any],
+    overlap_candidate_count: int,
+) -> dict[str, Any]:
+    return {
+        "entity_count": count_entities(args),
+        "overlap_candidate_count": overlap_candidate_count,
+        "displayed_overlap_cluster_count": len(clusters),
+        "displayed_duplicate_indicator_count": unique_displayed_duplicate_indicator_count(
+            inconsistencies
+        ),
+        "displayed_canonical_conflict_count": len(inconsistencies["canonical_conflicts"]),
+        "displayed_multi_grain_entity_count": len(inconsistencies["multi_grain_entities"]),
+        "displayed_discovery_risk_count": len(inconsistencies["discovery_risks"]),
+        "inconsistency_count_scope": "displayed_overlap_clusters",
+    }
+
+
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
     summary = manifest_summary(args)
-    consistency = load_consistency_report(args)
-    candidates = load_overlap_candidates(args, consistency)
+    candidates, overlap_candidate_count = load_overlap_candidates(args)
     clusters = overlap_clusters(args, candidates)
-    inconsistencies = inconsistency_sections(consistency, clusters)
+    inconsistencies = inconsistency_sections(clusters)
     return {
         "scope": summary,
-        "summary": {
-            "entity_count": consistency.get("entity_count", 0),
-            "overlap_candidate_count": consistency.get("overlap_candidate_count", 0),
-            "duplicate_indicator_count": consistency.get("duplicate_indicator_count", 0),
-            "canonical_conflict_count": consistency.get("canonical_conflict_count", 0),
-            "multi_grain_entity_count": consistency.get("multi_grain_entity_count", 0),
-        },
+        "summary": report_summary(
+            args,
+            clusters,
+            inconsistencies,
+            overlap_candidate_count,
+        ),
         "overlap_clusters": clusters,
         "inconsistencies": inconsistencies,
-        "cleanup_queue": cleanup_queue(consistency, inconsistencies, clusters),
+        "cleanup_queue": cleanup_queue(inconsistencies, clusters),
     }
 
 
@@ -290,6 +382,8 @@ def markdown_report(report: dict[str, Any]) -> str:
         f"- Manifest sha256: `{scope['manifest_identity']['sha256']}`",
         f"- Resource types: `{', '.join(scope['resource_types'])}`",
         f"- Entity count: `{summary['entity_count']}`",
+        f"- Overlap candidates: `{summary['overlap_candidate_count']}`",
+        f"- Displayed overlap clusters: `{summary['displayed_overlap_cluster_count']}`",
         "",
         "## Overlap Clusters",
     ]
@@ -316,11 +410,12 @@ def markdown_report(report: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "## Inconsistencies",
-            f"- duplicate indicators: `{len(report['inconsistencies']['duplicate_indicators'])}`",
-            f"- canonical conflicts: `{len(report['inconsistencies']['canonical_conflicts'])}`",
-            f"- multi-grain entities: `{len(report['inconsistencies']['multi_grain_entities'])}`",
-            f"- discovery risks: `{len(report['inconsistencies']['discovery_risks'])}`",
+            "## Displayed Inconsistencies",
+            f"- scope: `{summary['inconsistency_count_scope']}`",
+            f"- duplicate indicators: `{summary['displayed_duplicate_indicator_count']}`",
+            f"- canonical conflicts: `{summary['displayed_canonical_conflict_count']}`",
+            f"- multi-grain entities: `{summary['displayed_multi_grain_entity_count']}`",
+            f"- discovery risks: `{summary['displayed_discovery_risk_count']}`",
             "",
             "## Cleanup Queue",
             "- Immediate:",

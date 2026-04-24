@@ -35,6 +35,7 @@ RUN useradd --system --create-home --uid 10001 nova
 
 ENV DBT_NOVA_SERVER_TRANSPORT=streamable_http \
     DBT_NOVA_HTTP_PATH=/mcp \
+    DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true \
     DBT_NOVA_STORAGE_DIR=/tmp/dbt-nova \
     DBT_NOVA_EMBEDDINGS_CACHE_DIR=/tmp/dbt-nova/models \
     PORT=8080

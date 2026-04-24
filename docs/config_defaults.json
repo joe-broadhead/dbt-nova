@@ -29,6 +29,7 @@
   "http_host": "127.0.0.1",
   "http_port": 8000,
   "http_path": "/mcp",
+  "http_expect_auth_proxy": false,
   "http_stateful_mode": true,
   "http_sse_keep_alive_secs": 15,
   "http_sse_retry_secs": 3,

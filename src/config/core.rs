@@ -199,6 +199,8 @@ pub struct DbtNovaConfig {
     pub http_port: u16,
     /// HTTP mount path for MCP requests
     pub http_path: String,
+    /// Explicit acknowledgement that hosted HTTP is protected by an authenticating reverse proxy.
+    pub http_expect_auth_proxy: bool,
     /// Whether hosted HTTP mode should use stateful sessions
     pub http_stateful_mode: bool,
     /// SSE keepalive interval in seconds for hosted HTTP mode (0 = disable)
@@ -286,6 +288,7 @@ impl Default for DbtNovaConfig {
             http_host: "127.0.0.1".to_string(),
             http_port: 8000,
             http_path: "/mcp".to_string(),
+            http_expect_auth_proxy: false,
             http_stateful_mode: true,
             http_sse_keep_alive_secs: 15,
             http_sse_retry_secs: 3,
@@ -554,9 +557,20 @@ impl DbtNovaConfig {
                     "streamable HTTP transport reserves /healthz and /readyz for probe endpoints; choose a different http_path".to_string(),
                 ));
             }
+            if self.http_transport_binds_non_loopback() && !self.http_expect_auth_proxy {
+                return Err(DbtNovaError::InvalidParams(
+                    "streamable HTTP transport has no built-in authentication and is configured to listen on a non-loopback host. Bind to 127.0.0.1/::1 for local-only use, or set DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true only when an authenticating reverse proxy is enforcing access in front of dbt-nova; the published container image sets this acknowledgement explicitly for hosted deployments.".to_string(),
+                ));
+            }
         }
 
         Ok(())
+    }
+
+    #[must_use]
+    pub(crate) fn http_transport_binds_non_loopback(&self) -> bool {
+        self.server_transport == ServerTransport::StreamableHttp
+            && http_host_is_non_loopback(&self.http_host)
     }
 
     /// Resolve the base storage root directory.
@@ -803,6 +817,9 @@ impl DbtNovaConfig {
                 self.http_path = trimmed.to_string();
             }
         }
+        if let Some(value) = parse_bool("DBT_NOVA_HTTP_EXPECT_AUTH_PROXY") {
+            self.http_expect_auth_proxy = value;
+        }
         if let Some(value) = parse_bool("DBT_NOVA_HTTP_STATEFUL_MODE") {
             self.http_stateful_mode = value;
         }
@@ -1034,6 +1051,19 @@ fn http_path_conflicts_with_probe_route(path: &str) -> bool {
     matches!(path, "/healthz" | "/readyz")
 }
 
+fn http_host_is_non_loopback(host: &str) -> bool {
+    let normalized = host.trim().trim_start_matches('[').trim_end_matches(']');
+    if normalized.is_empty() {
+        return false;
+    }
+    if normalized.eq_ignore_ascii_case("localhost") {
+        return false;
+    }
+    normalized
+        .parse::<std::net::IpAddr>()
+        .map_or(true, |ip| !ip.is_loopback())
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{LazyLock, Mutex};
@@ -1263,6 +1293,34 @@ mod tests {
     }
 
     #[test]
+    fn validate_rejects_exposed_http_transport_without_auth_proxy_ack() {
+        let mut config = base_config();
+        config.server_transport = ServerTransport::StreamableHttp;
+        config.http_host = "0.0.0.0".to_string();
+
+        let error = config
+            .validate()
+            .expect_err("public HTTP bind without auth proxy acknowledgement should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true")
+        );
+    }
+
+    #[test]
+    fn validate_accepts_exposed_http_transport_with_auth_proxy_ack() {
+        let mut config = base_config();
+        config.server_transport = ServerTransport::StreamableHttp;
+        config.http_host = "0.0.0.0".to_string();
+        config.http_expect_auth_proxy = true;
+
+        config
+            .validate()
+            .expect("public HTTP bind should validate when auth proxy is acknowledged");
+    }
+
+    #[test]
     fn from_env_trims_http_path() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let vars = [("DBT_NOVA_HTTP_PATH", Some(" /mcp "))];
@@ -1425,5 +1483,41 @@ mod tests {
         assert_eq!(config.server_transport, ServerTransport::StreamableHttp);
         assert_eq!(config.http_port, 9090);
         assert_eq!(config.http_host, "0.0.0.0");
+    }
+
+    #[test]
+    fn from_env_reads_http_expect_auth_proxy_flag() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [("DBT_NOVA_HTTP_EXPECT_AUTH_PROXY", Some("true"))];
+        let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let config = DbtNovaConfig::from_env();
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        assert!(config.http_expect_auth_proxy);
     }
 }

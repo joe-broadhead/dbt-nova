@@ -4,6 +4,7 @@ Use `dbt-nova` in two modes:
 
 - No subcommand: start MCP server (backward compatible behavior)
 - Subcommand: run one-shot CLI commands and exit
+- CLI surface: `12` CLI-only leaf commands, plus `tool call` access to all `33` MCP tools
 
 ## Command Tree
 
@@ -43,6 +44,7 @@ Hosted HTTP form:
 ```bash
 PORT=8080 \
 DBT_NOVA_SERVER_TRANSPORT=streamable_http \
+DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true \
 dbt-nova server start --http-host 0.0.0.0 --http-path /mcp
 ```
 
@@ -206,7 +208,7 @@ When `--json` is passed, CLI commands return a standard envelope:
   "meta": {
     "elapsed_ms": 42,
     "timestamp_ms": 1772304167827,
-    "version": "0.0.3"
+    "version": "0.0.4"
   },
   "error": null
 }

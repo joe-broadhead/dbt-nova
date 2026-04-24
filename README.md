@@ -157,11 +157,12 @@ curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scrip
 # DBT_NOVA_WARMUP_CHECKSUM_FILE=/path/to/checksums.txt \
 #   bash scripts/warm_models.sh
 
-# Optional: install one built-in persona skill bundle to ~/.agents/skills
+# Optional: install all built-in persona skills to ~/.agents/skills
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  bash -s -- --slim --install-skills --skills-bundle mcp --non-interactive
+  bash -s -- --slim --install-skills --non-interactive
 
-# Use --skills-bundle cli instead for terminal-only agent setups.
+# Optional: install a single standalone skill
+# bash -s -- --slim --install-skills --skill analyst --non-interactive
 
 export DBT_MANIFEST_PATH=/path/to/manifest.json
 export PATH="$HOME/.local/bin:$PATH"
@@ -197,11 +198,11 @@ Producer (reusable workflow):
 jobs:
   build_nova_assets:
     # Pin to a release tag or commit SHA
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.3
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.4
     with:
       manifest_path: target/manifest.json
       storage_instance_id: analytics-prod
-      installer_ref: v0.0.3
+      installer_ref: v0.0.4
       installer_install_mode: auto
       artifact_name_prefix: analytics-prod
 ```
@@ -283,6 +284,7 @@ Legacy fallback: if you manually extract artifacts locally, you can omit
 
 - No subcommand: starts MCP server (backward compatible)
 - Subcommand: executes command and exits
+- CLI surface: `12` CLI-only leaf commands, plus `tool call` access to all `33` MCP tools
 
 Examples:
 
@@ -317,6 +319,10 @@ dbt-nova tool call reload_manifest \
   --json
 ```
 
+For hosted `streamable_http` deployments, front dbt-nova with an authenticating
+reverse proxy and set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true`. See
+**[Hosted Deployment](docs/operations/hosted-deployment.md)**.
+
 ## Release Size
 
 Default builds include embeddings + S3/GCS SDK support. For a minimal binary, build
@@ -350,6 +356,7 @@ via build locks and in‑use locks; pruning removes only inactive instances.
 - [Personas](docs/personas/overview.md)
 - [Architecture](docs/development/architecture.md)
 - [Operations & Troubleshooting](docs/operations/ops.md)
+- [Hosted Deployment](docs/operations/hosted-deployment.md)
 - [Performance](docs/operations/performance.md)
 - [Prebuilt Asset Workflow](docs/operations/prebuilt-assets.md)
 - [Security & Limits](docs/operations/security.md)

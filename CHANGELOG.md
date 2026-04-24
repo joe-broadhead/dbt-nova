@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-04-28
 ### Added
 
 - CLI-only `dbt-nova audit nova-meta` validation for `meta.nova`, with project/file/resource/column targeting, JSON output, schema validation against `schemas/nova/v0.json`, and local semantic checks for references, grain consistency, duplicate definitions, and filter-operator rules.
@@ -14,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `search_indicator`, `indicator_inventory`, `search_columns`, `column_inventory`,
   `compare_grains`, `find_entity_overlap`, and `modelling_consistency_report`.
 - Deterministic search explain/debug mode for `search` and `search_indicator`, including ranking-factor and retriever contribution output.
-- New shared skill architecture under `.github/skills/shared/` plus new persona skills for BI engineering, KPI debugging, model architecture, project cleanup, and metadata authoring across both CLI and MCP bundles.
+- New standalone persona-first skill architecture under `.github/skills/` for analyst, BI engineering, engineering, governance, KPI debugging, model architecture, project cleanup, and metadata authoring workflows across MCP and CLI transports.
 - Helper workflow scripts for architecture and cleanup work:
   `scripts/export_entity_inventory.py`, `scripts/export_column_inventory.py`,
   `scripts/build_overlap_report.py`, and `scripts/install_skills.sh`.
@@ -32,15 +33,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   all participate in ranking for both `search` and `search_indicator`.
 - Search/modeling inventory and consistency tools now respect the same search
   concurrency and timeout guardrails as the main search surface.
-- Skill installation is now bundle-aware (`cli` or `mcp`, not both in the same
-  destination), and installed skills are rewritten as standalone packages with
-  vendored shared references and assets.
+- Skill installation now supports standalone persona-first skills directly:
+  `--install-skills` installs the full standalone skill set, while `--skill`
+  or `DBT_NOVA_SKILL_NAME` installs a single skill. Deprecated `cli`/`mcp`
+  bundle selectors are mapped for compatibility.
 - CI hardening now includes lower-memory lint/coverage/test settings and extra
   runner disk cleanup for the `test` job.
 - Reusable asset publishing now supports GitHub OIDC for GCS targets, refreshes GCS access tokens during longer uploads, uses `gcloud storage cp` for large transfers, and applies higher publish timeout budgets.
 - Metadata audit and reusable asset workflows now support the shared `DBT_NOVA_SECRET_BUNDLE_JSON` secret-bundle contract for cross-repo dbt execution.
 - Analyst search now prefers matched canonical Nova measures and metrics more strongly, including cases where the same business term appears across multiple models or alongside standalone dbt `metric` entities.
 - Release automation now pushes the exact smoke-tested OCI image instead of rebuilding a separate image during release.
+- Release preparation and tagged releases now validate `Cargo.toml` and `CHANGELOG.md`
+  against the requested version/tag so published binaries, OCI images, and release notes
+  stay aligned.
+- CI now lints and tests `--all-features`, and adds an explicit Rust 1.93 MSRV check to
+  match the declared minimum supported toolchain.
 - Monthly fuzz maintenance now uses a shared Rust cache and a larger timeout budget so nightly fuzz targets spend time fuzzing instead of recompiling.
 
 ### Fixed
@@ -50,6 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Modeling consistency and overlap checks now use normalized grain signatures,
   apply pagination offsets correctly, compare the best matching grain variants,
   and detect overlap through repeated shared column names as well as semantic metadata.
+- `scripts/build_overlap_report.py` now reports full overlap candidate totals
+  separately from explicitly displayed inconsistency counts and deduplicates
+  displayed duplicate-indicator names.
 - `search` ordering now sorts by the returned final score before parent-signal
   tie-breaks, preventing lower-scored rows from outranking stronger results.
 - `audit nova-meta` now rejects unsupported `recommended_filters.operator`
@@ -65,16 +75,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Public docs, examples, and fixtures were sanitized to remove private
   manifest-specific vocabulary from the public repository.
 - Hosted HTTP startup/bind fallback handling is more robust: invalid `PORT` fallback is ignored, MCP paths are normalized/validated, and reserved probe paths are rejected.
+- Non-loopback hosted HTTP binds now fail fast unless operators explicitly acknowledge
+  that dbt-nova is behind an authenticating reverse proxy via
+  `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true`; the published container image sets that
+  acknowledgement explicitly for hosted deployments, and startup logs now warn
+  clearly that the built-in streamable HTTP transport has no authentication layer.
 - Cold-start search model failures now degrade safely by disabling broken empty search indexes instead of leaving startup wedged.
 - Metadata audit tests now use isolated storage roots under parallel execution, and the reusable audit workflow no longer cancels sibling invocations on the same ref.
 - Documentation and dependency maintenance issues that broke docs or security checks were corrected (`Pygments` compatibility and `tar` advisory updates).
+- Release installs with `--install-skills` now work with the standalone
+  persona-first skill layout instead of assuming the removed legacy
+  `cli`/`mcp`/`shared` directory structure.
+- Skill installers now reject unsafe skill names before constructing install
+  paths or removing existing destination directories.
 
 ### Documentation
 
 - Added and refreshed docs for the new search/modeling tools, CLI `audit nova-meta`,
-  bundle-aware skill installation, the shared skill architecture, new persona skills,
-  and updated analyst/engineering/governance workflows.
+  standalone skill installation, new persona skills, and updated
+  analyst/engineering/governance workflows.
+- Updated install, quickstart, modes, release, and README guidance to describe
+  standalone persona skills and the new `--skill` / `DBT_NOVA_SKILL_NAME`
+  controls.
 - Added and refreshed docs for hosted deployment, streamable HTTP mode, prebuilt bootstrap/artifact hydration, metadata audit workflows, OCI release behavior, persona-specific search candidate metadata/ranking, and canonical Nova metric/measure search behavior.
+- Added explicit security guidance that hosted streamable HTTP deployments must be
+  fronted by an authenticating proxy, along with updated hosted examples, release docs,
+  and contributor docs for `RELEASE_TAG_TOKEN` and version/tag release flow checks.
 
 ## [0.0.3] - 2026-03-19
 

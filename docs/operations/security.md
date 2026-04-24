@@ -25,6 +25,23 @@ with a configuration error.
 Storage path checks prevent traversal, and checksums validate entity store integrity.
 See [Configuration](../configuration/reference.md) for full limits.
 
+## Hosted HTTP Authentication Posture
+
+`streamable_http` mode exposes the full MCP tool surface, including any configured
+warehouse-backed `execute_sql` capability. dbt-nova does **not** provide built-in
+authentication or authorization for this transport.
+
+Operator policy:
+
+- Bind to loopback (`127.0.0.1` or `::1`) for local-only use.
+- For non-loopback / hosted exposure, place dbt-nova behind an authenticating reverse proxy.
+- Set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when that proxy is enforcing access.
+
+Runtime enforcement:
+
+- Non-loopback `streamable_http` binds fail validation unless `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true`.
+- Successful `streamable_http` startup logs a warning that the transport has no built-in auth.
+
 ## Advisory Exceptions
 
 The following RustSec advisories are explicitly ignored in `deny.toml` with documented rationale.

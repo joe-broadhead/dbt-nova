@@ -1,7 +1,10 @@
 use super::*;
+#[cfg(any(feature = "s3", feature = "gcs"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(any(feature = "s3", feature = "gcs"))]
 use tempfile::TempDir;
 
+#[cfg(any(feature = "s3", feature = "gcs"))]
 use crate::config::DbtNovaConfig;
 
 #[test]

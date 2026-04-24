@@ -8,6 +8,7 @@ INSTALL_FLAVOR="${DBT_NOVA_INSTALL_FLAVOR:-}"
 INSTALL_SKILLS="${DBT_NOVA_INSTALL_SKILLS:-0}"
 SKILLS_DIR="${DBT_NOVA_SKILLS_DIR:-$HOME/.agents/skills}"
 SKILLS_BUNDLE="${DBT_NOVA_SKILLS_BUNDLE:-}"
+SKILL_NAME="${DBT_NOVA_SKILL_NAME:-}"
 NON_INTERACTIVE="${DBT_NOVA_INSTALL_NONINTERACTIVE:-0}"
 INSTALL_WARM_MODELS="${DBT_NOVA_INSTALL_WARM_MODELS:-0}"
 VERIFY_CHECKSUM="${DBT_NOVA_VERIFY_CHECKSUM:-1}"
@@ -17,7 +18,7 @@ DOWNLOAD_TOKEN="${DBT_NOVA_GITHUB_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}"
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [--bundled|--slim] [--warm-models] [--install-skills --skills-bundle <cli|mcp>] [--skills-dir <path>] [--non-interactive|-y] [--install-dir <path>]
+Usage: install.sh [--bundled|--slim] [--warm-models] [--install-skills [--skill <name>]] [--skills-dir <path>] [--non-interactive|-y] [--install-dir <path>]
 
 Downloads and installs dbt-nova from GitHub releases.
 
@@ -33,7 +34,8 @@ Environment overrides:
   DBT_NOVA_INSTALL_FLAVOR          bundled|slim
   DBT_NOVA_INSTALL_SKILLS          1 to install Agent Skills (default: 0)
   DBT_NOVA_SKILLS_DIR              Skills destination (default: $HOME/.agents/skills)
-  DBT_NOVA_SKILLS_BUNDLE           cli|mcp bundle to install when --install-skills is enabled
+  DBT_NOVA_SKILL_NAME              Optional single standalone skill to install
+  DBT_NOVA_SKILLS_BUNDLE           Deprecated cli|mcp compatibility selector
   DBT_NOVA_INSTALL_WARM_MODELS     1 to pre-warm model files after install (default: 0)
   DBT_NOVA_INSTALL_NONINTERACTIVE  1 to skip prompts (defaults to slim)
   DBT_NOVA_VERIFY_CHECKSUM         1 to verify artifact checksum (default: 1)
@@ -52,32 +54,30 @@ validate_skills_bundle() {
   esac
 }
 
-resolve_skills_bundle() {
+validate_skill_name_segment() {
+  local skill_name="$1"
+  if [[ -z "${skill_name}" ]]; then
+    echo "Skill name cannot be empty." >&2
+    return 1
+  fi
+  if ! [[ "${skill_name}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    echo "Invalid skill name '${skill_name}'. Use a single safe path segment." >&2
+    return 1
+  fi
+}
+
+resolve_skill_install_selection() {
   if [[ "${INSTALL_SKILLS}" != "1" ]]; then
     return 0
   fi
 
   if [[ -n "${SKILLS_BUNDLE}" ]]; then
     validate_skills_bundle "${SKILLS_BUNDLE}"
-    return 0
   fi
 
-  if [[ "${NON_INTERACTIVE}" == "1" || ! -t 0 ]]; then
-    echo "Installing skills requires --skills-bundle <cli|mcp> or DBT_NOVA_SKILLS_BUNDLE." >&2
-    return 1
+  if [[ -n "${SKILL_NAME}" ]]; then
+    validate_skill_name_segment "${SKILL_NAME}"
   fi
-
-  while true; do
-    read -r -p "Install which skill bundle? [mcp/cli]: " SKILLS_BUNDLE
-    case "${SKILLS_BUNDLE}" in
-      cli|mcp)
-        return 0
-        ;;
-      *)
-        echo "Please enter 'mcp' or 'cli'."
-        ;;
-    esac
-  done
 }
 
 compute_sha256() {
@@ -263,15 +263,67 @@ normalize_model_layout() {
   fi
 }
 
-install_skills_from_ref() {
-  local ref="$1"
+list_standalone_skills() {
+  local skills_source="$1"
+  find "${skills_source}" -mindepth 1 -maxdepth 1 -type d \
+    ! -name cli \
+    ! -name mcp \
+    ! -name shared \
+    ! -name common \
+    -exec test -f "{}/SKILL.md" ';' -print | sed 's#.*/##' | sort
+}
+
+install_standalone_skill_from_source() {
+  local skills_source="$1"
+  local skills_dest="$2"
+  local skill_name="$3"
+  local skill_source="${skills_source}/${skill_name}"
+  local installed_dir="${skills_dest}/${skill_name}"
+  local legacy_name=""
+
+  validate_skill_name_segment "${skill_name}"
+  if [[ ! -f "${skill_source}/SKILL.md" ]]; then
+    echo "Standalone skill '${skill_name}' not found in repository archive." >&2
+    return 1
+  fi
+
+  mkdir -p "${skills_dest}"
+  rm -rf "${installed_dir}"
+  cp -R "${skill_source}" "${installed_dir}"
+
+  for legacy_name in "cli-${skill_name}" "mcp-${skill_name}"; do
+    if [[ -e "${skills_dest}/${legacy_name}" ]]; then
+      rm -rf "${skills_dest:?}/${legacy_name}"
+    fi
+  done
+
+  echo "Installed standalone skill '${skill_name}' to ${skills_dest}"
+}
+
+install_all_standalone_skills_from_source() {
+  local skills_source="$1"
+  local skills_dest="$2"
+  local skill_count=0
+  local skill_name=""
+
+  while IFS= read -r skill_name; do
+    [[ -n "${skill_name}" ]] || continue
+    install_standalone_skill_from_source "${skills_source}" "${skills_dest}" "${skill_name}"
+    skill_count=$((skill_count + 1))
+  done < <(list_standalone_skills "${skills_source}")
+
+  if (( skill_count < 1 )); then
+    return 1
+  fi
+
+  echo "Installed ${skill_count} standalone skill(s) to ${skills_dest}"
+}
+
+install_legacy_bundle_skills_from_source() {
+  local skills_source="$1"
   local skills_dest="$2"
   local skills_bundle="$3"
-  local archive_ref="${ref//\//-}"
-  local archive_path="${tmp_dir}/repo-${archive_ref}.tar.gz"
-  local extract_dir="${tmp_dir}/repo-${archive_ref}"
-  local skills_source=""
-  local bundle_source=""
+  local bundle_source="${skills_source}/${skills_bundle}"
   local other_bundle=""
   local other_source=""
   local skill_count=0
@@ -283,18 +335,12 @@ install_skills_from_ref() {
   local installed_dir=""
   local staged_skill_md=""
 
-  download_repo_archive "${ref}" "${archive_path}"
-  mkdir -p "${extract_dir}"
-  tar -xzf "${archive_path}" -C "${extract_dir}"
-  skills_source="$(find "${extract_dir}" -type d -path "*/.github/skills" | head -n 1)"
-  if [[ -z "${skills_source}" ]]; then
-    echo "Skills directory not found in repository archive for ref '${ref}'." >&2
+  if [[ ! -d "${bundle_source}" ]]; then
+    echo "Skills bundle '${skills_bundle}' not found in repository archive." >&2
     return 1
   fi
-
-  bundle_source="${skills_source}/${skills_bundle}"
-  if [[ ! -d "${bundle_source}" ]]; then
-    echo "Skills bundle '${skills_bundle}' not found in repository archive for ref '${ref}'." >&2
+  if [[ ! -d "${skills_source}/shared" ]]; then
+    echo "Legacy skill bundle '${skills_bundle}' requires missing shared skill assets." >&2
     return 1
   fi
 
@@ -336,7 +382,7 @@ install_skills_from_ref() {
   done < <(find "${bundle_source}" -type f -name "SKILL.md" -print0)
 
   if (( skill_count < 1 )); then
-    echo "No skills were found to install for bundle '${skills_bundle}' at ref '${ref}'." >&2
+    echo "No skills were found to install for bundle '${skills_bundle}'." >&2
     return 1
   fi
 
@@ -344,6 +390,43 @@ install_skills_from_ref() {
   if (( removed_other_count > 0 )); then
     echo "Removed ${removed_other_count} conflicting ${other_bundle} skill(s) from ${skills_dest}"
   fi
+}
+
+install_skills_from_ref() {
+  local ref="$1"
+  local skills_dest="$2"
+  local requested_skill="$3"
+  local legacy_bundle="$4"
+  local archive_ref="${ref//\//-}"
+  local archive_path="${tmp_dir}/repo-${archive_ref}.tar.gz"
+  local extract_dir="${tmp_dir}/repo-${archive_ref}"
+  local skills_source=""
+
+  download_repo_archive "${ref}" "${archive_path}"
+  mkdir -p "${extract_dir}"
+  tar -xzf "${archive_path}" -C "${extract_dir}"
+  skills_source="$(find "${extract_dir}" -type d -path "*/.github/skills" | head -n 1)"
+  if [[ -z "${skills_source}" ]]; then
+    echo "Skills directory not found in repository archive for ref '${ref}'." >&2
+    return 1
+  fi
+
+  if [[ -n "${requested_skill}" ]]; then
+    install_standalone_skill_from_source "${skills_source}" "${skills_dest}" "${requested_skill}"
+    return $?
+  fi
+
+  if install_all_standalone_skills_from_source "${skills_source}" "${skills_dest}"; then
+    return 0
+  fi
+
+  if [[ -n "${legacy_bundle}" ]]; then
+    install_legacy_bundle_skills_from_source "${skills_source}" "${skills_dest}" "${legacy_bundle}"
+    return $?
+  fi
+
+  echo "No standalone skills found at ref '${ref}'. For legacy refs, pass --skills-bundle <cli|mcp>." >&2
+  return 1
 }
 
 while [[ $# -gt 0 ]]; do
@@ -379,6 +462,14 @@ while [[ $# -gt 0 ]]; do
       SKILLS_BUNDLE="$2"
       shift
       ;;
+    --skill)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --skill" >&2
+        exit 1
+      fi
+      SKILL_NAME="$2"
+      shift
+      ;;
     --install-dir)
       if [[ $# -lt 2 ]]; then
         echo "Missing value for --install-dir" >&2
@@ -400,7 +491,7 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-resolve_skills_bundle
+resolve_skill_install_selection
 
 OS="$(uname -s)"
 ARCH="$(uname -m)"
@@ -584,15 +675,19 @@ if [[ "${INSTALL_SKILLS}" == "1" ]]; then
 
   for skills_ref in "${skills_refs[@]}"; do
     [[ -n "${skills_ref}" ]] || continue
-    echo "Installing ${SKILLS_BUNDLE} skills from ref '${skills_ref}' into ${SKILLS_DIR}"
-    if install_skills_from_ref "${skills_ref}" "${SKILLS_DIR}" "${SKILLS_BUNDLE}"; then
+    if [[ -n "${SKILL_NAME}" ]]; then
+      echo "Installing standalone skill '${SKILL_NAME}' from ref '${skills_ref}' into ${SKILLS_DIR}"
+    else
+      echo "Installing standalone skills from ref '${skills_ref}' into ${SKILLS_DIR}"
+    fi
+    if install_skills_from_ref "${skills_ref}" "${SKILLS_DIR}" "${SKILL_NAME}" "${SKILLS_BUNDLE}"; then
       skills_installed="1"
       break
     fi
   done
 
   if [[ "${skills_installed}" != "1" ]]; then
-    echo "Failed to install ${SKILLS_BUNDLE} skills into ${SKILLS_DIR}." >&2
+    echo "Failed to install skills into ${SKILLS_DIR}." >&2
     exit 1
   fi
 fi

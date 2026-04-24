@@ -24,10 +24,10 @@ cd dbt-nova
 cargo build
 
 # Tests
-cargo test
+cargo test --all-features
 
 # Lint + format
-cargo clippy --locked --all-targets -- -D warnings
+cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo fmt --check
 ```
 
@@ -103,7 +103,7 @@ implicit assertions. Prefer explicit checks and descriptive failure messages.
 Recommended commands:
 
 ```bash
-cargo test
+cargo test --all-features
 cargo test --all-targets
 cargo llvm-cov --locked --all-features --workspace --summary-only --fail-under-lines 65
 ```
@@ -117,14 +117,22 @@ cargo llvm-cov --locked --all-features --workspace --summary-only --fail-under-l
 
 Before submitting:
 
-- [ ] Tests pass (`cargo test`)
+- [ ] Tests pass (`cargo test --all-features`)
 - [ ] Coverage gate passes (`cargo llvm-cov --locked --all-features --workspace --summary-only --fail-under-lines 65`)
-- [ ] Lint passes (`cargo clippy --locked --all-targets -- -D warnings`)
+- [ ] Lint passes (`cargo clippy --locked --all-targets --all-features -- -D warnings`)
 - [ ] Formatting is clean (`cargo fmt --check`)
 - [ ] Docs updated (if user-facing)
 - [ ] `CHANGELOG.md` updated (if behavior or API changed)
 - [ ] No new `.expect()` in production code
 - [ ] No silently ignored errors
+
+## Release Secrets
+
+Release automation expects:
+
+- `RELEASE_TAG_TOKEN`: PAT or GitHub App token with `contents:write` so release tags trigger downstream release/docs workflows
+
+Additional publish credentials depend on where reusable assets are uploaded and whether downstream environments require cloud-specific auth.
 
 ## Commit Messages
 
