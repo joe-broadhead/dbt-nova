@@ -57,6 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Modeling consistency and overlap checks now use normalized grain signatures,
   apply pagination offsets correctly, compare the best matching grain variants,
   and detect overlap through repeated shared column names as well as semantic metadata.
+- `scripts/build_overlap_report.py` now reports full overlap candidate totals
+  separately from explicitly displayed inconsistency counts and deduplicates
+  displayed duplicate-indicator names.
 - `search` ordering now sorts by the returned final score before parent-signal
   tie-breaks, preventing lower-scored rows from outranking stronger results.
 - `audit nova-meta` now rejects unsupported `recommended_filters.operator`

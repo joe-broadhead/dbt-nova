@@ -325,11 +325,11 @@ def cleanup_queue(inconsistencies: dict[str, Any], clusters: list[dict[str, Any]
     }
 
 
-def duplicate_indicator_count(inconsistencies: dict[str, Any]) -> int:
-    return sum(
-        len(row.get("indicators", []))
-        for row in inconsistencies["duplicate_indicators"]
-    )
+def unique_displayed_duplicate_indicator_count(inconsistencies: dict[str, Any]) -> int:
+    indicators: set[str] = set()
+    for row in inconsistencies["duplicate_indicators"]:
+        indicators.update(str(indicator) for indicator in row.get("indicators", []))
+    return len(indicators)
 
 
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
@@ -342,9 +342,14 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         "summary": {
             "entity_count": count_entities(args),
             "overlap_candidate_count": overlap_candidate_count,
-            "duplicate_indicator_count": duplicate_indicator_count(inconsistencies),
-            "canonical_conflict_count": len(inconsistencies["canonical_conflicts"]),
-            "multi_grain_entity_count": len(inconsistencies["multi_grain_entities"]),
+            "displayed_overlap_cluster_count": len(clusters),
+            "displayed_duplicate_indicator_count": unique_displayed_duplicate_indicator_count(
+                inconsistencies
+            ),
+            "displayed_canonical_conflict_count": len(inconsistencies["canonical_conflicts"]),
+            "displayed_multi_grain_entity_count": len(inconsistencies["multi_grain_entities"]),
+            "displayed_discovery_risk_count": len(inconsistencies["discovery_risks"]),
+            "inconsistency_count_scope": "displayed_overlap_clusters",
         },
         "overlap_clusters": clusters,
         "inconsistencies": inconsistencies,
@@ -363,6 +368,8 @@ def markdown_report(report: dict[str, Any]) -> str:
         f"- Manifest sha256: `{scope['manifest_identity']['sha256']}`",
         f"- Resource types: `{', '.join(scope['resource_types'])}`",
         f"- Entity count: `{summary['entity_count']}`",
+        f"- Overlap candidates: `{summary['overlap_candidate_count']}`",
+        f"- Displayed overlap clusters: `{summary['displayed_overlap_cluster_count']}`",
         "",
         "## Overlap Clusters",
     ]
@@ -389,11 +396,12 @@ def markdown_report(report: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
-            "## Inconsistencies",
-            f"- duplicate indicators: `{len(report['inconsistencies']['duplicate_indicators'])}`",
-            f"- canonical conflicts: `{len(report['inconsistencies']['canonical_conflicts'])}`",
-            f"- multi-grain entities: `{len(report['inconsistencies']['multi_grain_entities'])}`",
-            f"- discovery risks: `{len(report['inconsistencies']['discovery_risks'])}`",
+            "## Displayed Inconsistencies",
+            f"- scope: `{summary['inconsistency_count_scope']}`",
+            f"- duplicate indicators: `{summary['displayed_duplicate_indicator_count']}`",
+            f"- canonical conflicts: `{summary['displayed_canonical_conflict_count']}`",
+            f"- multi-grain entities: `{summary['displayed_multi_grain_entity_count']}`",
+            f"- discovery risks: `{summary['displayed_discovery_risk_count']}`",
             "",
             "## Cleanup Queue",
             "- Immediate:",
