@@ -74,6 +74,18 @@ dbt-nova manifest load \
   --json
 ```
 
+Generate `DBT_NOVA_PRUNE_ALLOW_IDS` from a dbt selector:
+
+```bash
+DBT_NOVA_PRUNE_ALLOW_IDS="$(
+  dbt ls -s <lineage selection expression> --output json --quiet \
+  | jq -cs '[.[] | .unique_id]'
+)" \
+dbt-nova manifest load \
+  --manifest-path /path/to/target/manifest.json \
+  --json
+```
+
 ### Rebuild manifest indexes with override settings
 
 ```bash

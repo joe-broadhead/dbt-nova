@@ -77,6 +77,14 @@ Manifest pruning notes:
 - Matching is against dbt `unique_id` (not `fqn`).
 - If `DBT_NOVA_PRUNE_ALLOW_IDS` is empty, pruning starts from all entities, then applies deny rules.
 - `analysis` nodes are auto-included only when they directly depend on retained nodes and have no extra direct dependencies outside the retained set.
+- To generate a valid allow-list from dbt selectors, use `dbt ls` JSON output and extract `unique_id`:
+
+```bash
+export DBT_NOVA_PRUNE_ALLOW_IDS="$(
+  dbt ls -s <lineage selection expression> --output json --quiet \
+  | jq -cs '[.[] | .unique_id]'
+)"
+```
 
 ## Storage
 
