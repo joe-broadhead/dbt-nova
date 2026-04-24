@@ -64,6 +64,11 @@ jobs:
             exit 1
           fi
 
+      - name: Checkout release tag
+        env:
+          RELEASE_TAG: ${{ steps.resolve_tag.outputs.release_tag }}
+        run: git checkout --detach "${RELEASE_TAG}"
+
       - name: Ensure crate metadata matches tag
         env:
           RELEASE_TAG: ${{ steps.resolve_tag.outputs.release_tag }}
