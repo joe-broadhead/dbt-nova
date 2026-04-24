@@ -81,7 +81,7 @@ def manifest_summary(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def load_overlap_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
+def load_overlap_candidates(args: argparse.Namespace) -> tuple[list[dict[str, Any]], int]:
     params: dict[str, Any] = {
         "resource_types": sorted(set(args.resource_types)),
         "limit": args.limit,
@@ -99,7 +99,12 @@ def load_overlap_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
     data = payload["result"].get("data", [])
     if not isinstance(data, list):
         raise RuntimeError("find_entity_overlap returned an invalid payload")
-    return data
+    total_available = payload["result"].get("total_available")
+    if total_available is None:
+        total_available = len(data)
+    if not isinstance(total_available, int):
+        raise RuntimeError("find_entity_overlap returned an invalid total_available value")
+    return data, total_available
 
 
 def is_absent_resource_type_error(resource_type: str, exc: RuntimeError) -> bool:
@@ -322,14 +327,14 @@ def cleanup_queue(inconsistencies: dict[str, Any], clusters: list[dict[str, Any]
 
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
     summary = manifest_summary(args)
-    candidates = load_overlap_candidates(args)
+    candidates, overlap_candidate_count = load_overlap_candidates(args)
     clusters = overlap_clusters(args, candidates)
     inconsistencies = inconsistency_sections(clusters)
     return {
         "scope": summary,
         "summary": {
             "entity_count": count_entities(args),
-            "overlap_candidate_count": len(candidates),
+            "overlap_candidate_count": overlap_candidate_count,
             "duplicate_indicator_count": len(inconsistencies["duplicate_indicators"]),
             "canonical_conflict_count": len(inconsistencies["canonical_conflicts"]),
             "multi_grain_entity_count": len(inconsistencies["multi_grain_entities"]),

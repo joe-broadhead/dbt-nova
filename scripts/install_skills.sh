@@ -38,6 +38,30 @@ validate_bundle() {
   esac
 }
 
+boolean_enabled() {
+  local value
+  value="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  case "${value}" in
+    1|true|yes|on) return 0 ;;
+    ""|0|false|no|off) return 1 ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_boolean() {
+  local name="$1"
+  local value="$2"
+  local normalized
+  normalized="$(printf '%s' "${value}" | tr '[:upper:]' '[:lower:]')"
+  case "${normalized}" in
+    ""|0|1|false|true|no|yes|off|on) ;;
+    *)
+      echo "Invalid ${name} value '${value}'. Use 1/true/yes/on or 0/false/no/off." >&2
+      return 1
+      ;;
+  esac
+}
+
 validate_skill_name_segment() {
   local skill_name="$1"
   if [[ -z "${skill_name}" ]]; then
@@ -172,12 +196,14 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-if [[ -n "${SKILL_NAME}" && -n "${INSTALL_ALL}" ]]; then
+validate_boolean "DBT_NOVA_INSTALL_ALL" "${INSTALL_ALL}"
+
+if [[ -n "${SKILL_NAME}" ]] && boolean_enabled "${INSTALL_ALL}"; then
   echo "Use either --skill or --all, not both." >&2
   exit 1
 fi
 
-if [[ -n "${INSTALL_ALL}" ]]; then
+if boolean_enabled "${INSTALL_ALL}"; then
   install_all_skills "${SKILLS_SOURCE}" "${SKILLS_DIR}"
   exit 0
 fi
