@@ -4,49 +4,24 @@ Agent Skills are a lightweight, open format for packaging task-specific workflow
 
 ## Skills included in this repo
 
-We ship two built-in skill bundles under `.github/skills/`:
+The repo now uses one standalone, persona-first skill package per workflow:
 
-- `.github/skills/mcp/`
-  - `mcp-analyst`
-  - `mcp-bi-engineer`
-  - `mcp-engineer`
-  - `mcp-governance`
-  - `mcp-kpi-debugger`
-  - `mcp-model-architect`
-  - `mcp-meta-authoring`
-  - `mcp-project-cleanup`
-- `.github/skills/cli/`
-  - `cli-analyst`
-  - `cli-bi-engineer`
-  - `cli-engineer`
-  - `cli-governance`
-  - `cli-kpi-debugger`
-  - `cli-model-architect`
-  - `cli-meta-authoring`
-  - `cli-project-cleanup`
-- `.github/skills/shared/`
-  - transport-agnostic references and assets used by both bundles
+- `analyst`
+- `bi-engineer`
+- `engineer`
+- `governance`
+- `kpi-debugger`
+- `meta-authoring`
+- `model-architect`
+- `project-cleanup`
 
-Use the `mcp-*` skills when the agent can call Nova MCP tools directly.
-Use the `cli-*` skills when the agent only has terminal access to `dbt-nova` commands such as
-`tool call`, `manifest load`, `health check`, `audit metadata-score`, and `audit nova-meta`.
+Each skill now has:
+- one canonical skill name
+- one shared reasoning workflow
+- transport selected inside the skill
+- transport-specific references stored inside the same skill package
 
-Each installable skill follows the Agent Skills spec. The repo structure now separates:
-- thin transport wrappers in `.github/skills/cli/` and `.github/skills/mcp/`
-- shared workflow references and reusable assets in `.github/skills/shared/`
-
-This keeps the real workflow logic in one place while letting each transport wrapper stay focused on:
-- session setup
-- transport-specific caveats
-- command/tool syntax
-- boundaries where CLI and MCP differ
-
-The shared layer also holds reusable output templates for current and upcoming skills, including:
-- analyst evidence and report templates
-- engineer ship checklists
-- governance audit and remediation queue templates
-- BI engineer dashboard, metric card, dataset contract, and viz QA templates
-- KPI investigation, refactor-plan, and overlap-audit templates for future debugger/architecture/cleanup skills
+This is cleaner than the old `mcp-*` / `cli-*` split because the durable concept is the persona, not the transport.
 
 The repo also ships deterministic helper scripts for architecture and cleanup workflows:
 - `scripts/export_entity_inventory.py`
@@ -58,29 +33,26 @@ These scripts call Nova CLI tools directly and keep their outputs aligned with t
 
 ## Install in common tools
 
-Use one bundle per client scope. If you want both MCP-first and terminal-first workflows,
-install them into different clients or different skill directories rather than mixing both
-bundles into the same destination.
+Use the standalone persona skill directly when you want one workflow.
+Use `--all` when you want the full dbt-nova skill set.
 
 ### Installer shortcut (`~/.agents/skills`)
 
-If you installed dbt-nova via `scripts/install.sh`, you can also install skills into
-the standard Agent Skills user directory in one step. Choose exactly one bundle:
-
-- `mcp`: for agents that call Nova MCP tools directly
-- `cli`: for agents that only use terminal access to `dbt-nova`
+For one skill:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
-  bash -s -- --slim --install-skills --skills-bundle mcp --non-interactive
+bash scripts/install_skills.sh --skill analyst --skills-dir "$HOME/.agents/skills"
+bash scripts/install_skills.sh --skill engineer --skills-dir "$HOME/.agents/skills"
 ```
 
-Set `DBT_NOVA_SKILLS_DIR` to use a different destination (for example
-`~/.codex/skills` or `~/.claude/skills`).
-Set `DBT_NOVA_SKILLS_BUNDLE=cli` or pass `--skills-bundle cli` to install the CLI
-bundle instead. The installer flattens bundle paths into unique skill names such as
-`mcp-analyst` and removes any previously installed dbt-nova skills from the other
-bundle in that same destination.
+For all dbt-nova skills:
+
+```bash
+bash scripts/install_skills.sh --all --skills-dir "$HOME/.agents/skills"
+```
+
+This installs each skill under its standalone persona name and removes any previously installed
+transport-prefixed compatibility copies for that same persona from the same destination.
 
 ### Codex (CLI and IDE)
 
@@ -89,15 +61,14 @@ Codex supports Agent Skills for both the CLI and IDE extensions. You can install
 - User scope: `~/.codex/skills/<skill-name>`
 - Repo scope: `.codex/skills/<skill-name>`
 
-**Recommended (repo scope): choose one bundle and install standalone skills from the local checkout.**
+**Recommended (repo scope): install the standalone persona-first skill directly.**
 
 ```bash
-bash scripts/install_skills.sh --bundle mcp --skills-dir .codex/skills
+bash scripts/install_skills.sh --skill analyst --skills-dir .codex/skills
+bash scripts/install_skills.sh --skill engineer --skills-dir .codex/skills
 ```
 
-Use `--bundle cli` instead when the agent should rely on terminal access rather than MCP.
-`install_skills.sh` copies the shared references and assets into each installed skill
-so the result is standalone and client-safe.
+If you already use another generic persona skill in a user-level directory, prefer repo scope so this skill overrides it only for the current project.
 
 Restart Codex after installing new skills. You can invoke a skill explicitly with `$skill-name` or let Codex select it automatically.
 
@@ -105,29 +76,32 @@ Restart Codex after installing new skills. You can invoke a skill explicitly wit
 
 Anthropic supports Agent Skills across Claude apps, Claude Code, and the API. Skills are loaded automatically when relevant. In Claude apps, enable Skills in Settings > Capabilities (Team/Enterprise admins must enable them org-wide) and upload a ZIP file containing your skill folder. For Claude Code, you can install skills via plugins or create a `skills/` directory in your project or plugin root; for personal use you can also add skills to `~/.claude/skills`.
 
-**Recommended (Claude apps):** install one bundle into a staging directory, then zip a single installed skill directory and upload it.
+**Recommended (Claude apps):** install the standalone skill into a staging directory, then zip the installed skill directory and upload it.
 
 ```bash
 tmp_skills_dir="$(mktemp -d)"
-bash scripts/install_skills.sh --bundle mcp --skills-dir "${tmp_skills_dir}"
+bash scripts/install_skills.sh --all --skills-dir "${tmp_skills_dir}"
 cd "${tmp_skills_dir}"
-zip -r mcp-analyst.skill.zip mcp-analyst
+zip -r analyst.skill.zip analyst
+zip -r engineer.skill.zip engineer
 ```
 
-**Recommended (Claude Code / personal): choose one bundle.**
+**Recommended (Claude Code / personal): install the standalone skill directly.**
 
 ```bash
-bash /path/to/repo/scripts/install_skills.sh --bundle mcp --skills-dir "$HOME/.claude/skills"
+bash /path/to/repo/scripts/install_skills.sh --skill analyst --skills-dir "$HOME/.claude/skills"
+bash /path/to/repo/scripts/install_skills.sh --skill engineer --skills-dir "$HOME/.claude/skills"
 ```
 
 ### Gemini CLI
 
 Gemini CLI discovers skills from three tiers: workspace (`.gemini/skills/`), user (`~/.gemini/skills/`), and extensions. Workspace skills take precedence over user skills. You can manage skills using `/skills` commands or `gemini skills ...` from the terminal.
 
-**Recommended (workspace scope): choose one bundle.**
+**Recommended (workspace scope): install the standalone skill directly.**
 
 ```bash
-bash scripts/install_skills.sh --bundle mcp --skills-dir .gemini/skills
+bash scripts/install_skills.sh --skill analyst --skills-dir .gemini/skills
+bash scripts/install_skills.sh --skill engineer --skills-dir .gemini/skills
 ```
 
 Then reload skills:
@@ -148,8 +122,14 @@ gemini skills install /path/to/skill --scope workspace
 Use the reference tooling from the Agent Skills project to validate your skills:
 
 ```bash
-skills-ref validate .github/skills/mcp/analyst
-skills-ref validate .github/skills/cli/meta-authoring
+skills-ref validate .github/skills/analyst
+skills-ref validate .github/skills/bi-engineer
+skills-ref validate .github/skills/engineer
+skills-ref validate .github/skills/governance
+skills-ref validate .github/skills/kpi-debugger
+skills-ref validate .github/skills/meta-authoring
+skills-ref validate .github/skills/model-architect
+skills-ref validate .github/skills/project-cleanup
 ```
 
 ## Further reading

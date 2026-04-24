@@ -5,19 +5,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SKILLS_SOURCE="${DBT_NOVA_SKILLS_SOURCE:-${REPO_ROOT}/.github/skills}"
 SKILLS_DIR="${DBT_NOVA_SKILLS_DIR:-$HOME/.agents/skills}"
-SKILLS_BUNDLE="${DBT_NOVA_SKILLS_BUNDLE:-}"
+SKILL_NAME="${DBT_NOVA_SKILL_NAME:-}"
+INSTALL_ALL="${DBT_NOVA_INSTALL_ALL:-}"
 
 usage() {
   cat <<'EOF'
-Usage: install_skills.sh --bundle <cli|mcp> [--skills-dir <path>] [--skills-source <path>]
+Usage:
+  install_skills.sh --skill <name> [--skills-dir <path>] [--skills-source <path>]
+  install_skills.sh --all [--skills-dir <path>] [--skills-source <path>]
 
-Installs one dbt-nova skill bundle from the current checkout into a destination
-skills directory. The installed skills are standalone: shared references/assets
-are copied into each skill directory, and any previously installed dbt-nova
-skills from the other bundle are removed from the same destination.
+Deprecated:
+  install_skills.sh --bundle <cli|mcp> [...]
+
+Installs one standalone persona-first skill, or all standalone skills, from the
+current checkout into a destination skills directory.
 
 Environment overrides:
-  DBT_NOVA_SKILLS_BUNDLE    cli|mcp bundle to install
+  DBT_NOVA_SKILL_NAME       standalone skill to install (for example: analyst)
+  DBT_NOVA_INSTALL_ALL      set to 1 to install all standalone skills
   DBT_NOVA_SKILLS_DIR       Destination skills directory (default: $HOME/.agents/skills)
   DBT_NOVA_SKILLS_SOURCE    Source .github/skills directory (default: repo checkout)
 EOF
@@ -33,83 +38,78 @@ validate_bundle() {
   esac
 }
 
-install_from_source() {
+list_installable_skills() {
+  local source_root="$1"
+  find "${source_root}" -mindepth 1 -maxdepth 1 -type d \
+    ! -name cli \
+    ! -name mcp \
+    ! -name shared \
+    ! -name common \
+    -exec test -f "{}/SKILL.md" ';' -print | sed 's#.*/##' | sort
+}
+
+validate_skill_name() {
+  local source_root="$1"
+  local skill_name="$2"
+  if [[ -z "${skill_name}" ]]; then
+    echo "Skill name cannot be empty." >&2
+    return 1
+  fi
+  if [[ ! -d "${source_root}/${skill_name}" ]]; then
+    echo "Standalone skill '${skill_name}' not found in ${source_root}." >&2
+    return 1
+  fi
+  if [[ "${skill_name}" == "cli" || "${skill_name}" == "mcp" || "${skill_name}" == "shared" || "${skill_name}" == "common" ]]; then
+    echo "'${skill_name}' is not an installable standalone skill." >&2
+    return 1
+  fi
+  if [[ ! -f "${source_root}/${skill_name}/SKILL.md" ]]; then
+    echo "Standalone skill '${skill_name}' is missing SKILL.md." >&2
+    return 1
+  fi
+}
+
+install_standalone_skill() {
   local source_root="$1"
   local skills_dest="$2"
-  local skills_bundle="$3"
-  local bundle_source="${source_root}/${skills_bundle}"
-  local other_bundle=""
-  local other_source=""
-  local skill_file=""
-  local skill_dir=""
-  local skill_rel=""
-  local skill_name=""
-  local installed_dir=""
-  local staged_skill_md=""
-  local removed_other_count=0
-  local installed_count=0
-  local tmp_dir
+  local skill_name="$3"
+  local skill_source="${source_root}/${skill_name}"
+  local installed_dir="${skills_dest}/${skill_name}"
+  local legacy_name=""
 
-  if [[ ! -d "${source_root}" ]]; then
-    echo "Skills source directory not found: ${source_root}" >&2
-    return 1
-  fi
-  if [[ ! -d "${bundle_source}" ]]; then
-    echo "Skills bundle '${skills_bundle}' not found in ${source_root}." >&2
-    return 1
-  fi
-
-  if [[ "${skills_bundle}" == "cli" ]]; then
-    other_bundle="mcp"
-  else
-    other_bundle="cli"
-  fi
-  other_source="${source_root}/${other_bundle}"
-
-  tmp_dir="$(mktemp -d)"
+  validate_skill_name "${source_root}" "${skill_name}"
 
   mkdir -p "${skills_dest}"
+  rm -rf "${installed_dir}"
+  cp -R "${skill_source}" "${installed_dir}"
 
-  if [[ -d "${other_source}" ]]; then
-    while IFS= read -r -d '' skill_file; do
-      skill_dir="$(dirname "${skill_file}")"
-      skill_rel="${skill_dir#"${other_source}/"}"
-      skill_name="${other_bundle}-${skill_rel//\//-}"
-      if [[ -e "${skills_dest}/${skill_name}" ]]; then
-        rm -rf "${skills_dest:?}/${skill_name}"
-        removed_other_count=$((removed_other_count + 1))
-      fi
-    done < <(find "${other_source}" -type f -name "SKILL.md" -print0)
-  fi
+  for legacy_name in "cli-${skill_name}" "mcp-${skill_name}"; do
+    if [[ -e "${skills_dest}/${legacy_name}" ]]; then
+      rm -rf "${skills_dest:?}/${legacy_name}"
+    fi
+  done
 
-  while IFS= read -r -d '' skill_file; do
-    skill_dir="$(dirname "${skill_file}")"
-    skill_rel="${skill_dir#"${bundle_source}/"}"
-    skill_name="${skills_bundle}-${skill_rel//\//-}"
-    installed_dir="${skills_dest}/${skill_name}"
-    staged_skill_md="${tmp_dir}/${skill_name}-SKILL.md"
+  echo "Installed standalone skill '${skill_name}' to ${skills_dest}"
+}
 
-    rm -rf "${installed_dir}"
-    cp -R "${skill_dir}" "${installed_dir}"
-    mkdir -p "${installed_dir}/shared"
-    cp -R "${source_root}/shared/." "${installed_dir}/shared/"
-    sed 's#\.\./\.\./shared/#shared/#g' "${installed_dir}/SKILL.md" > "${staged_skill_md}"
-    mv "${staged_skill_md}" "${installed_dir}/SKILL.md"
+install_all_skills() {
+  local source_root="$1"
+  local skills_dest="$2"
+  local skill_name=""
+  local installed_count=0
 
+  while IFS= read -r skill_name; do
+    [[ -z "${skill_name}" ]] && continue
+    install_standalone_skill "${source_root}" "${skills_dest}" "${skill_name}"
     installed_count=$((installed_count + 1))
-  done < <(find "${bundle_source}" -type f -name "SKILL.md" -print0)
+  done < <(list_installable_skills "${source_root}")
 
   if (( installed_count < 1 )); then
-    rm -rf "${tmp_dir}"
-    echo "No skills were found to install for bundle '${skills_bundle}'." >&2
+    echo "No standalone skills were found in ${source_root}." >&2
     return 1
   fi
 
-  echo "Installed ${installed_count} ${skills_bundle} skill(s) to ${skills_dest}"
-  if (( removed_other_count > 0 )); then
-    echo "Removed ${removed_other_count} conflicting ${other_bundle} skill(s) from ${skills_dest}"
-  fi
-  rm -rf "${tmp_dir}"
+  echo "Installed ${installed_count} standalone skill(s) to ${skills_dest}"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -119,7 +119,16 @@ while [[ $# -gt 0 ]]; do
         echo "Missing value for --bundle" >&2
         exit 1
       fi
-      SKILLS_BUNDLE="$2"
+      validate_bundle "$2"
+      INSTALL_ALL=1
+      shift
+      ;;
+    --skill)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --skill" >&2
+        exit 1
+      fi
+      SKILL_NAME="$2"
       shift
       ;;
     --skills-dir)
@@ -138,6 +147,9 @@ while [[ $# -gt 0 ]]; do
       SKILLS_SOURCE="$2"
       shift
       ;;
+    --all)
+      INSTALL_ALL=1
+      ;;
     --help|-h)
       usage
       exit 0
@@ -151,10 +163,20 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-if [[ -z "${SKILLS_BUNDLE}" ]]; then
-  echo "Installing skills requires --bundle <cli|mcp> or DBT_NOVA_SKILLS_BUNDLE." >&2
+if [[ -n "${SKILL_NAME}" && -n "${INSTALL_ALL}" ]]; then
+  echo "Use either --skill or --all, not both." >&2
   exit 1
 fi
 
-validate_bundle "${SKILLS_BUNDLE}"
-install_from_source "${SKILLS_SOURCE}" "${SKILLS_DIR}" "${SKILLS_BUNDLE}"
+if [[ -n "${INSTALL_ALL}" ]]; then
+  install_all_skills "${SKILLS_SOURCE}" "${SKILLS_DIR}"
+  exit 0
+fi
+
+if [[ -n "${SKILL_NAME}" ]]; then
+  install_standalone_skill "${SKILLS_SOURCE}" "${SKILLS_DIR}" "${SKILL_NAME}"
+  exit 0
+fi
+
+echo "Installing skills requires either --skill <name> or --all." >&2
+exit 1

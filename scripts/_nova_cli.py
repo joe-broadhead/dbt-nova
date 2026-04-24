@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -47,6 +48,14 @@ def manifest_identity(manifest_path: Path) -> JsonDict:
     }
 
 
+def default_storage_instance_id(manifest_path: str | Path) -> str:
+    """Return a deterministic storage instance id for helper-script tool calls."""
+
+    manifest_key = str(Path(manifest_path).resolve())
+    digest = hashlib.sha256(manifest_key.encode("utf-8")).hexdigest()[:12]
+    return f"script-{digest}"
+
+
 def run_nova_tool(
     nova_bin: str | Path,
     manifest_path: str | Path,
@@ -62,15 +71,20 @@ def run_nova_tool(
         tool_name,
         "--manifest-path",
         str(manifest_path),
+        "--storage-instance-id",
+        os.environ.get("DBT_NOVA_STORAGE_INSTANCE_ID", default_storage_instance_id(manifest_path)),
         "--params-json",
         json.dumps(params, sort_keys=True, separators=(",", ":")),
         "--json",
     ]
+    env = dict(os.environ)
+    env.setdefault("DBT_NOVA_STORAGE_DIR", str(Path(tempfile.gettempdir()) / "dbt-nova-script-storage"))
     result = subprocess.run(
         command,
         capture_output=True,
         check=False,
         text=True,
+        env=env,
     )
     if result.returncode != 0:
         message = result.stderr.strip() or result.stdout.strip() or "unknown nova cli error"
