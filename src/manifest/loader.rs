@@ -114,6 +114,12 @@ struct PreparedManifestData {
     indexes_reused: bool,
 }
 
+struct ManifestParseContext<'a> {
+    path: &'a Path,
+    source_uri: &'a str,
+    load_start: Instant,
+}
+
 struct PersistContext<'a> {
     signature_path: &'a Path,
     storage_dir: &'a Path,
@@ -172,9 +178,11 @@ impl ManifestSearch {
             &storage.signature,
             reused.reuse_store,
             reused.entities,
-            &manifest_path,
-            &manifest_resolution.source_uri,
-            load_start,
+            &ManifestParseContext {
+                path: &manifest_path,
+                source_uri: &manifest_resolution.source_uri,
+                load_start,
+            },
         )?;
         let PreparedManifestData {
             accumulator,
@@ -506,10 +514,11 @@ fn prepare_manifest_data(
     signature: &ManifestSignature,
     reuse_store: bool,
     existing_entities: Option<EntityStore>,
-    manifest_path: &Path,
-    source_uri: &str,
-    load_start: Instant,
+    parse_context: &ManifestParseContext<'_>,
 ) -> Result<PreparedManifestData> {
+    let manifest_path = parse_context.path;
+    let source_uri = parse_context.source_uri;
+    let load_start = parse_context.load_start;
     let mut accumulator = ManifestAccumulator::new(storage_dir, !reuse_store)?;
     let mut cached_indexes =
         load_cached_indexes(storage_dir, signature, reuse_store, &mut accumulator);

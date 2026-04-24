@@ -159,9 +159,9 @@ pub struct DbtNovaConfig {
     pub manifest_fetch_timeout_secs: u64,
     /// Allow non-TLS manifest URIs (http://). Disable to enforce HTTPS-only.
     pub manifest_allow_http: bool,
-    /// Optional allowlist of dbt unique_id patterns to retain during manifest parse.
+    /// Optional allowlist of dbt `unique_id` patterns to retain during manifest parse.
     pub manifest_prune_allow_ids: Vec<String>,
-    /// Optional denylist of dbt unique_id patterns to remove during manifest parse.
+    /// Optional denylist of dbt `unique_id` patterns to remove during manifest parse.
     pub manifest_prune_deny_ids: Vec<String>,
     /// Base directory for on-disk storage (instances live under `storage_dir/instances`)
     pub storage_dir: String,

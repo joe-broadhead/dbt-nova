@@ -446,7 +446,9 @@ impl ManifestPruner {
         if keep_base {
             return true;
         }
-        if self.matches_deny(unique_id, false) || !self.is_analysis(payload, forced_resource_type) {
+        if self.matches_deny(unique_id, false)
+            || !Self::is_analysis(payload, forced_resource_type)
+        {
             return false;
         }
         self.should_auto_include_analysis(payload)
@@ -489,7 +491,7 @@ impl ManifestPruner {
         }
     }
 
-    fn is_analysis(&self, payload: &JsonValue, forced_resource_type: Option<&str>) -> bool {
+    fn is_analysis(payload: &JsonValue, forced_resource_type: Option<&str>) -> bool {
         forced_resource_type == Some("analysis")
             || payload
                 .get("resource_type")
