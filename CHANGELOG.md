@@ -74,8 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hosted HTTP startup/bind fallback handling is more robust: invalid `PORT` fallback is ignored, MCP paths are normalized/validated, and reserved probe paths are rejected.
 - Non-loopback hosted HTTP binds now fail fast unless operators explicitly acknowledge
   that dbt-nova is behind an authenticating reverse proxy via
-  `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true`, and startup logs now warn clearly that the
-  built-in streamable HTTP transport has no authentication layer.
+  `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true`; the published container image sets that
+  acknowledgement explicitly for hosted deployments, and startup logs now warn
+  clearly that the built-in streamable HTTP transport has no authentication layer.
 - Cold-start search model failures now degrade safely by disabling broken empty search indexes instead of leaving startup wedged.
 - Metadata audit tests now use isolated storage roots under parallel execution, and the reusable audit workflow no longer cancels sibling invocations on the same ref.
 - Documentation and dependency maintenance issues that broke docs or security checks were corrected (`Pygments` compatibility and `tar` advisory updates).

@@ -325,6 +325,13 @@ def cleanup_queue(inconsistencies: dict[str, Any], clusters: list[dict[str, Any]
     }
 
 
+def duplicate_indicator_count(inconsistencies: dict[str, Any]) -> int:
+    return sum(
+        len(row.get("indicators", []))
+        for row in inconsistencies["duplicate_indicators"]
+    )
+
+
 def build_report(args: argparse.Namespace) -> dict[str, Any]:
     summary = manifest_summary(args)
     candidates, overlap_candidate_count = load_overlap_candidates(args)
@@ -335,7 +342,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         "summary": {
             "entity_count": count_entities(args),
             "overlap_candidate_count": overlap_candidate_count,
-            "duplicate_indicator_count": len(inconsistencies["duplicate_indicators"]),
+            "duplicate_indicator_count": duplicate_indicator_count(inconsistencies),
             "canonical_conflict_count": len(inconsistencies["canonical_conflicts"]),
             "multi_grain_entity_count": len(inconsistencies["multi_grain_entities"]),
         },

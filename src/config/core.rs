@@ -559,7 +559,7 @@ impl DbtNovaConfig {
             }
             if self.http_transport_binds_non_loopback() && !self.http_expect_auth_proxy {
                 return Err(DbtNovaError::InvalidParams(
-                    "streamable HTTP transport has no built-in authentication and is configured to listen on a non-loopback host. Bind to 127.0.0.1/::1 for local-only use, or set DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true only when an authenticating reverse proxy is enforcing access in front of dbt-nova.".to_string(),
+                    "streamable HTTP transport has no built-in authentication and is configured to listen on a non-loopback host. Bind to 127.0.0.1/::1 for local-only use, or set DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true only when an authenticating reverse proxy is enforcing access in front of dbt-nova; the published container image sets this acknowledgement explicitly for hosted deployments.".to_string(),
                 ));
             }
         }
