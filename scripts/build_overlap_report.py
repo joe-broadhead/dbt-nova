@@ -17,6 +17,24 @@ from _nova_cli import (
 )
 
 
+KNOWN_RESOURCE_TYPES = {
+    "analysis",
+    "doc",
+    "exposure",
+    "group",
+    "macro",
+    "metric",
+    "model",
+    "saved_query",
+    "seed",
+    "semantic_model",
+    "snapshot",
+    "source",
+    "test",
+    "unit_test",
+}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--nova-bin", default=default_nova_bin(), help="Path to the dbt-nova binary.")
@@ -84,15 +102,34 @@ def load_overlap_candidates(args: argparse.Namespace) -> list[dict[str, Any]]:
     return data
 
 
+def is_absent_resource_type_error(resource_type: str, exc: RuntimeError) -> bool:
+    normalized = resource_type.strip().lower()
+    if normalized not in KNOWN_RESOURCE_TYPES:
+        return False
+    message = str(exc).lower()
+    return (
+        f"resource_type '{normalized}'" in message
+        and (
+            "is invalid; allowed values:" in message
+            or "resolved but was not indexed" in message
+        )
+    )
+
+
 def count_entities(args: argparse.Namespace) -> int:
     total = 0
     for resource_type in sorted(set(args.resource_types)):
-        rows = paginated_tool_rows(
-            args.nova_bin,
-            args.manifest_path,
-            "list_entities",
-            {"resource_type": resource_type, "detail": "standard"},
-        )
+        try:
+            rows = paginated_tool_rows(
+                args.nova_bin,
+                args.manifest_path,
+                "list_entities",
+                {"resource_type": resource_type, "detail": "standard"},
+            )
+        except RuntimeError as exc:
+            if is_absent_resource_type_error(resource_type, exc):
+                continue
+            raise
         total += len(rows)
     return total
 
