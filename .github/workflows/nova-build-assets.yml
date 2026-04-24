@@ -102,6 +102,11 @@ on:
         required: false
         type: number
         default: 14
+      build_timeout_minutes:
+        description: "Max runtime for the build/publish job in minutes"
+        required: false
+        type: number
+        default: 360
       publish_targets:
         description: "Comma-separated remote publish targets: s3,gcs,dbfs"
         required: false
@@ -230,6 +235,7 @@ jobs:
       search_onnx_threads: ${{ steps.resolve.outputs.search_onnx_threads }}
       search_embedding_batch_size: ${{ steps.resolve.outputs.search_embedding_batch_size }}
       search_sparse_embedding_batch_size: ${{ steps.resolve.outputs.search_sparse_embedding_batch_size }}
+      build_timeout_minutes: ${{ steps.resolve.outputs.build_timeout_minutes }}
       dbt_env_json: ${{ steps.resolve.outputs.dbt_env_json }}
       dbt_secret_env_map_json: ${{ steps.resolve.outputs.dbt_secret_env_map_json }}
       dbt_invocation_mode: ${{ steps.resolve.outputs.dbt_invocation_mode }}
@@ -260,6 +266,7 @@ jobs:
           INPUT_SEARCH_SPARSE_EMBEDDING_BATCH_SIZE: ${{ inputs.search_sparse_embedding_batch_size }}
           INPUT_ARTIFACT_NAME_PREFIX: ${{ inputs.artifact_name_prefix }}
           INPUT_RETENTION_DAYS: ${{ inputs.retention_days }}
+          INPUT_BUILD_TIMEOUT_MINUTES: ${{ inputs.build_timeout_minutes }}
           INPUT_PUBLISH_TARGETS: ${{ inputs.publish_targets }}
           INPUT_PUBLISH_S3_PREFIX: ${{ inputs.publish_s3_prefix }}
           INPUT_PUBLISH_GCS_PREFIX: ${{ inputs.publish_gcs_prefix }}
@@ -297,6 +304,7 @@ jobs:
           search_sparse_embedding_batch_size="${INPUT_SEARCH_SPARSE_EMBEDDING_BATCH_SIZE}"
           artifact_name_prefix="${INPUT_ARTIFACT_NAME_PREFIX}"
           retention_days="${INPUT_RETENTION_DAYS}"
+          build_timeout_minutes="${INPUT_BUILD_TIMEOUT_MINUTES}"
           publish_targets_raw="${INPUT_PUBLISH_TARGETS}"
           publish_s3_prefix="${INPUT_PUBLISH_S3_PREFIX}"
           publish_gcs_prefix="${INPUT_PUBLISH_GCS_PREFIX}"
@@ -503,6 +511,14 @@ jobs:
             echo "retention_days must be between 1 and 90."
             exit 1
           fi
+          if ! [[ "${build_timeout_minutes}" =~ ^[0-9]+$ ]]; then
+            echo "build_timeout_minutes must be an integer between 1 and 360."
+            exit 1
+          fi
+          if (( build_timeout_minutes < 1 || build_timeout_minutes > 360 )); then
+            echo "build_timeout_minutes must be between 1 and 360."
+            exit 1
+          fi
 
           if [[ "${publish_dry_run}" != "true" && "${publish_dry_run}" != "false" ]]; then
             echo "publish_dry_run must be true or false."
@@ -680,6 +696,7 @@ jobs:
           echo "search_onnx_threads=${search_onnx_threads}" >> "$GITHUB_OUTPUT"
           echo "search_embedding_batch_size=${search_embedding_batch_size}" >> "$GITHUB_OUTPUT"
           echo "search_sparse_embedding_batch_size=${search_sparse_embedding_batch_size}" >> "$GITHUB_OUTPUT"
+          echo "build_timeout_minutes=${build_timeout_minutes}" >> "$GITHUB_OUTPUT"
           echo "dbt_env_json=${dbt_env_json}" >> "$GITHUB_OUTPUT"
           echo "dbt_secret_env_map_json=${dbt_secret_env_map_json}" >> "$GITHUB_OUTPUT"
           echo "dbt_invocation_mode=${dbt_invocation_mode}" >> "$GITHUB_OUTPUT"
@@ -712,6 +729,7 @@ jobs:
           - search_onnx_threads: `${{ steps.resolve.outputs.search_onnx_threads }}`
           - search_embedding_batch_size: `${{ steps.resolve.outputs.search_embedding_batch_size }}`
           - search_sparse_embedding_batch_size: `${{ steps.resolve.outputs.search_sparse_embedding_batch_size }}`
+          - build_timeout_minutes: `${{ steps.resolve.outputs.build_timeout_minutes }}`
           - dbt_env_json: `${{ steps.resolve.outputs.dbt_env_json }}`
           - dbt_secret_env_map_json: `${{ steps.resolve.outputs.dbt_secret_env_map_json }}`
           - dbt_invocation_mode: `${{ steps.resolve.outputs.dbt_invocation_mode }}`
@@ -722,7 +740,7 @@ jobs:
   build:
     name: Build, validate, and publish storage artifact
     runs-on: ubuntu-22.04
-    timeout-minutes: 240
+    timeout-minutes: ${{ fromJSON(needs.prepare.outputs.build_timeout_minutes) }}
     needs: prepare
     concurrency:
       group: nova-assets-${{ github.repository }}-${{ needs.prepare.outputs.storage_instance_id }}
