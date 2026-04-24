@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
+use blake3;
 use moka::sync::Cache as MokaCache;
 use serde_json::Value as JsonValue;
 
@@ -166,6 +167,7 @@ impl ManifestSearch {
         ensure_build_reuse_state(&mut storage, &reused, &config, needs_build)?;
         let tantivy_reused = reused.tantivy_opened.is_some();
         let prepared_manifest_data = prepare_manifest_data(
+            &config,
             &reused.storage_dir,
             &storage.signature,
             reused.reuse_store,
@@ -255,7 +257,7 @@ fn prepare_storage(
     let versions_root = instance_root.join("versions");
     fs::create_dir_all(&versions_root)?;
 
-    let signature = manifest_signature(
+    let mut signature = manifest_signature(
         &manifest_resolution.local_path,
         &manifest_resolution.source_uri,
     )
@@ -265,7 +267,17 @@ fn prepare_storage(
             manifest_resolution.source_uri
         ))
     })?;
-    let mut version_id = signature.content_hash.chars().take(12).collect::<String>();
+    signature.prune_fingerprint = config.manifest_prune_fingerprint();
+    let version_hash = if signature.prune_fingerprint.is_empty() {
+        signature.content_hash.clone()
+    } else {
+        blake3::hash(
+            format!("{}:{}", signature.content_hash, signature.prune_fingerprint).as_bytes(),
+        )
+        .to_hex()
+        .to_string()
+    };
+    let mut version_id = version_hash.chars().take(12).collect::<String>();
     if version_id.is_empty() {
         version_id = "unknown".to_string();
     }
@@ -489,6 +501,7 @@ fn ensure_build_reuse_state(
 }
 
 fn prepare_manifest_data(
+    config: &DbtNovaConfig,
     storage_dir: &Path,
     signature: &ManifestSignature,
     reuse_store: bool,
@@ -504,7 +517,14 @@ fn prepare_manifest_data(
 
     let parse_manifest = !reuse_store || !cached_indexes.used_cached_indexes;
     if parse_manifest {
-        parse_manifest_file(manifest_path, source_uri, &mut accumulator, load_start)?;
+        parse_manifest_file(
+            manifest_path,
+            source_uri,
+            &config.manifest_prune_allow_ids,
+            &config.manifest_prune_deny_ids,
+            &mut accumulator,
+            load_start,
+        )?;
     } else {
         info!("reused entity/index caches; skipped manifest parse");
     }
@@ -1145,6 +1165,7 @@ mod tests {
             len: 12_345,
             modified_ms: 9_999,
             content_hash: "same-hash".to_string(),
+            prune_fingerprint: String::new(),
             source_uri: "file:///new/path".to_string(),
         };
         let existing = ManifestSignature {
@@ -1152,6 +1173,7 @@ mod tests {
             len: 1,
             modified_ms: 1,
             content_hash: "same-hash".to_string(),
+            prune_fingerprint: String::new(),
             source_uri: "file:///old/path".to_string(),
         };
         assert!(
@@ -1167,6 +1189,7 @@ mod tests {
             len: 12_345,
             modified_ms: 9_999,
             content_hash: "expected-hash".to_string(),
+            prune_fingerprint: String::new(),
             source_uri: "file:///new/path".to_string(),
         };
         let different_hash = ManifestSignature {
@@ -1174,6 +1197,7 @@ mod tests {
             len: 12_345,
             modified_ms: 1,
             content_hash: "different-hash".to_string(),
+            prune_fingerprint: String::new(),
             source_uri: "file:///old/path".to_string(),
         };
         let missing_hash = ManifestSignature {
@@ -1181,6 +1205,7 @@ mod tests {
             len: 12_345,
             modified_ms: 1,
             content_hash: String::new(),
+            prune_fingerprint: String::new(),
             source_uri: "file:///old/path".to_string(),
         };
         assert!(!manifest_signature_matches_for_reuse(
@@ -1191,5 +1216,26 @@ mod tests {
             &missing_hash,
             &expected
         ));
+    }
+
+    #[test]
+    fn manifest_signature_reuse_match_rejects_prune_fingerprint_mismatch() {
+        let expected = ManifestSignature {
+            path: "/tmp/new/path/manifest.json".to_string(),
+            len: 12_345,
+            modified_ms: 9_999,
+            content_hash: "same-hash".to_string(),
+            prune_fingerprint: "fingerprint-a".to_string(),
+            source_uri: "file:///new/path".to_string(),
+        };
+        let existing = ManifestSignature {
+            path: "/tmp/old/path/manifest.json".to_string(),
+            len: 12_345,
+            modified_ms: 1,
+            content_hash: "same-hash".to_string(),
+            prune_fingerprint: "fingerprint-b".to_string(),
+            source_uri: "file:///old/path".to_string(),
+        };
+        assert!(!manifest_signature_matches_for_reuse(&existing, &expected));
     }
 }

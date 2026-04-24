@@ -7,11 +7,12 @@ use std::time::Instant;
 
 use serde::de::{self, DeserializeSeed, Deserializer, MapAccess, Visitor};
 use serde_json::Value as JsonValue;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::entity::Entity;
 use crate::manifest::store::{EntityStore, EntityStoreBuilder};
+use crate::utils::{GlobPattern, compile_glob, glob_match_compiled};
 
 pub(super) struct ManifestAccumulator {
     pub(super) store_builder: Option<EntityStoreBuilder>,
@@ -179,6 +180,7 @@ impl ManifestAccumulator {
 
 struct EntitiesSeed<'a> {
     accumulator: &'a mut ManifestAccumulator,
+    pruner: Option<&'a mut ManifestPruner>,
     forced_resource_type: Option<&'static str>,
 }
 
@@ -191,6 +193,7 @@ impl<'de> DeserializeSeed<'de> for EntitiesSeed<'_> {
     {
         deserializer.deserialize_any(EntitiesVisitor {
             accumulator: self.accumulator,
+            pruner: self.pruner,
             forced_resource_type: self.forced_resource_type,
         })
     }
@@ -198,6 +201,7 @@ impl<'de> DeserializeSeed<'de> for EntitiesSeed<'_> {
 
 struct EntitiesVisitor<'a> {
     accumulator: &'a mut ManifestAccumulator,
+    pruner: Option<&'a mut ManifestPruner>,
     forced_resource_type: Option<&'static str>,
 }
 
@@ -212,7 +216,17 @@ impl<'de> Visitor<'de> for EntitiesVisitor<'_> {
     where
         M: MapAccess<'de>,
     {
+        let mut pruner = self.pruner;
         while let Some((unique_id, payload)) = map.next_entry::<String, JsonValue>()? {
+            let keep = match pruner.as_deref_mut() {
+                Some(matcher) => {
+                    matcher.should_keep_entity(&unique_id, &payload, self.forced_resource_type)
+                }
+                None => true,
+            };
+            if !keep {
+                continue;
+            }
             let entity = Entity::from_json(&unique_id, &payload);
             self.accumulator
                 .add_entity(&unique_id, &entity, self.forced_resource_type)
@@ -239,6 +253,7 @@ impl<'de> Visitor<'de> for EntitiesVisitor<'_> {
 
 struct ManifestSeed<'a> {
     accumulator: &'a mut ManifestAccumulator,
+    pruner: Option<&'a mut ManifestPruner>,
 }
 
 impl<'de> DeserializeSeed<'de> for ManifestSeed<'_> {
@@ -250,12 +265,14 @@ impl<'de> DeserializeSeed<'de> for ManifestSeed<'_> {
     {
         deserializer.deserialize_map(ManifestVisitor {
             accumulator: self.accumulator,
+            pruner: self.pruner,
         })
     }
 }
 
 struct ManifestVisitor<'a> {
     accumulator: &'a mut ManifestAccumulator,
+    pruner: Option<&'a mut ManifestPruner>,
 }
 
 impl<'de> Visitor<'de> for ManifestVisitor<'_> {
@@ -265,7 +282,7 @@ impl<'de> Visitor<'de> for ManifestVisitor<'_> {
         formatter.write_str("a manifest object")
     }
 
-    fn visit_map<M>(self, mut map: M) -> std::result::Result<Self::Value, M::Error>
+    fn visit_map<M>(mut self, mut map: M) -> std::result::Result<Self::Value, M::Error>
     where
         M: MapAccess<'de>,
     {
@@ -274,60 +291,70 @@ impl<'de> Visitor<'de> for ManifestVisitor<'_> {
                 "nodes" => {
                     map.next_value_seed(EntitiesSeed {
                         accumulator: self.accumulator,
+                        pruner: self.pruner.as_deref_mut(),
                         forced_resource_type: None,
                     })?;
                 }
                 "sources" => {
                     map.next_value_seed(EntitiesSeed {
                         accumulator: self.accumulator,
+                        pruner: self.pruner.as_deref_mut(),
                         forced_resource_type: Some("source"),
                     })?;
                 }
                 "macros" => {
                     map.next_value_seed(EntitiesSeed {
                         accumulator: self.accumulator,
+                        pruner: self.pruner.as_deref_mut(),
                         forced_resource_type: Some("macro"),
                     })?;
                 }
                 "docs" => {
                     map.next_value_seed(EntitiesSeed {
                         accumulator: self.accumulator,
+                        pruner: self.pruner.as_deref_mut(),
                         forced_resource_type: Some("doc"),
                     })?;
                 }
                 "groups" => {
                     map.next_value_seed(EntitiesSeed {
                         accumulator: self.accumulator,
+                        pruner: self.pruner.as_deref_mut(),
                         forced_resource_type: Some("group"),
                     })?;
                 }
                 "exposures" => {
                     map.next_value_seed(EntitiesSeed {
                         accumulator: self.accumulator,
+                        pruner: self.pruner.as_deref_mut(),
                         forced_resource_type: Some("exposure"),
                     })?;
                 }
                 "metrics" => {
                     map.next_value_seed(EntitiesSeed {
                         accumulator: self.accumulator,
+                        pruner: self.pruner.as_deref_mut(),
                         forced_resource_type: Some("metric"),
                     })?;
                 }
                 "saved_queries" => {
                     map.next_value_seed(EntitiesSeed {
                         accumulator: self.accumulator,
+                        pruner: self.pruner.as_deref_mut(),
                         forced_resource_type: Some("saved_query"),
                     })?;
                 }
                 "semantic_models" => {
                     map.next_value_seed(EntitiesSeed {
                         accumulator: self.accumulator,
+                        pruner: self.pruner.as_deref_mut(),
                         forced_resource_type: Some("semantic_model"),
                     })?;
                 }
                 "unit_tests" => {
                     map.next_value_seed(EntitiesSeed {
                         accumulator: self.accumulator,
+                        pruner: self.pruner.as_deref_mut(),
                         forced_resource_type: Some("unit_test"),
                     })?;
                 }
@@ -363,9 +390,164 @@ impl<'de> Visitor<'de> for ManifestVisitor<'_> {
     }
 }
 
+struct CompiledPattern {
+    raw: String,
+    compiled: GlobPattern,
+    matched: bool,
+}
+
+impl CompiledPattern {
+    fn new(pattern: String) -> Self {
+        Self {
+            compiled: compile_glob(&pattern, true),
+            raw: pattern,
+            matched: false,
+        }
+    }
+}
+
+struct ManifestPruner {
+    allow_patterns: Vec<CompiledPattern>,
+    deny_patterns: Vec<CompiledPattern>,
+}
+
+impl ManifestPruner {
+    fn from_patterns(allow_ids: &[String], deny_ids: &[String]) -> Option<Self> {
+        let allow_patterns: Vec<CompiledPattern> = allow_ids
+            .iter()
+            .filter_map(|pattern| {
+                let trimmed = pattern.trim();
+                (!trimmed.is_empty()).then(|| CompiledPattern::new(trimmed.to_string()))
+            })
+            .collect();
+        let deny_patterns: Vec<CompiledPattern> = deny_ids
+            .iter()
+            .filter_map(|pattern| {
+                let trimmed = pattern.trim();
+                (!trimmed.is_empty()).then(|| CompiledPattern::new(trimmed.to_string()))
+            })
+            .collect();
+        if allow_patterns.is_empty() && deny_patterns.is_empty() {
+            return None;
+        }
+        Some(Self {
+            allow_patterns,
+            deny_patterns,
+        })
+    }
+
+    fn should_keep_entity(
+        &mut self,
+        unique_id: &str,
+        payload: &JsonValue,
+        forced_resource_type: Option<&str>,
+    ) -> bool {
+        let keep_base = self.keep_by_allow_deny(unique_id, true);
+        if keep_base {
+            return true;
+        }
+        if self.matches_deny(unique_id, false) || !self.is_analysis(payload, forced_resource_type) {
+            return false;
+        }
+        self.should_auto_include_analysis(payload)
+    }
+
+    fn should_auto_include_analysis(&mut self, payload: &JsonValue) -> bool {
+        let deps = payload
+            .get("depends_on")
+            .and_then(|d| d.get("nodes"))
+            .and_then(|n| n.as_array());
+        let Some(dependencies) = deps else {
+            return false;
+        };
+        if dependencies.is_empty() {
+            return false;
+        }
+        dependencies.iter().all(|value| {
+            value
+                .as_str()
+                .is_some_and(|id| self.keep_by_allow_deny(id, false))
+        })
+    }
+
+    fn report_unmatched(&self) {
+        for pattern in &self.allow_patterns {
+            if !pattern.matched {
+                warn!(
+                    pattern = %pattern.raw,
+                    "manifest prune allow pattern did not match any entities"
+                );
+            }
+        }
+        for pattern in &self.deny_patterns {
+            if !pattern.matched {
+                warn!(
+                    pattern = %pattern.raw,
+                    "manifest prune deny pattern did not match any entities"
+                );
+            }
+        }
+    }
+
+    fn is_analysis(&self, payload: &JsonValue, forced_resource_type: Option<&str>) -> bool {
+        forced_resource_type == Some("analysis")
+            || payload
+                .get("resource_type")
+                .and_then(JsonValue::as_str)
+                .is_some_and(|resource_type| resource_type == "analysis")
+    }
+
+    fn matches_mut(patterns: &mut [CompiledPattern], unique_id: &str, mark: bool) -> bool {
+        let mut matched = false;
+        for pattern in patterns {
+            if glob_match_compiled(&pattern.compiled, unique_id) {
+                matched = true;
+                if mark {
+                    pattern.matched = true;
+                }
+            }
+        }
+        matched
+    }
+
+    fn matches_allow(&mut self, unique_id: &str, mark: bool) -> bool {
+        Self::matches_mut(&mut self.allow_patterns, unique_id, mark)
+    }
+
+    fn matches_deny(&mut self, unique_id: &str, mark: bool) -> bool {
+        Self::matches_mut(&mut self.deny_patterns, unique_id, mark)
+    }
+
+    fn keep_by_allow_deny(&mut self, unique_id: &str, mark: bool) -> bool {
+        let keep_after_allow = if self.allow_patterns.is_empty() {
+            true
+        } else {
+            self.matches_allow(unique_id, mark)
+        };
+        keep_after_allow && !self.matches_deny(unique_id, mark)
+    }
+}
+
+fn prune_lineage_maps(accumulator: &mut ManifestAccumulator) {
+    accumulator
+        .parent_map
+        .retain(|node_id, _| accumulator.seen_unique_ids.contains(node_id));
+    for dependencies in accumulator.parent_map.values_mut() {
+        dependencies.retain(|dep_id| accumulator.seen_unique_ids.contains(dep_id));
+    }
+    accumulator
+        .child_map
+        .retain(|node_id, _| accumulator.seen_unique_ids.contains(node_id));
+    for children in accumulator.child_map.values_mut() {
+        children.retain(|child_id| accumulator.seen_unique_ids.contains(child_id));
+    }
+}
+
 pub(super) fn parse_manifest_file(
     manifest_path: &Path,
     source_uri: &str,
+    allow_ids: &[String],
+    deny_ids: &[String],
     accumulator: &mut ManifestAccumulator,
     load_start: Instant,
 ) -> Result<()> {
@@ -375,14 +557,175 @@ pub(super) fn parse_manifest_file(
     let reader = BufReader::new(file);
 
     let mut deserializer = serde_json::Deserializer::from_reader(reader);
-    ManifestSeed { accumulator }
-        .deserialize(&mut deserializer)
-        .map_err(|err| {
-            DbtNovaError::ManifestError(format!("Failed to parse manifest JSON: {err}"))
-        })?;
+    let mut pruner = ManifestPruner::from_patterns(allow_ids, deny_ids);
+    ManifestSeed {
+        accumulator,
+        pruner: pruner.as_mut(),
+    }
+    .deserialize(&mut deserializer)
+    .map_err(|err| DbtNovaError::ManifestError(format!("Failed to parse manifest JSON: {err}")))?;
+    if let Some(pruner) = pruner.as_ref() {
+        pruner.report_unmatched();
+    }
+    prune_lineage_maps(accumulator);
     info!(
         elapsed_ms = load_start.elapsed().as_millis(),
         "manifest parsed"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ManifestAccumulator, parse_manifest_file};
+    use std::fs;
+    use std::time::Instant;
+    use tempfile::tempdir;
+
+    #[test]
+    fn parse_manifest_prunes_by_allow_and_strict_analysis_dependencies() {
+        let manifest = r#"{
+          "metadata": { "dbt_version": "1.10.0" },
+          "nodes": {
+            "model.pkg.base_a": {
+              "name": "base_a",
+              "resource_type": "model",
+              "package_name": "pkg",
+              "depends_on": { "nodes": [], "macros": [] }
+            },
+            "model.pkg.base_b": {
+              "name": "base_b",
+              "resource_type": "model",
+              "package_name": "pkg",
+              "depends_on": { "nodes": [], "macros": [] }
+            },
+            "analysis.pkg.only_a": {
+              "name": "only_a",
+              "resource_type": "analysis",
+              "package_name": "pkg",
+              "depends_on": { "nodes": ["model.pkg.base_a"], "macros": [] }
+            },
+            "analysis.pkg.a_and_b": {
+              "name": "a_and_b",
+              "resource_type": "analysis",
+              "package_name": "pkg",
+              "depends_on": { "nodes": ["model.pkg.base_a", "model.pkg.base_b"], "macros": [] }
+            },
+            "analysis.pkg.empty_deps": {
+              "name": "empty_deps",
+              "resource_type": "analysis",
+              "package_name": "pkg",
+              "depends_on": { "nodes": [], "macros": [] }
+            }
+          },
+          "sources": {},
+          "macros": {},
+          "docs": {},
+          "groups": {},
+          "exposures": {},
+          "metrics": {},
+          "saved_queries": {},
+          "semantic_models": {},
+          "unit_tests": {},
+          "parent_map": {
+            "analysis.pkg.only_a": ["model.pkg.base_a"],
+            "analysis.pkg.a_and_b": ["model.pkg.base_a", "model.pkg.base_b"]
+          },
+          "child_map": {
+            "model.pkg.base_a": ["analysis.pkg.only_a", "analysis.pkg.a_and_b"],
+            "model.pkg.base_b": ["analysis.pkg.a_and_b"]
+          }
+        }"#;
+
+        let temp = tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("manifest.json");
+        fs::write(&manifest_path, manifest).expect("write manifest");
+        let mut accumulator = ManifestAccumulator::new(temp.path(), false).expect("accumulator");
+        let allow_ids = vec!["model.pkg.base_a".to_string()];
+        let deny_ids: Vec<String> = Vec::new();
+
+        parse_manifest_file(
+            &manifest_path,
+            manifest_path.to_string_lossy().as_ref(),
+            &allow_ids,
+            &deny_ids,
+            &mut accumulator,
+            Instant::now(),
+        )
+        .expect("parse manifest");
+
+        assert!(accumulator.seen_unique_ids.contains("model.pkg.base_a"));
+        assert!(!accumulator.seen_unique_ids.contains("model.pkg.base_b"));
+        assert!(accumulator.seen_unique_ids.contains("analysis.pkg.only_a"));
+        assert!(!accumulator.seen_unique_ids.contains("analysis.pkg.a_and_b"));
+        assert!(
+            !accumulator
+                .seen_unique_ids
+                .contains("analysis.pkg.empty_deps")
+        );
+
+        let parent_only_a = accumulator
+            .parent_map
+            .get("analysis.pkg.only_a")
+            .expect("parent map for only_a");
+        assert!(parent_only_a.contains("model.pkg.base_a"));
+        assert!(!accumulator.parent_map.contains_key("analysis.pkg.a_and_b"));
+
+        let child_base_a = accumulator
+            .child_map
+            .get("model.pkg.base_a")
+            .expect("child map for base_a");
+        assert!(child_base_a.contains("analysis.pkg.only_a"));
+        assert!(!child_base_a.contains("analysis.pkg.a_and_b"));
+    }
+
+    #[test]
+    fn parse_manifest_deny_overrides_auto_analysis_inclusion() {
+        let manifest = r#"{
+          "metadata": { "dbt_version": "1.10.0" },
+          "nodes": {
+            "model.pkg.base_a": {
+              "name": "base_a",
+              "resource_type": "model",
+              "package_name": "pkg",
+              "depends_on": { "nodes": [], "macros": [] }
+            },
+            "analysis.pkg.only_a": {
+              "name": "only_a",
+              "resource_type": "analysis",
+              "package_name": "pkg",
+              "depends_on": { "nodes": ["model.pkg.base_a"], "macros": [] }
+            }
+          },
+          "sources": {},
+          "macros": {},
+          "docs": {},
+          "groups": {},
+          "exposures": {},
+          "metrics": {},
+          "saved_queries": {},
+          "semantic_models": {},
+          "unit_tests": {}
+        }"#;
+
+        let temp = tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("manifest.json");
+        fs::write(&manifest_path, manifest).expect("write manifest");
+        let mut accumulator = ManifestAccumulator::new(temp.path(), false).expect("accumulator");
+        let allow_ids = vec!["model.pkg.base_a".to_string()];
+        let deny_ids = vec!["analysis.pkg.*".to_string()];
+
+        parse_manifest_file(
+            &manifest_path,
+            manifest_path.to_string_lossy().as_ref(),
+            &allow_ids,
+            &deny_ids,
+            &mut accumulator,
+            Instant::now(),
+        )
+        .expect("parse manifest");
+
+        assert!(accumulator.seen_unique_ids.contains("model.pkg.base_a"));
+        assert!(!accumulator.seen_unique_ids.contains("analysis.pkg.only_a"));
+    }
 }

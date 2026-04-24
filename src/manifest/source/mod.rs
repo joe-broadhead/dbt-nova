@@ -131,6 +131,7 @@ pub(crate) struct ManifestSignature {
     pub len: u64,
     pub modified_ms: u128,
     pub content_hash: String,
+    pub prune_fingerprint: String,
     pub source_uri: String,
 }
 
@@ -167,6 +168,7 @@ pub(crate) fn manifest_signature(path: &Path, source_uri: &str) -> Result<Manife
         len: meta.len(),
         modified_ms,
         content_hash,
+        prune_fingerprint: String::new(),
         source_uri: source_uri.to_string(),
     })
 }
@@ -944,6 +946,7 @@ where
     })
 }
 
+#[cfg(any(feature = "s3", feature = "gcs"))]
 fn run_async_fetch_blocking<F, Fut, T>(factory: F) -> Result<T>
 where
     F: FnOnce() -> Fut + Send + 'static,
