@@ -64,6 +64,16 @@ dbt-nova manifest load \
   --manifest-path /path/to/target/manifest.json
 ```
 
+### Build indexes with manifest pruning
+
+```bash
+DBT_NOVA_PRUNE_ALLOW_IDS='["model.my_proj.fct_orders","model.my_proj.dim_*"]' \
+DBT_NOVA_PRUNE_DENY_IDS='["model.my_proj.dim_legacy_*"]' \
+dbt-nova manifest load \
+  --manifest-path /path/to/target/manifest.json \
+  --json
+```
+
 ### Rebuild manifest indexes with override settings
 
 ```bash
