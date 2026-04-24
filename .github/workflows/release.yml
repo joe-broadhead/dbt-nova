@@ -75,14 +75,16 @@ jobs:
         run: |
           set -euo pipefail
           release_version="${RELEASE_TAG#v}"
-          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          cargo_toml="$(git show "${RELEASE_TAG}:Cargo.toml")"
+          changelog="$(git show "${RELEASE_TAG}:CHANGELOG.md")"
+          cargo_version="$(awk -F'"' '/^version = "/ { print $2; exit }' <<< "${cargo_toml}")"
 
           if [ "${cargo_version}" != "${release_version}" ]; then
             echo "Cargo.toml version (${cargo_version}) does not match release tag (${release_version})."
             exit 1
           fi
 
-          if ! grep -q "^## \[${release_version}\]" CHANGELOG.md; then
+          if ! grep -q "^## \[${release_version}\]" <<< "${changelog}"; then
             echo "CHANGELOG.md is missing a ## [${release_version}] entry."
             exit 1
           fi
