@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::future::Future;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -61,8 +62,23 @@ impl ServerHandler for DbtNovaServer {
 
 impl DbtNovaServer {
     /// Create a new MCP server wrapper for an existing search handle.
+    #[must_use]
     pub fn new(searcher: ManifestSearchHandle) -> Self {
+        let exposed_tools = crate::tools::catalog::MCP_TOOL_NAMES
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect();
+        Self::new_with_exposed_tools(searcher, &exposed_tools)
+    }
+
+    /// Create a new MCP server wrapper and expose only the provided MCP tool names.
+    #[must_use]
+    pub fn new_with_exposed_tools(
+        searcher: ManifestSearchHandle,
+        exposed_tools: &BTreeSet<String>,
+    ) -> Self {
         let mut tool_router = Self::tool_router();
+        filter_tool_router(&mut tool_router, exposed_tools);
         if disable_tool_schemas() {
             tracing::info!("tool schemas disabled (DBT_NOVA_DISABLE_TOOL_SCHEMAS=1)");
             strip_tool_schemas(&mut tool_router);
@@ -423,6 +439,15 @@ fn strip_tool_schemas(tool_router: &mut ToolRouter<DbtNovaServer>) {
         route.attr.input_schema = empty_schema.clone();
         route.attr.output_schema = None;
     }
+}
+
+fn filter_tool_router(
+    tool_router: &mut ToolRouter<DbtNovaServer>,
+    exposed_tools: &BTreeSet<String>,
+) {
+    tool_router
+        .map
+        .retain(|tool_name, _| exposed_tools.contains(tool_name.as_ref()));
 }
 
 #[tool_router]
@@ -973,12 +998,14 @@ fn sql_queue_timeout(config: &crate::config::DbtNovaConfig) -> Option<Duration> 
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::path::Path;
 
     use tempfile::TempDir;
 
     use super::*;
     use crate::tests::common::fixture_manifest_path_string;
+    use crate::tools::catalog::MCP_TOOL_NAMES;
 
     fn test_config(storage_root: &Path) -> crate::config::DbtNovaConfig {
         let mut config = crate::config::DbtNovaConfig {
@@ -1002,6 +1029,22 @@ mod tests {
             .await
             .expect("fixture manifest should load");
         DbtNovaServer::new(handle)
+    }
+
+    #[test]
+    fn mcp_tool_catalog_matches_registered_router_names() {
+        let router_names = DbtNovaServer::tool_router()
+            .map
+            .keys()
+            .map(|name| name.as_ref().to_string())
+            .collect::<BTreeSet<_>>();
+        let catalog_names = MCP_TOOL_NAMES
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(MCP_TOOL_NAMES.len(), catalog_names.len());
+        assert_eq!(catalog_names, router_names);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

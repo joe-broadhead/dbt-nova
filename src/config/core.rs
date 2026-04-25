@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 
 use blake3;
 
 use crate::error::{DbtNovaError, Result};
+use crate::tools::catalog::MCP_TOOL_NAMES;
 
 use super::column_lineage::ColumnLineageConfig;
 use super::metadata_score::MetadataScoreConfig;
@@ -215,6 +216,10 @@ pub struct DbtNovaConfig {
     pub tool_rate_limits: String,
     /// Rate limit window size in seconds
     pub tool_rate_limit_window_secs: u64,
+    /// Optional tool allowlist (comma-separated exact MCP tool names)
+    pub tool_allowlist: String,
+    /// Optional tool denylist (comma-separated exact MCP tool names)
+    pub tool_denylist: String,
     /// SQL provider for `execute_sql` (default: "databricks")
     pub sql_provider: String,
     /// Max rows allowed for `execute_sql` requests (0 = unlimited)
@@ -303,6 +308,8 @@ impl Default for DbtNovaConfig {
             http_sse_retry_secs: 3,
             tool_rate_limits: "search=60,execute_sql=20,default=120".to_string(),
             tool_rate_limit_window_secs: 60,
+            tool_allowlist: String::new(),
+            tool_denylist: String::new(),
             sql_provider: DEFAULT_SQL_PROVIDER.to_string(),
             sql_max_row_limit: 10_000,
             sql_max_byte_limit: 100_000_000,
@@ -494,6 +501,77 @@ impl DbtNovaConfig {
         );
     }
 
+    #[must_use]
+    pub fn parsed_tool_allowlist(&self) -> Option<Vec<String>> {
+        let allowlist = parse_tool_name_csv(&self.tool_allowlist);
+        if allowlist.is_empty() {
+            None
+        } else {
+            Some(allowlist)
+        }
+    }
+
+    #[must_use]
+    pub fn parsed_tool_denylist(&self) -> Vec<String> {
+        parse_tool_name_csv(&self.tool_denylist)
+    }
+
+    #[must_use]
+    pub fn resolved_mcp_tool_names(&self) -> BTreeSet<String> {
+        let mut eligible = if let Some(allowlist) = self.parsed_tool_allowlist() {
+            allowlist.into_iter().collect::<BTreeSet<_>>()
+        } else {
+            MCP_TOOL_NAMES
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect()
+        };
+        for denied in self.parsed_tool_denylist() {
+            eligible.remove(&denied);
+        }
+        eligible
+    }
+
+    fn validate_tool_filters(&self) -> Result<()> {
+        let valid_names = MCP_TOOL_NAMES.iter().copied().collect::<BTreeSet<_>>();
+        let allowlist = self.parsed_tool_allowlist().unwrap_or_default();
+        let denylist = self.parsed_tool_denylist();
+
+        let invalid_allowlist = allowlist
+            .into_iter()
+            .filter(|name| !valid_names.contains(name.as_str()))
+            .collect::<BTreeSet<_>>();
+        let invalid_denylist = denylist
+            .into_iter()
+            .filter(|name| !valid_names.contains(name.as_str()))
+            .collect::<BTreeSet<_>>();
+
+        if invalid_allowlist.is_empty() && invalid_denylist.is_empty() {
+            return Ok(());
+        }
+
+        let mut invalid_sections = Vec::new();
+        if !invalid_allowlist.is_empty() {
+            invalid_sections.push(format!(
+                "DBT_NOVA_TOOL_ALLOWLIST: {}",
+                invalid_allowlist.into_iter().collect::<Vec<_>>().join(", ")
+            ));
+        }
+        if !invalid_denylist.is_empty() {
+            invalid_sections.push(format!(
+                "DBT_NOVA_TOOL_DENYLIST: {}",
+                invalid_denylist.into_iter().collect::<Vec<_>>().join(", ")
+            ));
+        }
+
+        let valid_tools = MCP_TOOL_NAMES.join(", ");
+        Err(DbtNovaError::InvalidParams(format!(
+            "invalid MCP tool names: {}. Tool names must be case-sensitive exact MCP tool names. Check valid tool names: {}",
+            invalid_sections.join("; "),
+            valid_tools
+        )))
+    }
+
     /// Validate configuration for conflicting or unsafe settings.
     ///
     /// # Errors
@@ -602,6 +680,8 @@ impl DbtNovaConfig {
                 ));
             }
         }
+
+        self.validate_tool_filters()?;
 
         Ok(())
     }
@@ -925,6 +1005,12 @@ impl DbtNovaConfig {
         {
             self.tool_rate_limit_window_secs = v;
         }
+        if let Some(value) = env_string("DBT_NOVA_TOOL_ALLOWLIST") {
+            self.tool_allowlist = value;
+        }
+        if let Some(value) = env_string("DBT_NOVA_TOOL_DENYLIST") {
+            self.tool_denylist = value;
+        }
         set_string("DBT_NOVA_SQL_PROVIDER", &mut self.sql_provider);
         if let Some(v) = parse_u64("DBT_NOVA_SQL_MAX_ROW_LIMIT") {
             self.sql_max_row_limit = v;
@@ -1068,6 +1154,14 @@ fn canonical_prune_patterns(patterns: &[String]) -> Vec<String> {
         .collect();
     values.sort();
     values
+}
+
+fn parse_tool_name_csv(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 fn artifact_uri_scheme(uri: &str) -> String {
@@ -1593,6 +1687,52 @@ mod tests {
     }
 
     #[test]
+    fn from_env_reads_tool_allowlist_and_denylist() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [
+            ("DBT_NOVA_TOOL_ALLOWLIST", Some("search, get_entity")),
+            ("DBT_NOVA_TOOL_DENYLIST", Some("execute_sql")),
+        ];
+        let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let config = DbtNovaConfig::from_env();
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        assert_eq!(
+            config.parsed_tool_allowlist(),
+            Some(vec!["search".to_string(), "get_entity".to_string()])
+        );
+        assert_eq!(
+            config.parsed_tool_denylist(),
+            vec!["execute_sql".to_string()]
+        );
+    }
+
+    #[test]
     fn from_env_parses_manifest_prune_ids() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let vars = [
@@ -1712,5 +1852,51 @@ mod tests {
             config_b.manifest_prune_fingerprint()
         );
         assert!(config_a.manifest_pruning_enabled());
+    }
+
+    #[test]
+    fn validate_rejects_invalid_tool_names_in_filters() {
+        let config = DbtNovaConfig {
+            tool_allowlist: "search,unknown_tool".to_string(),
+            tool_denylist: "execute_sql,Search".to_string(),
+            ..base_config()
+        };
+
+        let error = config
+            .validate()
+            .expect_err("invalid tool names should fail validation");
+        let message = error.to_string();
+        assert!(message.contains("DBT_NOVA_TOOL_ALLOWLIST: unknown_tool"));
+        assert!(message.contains("DBT_NOVA_TOOL_DENYLIST: Search"));
+        assert!(message.contains("case-sensitive exact MCP tool names"));
+        assert!(message.contains("search"));
+        assert!(message.contains("execute_sql"));
+    }
+
+    #[test]
+    fn empty_allowlist_is_treated_as_unset() {
+        let config = DbtNovaConfig {
+            tool_allowlist: "   ".to_string(),
+            tool_denylist: "execute_sql".to_string(),
+            ..base_config()
+        };
+
+        let resolved = config.resolved_mcp_tool_names();
+        assert!(resolved.contains("search"));
+        assert!(!resolved.contains("execute_sql"));
+    }
+
+    #[test]
+    fn denylist_takes_precedence_over_allowlist() {
+        let config = DbtNovaConfig {
+            tool_allowlist: "search,execute_sql".to_string(),
+            tool_denylist: "execute_sql".to_string(),
+            ..base_config()
+        };
+
+        let resolved = config.resolved_mcp_tool_names();
+        assert!(resolved.contains("search"));
+        assert!(!resolved.contains("execute_sql"));
+        assert_eq!(resolved.len(), 1);
     }
 }

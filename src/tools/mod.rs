@@ -1,3 +1,4 @@
+pub mod catalog;
 pub mod column_lineage;
 pub mod context;
 pub mod coverage;

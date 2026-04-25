@@ -144,6 +144,7 @@ async fn start_with_config_and_shutdown(
 
     let transport = config.server_transport;
     let http_settings = HttpServerSettings::from_config(&config);
+    let exposed_tools = config.resolved_mcp_tool_names();
     let searcher = ManifestSearchHandle::spawn(config);
     let ready_handle = searcher.clone();
     tokio::spawn(async move {
@@ -157,7 +158,7 @@ async fn start_with_config_and_shutdown(
         }
     });
 
-    let server = DbtNovaServer::new(searcher.clone());
+    let server = DbtNovaServer::new_with_exposed_tools(searcher.clone(), &exposed_tools);
     match transport {
         ServerTransport::Stdio => serve_stdio(server, shutdown).await,
         ServerTransport::StreamableHttp => {
@@ -729,5 +730,20 @@ mod tests {
                 .is_some_and(|value| value.contains("missing-manifest.json")),
             "unexpected readiness payload: {readiness}"
         );
+    }
+
+    #[tokio::test]
+    async fn server_start_rejects_invalid_tool_filter_names() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let shutdown = CancellationToken::new();
+        let mut config = http_test_config(&temp_dir, fixture_manifest_path_string(), 0);
+        config.tool_allowlist = "search,unknown_tool".to_string();
+
+        let error = start_with_config_and_shutdown(config, shutdown)
+            .await
+            .expect_err("invalid tool filter should fail startup");
+
+        assert!(error.to_string().contains("DBT_NOVA_TOOL_ALLOWLIST"));
+        assert!(error.to_string().contains("unknown_tool"));
     }
 }
