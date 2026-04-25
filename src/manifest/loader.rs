@@ -125,6 +125,7 @@ struct PersistContext<'a> {
     storage_dir: &'a Path,
     config: &'a DbtNovaConfig,
     needs_build: bool,
+    update_current_version: bool,
     indexes_reused: bool,
     parent_map: &'a HashMap<String, Vec<String>>,
     child_map: &'a HashMap<String, Vec<String>>,
@@ -190,6 +191,10 @@ impl ManifestSearch {
             cached_indexes,
             indexes_reused,
         } = prepared_manifest_data;
+        let update_current_version = !needs_build
+            && !config.storage_read_only
+            && reused.storage_dir == storage.storage_dir
+            && reused.current_version.as_deref() != Some(storage.version_id.as_str());
         let signature_path = reused.signature_path.clone();
         let storage_dir = reused.storage_dir.clone();
         let search_backends = build_search_backends_for_manifest(
@@ -216,6 +221,7 @@ impl ManifestSearch {
             storage_dir: &storage_dir,
             config: &config,
             needs_build,
+            update_current_version,
             indexes_reused,
             parent_map: &runtime.parent_map,
             child_map: &runtime.child_map,
@@ -806,6 +812,8 @@ fn persist_storage_outputs(
 ) -> Result<()> {
     if context.needs_build {
         write_manifest_signature(context.signature_path, &storage.signature)?;
+    }
+    if context.needs_build || context.update_current_version {
         write_current_version(&storage.instance_root, &storage.version_id)?;
     }
 
@@ -1368,6 +1376,56 @@ mod tests {
         let loaded = ManifestSearch::new(config).expect("load manifest search");
 
         assert_eq!(loaded.search.manifest_hash, expected_hash);
+    }
+
+    #[test]
+    fn manifest_search_updates_current_pointer_after_scoped_fallback_reuse() {
+        let temp = tempdir().unwrap_or_else(|err| panic!("tempdir failed: {err}"));
+        let manifest_path = temp.path().join("manifest.json");
+        std::fs::copy(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/minimal.json"),
+            &manifest_path,
+        )
+        .expect("copy fixture manifest");
+
+        let base = DbtNovaConfig {
+            manifest_path: manifest_path.to_string_lossy().to_string(),
+            storage_dir: temp.path().join("storage").to_string_lossy().to_string(),
+            storage_instance_id: "scoped-current".to_string(),
+            ..DbtNovaConfig::default()
+        };
+        let instance_root = base.storage_instance_root_dir().expect("instance root");
+        let allow_config = DbtNovaConfig {
+            manifest_prune_allow_ids: vec!["model.pkg.model_a".to_string()],
+            ..base.clone()
+        };
+        let deny_config = DbtNovaConfig {
+            manifest_prune_deny_ids: vec!["model.pkg.unused".to_string()],
+            ..base
+        };
+
+        let allow_first =
+            ManifestSearch::new(allow_config.clone()).expect("load allow-scoped manifest first");
+        let allow_version = allow_first.search.manifest_version;
+        let deny_loaded =
+            ManifestSearch::new(deny_config).expect("load alternate prune-scoped manifest");
+        let deny_version = deny_loaded.search.manifest_version;
+
+        assert_ne!(allow_version, deny_version);
+        assert_eq!(
+            read_current_version(&instance_root).expect("read current after alternate"),
+            Some(deny_version)
+        );
+
+        let allow_second =
+            ManifestSearch::new(allow_config).expect("reuse original prune-scoped manifest");
+
+        assert!(allow_second.entity_store_reused);
+        assert_eq!(allow_second.search.manifest_version, allow_version);
+        assert_eq!(
+            read_current_version(&instance_root).expect("read refreshed current"),
+            Some(allow_version)
+        );
     }
 
     #[test]
