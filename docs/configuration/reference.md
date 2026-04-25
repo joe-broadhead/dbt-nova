@@ -45,6 +45,8 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_RECIPES_DIR` – manifest `original_file_path` prefix used to discover recipe `analysis` nodes (default: `analyses/recipes`). Recipe SQL is resolved from manifest `compiled_code` (or `raw_code` fallback). Recipes are documented in [Analysis Recipes](../features/recipes.md).
 - `DBT_NOVA_LOG` / `RUST_LOG` – enable structured logs to stderr (e.g., `info`, `debug`, `trace`)
 - `DBT_NOVA_DISABLE_TOOL_SCHEMAS` – strip JSON schema hints from MCP tools (useful for strict clients like Gemini; see [MCP Clients](../getting-started/mcp-clients.md))
+- `DBT_NOVA_TOOL_ALLOWLIST` – optional comma-separated allowlist of exact MCP tool names to expose; when set, only these tools are eligible for exposure
+- `DBT_NOVA_TOOL_DENYLIST` – optional comma-separated denylist of exact MCP tool names to hide after allowlist processing
 - `DBT_NOVA_SQL_PROVIDER` – SQL backend for `execute_sql` (`databricks`, `bigquery`, or `duckdb`, default: `databricks`)
 - `DBT_NOVA_GCP_PROJECT_ID` – shared Google project id alias (used by BigQuery fallback resolution)
 - `DBT_NOVA_GCP_ACCESS_TOKEN` – shared Google OAuth access token alias (used by BigQuery fallback resolution)
@@ -70,6 +72,8 @@ Remote manifest notes:
 - To allow insecure `http://` manifests (not recommended), set `DBT_NOVA_MANIFEST_ALLOW_HTTP=true`.
 - To allow insecure `http://` prebuilt artifact URIs (not recommended), set `DBT_NOVA_ARTIFACT_ALLOW_HTTP=true`.
 - Bootstrap precedence is deterministic: explicit env vars override bootstrap values, and bootstrap values override defaults.
+- Tool filtering precedence is deterministic: allowlist is applied first, then denylist; denylist wins when both include the same tool.
+- Tool filter names are strict and case-sensitive. Unknown names in either list fail startup validation with a hard error.
 - Streamable HTTP mode has **no built-in authentication**. Keep it bound to loopback for local use, or set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when an authenticating reverse proxy is enforcing access in front of dbt-nova.
 - The MCP endpoint is mounted at `DBT_NOVA_HTTP_PATH`; plain probe endpoints are always available at `/healthz` and `/readyz`.
 

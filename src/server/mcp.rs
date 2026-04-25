@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::future::Future;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -61,8 +62,23 @@ impl ServerHandler for DbtNovaServer {
 
 impl DbtNovaServer {
     /// Create a new MCP server wrapper for an existing search handle.
+    #[must_use]
     pub fn new(searcher: ManifestSearchHandle) -> Self {
+        let exposed_tools = crate::tools::catalog::MCP_TOOL_NAMES
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect();
+        Self::new_with_exposed_tools(searcher, &exposed_tools)
+    }
+
+    /// Create a new MCP server wrapper and expose only the provided MCP tool names.
+    #[must_use]
+    pub fn new_with_exposed_tools(
+        searcher: ManifestSearchHandle,
+        exposed_tools: &BTreeSet<String>,
+    ) -> Self {
         let mut tool_router = Self::tool_router();
+        filter_tool_router(&mut tool_router, exposed_tools);
         if disable_tool_schemas() {
             tracing::info!("tool schemas disabled (DBT_NOVA_DISABLE_TOOL_SCHEMAS=1)");
             strip_tool_schemas(&mut tool_router);
@@ -423,6 +439,15 @@ fn strip_tool_schemas(tool_router: &mut ToolRouter<DbtNovaServer>) {
         route.attr.input_schema = empty_schema.clone();
         route.attr.output_schema = None;
     }
+}
+
+fn filter_tool_router(
+    tool_router: &mut ToolRouter<DbtNovaServer>,
+    exposed_tools: &BTreeSet<String>,
+) {
+    tool_router
+        .map
+        .retain(|tool_name, _| exposed_tools.contains(tool_name.as_ref()));
 }
 
 #[tool_router]

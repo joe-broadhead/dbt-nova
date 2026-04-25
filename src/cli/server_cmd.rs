@@ -144,6 +144,7 @@ async fn start_with_config_and_shutdown(
 
     let transport = config.server_transport;
     let http_settings = HttpServerSettings::from_config(&config);
+    let exposed_tools = config.resolved_mcp_tool_names();
     let searcher = ManifestSearchHandle::spawn(config);
     let ready_handle = searcher.clone();
     tokio::spawn(async move {
@@ -157,7 +158,7 @@ async fn start_with_config_and_shutdown(
         }
     });
 
-    let server = DbtNovaServer::new(searcher.clone());
+    let server = DbtNovaServer::new_with_exposed_tools(searcher.clone(), &exposed_tools);
     match transport {
         ServerTransport::Stdio => serve_stdio(server, shutdown).await,
         ServerTransport::StreamableHttp => {
