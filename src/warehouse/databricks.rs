@@ -1237,8 +1237,8 @@ mod tests {
 
     #[test]
     fn schema_preflight_statement_uses_valid_show_syntax() {
-        let statement = schema_preflight_statement("prod_datalake_analytics_unified");
-        assert_eq!(statement, "SHOW TABLES IN prod_datalake_analytics_unified");
+        let statement = schema_preflight_statement("analytics_reporting");
+        assert_eq!(statement, "SHOW TABLES IN analytics_reporting");
         assert!(
             !statement.to_ascii_uppercase().contains("LIMIT"),
             "schema preflight statement must not include LIMIT"

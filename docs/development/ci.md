@@ -41,7 +41,9 @@ Operational defaults:
   invocation (`dbt_command`), plus `dbt_env_json`,
   `dbt_secret_env_map_json`, optional workflow_call secret bundle
   (`DBT_NOVA_SECRET_BUNDLE_JSON`), optional installer source override
-  (`installer_repository`, `installer_ref`, `installer_install_mode`), optional models artifact, optional remote publish
+  (`installer_repository`, `installer_ref`, `installer_install_mode`), optional models artifact, staged/full semantic warmup
+  (`search_warm_strategy`), configurable build timeout
+  (`build_timeout_minutes`), optional remote publish
   targets (`s3`, `gcs`, `dbfs`) and `publish_dry_run`; models behavior is
   configured via `models_distribution_mode` (`none|publish_only|publish_and_bootstrap`)
 - **Invocation safety:** structured mode runs
