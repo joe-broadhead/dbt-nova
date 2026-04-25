@@ -446,8 +446,7 @@ impl ManifestPruner {
         if keep_base {
             return true;
         }
-        if self.matches_deny(unique_id, false)
-            || !Self::is_analysis(payload, forced_resource_type)
+        if self.matches_deny(unique_id, false) || !Self::is_analysis(payload, forced_resource_type)
         {
             return false;
         }
