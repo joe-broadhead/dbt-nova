@@ -64,6 +64,31 @@ dbt-nova manifest load \
   --manifest-path /path/to/target/manifest.json
 ```
 
+### Build indexes with manifest pruning
+
+```bash
+DBT_NOVA_PRUNE_ALLOW_IDS='["model.my_proj.fct_orders","model.my_proj.dim_*"]' \
+DBT_NOVA_PRUNE_DENY_IDS='["model.my_proj.dim_legacy_*"]' \
+dbt-nova manifest load \
+  --manifest-path /path/to/target/manifest.json \
+  --json
+```
+
+Generate `DBT_NOVA_PRUNE_ALLOW_IDS` from a dbt selector:
+
+```bash
+DBT_NOVA_PRUNE_ALLOW_IDS="$(
+  dbt ls -s <lineage selection expression> --output json --quiet \
+  | jq -cs '[.[] | .unique_id]'
+)" \
+dbt-nova manifest load \
+  --manifest-path /path/to/target/manifest.json \
+  --json
+```
+
+Prune variables must be valid JSON arrays of strings. Invalid JSON fails config
+validation and startup instead of falling back to an unpruned manifest.
+
 ### Rebuild manifest indexes with override settings
 
 ```bash

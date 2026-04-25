@@ -9,6 +9,8 @@
   "manifest_http_timeout_secs": 120,
   "manifest_fetch_timeout_secs": 300,
   "manifest_allow_http": false,
+  "manifest_prune_allow_ids": [],
+  "manifest_prune_deny_ids": [],
   "storage_dir": ".dbt-nova",
   "storage_instance_id": "",
   "cleanup_storage_on_start": false,

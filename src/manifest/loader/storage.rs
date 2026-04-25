@@ -44,6 +44,7 @@ pub(super) fn manifest_signature_matches_for_reuse(
     !existing.content_hash.is_empty()
         && !expected.content_hash.is_empty()
         && existing.content_hash == expected.content_hash
+        && existing.prune_fingerprint == expected.prune_fingerprint
 }
 
 pub(super) fn read_current_version(path: &Path) -> Result<Option<String>> {

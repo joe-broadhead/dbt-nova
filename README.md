@@ -124,6 +124,8 @@ Minimal MCP client config:
       "args": [],
       "env": {
         "DBT_MANIFEST_PATH": "/path/to/manifest.json",
+        "DBT_NOVA_PRUNE_ALLOW_IDS": "[\"model.my_proj.fct_orders\",\"model.my_proj.dim_*\"]",
+        "DBT_NOVA_PRUNE_DENY_IDS": "[\"model.my_proj.dim_legacy_*\"]",
         "DBT_NOVA_EMBEDDINGS_CACHE_DIR": "/Users/<you>/.dbt-nova/.fastembed_cache"
       }
     }
@@ -165,6 +167,8 @@ curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scrip
 # bash -s -- --slim --install-skills --skill analyst --non-interactive
 
 export DBT_MANIFEST_PATH=/path/to/manifest.json
+export DBT_NOVA_PRUNE_ALLOW_IDS='["model.my_proj.fct_orders","model.my_proj.dim_*"]'
+export DBT_NOVA_PRUNE_DENY_IDS='["model.my_proj.dim_legacy_*"]'
 export PATH="$HOME/.local/bin:$PATH"
 
 # Optional: enable semantic search layers after warming models/caches

@@ -36,6 +36,12 @@ or reranking in your MCP client, enable them explicitly with:
 - `DBT_NOVA_SEARCH_ENABLE_SPARSE=true`
 - `DBT_NOVA_SEARCH_ENABLE_RERANKER=true`
 
+Optional manifest pruning (applies to MCP server startup and reloads):
+- `DBT_NOVA_PRUNE_ALLOW_IDS` (JSON array of dbt `unique_id` patterns)
+- `DBT_NOVA_PRUNE_DENY_IDS` (JSON array of dbt `unique_id` patterns; deny wins)
+- Matching is on `unique_id`, not `fqn`.
+- Invalid JSON fails startup; do not use comma-separated strings.
+
 ## Prebuilt Consumer Setup
 
 If you consume prebuilt Nova storage artifacts (built by the reusable producer
@@ -116,6 +122,8 @@ For producer/consumer workflow details, see:
       "command": "/path/to/dbt-nova",
       "env": {
         "DBT_MANIFEST_PATH": "/path/to/manifest.json",
+        "DBT_NOVA_PRUNE_ALLOW_IDS": "[\"model.my_proj.fct_orders\",\"model.my_proj.dim_*\"]",
+        "DBT_NOVA_PRUNE_DENY_IDS": "[\"model.my_proj.dim_legacy_*\"]",
         "DBT_NOVA_EMBEDDINGS_CACHE_DIR": "/Users/<you>/.dbt-nova/.fastembed_cache",
         "DATABRICKS_HOST": "https://<workspace>.cloud.databricks.com",
         "DATABRICKS_HTTP_PATH": "/sql/1.0/warehouses/<warehouse_id>",
@@ -135,6 +143,8 @@ startup_timeout_sec = 60
 
 [mcp_servers.dbt-nova.env]
 DBT_MANIFEST_PATH = "/path/to/manifest.json"
+DBT_NOVA_PRUNE_ALLOW_IDS = "[\"model.my_proj.fct_orders\",\"model.my_proj.dim_*\"]"
+DBT_NOVA_PRUNE_DENY_IDS = "[\"model.my_proj.dim_legacy_*\"]"
 DATABRICKS_HOST = "https://<workspace>.cloud.databricks.com"
 DATABRICKS_HTTP_PATH = "/sql/1.0/warehouses/<warehouse_id>"
 DATABRICKS_ACCESS_TOKEN = "<token>"

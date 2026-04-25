@@ -21,6 +21,8 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_MANIFEST_HTTP_TIMEOUT_SECS` – HTTP request timeout for manifest fetches (`0` = disabled, default: `120`)
 - `DBT_NOVA_MANIFEST_FETCH_TIMEOUT_SECS` – total fetch deadline for manifest fetches (`0` = disabled, default: `300`)
 - `DBT_NOVA_MANIFEST_ALLOW_HTTP` – allow `http://` manifest URIs (`true`|`false`, default: `false`)
+- `DBT_NOVA_PRUNE_ALLOW_IDS` – optional JSON array of dbt `unique_id` patterns to retain (exact or glob, default: `[]`)
+- `DBT_NOVA_PRUNE_DENY_IDS` – optional JSON array of dbt `unique_id` patterns to exclude (exact or glob, default: `[]`; deny wins overlaps)
 - `DBT_NOVA_STORAGE_ARTIFACT_URI` – optional URI to prebuilt storage archive (`file://`, `s3://`, `gs://`, `dbfs://`, `http(s)://`)
 - `DBT_NOVA_METADATA_ARTIFACT_URI` – optional URI to prebuilt metadata contract JSON (required with `DBT_NOVA_STORAGE_ARTIFACT_URI`)
 - `DBT_NOVA_MODELS_ARTIFACT_URI` – optional URI to prebuilt models archive
@@ -70,6 +72,20 @@ Remote manifest notes:
 - Bootstrap precedence is deterministic: explicit env vars override bootstrap values, and bootstrap values override defaults.
 - Streamable HTTP mode has **no built-in authentication**. Keep it bound to loopback for local use, or set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when an authenticating reverse proxy is enforcing access in front of dbt-nova.
 - The MCP endpoint is mounted at `DBT_NOVA_HTTP_PATH`; plain probe endpoints are always available at `/healthz` and `/readyz`.
+
+Manifest pruning notes:
+- Matching is against dbt `unique_id` (not `fqn`).
+- Prune variables must be valid JSON arrays of strings; invalid JSON fails config validation and server startup.
+- If `DBT_NOVA_PRUNE_ALLOW_IDS` is empty, pruning starts from all entities, then applies deny rules.
+- `analysis` nodes are auto-included only when they directly depend on retained nodes and have no extra direct dependencies outside the retained set.
+- To generate a valid allow-list from dbt selectors, use `dbt ls` JSON output and extract `unique_id`:
+
+```bash
+export DBT_NOVA_PRUNE_ALLOW_IDS="$(
+  dbt ls -s <lineage selection expression> --output json --quiet \
+  | jq -cs '[.[] | .unique_id]'
+)"
+```
 
 ## Storage
 

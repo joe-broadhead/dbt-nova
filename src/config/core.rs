@@ -159,6 +159,10 @@ pub struct DbtNovaConfig {
     pub manifest_fetch_timeout_secs: u64,
     /// Allow non-TLS manifest URIs (http://). Disable to enforce HTTPS-only.
     pub manifest_allow_http: bool,
+    /// Optional allowlist of dbt `unique_id` patterns to retain during manifest parse.
+    pub manifest_prune_allow_ids: Vec<String>,
+    /// Optional denylist of dbt `unique_id` patterns to remove during manifest parse.
+    pub manifest_prune_deny_ids: Vec<String>,
     /// Base directory for on-disk storage (instances live under `storage_dir/instances`)
     pub storage_dir: String,
     /// Storage instance id (generated from manifest when empty)
@@ -252,6 +256,9 @@ pub struct DbtNovaConfig {
     /// Runtime bootstrap resolution status (not user-configurable).
     #[serde(skip)]
     pub bootstrap_status: Option<JsonValue>,
+    /// Configuration errors captured while reading fallible environment values.
+    #[serde(skip)]
+    pub env_errors: Vec<String>,
 }
 
 impl Default for DbtNovaConfig {
@@ -268,6 +275,8 @@ impl Default for DbtNovaConfig {
             manifest_http_timeout_secs: 120,
             manifest_fetch_timeout_secs: 300,
             manifest_allow_http: false,
+            manifest_prune_allow_ids: Vec::new(),
+            manifest_prune_deny_ids: Vec::new(),
             storage_dir: ".dbt-nova".to_string(),
             storage_instance_id: String::new(),
             cleanup_storage_on_start: false,
@@ -314,6 +323,7 @@ impl Default for DbtNovaConfig {
             governance_required_fields: default_governance_required_fields(),
             governance_gate: GovernanceGateConfig::default(),
             bootstrap_status: None,
+            env_errors: Vec::new(),
         }
     }
 }
@@ -345,6 +355,31 @@ fn default_governance_required_fields() -> HashMap<String, Vec<String>> {
 }
 
 impl DbtNovaConfig {
+    /// Whether manifest pruning is enabled.
+    #[must_use]
+    pub fn manifest_pruning_enabled(&self) -> bool {
+        !canonical_prune_patterns(&self.manifest_prune_allow_ids).is_empty()
+            || !canonical_prune_patterns(&self.manifest_prune_deny_ids).is_empty()
+    }
+
+    /// Deterministic fingerprint for pruning inputs used in cache/reuse identity.
+    #[must_use]
+    pub fn manifest_prune_fingerprint(&self) -> String {
+        if !self.manifest_pruning_enabled() {
+            return String::new();
+        }
+
+        let allow = canonical_prune_patterns(&self.manifest_prune_allow_ids);
+        let deny = canonical_prune_patterns(&self.manifest_prune_deny_ids);
+        let payload = serde_json::json!({
+            "allow": allow,
+            "deny": deny,
+        });
+        blake3::hash(payload.to_string().as_bytes())
+            .to_hex()
+            .to_string()
+    }
+
     /// Ensure a deterministic storage instance id is set.
     pub fn ensure_storage_instance_id(&mut self) {
         if !self.storage_instance_id.trim().is_empty() {
@@ -465,6 +500,10 @@ impl DbtNovaConfig {
     ///
     /// Returns an error when an invalid configuration is detected.
     pub fn validate(&self) -> Result<()> {
+        if !self.env_errors.is_empty() {
+            return Err(DbtNovaError::InvalidParams(self.env_errors.join("; ")));
+        }
+
         if !self.manifest_allow_http && self.manifest_uri.trim().starts_with("http://") {
             return Err(DbtNovaError::InvalidParams(
                 "manifest_allow_http=false but manifest_uri uses http://".to_string(),
@@ -722,6 +761,26 @@ impl DbtNovaConfig {
         }
         if let Some(value) = parse_bool("DBT_NOVA_MANIFEST_ALLOW_HTTP") {
             self.manifest_allow_http = value;
+        }
+        if let Some(value) = env_string("DBT_NOVA_PRUNE_ALLOW_IDS") {
+            match serde_json::from_str::<Vec<String>>(&value) {
+                Ok(patterns) => self.manifest_prune_allow_ids = patterns,
+                Err(err) => {
+                    self.env_errors.push(format!(
+                        "Invalid DBT_NOVA_PRUNE_ALLOW_IDS JSON; expected a JSON array of strings (error: {err})"
+                    ));
+                }
+            }
+        }
+        if let Some(value) = env_string("DBT_NOVA_PRUNE_DENY_IDS") {
+            match serde_json::from_str::<Vec<String>>(&value) {
+                Ok(patterns) => self.manifest_prune_deny_ids = patterns,
+                Err(err) => {
+                    self.env_errors.push(format!(
+                        "Invalid DBT_NOVA_PRUNE_DENY_IDS JSON; expected a JSON array of strings (error: {err})"
+                    ));
+                }
+            }
         }
     }
 
@@ -997,6 +1056,18 @@ impl DbtNovaConfig {
             self.governance_gate.block_on_failure = value;
         }
     }
+}
+
+fn canonical_prune_patterns(patterns: &[String]) -> Vec<String> {
+    let mut values: Vec<String> = patterns
+        .iter()
+        .filter_map(|pattern| {
+            let trimmed = pattern.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        })
+        .collect();
+    values.sort();
+    values
 }
 
 fn artifact_uri_scheme(uri: &str) -> String {
@@ -1519,5 +1590,127 @@ mod tests {
         }
 
         assert!(config.http_expect_auth_proxy);
+    }
+
+    #[test]
+    fn from_env_parses_manifest_prune_ids() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [
+            (
+                "DBT_NOVA_PRUNE_ALLOW_IDS",
+                Some("[\"model.pkg.orders\",\"analysis.pkg.*\"]"),
+            ),
+            ("DBT_NOVA_PRUNE_DENY_IDS", Some("[\"model.pkg.stg_*\"]")),
+        ];
+        let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let config = DbtNovaConfig::from_env();
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        assert_eq!(
+            config.manifest_prune_allow_ids,
+            vec!["model.pkg.orders".to_string(), "analysis.pkg.*".to_string()]
+        );
+        assert_eq!(
+            config.manifest_prune_deny_ids,
+            vec!["model.pkg.stg_*".to_string()]
+        );
+    }
+
+    #[test]
+    fn from_env_invalid_manifest_prune_json_fails_validation() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [
+            ("DBT_NOVA_PRUNE_ALLOW_IDS", Some("model.pkg.*")),
+            ("DBT_NOVA_PRUNE_DENY_IDS", Some("[\"model.pkg.stg_*\"]")),
+        ];
+        let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let config = DbtNovaConfig::from_env();
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let error = config
+            .validate()
+            .expect_err("invalid prune JSON should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("Invalid DBT_NOVA_PRUNE_ALLOW_IDS JSON")
+        );
+    }
+
+    #[test]
+    fn manifest_prune_fingerprint_is_order_independent() {
+        let config_a = DbtNovaConfig {
+            manifest_prune_allow_ids: vec![
+                "model.pkg.a".to_string(),
+                "model.pkg.b".to_string(),
+                String::new(),
+            ],
+            manifest_prune_deny_ids: vec![
+                "model.pkg.c".to_string(),
+                "model.pkg.d".to_string(),
+                "   ".to_string(),
+            ],
+            ..DbtNovaConfig::default()
+        };
+        let config_b = DbtNovaConfig {
+            manifest_prune_allow_ids: vec![" model.pkg.b ".to_string(), "model.pkg.a".to_string()],
+            manifest_prune_deny_ids: vec!["model.pkg.d".to_string(), " model.pkg.c ".to_string()],
+            ..DbtNovaConfig::default()
+        };
+        assert_eq!(
+            config_a.manifest_prune_fingerprint(),
+            config_b.manifest_prune_fingerprint()
+        );
+        assert!(config_a.manifest_pruning_enabled());
     }
 }
