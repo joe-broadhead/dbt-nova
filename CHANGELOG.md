@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reusable asset builds now expose `search_warm_strategy` (`staged` or `full`) and
   `build_timeout_minutes` inputs so large manifests can warm semantic assets in
   bounded stages and choose an explicit job timeout.
+- Manifest unique_id pruning via `DBT_NOVA_PRUNE_ALLOW_IDS` and
+  `DBT_NOVA_PRUNE_DENY_IDS`, with cache identity isolation and fail-fast
+  validation for malformed prune JSON.
 
 ### Changed
 

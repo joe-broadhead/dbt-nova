@@ -40,6 +40,7 @@ Optional manifest pruning (applies to MCP server startup and reloads):
 - `DBT_NOVA_PRUNE_ALLOW_IDS` (JSON array of dbt `unique_id` patterns)
 - `DBT_NOVA_PRUNE_DENY_IDS` (JSON array of dbt `unique_id` patterns; deny wins)
 - Matching is on `unique_id`, not `fqn`.
+- Invalid JSON fails startup; do not use comma-separated strings.
 
 ## Prebuilt Consumer Setup
 

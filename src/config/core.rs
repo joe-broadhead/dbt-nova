@@ -1666,7 +1666,9 @@ mod tests {
             }
         }
 
-        let error = config.validate().expect_err("invalid prune JSON should fail");
+        let error = config
+            .validate()
+            .expect_err("invalid prune JSON should fail");
         assert!(
             error
                 .to_string()

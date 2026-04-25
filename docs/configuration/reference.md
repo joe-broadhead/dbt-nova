@@ -75,6 +75,7 @@ Remote manifest notes:
 
 Manifest pruning notes:
 - Matching is against dbt `unique_id` (not `fqn`).
+- Prune variables must be valid JSON arrays of strings; invalid JSON fails config validation and server startup.
 - If `DBT_NOVA_PRUNE_ALLOW_IDS` is empty, pruning starts from all entities, then applies deny rules.
 - `analysis` nodes are auto-included only when they directly depend on retained nodes and have no extra direct dependencies outside the retained set.
 - To generate a valid allow-list from dbt selectors, use `dbt ls` JSON output and extract `unique_id`:

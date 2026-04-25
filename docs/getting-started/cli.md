@@ -86,6 +86,9 @@ dbt-nova manifest load \
   --json
 ```
 
+Prune variables must be valid JSON arrays of strings. Invalid JSON fails config
+validation and startup instead of falling back to an unpruned manifest.
+
 ### Rebuild manifest indexes with override settings
 
 ```bash
