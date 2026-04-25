@@ -292,7 +292,7 @@ fn prepare_storage(
     let mut artifact_consumer_status = build_artifact_consumer_status(config, None, None);
     if config.remote_artifact_mode_enabled() {
         let evaluated_at_ms = current_time_ms();
-        let materialization = materialize_file_artifacts(config, &signature.content_hash)?;
+        let materialization = materialize_file_artifacts(config, &version_hash)?;
         if let Some(outcome) = materialization {
             let last_materialized_at_ms =
                 if outcome.storage_materialized || outcome.models_materialized {
@@ -1274,6 +1274,70 @@ mod tests {
         assert_eq!(scoped_manifest_hash(&unpruned), "same-hash");
         assert_ne!(scoped_manifest_hash(&pruned), "same-hash");
         assert_eq!(scoped_manifest_hash(&pruned).len(), 64);
+    }
+
+    #[test]
+    fn prepare_storage_validates_artifacts_with_scoped_manifest_hash() {
+        let temp = tempdir().unwrap_or_else(|err| panic!("tempdir failed: {err}"));
+        let manifest_path = temp.path().join("manifest.json");
+        std::fs::write(&manifest_path, br#"{"metadata":{"dbt_version":"1.10.0"}}"#)
+            .expect("write manifest");
+
+        let mut config = DbtNovaConfig {
+            storage_dir: temp.path().join("storage").to_string_lossy().to_string(),
+            storage_instance_id: "analytics-prod".to_string(),
+            manifest_prune_allow_ids: vec!["model.pkg.orders".to_string()],
+            artifact_fetch_policy: crate::config::ArtifactFetchPolicy::Never,
+            ..DbtNovaConfig::default()
+        };
+        std::fs::create_dir_all(
+            temp.path()
+                .join("storage")
+                .join("instances")
+                .join("analytics-prod")
+                .join("versions")
+                .join("existing"),
+        )
+        .expect("create existing storage marker");
+
+        let mut signature =
+            manifest_signature(&manifest_path, manifest_path.to_string_lossy().as_ref())
+                .expect("manifest signature");
+        signature.prune_fingerprint = config.manifest_prune_fingerprint();
+        let scoped_hash = scoped_manifest_hash(&signature);
+
+        let metadata_path = temp.path().join("nova-build-metadata.json");
+        std::fs::write(
+            &metadata_path,
+            format!(
+                r#"{{
+  "contract_version":"v1",
+  "manifest_hash":"{scoped_hash}",
+  "manifest_version":"v12",
+  "entity_count":1,
+  "storage_instance_id":"analytics-prod",
+  "dbt_nova_version":"0.0.4",
+  "build_timestamp":"2026-04-25T00:00:00Z",
+  "artifact_name_storage":"storage.tar.gz",
+  "artifact_name_models":""
+}}"#
+            ),
+        )
+        .expect("write metadata");
+        config.storage_artifact_uri = temp
+            .path()
+            .join("unused-storage.tar.gz")
+            .to_string_lossy()
+            .to_string();
+        config.metadata_artifact_uri = metadata_path.to_string_lossy().to_string();
+
+        let resolution = crate::manifest::source::ManifestResolution {
+            local_path: manifest_path.clone(),
+            source_uri: manifest_path.to_string_lossy().to_string(),
+            cached: false,
+        };
+        prepare_storage(&config, &resolution, JsonValue::Null)
+            .expect("scoped metadata hash should validate");
     }
 
     #[test]
