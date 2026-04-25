@@ -358,7 +358,8 @@ impl DbtNovaConfig {
     /// Whether manifest pruning is enabled.
     #[must_use]
     pub fn manifest_pruning_enabled(&self) -> bool {
-        !self.manifest_prune_allow_ids.is_empty() || !self.manifest_prune_deny_ids.is_empty()
+        !canonical_prune_patterns(&self.manifest_prune_allow_ids).is_empty()
+            || !canonical_prune_patterns(&self.manifest_prune_deny_ids).is_empty()
     }
 
     /// Deterministic fingerprint for pruning inputs used in cache/reuse identity.
@@ -368,10 +369,8 @@ impl DbtNovaConfig {
             return String::new();
         }
 
-        let mut allow = self.manifest_prune_allow_ids.clone();
-        let mut deny = self.manifest_prune_deny_ids.clone();
-        allow.sort();
-        deny.sort();
+        let allow = canonical_prune_patterns(&self.manifest_prune_allow_ids);
+        let deny = canonical_prune_patterns(&self.manifest_prune_deny_ids);
         let payload = serde_json::json!({
             "allow": allow,
             "deny": deny,
@@ -1059,6 +1058,18 @@ impl DbtNovaConfig {
     }
 }
 
+fn canonical_prune_patterns(patterns: &[String]) -> Vec<String> {
+    let mut values: Vec<String> = patterns
+        .iter()
+        .filter_map(|pattern| {
+            let trimmed = pattern.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        })
+        .collect();
+    values.sort();
+    values
+}
+
 fn artifact_uri_scheme(uri: &str) -> String {
     let lower = uri.trim().to_ascii_lowercase();
     if lower.starts_with("dbfs:/") && !lower.starts_with("dbfs://") {
@@ -1679,13 +1690,21 @@ mod tests {
     #[test]
     fn manifest_prune_fingerprint_is_order_independent() {
         let config_a = DbtNovaConfig {
-            manifest_prune_allow_ids: vec!["model.pkg.a".to_string(), "model.pkg.b".to_string()],
-            manifest_prune_deny_ids: vec!["model.pkg.c".to_string(), "model.pkg.d".to_string()],
+            manifest_prune_allow_ids: vec![
+                "model.pkg.a".to_string(),
+                "model.pkg.b".to_string(),
+                String::new(),
+            ],
+            manifest_prune_deny_ids: vec![
+                "model.pkg.c".to_string(),
+                "model.pkg.d".to_string(),
+                "   ".to_string(),
+            ],
             ..DbtNovaConfig::default()
         };
         let config_b = DbtNovaConfig {
-            manifest_prune_allow_ids: vec!["model.pkg.b".to_string(), "model.pkg.a".to_string()],
-            manifest_prune_deny_ids: vec!["model.pkg.d".to_string(), "model.pkg.c".to_string()],
+            manifest_prune_allow_ids: vec![" model.pkg.b ".to_string(), "model.pkg.a".to_string()],
+            manifest_prune_deny_ids: vec!["model.pkg.d".to_string(), " model.pkg.c ".to_string()],
             ..DbtNovaConfig::default()
         };
         assert_eq!(

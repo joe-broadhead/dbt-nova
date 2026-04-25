@@ -195,7 +195,7 @@ impl ManifestSearch {
         let search_backends = build_search_backends_for_manifest(
             &mut config,
             &reused.storage_dir,
-            &storage.signature.content_hash,
+            &storage.signature,
             &accumulator,
             &entities,
             reused.tantivy_opened,
@@ -276,15 +276,7 @@ fn prepare_storage(
         ))
     })?;
     signature.prune_fingerprint = config.manifest_prune_fingerprint();
-    let version_hash = if signature.prune_fingerprint.is_empty() {
-        signature.content_hash.clone()
-    } else {
-        blake3::hash(
-            format!("{}:{}", signature.content_hash, signature.prune_fingerprint).as_bytes(),
-        )
-        .to_hex()
-        .to_string()
-    };
+    let version_hash = scoped_manifest_hash(&signature);
     let mut version_id = version_hash.chars().take(12).collect::<String>();
     if version_id.is_empty() {
         version_id = "unknown".to_string();
@@ -348,6 +340,7 @@ fn load_reusable_artifacts(
     let mut entities: Option<EntityStore> = None;
     let mut reuse_store = false;
     let mut tantivy_opened: Option<TantivySearcher> = None;
+    let mut matched_signature = false;
 
     if let Some(current) = &current_version {
         let current_dir = versions_root.join(current);
@@ -357,6 +350,7 @@ fn load_reusable_artifacts(
         {
             storage_dir = current_dir;
             signature_path = current_sig_path;
+            matched_signature = true;
             if let Ok(store) = EntityStore::open(&storage_dir) {
                 entities = Some(store);
                 reuse_store = true;
@@ -365,9 +359,14 @@ fn load_reusable_artifacts(
                 tantivy_opened = opened;
             }
         }
-    } else if let Some(existing) = read_manifest_signature(&signature_path)?
+    }
+
+    if !matched_signature
+        && let Some(existing) = read_manifest_signature(initial_signature_path)?
         && manifest_signature_matches_for_reuse(&existing, signature)
     {
+        storage_dir = initial_storage_dir.to_path_buf();
+        signature_path = initial_signature_path.to_path_buf();
         if let Ok(store) = EntityStore::open(&storage_dir) {
             entities = Some(store);
             reuse_store = true;
@@ -706,12 +705,12 @@ fn build_search_indexes(
 fn build_search_backends_for_manifest(
     config: &mut DbtNovaConfig,
     storage_dir: &Path,
-    signature_hash: &str,
+    signature: &ManifestSignature,
     accumulator: &ManifestAccumulator,
     entities: &EntityStore,
     tantivy_opened: Option<TantivySearcher>,
 ) -> Result<SearchBackends> {
-    config.search.manifest_hash = Some(signature_hash.to_string());
+    config.search.manifest_hash = Some(scoped_manifest_hash(signature));
     build_search_indexes(
         storage_dir,
         accumulator,
@@ -719,6 +718,18 @@ fn build_search_backends_for_manifest(
         &config.search,
         tantivy_opened,
     )
+}
+
+fn scoped_manifest_hash(signature: &ManifestSignature) -> String {
+    if signature.prune_fingerprint.is_empty() {
+        signature.content_hash.clone()
+    } else {
+        blake3::hash(
+            format!("{}:{}", signature.content_hash, signature.prune_fingerprint).as_bytes(),
+        )
+        .to_hex()
+        .to_string()
+    }
 }
 
 fn build_runtime_components(
@@ -1246,5 +1257,66 @@ mod tests {
             source_uri: "file:///old/path".to_string(),
         };
         assert!(!manifest_signature_matches_for_reuse(&existing, &expected));
+    }
+
+    #[test]
+    fn scoped_manifest_hash_includes_prune_fingerprint() {
+        let unpruned = ManifestSignature {
+            content_hash: "same-hash".to_string(),
+            prune_fingerprint: String::new(),
+            ..ManifestSignature::default()
+        };
+        let pruned = ManifestSignature {
+            content_hash: "same-hash".to_string(),
+            prune_fingerprint: "fingerprint-a".to_string(),
+            ..ManifestSignature::default()
+        };
+        assert_eq!(scoped_manifest_hash(&unpruned), "same-hash");
+        assert_ne!(scoped_manifest_hash(&pruned), "same-hash");
+        assert_eq!(scoped_manifest_hash(&pruned).len(), 64);
+    }
+
+    #[test]
+    fn reusable_artifacts_fall_back_to_computed_version_when_current_differs() {
+        let temp = tempdir().unwrap_or_else(|err| panic!("tempdir failed: {err}"));
+        let instance_root = temp.path().join("instance");
+        let versions_root = instance_root.join("versions");
+        let current_dir = versions_root.join("current-scope");
+        let computed_dir = versions_root.join("computed-scope");
+        std::fs::create_dir_all(&current_dir).expect("create current version dir");
+        std::fs::create_dir_all(&computed_dir).expect("create computed version dir");
+
+        let expected = ManifestSignature {
+            content_hash: "same-hash".to_string(),
+            prune_fingerprint: "fingerprint-a".to_string(),
+            ..ManifestSignature::default()
+        };
+        let other_scope = ManifestSignature {
+            content_hash: "same-hash".to_string(),
+            prune_fingerprint: "fingerprint-b".to_string(),
+            ..ManifestSignature::default()
+        };
+        write_manifest_signature(&current_dir.join(MANIFEST_SIGNATURE_FILENAME), &other_scope)
+            .expect("write current signature");
+        write_manifest_signature(&computed_dir.join(MANIFEST_SIGNATURE_FILENAME), &expected)
+            .expect("write computed signature");
+        write_current_version(&instance_root, "current-scope").expect("write current pointer");
+
+        let reused = load_reusable_artifacts(
+            &DbtNovaConfig::default(),
+            &instance_root,
+            &versions_root,
+            &expected,
+            &computed_dir,
+            &computed_dir.join(MANIFEST_SIGNATURE_FILENAME),
+        )
+        .expect("load reusable artifacts");
+
+        assert_eq!(reused.current_version.as_deref(), Some("current-scope"));
+        assert_eq!(reused.storage_dir, computed_dir);
+        assert_eq!(
+            reused.signature_path,
+            reused.storage_dir.join(MANIFEST_SIGNATURE_FILENAME)
+        );
     }
 }
