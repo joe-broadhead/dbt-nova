@@ -74,6 +74,14 @@ Remote manifest notes:
 - Bootstrap precedence is deterministic: explicit env vars override bootstrap values, and bootstrap values override defaults.
 - Tool filtering precedence is deterministic: allowlist is applied first, then denylist; denylist wins when both include the same tool.
 - Tool filter names are strict and case-sensitive. Unknown names in either list fail startup validation with a hard error.
+- Tool filter examples:
+  - Allowlist only (expose only discovery + entity lookup):
+    - `DBT_NOVA_TOOL_ALLOWLIST=search,get_entity`
+  - Denylist only (hide query execution tools):
+    - `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe`
+  - Combined with denylist precedence (effective exposed set: `search`):
+    - `DBT_NOVA_TOOL_ALLOWLIST=search,execute_sql`
+    - `DBT_NOVA_TOOL_DENYLIST=execute_sql`
 - Streamable HTTP mode has **no built-in authentication**. Keep it bound to loopback for local use, or set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when an authenticating reverse proxy is enforcing access in front of dbt-nova.
 - The MCP endpoint is mounted at `DBT_NOVA_HTTP_PATH`; plain probe endpoints are always available at `/healthz` and `/readyz`.
 
