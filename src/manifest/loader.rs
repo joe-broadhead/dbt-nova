@@ -892,7 +892,7 @@ fn assemble_manifest_search(context: AssembleContext) -> ManifestSearch {
         lineage_cache_hits: AtomicU64::new(0),
         lineage_cache_misses: AtomicU64::new(0),
         manifest_source_uri,
-        manifest_hash: storage.signature.content_hash,
+        manifest_hash: scoped_manifest_hash(&storage.signature),
         manifest_len: storage.signature.len,
         manifest_modified_ms: storage.signature.modified_ms,
         manifest_version: storage.version_id,
@@ -1338,6 +1338,36 @@ mod tests {
         };
         prepare_storage(&config, &resolution, JsonValue::Null)
             .expect("scoped metadata hash should validate");
+    }
+
+    #[test]
+    fn manifest_search_reports_scoped_manifest_hash_when_pruned() {
+        let temp = tempdir().unwrap_or_else(|err| panic!("tempdir failed: {err}"));
+        let manifest_path = temp.path().join("manifest.json");
+        std::fs::copy(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/minimal.json"),
+            &manifest_path,
+        )
+        .expect("copy fixture manifest");
+
+        let config = DbtNovaConfig {
+            manifest_path: manifest_path.to_string_lossy().to_string(),
+            storage_dir: temp.path().join("storage").to_string_lossy().to_string(),
+            storage_instance_id: "scoped-report".to_string(),
+            manifest_prune_allow_ids: vec!["model.pkg.model_a".to_string()],
+            ..DbtNovaConfig::default()
+        };
+        let mut signature =
+            manifest_signature(&manifest_path, manifest_path.to_string_lossy().as_ref())
+                .expect("manifest signature");
+        signature.prune_fingerprint = config.manifest_prune_fingerprint();
+        let expected_hash = scoped_manifest_hash(&signature);
+
+        assert_ne!(expected_hash, signature.content_hash);
+
+        let loaded = ManifestSearch::new(config).expect("load manifest search");
+
+        assert_eq!(loaded.search.manifest_hash, expected_hash);
     }
 
     #[test]
