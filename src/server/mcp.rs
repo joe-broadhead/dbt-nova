@@ -998,12 +998,14 @@ fn sql_queue_timeout(config: &crate::config::DbtNovaConfig) -> Option<Duration> 
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::path::Path;
 
     use tempfile::TempDir;
 
     use super::*;
     use crate::tests::common::fixture_manifest_path_string;
+    use crate::tools::catalog::MCP_TOOL_NAMES;
 
     fn test_config(storage_root: &Path) -> crate::config::DbtNovaConfig {
         let mut config = crate::config::DbtNovaConfig {
@@ -1027,6 +1029,22 @@ mod tests {
             .await
             .expect("fixture manifest should load");
         DbtNovaServer::new(handle)
+    }
+
+    #[test]
+    fn mcp_tool_catalog_matches_registered_router_names() {
+        let router_names = DbtNovaServer::tool_router()
+            .map
+            .keys()
+            .map(|name| name.as_ref().to_string())
+            .collect::<BTreeSet<_>>();
+        let catalog_names = MCP_TOOL_NAMES
+            .iter()
+            .map(|name| (*name).to_string())
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(MCP_TOOL_NAMES.len(), catalog_names.len());
+        assert_eq!(catalog_names, router_names);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
