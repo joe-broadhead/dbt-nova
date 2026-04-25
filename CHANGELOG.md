@@ -7,7 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.0.4] - 2026-04-28
+## [0.0.4] - 2026-04-25
+
 ### Added
 
 - CLI-only `dbt-nova audit nova-meta` validation for `meta.nova`, with project/file/resource/column targeting, JSON output, schema validation against `schemas/nova/v0.json`, and local semantic checks for references, grain consistency, duplicate definitions, and filter-operator rules.
@@ -24,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reusable metadata audit workflow plus `dbt-nova audit metadata-score` CLI support for project-wide, changed-entity, and explicit-entity metadata gating in CI.
 - Query-aware Nova semantic previews in search results, plus stronger canonical measure/metric ranking so analyst search surfaces the preferred execution model and formula directly.
 - Tagged releases now publish a smoke-tested OCI image for hosted/server deployments.
+- Reusable asset builds now expose `search_warm_strategy` (`staged` or `full`) and
+  `build_timeout_minutes` inputs so large manifests can warm semantic assets in
+  bounded stages and choose an explicit job timeout.
 
 ### Changed
 
@@ -39,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bundle selectors are mapped for compatibility.
 - CI hardening now includes lower-memory lint/coverage/test settings and extra
   runner disk cleanup for the `test` job.
-- Reusable asset publishing now supports GitHub OIDC for GCS targets, refreshes GCS access tokens during longer uploads, uses `gcloud storage cp` for large transfers, and applies higher publish timeout budgets.
+- Reusable asset publishing now supports GitHub OIDC for GCS targets, refreshes GCS access tokens during longer uploads, uses `gcloud storage cp` for large transfers, defaults semantic cache warmup to staged mode, and applies configurable build/publish timeout budgets.
 - Metadata audit and reusable asset workflows now support the shared `DBT_NOVA_SECRET_BUNDLE_JSON` secret-bundle contract for cross-repo dbt execution.
 - Analyst search now prefers matched canonical Nova measures and metrics more strongly, including cases where the same business term appears across multiple models or alongside standalone dbt `metric` entities.
 - Release automation now pushes the exact smoke-tested OCI image instead of rebuilding a separate image during release.
@@ -81,6 +85,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   acknowledgement explicitly for hosted deployments, and startup logs now warn
   clearly that the built-in streamable HTTP transport has no authentication layer.
 - Cold-start search model failures now degrade safely by disabling broken empty search indexes instead of leaving startup wedged.
+- Bootstrap artifact hydration now works when invoked from an existing current-thread
+  Tokio runtime, fixing hosted/embedded startup paths that fetch bootstrap contracts
+  during server initialization.
 - Metadata audit tests now use isolated storage roots under parallel execution, and the reusable audit workflow no longer cancels sibling invocations on the same ref.
 - Documentation and dependency maintenance issues that broke docs or security checks were corrected (`Pygments` compatibility and `tar` advisory updates).
 - Release installs with `--install-skills` now work with the standalone

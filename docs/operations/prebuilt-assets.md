@@ -41,9 +41,8 @@ read-only reuse after local materialization.
 
 Create a workflow in the downstream repo that calls Nova's reusable producer.
 
-The examples below pin a commit SHA because they rely on the current
-unreleased secret-bundle workflow contract. After the next release, replace
-that SHA with the corresponding release tag.
+The examples below pin `v0.0.4`. For production, pin either a release tag or an
+immutable commit SHA and keep `installer_ref` aligned with the workflow ref.
 
 ```yaml
 name: Build Nova Assets
@@ -54,11 +53,11 @@ on:
 jobs:
   build_nova_assets:
     # Pin to a release tag or commit SHA
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@c443c5c301db04189fea690ff1adc32823721d11
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.4
     with:
       manifest_path: target/manifest.json
       storage_instance_id: analytics-prod
-      installer_ref: c443c5c301db04189fea690ff1adc32823721d11
+      installer_ref: v0.0.4
       installer_install_mode: auto
       artifact_name_prefix: analytics-prod
       retention_days: 14
@@ -74,6 +73,8 @@ Alternative producer inputs:
 - `dbt_env_json` (JSON object of non-secret env vars exported before dbt invocation)
 - `dbt_secret_env_map_json` (JSON object mapping env var names to secret names)
 - `models_distribution_mode` (`none`, `publish_only`, `publish_and_bootstrap`)
+- `search_warm_strategy` (`staged` by default, or `full`)
+- `build_timeout_minutes` (integer `1..360`, default `360`)
 - workflow_call secret `DBT_NOVA_SECRET_BUNDLE_JSON` (optional JSON object of
   `secret-name -> secret-value` entries for cross-owner reusable workflow calls)
 
@@ -97,7 +98,7 @@ workflow works across Databricks, BigQuery, DuckDB, and mixed profiles:
 ```yaml
 jobs:
   build_nova_assets:
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@c443c5c301db04189fea690ff1adc32823721d11
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.4
     with:
       dbt_generate_manifest: true
       dbt_command_args_json: >-
@@ -116,7 +117,7 @@ DBFS publish wrapper example:
 ```yaml
 jobs:
   build_nova_assets:
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@c443c5c301db04189fea690ff1adc32823721d11
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.4
     with:
       dbt_generate_manifest: true
       dbt_command_args_json: >-
@@ -126,12 +127,14 @@ jobs:
       dbt_secret_env_map_json: >-
         {"DBT_ACCESS_TOKEN":"DBT_ACCESS_TOKEN","DATABRICKS_ACCESS_TOKEN":"DBT_ACCESS_TOKEN"}
       storage_instance_id: analytics-prod
-      installer_ref: c443c5c301db04189fea690ff1adc32823721d11
+      installer_ref: v0.0.4
       installer_install_mode: source
       publish_targets: dbfs
       publish_dbfs_prefix: dbfs:/FileStore/projects/my-project/nova-assets/prod
       publish_dry_run: false
       models_distribution_mode: none
+      search_warm_strategy: staged
+      build_timeout_minutes: 360
     secrets:
       DBT_NOVA_SECRET_BUNDLE_JSON: ${{ secrets.DBT_NOVA_SECRET_BUNDLE_JSON }}
 ```
@@ -148,6 +151,13 @@ Notes:
   2) inherited workflow secrets (`secrets: inherit`, same-owner/org calls).
 - Missing mapped secrets fail fast before dbt invocation.
 - Use trusted `dbt_command` only when you explicitly need shell semantics.
+- Keep `search_warm_strategy: staged` for large manifests or memory-constrained
+  runners. It warms dense, sparse, and reranker assets in separate bounded steps
+  instead of one full warmup process. Use `full` only when the runner has enough
+  memory and you want the legacy single-step warm behavior.
+- Increase `build_timeout_minutes` for large dbt projects or remote publishes
+  that need more than the default job budget; the workflow validates values from
+  `1` to `360`.
 
 Secret setup patterns:
 

@@ -129,6 +129,23 @@ jobs:
         with:
           cosign-release: "v2.4.1"
 
+      - name: Extract release notes
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          release_version="${RELEASE_TAG#v}"
+          awk -v version="${release_version}" '
+            index($0, "## [" version "]") == 1 { in_release=1; next }
+            /^## \[/ && in_release { exit }
+            in_release { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "Failed to extract release notes for ${release_version} from CHANGELOG.md."
+            exit 1
+          fi
+
       - name: Build (release, all features)
         env:
           TARGET_TRIPLE: ${{ matrix.target }}
@@ -170,6 +187,7 @@ jobs:
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b
         with:
           tag_name: ${{ needs.validate.outputs.release_tag }}
+          body_path: RELEASE_NOTES.md
           files: |
             dbt-nova-${{ matrix.asset }}.tar.gz
             dbt-nova-${{ matrix.asset }}.sha256
