@@ -36,6 +36,17 @@ jobs:
             exit 1
           fi
 
+          unreleased_content="$(awk '
+            /^## \[Unreleased\]/ { in_unreleased=1; next }
+            /^## \[/ && in_unreleased { exit }
+            in_unreleased && NF { print }
+          ' CHANGELOG.md)"
+          if [ -n "${unreleased_content}" ]; then
+            echo "CHANGELOG.md [Unreleased] must be empty before preparing a release."
+            echo "${unreleased_content}"
+            exit 1
+          fi
+
       - name: Create release branch
         env:
           VERSION: ${{ inputs.version }}

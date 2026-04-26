@@ -12,10 +12,7 @@ on:
         type: string
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
-  packages: write
+  contents: read
 
 jobs:
   validate:
@@ -100,6 +97,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     needs: validate
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -175,6 +177,15 @@ jobs:
               "$artifact"
           done
 
+      - name: Generate SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610
+        with:
+          path: .
+          format: spdx-json
+          output-file: dbt-nova-${{ matrix.asset }}.sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
       - name: Publish build provenance
         if: ${{ !github.event.repository.private }}
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
@@ -182,6 +193,7 @@ jobs:
           subject-path: |
             dbt-nova-${{ matrix.asset }}.tar.gz
             dbt-nova-${{ matrix.asset }}.sha256
+            dbt-nova-${{ matrix.asset }}.sbom.spdx.json
 
       - name: Publish release assets
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b
@@ -195,6 +207,7 @@ jobs:
             dbt-nova-${{ matrix.asset }}.tar.gz.crt
             dbt-nova-${{ matrix.asset }}.sha256.sig
             dbt-nova-${{ matrix.asset }}.sha256.crt
+            dbt-nova-${{ matrix.asset }}.sbom.spdx.json
 
   container:
     name: Publish OCI image
