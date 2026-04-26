@@ -2,8 +2,8 @@ name: Deploy Documentation
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - master
   workflow_dispatch:
 
 permissions:
@@ -50,6 +50,7 @@ jobs:
           path: site
 
   deploy:
+    if: github.ref == 'refs/heads/master'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

@@ -131,7 +131,7 @@ Operational defaults:
 ### Docs Deploy
 
 - **File:** `.github/workflows/docs.yml`
-- **Trigger:** `v*` tag push
+- **Trigger:** `master` push or manual dispatch
 - **Action:** builds MkDocs and publishes to GitHub Pages
 
 ## Required Permissions
