@@ -327,7 +327,6 @@ jobs:
           INPUT_STORAGE_INSTANCE_ID: ${{ inputs.storage_instance_id }}
           INPUT_ARTIFACT_NAME_PREFIX: ${{ inputs.artifact_name_prefix }}
           INPUT_RETENTION_DAYS: ${{ inputs.retention_days }}
-          JOB_WORKFLOW_REF: ${{ github.job_workflow_ref }}
           WORKFLOW_REF: ${{ github.workflow_ref }}
           ACTION_REPOSITORY: ${{ github.action_repository }}
           CURRENT_REPOSITORY: ${{ github.repository }}
@@ -384,7 +383,6 @@ jobs:
           storage_instance_id = os.environ["INPUT_STORAGE_INSTANCE_ID"].strip() or "metadata-audit"
           artifact_name_prefix = os.environ["INPUT_ARTIFACT_NAME_PREFIX"].strip() or "dbt-nova-metadata-audit"
           retention_days = os.environ["INPUT_RETENTION_DAYS"].strip()
-          job_workflow_ref = os.environ.get("JOB_WORKFLOW_REF", "")
           workflow_ref = os.environ.get("WORKFLOW_REF", "")
           action_repository = os.environ.get("ACTION_REPOSITORY", "")
           current_repository = os.environ.get("CURRENT_REPOSITORY", "")
@@ -440,13 +438,6 @@ jobs:
           if not retention_days.isdigit() or not (1 <= int(retention_days) <= 90):
               fail("retention_days must be an integer between 1 and 90.")
 
-          if (not installer_repository or not installer_ref) and job_workflow_ref and "/.github/workflows/" in job_workflow_ref and "@" in job_workflow_ref:
-              workflow_repository = job_workflow_ref.split("/.github/workflows/")[0]
-              workflow_ref_value = job_workflow_ref.rsplit("@", 1)[1]
-              if not installer_repository:
-                  installer_repository = workflow_repository
-              if not installer_ref and installer_repository == workflow_repository:
-                  installer_ref = workflow_ref_value
           if (not installer_repository or not installer_ref) and workflow_ref and "/.github/workflows/" in workflow_ref and "@" in workflow_ref:
               workflow_repository = workflow_ref.split("/.github/workflows/")[0]
               workflow_ref_value = workflow_ref.rsplit("@", 1)[1]

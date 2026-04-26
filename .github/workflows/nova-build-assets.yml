@@ -275,7 +275,6 @@ jobs:
           INPUT_GCP_PROJECT_ID: ${{ inputs.gcp_project_id }}
           INPUT_PUBLISH_DBFS_PREFIX: ${{ inputs.publish_dbfs_prefix }}
           INPUT_PUBLISH_DRY_RUN: ${{ inputs.publish_dry_run }}
-          JOB_WORKFLOW_REF: ${{ github.job_workflow_ref }}
           WORKFLOW_REF: ${{ github.workflow_ref }}
           ACTION_REPOSITORY: ${{ github.action_repository }}
           ACTION_REF: ${{ github.action_ref }}
@@ -614,19 +613,6 @@ jobs:
               exit 1
             fi
           done
-
-          if [[ -z "${installer_repository}" || -z "${installer_ref}" ]]; then
-            if [[ -n "${JOB_WORKFLOW_REF:-}" && "${JOB_WORKFLOW_REF}" == *"/.github/workflows/"* && "${JOB_WORKFLOW_REF}" == *"@"* ]]; then
-              job_workflow_repository="${JOB_WORKFLOW_REF%%/.github/workflows/*}"
-              job_workflow_ref="${JOB_WORKFLOW_REF##*@}"
-              if [[ -z "${installer_repository}" ]]; then
-                installer_repository="${job_workflow_repository}"
-              fi
-              if [[ -z "${installer_ref}" && "${installer_repository}" == "${job_workflow_repository}" ]]; then
-                installer_ref="${job_workflow_ref}"
-              fi
-            fi
-          fi
 
           if [[ -z "${installer_repository}" ]]; then
             if [[ -n "${WORKFLOW_REF:-}" && "${WORKFLOW_REF}" == *"/.github/workflows/"* && "${WORKFLOW_REF}" == *"@"* ]]; then

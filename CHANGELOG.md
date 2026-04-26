@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.0.4] - 2026-04-25
+## [0.0.4] - 2026-04-26
 
 ### Added
 
@@ -53,6 +53,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release preparation and tagged releases now validate `Cargo.toml` and `CHANGELOG.md`
   against the requested version/tag so published binaries, OCI images, and release notes
   stay aligned.
+- Reusable workflows now derive installer defaults from the supported
+  `github.workflow_ref` context only, keeping asset build and metadata audit
+  workflow validation compatible with `actionlint`.
+- Release builds now attach SPDX JSON SBOMs, use narrower job-level permissions,
+  and block release preparation if the `[Unreleased]` changelog section still
+  contains entries.
+- Crate metadata and the security policy now include fuller publication and
+  coordinated-disclosure details.
 - CI now lints and tests `--all-features`, and adds an explicit Rust 1.93 MSRV check to
   match the declared minimum supported toolchain.
 - Monthly fuzz maintenance now uses a shared Rust cache and a larger timeout budget so nightly fuzz targets spend time fuzzing instead of recompiling.
