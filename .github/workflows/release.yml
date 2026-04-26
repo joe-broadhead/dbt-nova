@@ -47,9 +47,11 @@ jobs:
           fetch-depth: 0
 
       - name: Fetch master and tag
+        env:
+          RELEASE_TAG: ${{ steps.resolve_tag.outputs.release_tag }}
         run: |
           git fetch --no-tags origin master
-          git fetch --tags origin
+          git fetch --force origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
 
       - name: Ensure tag is on master
         env:

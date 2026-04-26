@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Documentation deployment now runs from `master` instead of release tags, matching
+  GitHub Pages environment protection rules.
+- Release validation now fetches only the requested release tag, preventing local
+  tag-clobber failures on tag-triggered release runs.
+
 ## [0.0.4] - 2026-04-26
 
 ### Added

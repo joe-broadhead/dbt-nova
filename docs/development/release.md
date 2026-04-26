@@ -10,7 +10,8 @@ Releases use a `master`-only flow:
 
 Hotfixes follow the same pattern from `master` via `hotfix/<version>`.
 
-Docs are deployed from release tags (`v*`).
+Docs are deployed from `master` pushes so GitHub Pages environment protection
+rules can require the protected default branch.
 
 The release workflow enforces this policy:
 
@@ -34,6 +35,7 @@ After merge to `master`:
 
 - [ ] Tagging happens automatically when the release PR is merged
 - [ ] Verify release assets on GitHub
+- [ ] Verify docs deploy from the `master` push
 
 ## CI & Automation
 
@@ -65,7 +67,7 @@ This repo uses four GitHub Actions workflows for releases and documentation:
      - builds, smokes, and publishes a `linux/amd64` OCI image to GHCR
 
 4. **Docs Deploy** (`.github/workflows/docs.yml`)
-   - Trigger: `v*` tag push
+   - Trigger: `master` push or manual dispatch
    - Actions: builds MkDocs and publishes to GitHub Pages
 
 Release jobs now generate and publish checksum and cosign artifacts for every released platform,
