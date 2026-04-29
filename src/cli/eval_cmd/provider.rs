@@ -13,6 +13,10 @@ use crate::utils::tool_trace::TRACE_ENV;
 
 use super::server_error;
 
+const PROVIDER_MCP_SERVER_ALIASES_ENV: &str = "DBT_NOVA_EVAL_MCP_SERVER_ALIASES";
+const DEFAULT_NOVA_MCP_SERVER_ALIASES: [&str; 5] =
+    ["nova", "dbt-nova", "dbt_nova", "dbtnova", "dbt-nova-mcp"];
+
 #[derive(Debug)]
 pub(super) struct ProviderInvocation {
     pub(super) command: String,
@@ -307,6 +311,9 @@ fn codex_mcp_tool_row(event: &JsonValue) -> Option<JsonValue> {
     if item.get("type").and_then(JsonValue::as_str) != Some("mcp_tool_call") {
         return None;
     }
+    if !is_nova_mcp_server_alias(item.get("server").and_then(JsonValue::as_str)) {
+        return None;
+    }
     let tool = item.get("tool").and_then(JsonValue::as_str)?;
     if !is_nova_tool_name(tool) {
         return None;
@@ -351,18 +358,51 @@ fn opencode_mcp_tool_row(event: &JsonValue) -> Option<JsonValue> {
 }
 
 fn normalize_provider_nova_tool_name(name: &str) -> Option<String> {
-    let candidate = name
-        .strip_prefix("mcp__")
-        .and_then(|suffix| suffix.rsplit_once("__").map(|(_, tool)| tool))
-        .or_else(|| name.rsplit_once("__").map(|(_, tool)| tool))
-        .or_else(|| name.rsplit_once('.').map(|(_, tool)| tool))
-        .unwrap_or(name)
-        .trim();
-    is_nova_tool_name(candidate).then(|| candidate.to_string())
+    let name = name.trim();
+    let (server_alias, tool) = if let Some(suffix) = name.strip_prefix("mcp__") {
+        suffix.rsplit_once("__")?
+    } else if let Some(parts) = name.rsplit_once("__") {
+        parts
+    } else if let Some(parts) = name.rsplit_once('.') {
+        parts
+    } else {
+        return None;
+    };
+    let tool = tool.trim();
+    (is_nova_mcp_server_alias(Some(server_alias)) && is_nova_tool_name(tool))
+        .then(|| tool.to_string())
 }
 
 fn is_nova_tool_name(name: &str) -> bool {
     MCP_TOOL_NAMES.contains(&name)
+}
+
+fn is_nova_mcp_server_alias(alias: Option<&str>) -> bool {
+    let Some(alias) = alias else {
+        return false;
+    };
+    let normalized = normalize_mcp_server_alias(alias);
+    if normalized.is_empty() {
+        return false;
+    }
+    DEFAULT_NOVA_MCP_SERVER_ALIASES
+        .iter()
+        .any(|default_alias| normalize_mcp_server_alias(default_alias) == normalized)
+        || std::env::var(PROVIDER_MCP_SERVER_ALIASES_ENV)
+            .ok()
+            .is_some_and(|configured| {
+                configured
+                    .split([',', ';', ' '])
+                    .any(|entry| normalize_mcp_server_alias(entry) == normalized)
+            })
+}
+
+fn normalize_mcp_server_alias(alias: &str) -> String {
+    alias
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect()
 }
 
 fn provider_tool_row(
@@ -551,6 +591,14 @@ mod tests {
     }
 
     #[test]
+    fn provider_trace_rejects_codex_events_from_other_servers() {
+        let stdout = r#"{"type":"item.completed","item":{"type":"mcp_tool_call","server":"other-server","tool":"search","arguments":{"query":"gmv"},"result":{"content":[{"type":"text","text":"{\"data\":[{\"unique_id\":\"model.pkg.orders\"}]}"}]},"error":null,"status":"completed"}}"#;
+        let trace = read_provider_tool_trace(stdout);
+        assert_eq!(trace.errors, Vec::<String>::new());
+        assert!(trace.rows.is_empty());
+    }
+
+    #[test]
     fn provider_trace_reads_claude_mcp_tool_use_events() {
         let stdout = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__nova__search_indicator","input":{"query":"gmv"}},{"type":"tool_use","name":"mcp__nova__get_context","input":{"id_or_name":"model.pkg.orders"}}]}}"#;
         let trace = read_provider_tool_trace(stdout);
@@ -580,7 +628,7 @@ mod tests {
 
     #[test]
     fn provider_trace_normalizes_custom_mcp_aliases() {
-        let stdout = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__dbt_nova__search_indicator","input":{"query":"gmv"}},{"type":"tool_use","name":"dbt-nova.get_context","input":{"id_or_name":"model.pkg.orders"}},{"type":"tool_use","name":"other_server.not_a_nova_tool","input":{}}]}}"#;
+        let stdout = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__dbt_nova__search_indicator","input":{"query":"gmv"}},{"type":"tool_use","name":"dbt-nova.get_context","input":{"id_or_name":"model.pkg.orders"}},{"type":"tool_use","name":"other_server.search","input":{"query":"gmv"}},{"type":"tool_use","name":"other_server.not_a_nova_tool","input":{}}]}}"#;
         let trace = read_provider_tool_trace(stdout);
         assert_eq!(trace.errors, Vec::<String>::new());
         assert_eq!(trace.rows.len(), 2);

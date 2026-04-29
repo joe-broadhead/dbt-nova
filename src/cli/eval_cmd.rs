@@ -1443,9 +1443,10 @@ fn validate_case_ids<'a>(
             )));
         }
         let artifact_segment = safe_path_segment(trimmed);
-        if !seen_artifact_segments.insert(artifact_segment.clone()) {
+        let artifact_segment_key = artifact_segment.to_ascii_lowercase();
+        if !seen_artifact_segments.insert(artifact_segment_key) {
             return Err(DbtNovaError::InvalidParams(format!(
-                "eval case ids in {section} must map to unique artifact paths; duplicate segment '{artifact_segment}'"
+                "eval case ids in {section} must map to unique artifact paths case-insensitively; duplicate segment '{artifact_segment}'"
             )));
         }
     }

@@ -79,7 +79,10 @@ provider must already be configured to use dbt-nova as an MCP server or local
 CLI-backed tool source. dbt-nova first reads sanitized JSONL rows written to
 `DBT_NOVA_TRACE_TOOL_CALLS_PATH`; if that trace is empty, it falls back to
 provider JSON event streams for MCP tool calls from supported presets such as
-Codex, Claude, and OpenCode.
+Codex, Claude, and OpenCode. Fallback parsing only accepts MCP server aliases
+that look like Nova (`nova`, `dbt-nova`, `dbt_nova`, `dbtnova`, or
+`dbt-nova-mcp`). If your client uses a different alias, set
+`DBT_NOVA_EVAL_MCP_SERVER_ALIASES` to a comma-separated list of accepted aliases.
 
 ```yaml
 version: 1

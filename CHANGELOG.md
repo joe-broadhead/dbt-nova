@@ -18,7 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agent evals now score Codex/Claude/OpenCode MCP tool calls from provider JSON
   event streams when a local dbt-nova trace file is empty, including MCP servers
   configured with aliases such as `dbt-nova` instead of `nova`, and Claude
-  `tool_result` payloads now populate `selected_entities` evidence.
+  `tool_result` payloads now populate `selected_entities` evidence. Provider
+  fallback parsing now filters MCP events by Nova server aliases and validates
+  eval artifact path collisions case-insensitively.
 - The Claude provider preset now passes `--verbose` with `--output-format
   stream-json`, matching current Claude Code CLI requirements.
 - Eval artifact path generation now rejects colliding sanitized case IDs and

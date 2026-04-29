@@ -130,6 +130,30 @@ fn validate_suite_rejects_duplicate_artifact_segments() {
 }
 
 #[test]
+fn validate_suite_rejects_case_insensitive_artifact_segment_collisions() {
+    let suite = EvalSuite {
+        version: 1,
+        name: None,
+        defaults: EvalDefaults::default(),
+        cases: Vec::new(),
+        agent_cases: vec![
+            super::AgentCase {
+                id: "RevenueFlow".to_string(),
+                task: "one".to_string(),
+                expected: AgentExpected::default(),
+            },
+            super::AgentCase {
+                id: "revenueflow".to_string(),
+                task: "two".to_string(),
+                expected: AgentExpected::default(),
+            },
+        ],
+    };
+    let error = validate_suite(&suite).expect_err("case-insensitive collision should fail");
+    assert!(error.to_string().contains("case-insensitively"));
+}
+
+#[test]
 fn safe_path_segment_blocks_dot_segments_and_caps_length() {
     assert_eq!(safe_path_segment("."), "eval");
     assert_eq!(safe_path_segment(".."), "eval");
