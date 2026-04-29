@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   both `expected_column` and `expected_parent_unique_id`.
 - The default OpenCode agent-eval provider preset no longer passes a redundant
   `--dir` flag; dbt-nova sets the provider process working directory directly.
+- Agent eval `final_answer` assertions now score extracted assistant final text
+  from provider JSON event streams instead of matching against full stdout.
 - The Claude provider preset now passes `--verbose` with `--output-format
   stream-json`, matching current Claude Code CLI requirements.
 - Eval artifact path generation now rejects colliding sanitized case IDs and

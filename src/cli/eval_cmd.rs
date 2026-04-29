@@ -620,10 +620,12 @@ async fn run_agent_case(
     for error in &trace.errors {
         assertions.push(AssertionResult::error("tool_trace_parse", error.clone()));
     }
+    let final_answer_text =
+        provider::read_provider_final_answer(&stdout).unwrap_or_else(|| stdout.clone());
     assertions.extend(score_agent_expectations(
         &case.expected,
         &trace.rows,
-        &stdout,
+        &final_answer_text,
     ));
     EvalCaseReport::new(
         case.id.clone(),
@@ -640,7 +642,7 @@ async fn run_agent_case(
 fn score_agent_expectations(
     expected: &AgentExpected,
     trace: &[JsonValue],
-    stdout: &str,
+    final_answer_text: &str,
 ) -> Vec<AssertionResult> {
     let mut assertions = Vec::new();
     for tool in &expected.must_call {
@@ -692,7 +694,7 @@ fn score_agent_expectations(
         }
     }
     if let Some(final_answer) = expected.final_answer.as_ref() {
-        assertions.extend(score_final_answer(final_answer, stdout));
+        assertions.extend(score_final_answer(final_answer, final_answer_text));
     }
     assertions
 }
@@ -733,8 +735,11 @@ fn order_assertion(trace: &[JsonValue], order: &AgentOrder) -> AssertionResult {
     }
 }
 
-fn score_final_answer(expected: &FinalAnswerExpected, stdout: &str) -> Vec<AssertionResult> {
-    let haystack = stdout.to_lowercase();
+fn score_final_answer(
+    expected: &FinalAnswerExpected,
+    final_answer_text: &str,
+) -> Vec<AssertionResult> {
+    let haystack = final_answer_text.to_lowercase();
     let mut assertions = Vec::new();
     for needle in &expected.must_contain {
         if haystack.contains(&needle.to_lowercase()) {
@@ -747,7 +752,7 @@ fn score_final_answer(expected: &FinalAnswerExpected, stdout: &str) -> Vec<Asser
             assertions.push(AssertionResult::fail(
                 format!("final_answer_contains:{needle}"),
                 "final answer did not contain expected text",
-                json!({"stdout": truncate(stdout, 4000)}),
+                json!({"final_answer": truncate(final_answer_text, 4000)}),
             ));
         }
     }
@@ -756,7 +761,7 @@ fn score_final_answer(expected: &FinalAnswerExpected, stdout: &str) -> Vec<Asser
             assertions.push(AssertionResult::fail(
                 format!("final_answer_excludes:{needle}"),
                 "final answer contained forbidden text",
-                json!({"stdout": truncate(stdout, 4000)}),
+                json!({"final_answer": truncate(final_answer_text, 4000)}),
             ));
         } else {
             assertions.push(AssertionResult::pass(

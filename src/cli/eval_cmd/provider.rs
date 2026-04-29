@@ -219,6 +219,110 @@ pub(super) fn read_provider_tool_trace(stdout: &str) -> ToolTraceRead {
     }
 }
 
+pub(super) fn read_provider_final_answer(stdout: &str) -> Option<String> {
+    let mut assistant_parts = Vec::new();
+    let mut result_parts = Vec::new();
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || !trimmed.starts_with('{') {
+            continue;
+        }
+        let Ok(event) = serde_json::from_str::<JsonValue>(trimmed) else {
+            continue;
+        };
+        collect_provider_final_answer_event(&event, &mut assistant_parts, &mut result_parts);
+    }
+    join_provider_text_parts(&result_parts).or_else(|| join_provider_text_parts(&assistant_parts))
+}
+
+fn collect_provider_final_answer_event(
+    event: &JsonValue,
+    assistant_parts: &mut Vec<String>,
+    result_parts: &mut Vec<String>,
+) {
+    if event.get("type").and_then(JsonValue::as_str) == Some("result") {
+        collect_provider_text_content(event.get("result").unwrap_or(event), result_parts);
+        return;
+    }
+    if event.get("type").and_then(JsonValue::as_str) == Some("assistant")
+        && let Some(message) = event.get("message")
+    {
+        collect_provider_text_content(message, assistant_parts);
+        return;
+    }
+    if provider_role(event) == Some("assistant") {
+        collect_provider_text_content(event, assistant_parts);
+        return;
+    }
+    if let Some(message) = event.get("message")
+        && provider_role(message) == Some("assistant")
+    {
+        collect_provider_text_content(message, assistant_parts);
+        return;
+    }
+    if let Some(item) = event.get("item")
+        && provider_role(item) == Some("assistant")
+    {
+        collect_provider_text_content(item, assistant_parts);
+        return;
+    }
+    if let Some("assistant_message" | "agent_message") =
+        event.get("type").and_then(JsonValue::as_str)
+    {
+        collect_provider_text_content(event, assistant_parts);
+    }
+}
+
+fn provider_role(value: &JsonValue) -> Option<&str> {
+    value.get("role").and_then(JsonValue::as_str)
+}
+
+fn collect_provider_text_content(value: &JsonValue, out: &mut Vec<String>) {
+    match value {
+        JsonValue::Object(map) => {
+            if matches!(
+                map.get("type").and_then(JsonValue::as_str),
+                Some("tool_use" | "tool_result" | "mcp_tool_call")
+            ) {
+                return;
+            }
+            for key in ["text", "output_text"] {
+                if let Some(text) = map.get(key).and_then(JsonValue::as_str)
+                    && !text.trim().is_empty()
+                {
+                    out.push(text.to_owned());
+                }
+            }
+            for key in ["content", "parts", "message", "messages"] {
+                if let Some(child) = map.get(key) {
+                    collect_provider_text_content(child, out);
+                }
+            }
+        }
+        JsonValue::Array(items) => {
+            for item in items {
+                collect_provider_text_content(item, out);
+            }
+        }
+        JsonValue::String(text) => {
+            if !text.trim().is_empty() {
+                out.push(text.clone());
+            }
+        }
+        JsonValue::Null | JsonValue::Bool(_) | JsonValue::Number(_) => {}
+    }
+}
+
+fn join_provider_text_parts(parts: &[String]) -> Option<String> {
+    let joined = parts
+        .iter()
+        .map(|part| part.trim())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!joined.is_empty()).then_some(joined)
+}
+
 #[derive(Default)]
 struct ProviderTraceState {
     rows: Vec<JsonValue>,
@@ -496,7 +600,7 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{provider_invocation, read_provider_tool_trace};
+    use super::{provider_invocation, read_provider_final_answer, read_provider_tool_trace};
     use crate::cli::args::EvalAgentRunArgs;
 
     #[test]
@@ -639,5 +743,32 @@ mod tests {
         assert_eq!(trace.rows.len(), 2);
         assert_eq!(trace.rows[0]["tool"], "search_indicator");
         assert_eq!(trace.rows[1]["tool"], "get_context");
+    }
+
+    #[test]
+    fn provider_final_answer_reads_claude_result_event() {
+        let stdout = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"mcp__nova__search","input":{"query":"prompt-only term"}}]}}
+{"type":"result","subtype":"success","result":"Final answer uses model.pkg.orders only."}"#;
+        let final_answer = read_provider_final_answer(stdout).expect("final answer");
+        assert_eq!(final_answer, "Final answer uses model.pkg.orders only.");
+        assert!(!final_answer.contains("prompt-only term"));
+    }
+
+    #[test]
+    fn provider_final_answer_reads_codex_completed_assistant_message() {
+        let stdout = r#"{"type":"item.completed","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Use gross merchandise value from model.pkg.orders."}]}}"#;
+        let final_answer = read_provider_final_answer(stdout).expect("final answer");
+        assert_eq!(
+            final_answer,
+            "Use gross merchandise value from model.pkg.orders."
+        );
+    }
+
+    #[test]
+    fn provider_final_answer_ignores_tool_payload_text() {
+        let stdout = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"mcp__nova__search","input":{"query":"must not leak"}}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Clean final answer."}]}}"#;
+        let final_answer = read_provider_final_answer(stdout).expect("final answer");
+        assert_eq!(final_answer, "Clean final answer.");
     }
 }

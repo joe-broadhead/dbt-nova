@@ -127,6 +127,10 @@ endpoints cannot inherit local trace environment variables, so use a provider
 that emits MCP calls in its JSON output or keep the Nova server local when
 asserting tool-use traces.
 
+`final_answer` assertions are matched against extracted assistant final text
+from provider JSON event streams. For custom providers that do not emit JSON
+events, dbt-nova falls back to the provider stdout.
+
 For another provider or a custom local wrapper, pass an explicit command:
 
 ```bash
