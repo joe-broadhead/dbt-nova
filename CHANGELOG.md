@@ -16,8 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Agent evals now score Codex/Claude/OpenCode MCP tool calls from provider JSON
-  event streams when a local dbt-nova trace file is empty, which supports remote
-  hosted MCP endpoints that cannot inherit local trace environment variables.
+  event streams when a local dbt-nova trace file is empty, including MCP servers
+  configured with aliases such as `dbt-nova` instead of `nova`.
 - The Claude provider preset now passes `--verbose` with `--output-format
   stream-json`, matching current Claude Code CLI requirements.
 - Eval artifact path generation now rejects colliding sanitized case IDs and
