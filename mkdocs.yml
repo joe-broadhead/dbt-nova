@@ -122,6 +122,7 @@ nav:
     - Error Codes: api/error-codes.md
     - Metrics Reference: api/metrics-reference.md
   - Features:
+    - Nova Evals: features/evals.md
     - Analysis Recipes: features/recipes.md
     - Column Lineage: features/column-lineage.md
     - Metadata Audit: features/metadata-audit.md

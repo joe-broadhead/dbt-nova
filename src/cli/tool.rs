@@ -184,14 +184,39 @@ pub async fn run_call_command(args: &ToolCallArgs) -> DispatchResult {
     }
     let params = resolve_params_value(args)
         .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
+    let trace_params = params.clone();
     let config = build_manifest_load_config(&manifest_load_args_from_tool_args(args))
         .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
     let load_result = execute_manifest_load(config)
         .await
         .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
-    let result = dispatch_tool(&load_result.search, &args.tool_name, params)
-        .await
-        .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
+    let result = match dispatch_tool(&load_result.search, &args.tool_name, params).await {
+        Ok(result) => result,
+        Err(error) => {
+            let trace_error = trace_error_response(&error);
+            crate::utils::tool_trace::record_tool_call(
+                "cli",
+                &args.tool_name,
+                Some(&trace_params),
+                Some(&trace_error),
+                false,
+                elapsed_ms_to_u64(started.elapsed()),
+            );
+            return Err(render_or_propagate_error(
+                args,
+                error,
+                started.elapsed().as_millis(),
+            ));
+        }
+    };
+    crate::utils::tool_trace::record_tool_call(
+        "cli",
+        &args.tool_name,
+        Some(&trace_params),
+        Some(&result),
+        true,
+        elapsed_ms_to_u64(started.elapsed()),
+    );
 
     if args.json {
         let envelope = CliEnvelope::success(
@@ -217,6 +242,7 @@ pub async fn run_call_command(args: &ToolCallArgs) -> DispatchResult {
 async fn run_reload_manifest_tool_call(args: &ToolCallArgs, started: Instant) -> DispatchResult {
     let params = resolve_params_value(args)
         .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
+    let trace_params = params.clone();
     let reload_params: ReloadManifestParams = decode_tool_params("reload_manifest", params)
         .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
     let reload_args = build_reload_args_from_tool_call(args, &reload_params);
@@ -242,6 +268,14 @@ async fn run_reload_manifest_tool_call(args: &ToolCallArgs, started: Instant) ->
             started.elapsed().as_millis(),
         )
     })?;
+    crate::utils::tool_trace::record_tool_call(
+        "cli",
+        &args.tool_name,
+        Some(&trace_params),
+        Some(&result),
+        true,
+        elapsed_ms_to_u64(started.elapsed()),
+    );
 
     if args.json {
         let envelope = CliEnvelope::success(
@@ -326,6 +360,14 @@ fn render_or_propagate_error(
         error,
         rendered: false,
     }
+}
+
+fn trace_error_response(error: &DbtNovaError) -> JsonValue {
+    serde_json::json!({
+        "success": false,
+        "error": error.to_string(),
+        "error_code": error.error_code(),
+    })
 }
 
 fn manifest_load_args_from_tool_args(args: &ToolCallArgs) -> ManifestLoadArgs {
@@ -427,13 +469,17 @@ fn resolve_tool_entry(tool_name: &str) -> Result<ToolRegistryEntry> {
         })
 }
 
-async fn dispatch_tool(
+pub(crate) async fn dispatch_tool(
     searcher: &ManifestSearch,
     tool_name: &str,
     params: JsonValue,
 ) -> Result<JsonValue> {
     let entry = resolve_tool_entry(tool_name)?;
     (entry.dispatch)(searcher, params).await
+}
+
+fn elapsed_ms_to_u64(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
 macro_rules! typed_dispatch {

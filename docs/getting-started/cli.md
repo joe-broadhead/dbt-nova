@@ -4,7 +4,7 @@ Use `dbt-nova` in two modes:
 
 - No subcommand: start MCP server (backward compatible behavior)
 - Subcommand: run one-shot CLI commands and exit
-- CLI surface: `12` CLI-only leaf commands, plus `tool call` access to all `33` MCP tools
+- CLI surface: `15` CLI-only leaf commands, plus `tool call` access to all `33` MCP tools
 
 ## Command Tree
 
@@ -22,6 +22,9 @@ dbt-nova
 ├── storage inspect [--storage-instance-id] [--json]
 ├── storage prune [--max-keep] [--max-bytes] [--storage-instance-id] [--json]
 ├── storage cleanup [--storage-instance-id] [--json]
+├── eval init --out <PATH> [--persona] [--force]
+├── eval run --suite <PATH> [--manifest-path|--manifest-uri] [--storage-instance-id] [--output-dir] [--fail-under] [--cleanup-storage-on-start] [--read-only] [--json]
+├── eval agent run --suite <PATH> [--provider] [--provider-command] [--provider-args-json] [--manifest-path|--manifest-uri] [--storage-instance-id] [--output-dir] [--timeout-secs] [--fail-under] [--cleanup-storage-on-start] [--read-only] [--json]
 └── health check [--manifest-path|--manifest-uri] [--json]
 ```
 
@@ -173,6 +176,33 @@ dbt-nova audit nova-meta \
   --resource-name fct_orders \
   --column order_date
 ```
+
+### Run Nova bridge evals
+
+```bash
+dbt-nova eval init --persona analyst --out evals/analyst-smoke.yml
+
+dbt-nova eval run \
+  --suite evals/analyst-smoke.yml \
+  --manifest-path /path/to/target/manifest.json \
+  --fail-under 1.0 \
+  --json
+```
+
+### Run provider-backed agent evals
+
+```bash
+dbt-nova eval agent run \
+  --suite evals/analyst-agent.yml \
+  --provider opencode \
+  --manifest-path /path/to/target/manifest.json \
+  --timeout-secs 600
+```
+
+Agent evals score sanitized Nova tool-call traces, falling back to supported
+provider JSON event streams when a remote MCP endpoint cannot inherit local
+trace environment variables. The selected provider must already be configured to
+use dbt-nova tools.
 
 ### Health diagnostics
 

@@ -7,6 +7,7 @@ use crate::utils::{dir_in_use, prune_dirs};
 pub mod args;
 pub mod audit_cmd;
 pub mod config_cmd;
+pub mod eval_cmd;
 pub mod health_cmd;
 pub mod manifest;
 pub mod nova_meta_cmd;
@@ -79,6 +80,15 @@ pub async fn dispatch(command: args::Command) -> DispatchResult {
             args::HealthCommand::Check(check_args) => {
                 health_cmd::run_check_command(&check_args).await
             }
+        },
+        args::Command::Eval(eval_args) => match eval_args.command {
+            args::EvalCommand::Init(init_args) => eval_cmd::run_init_command(&init_args),
+            args::EvalCommand::Run(run_args) => eval_cmd::run_eval_command(&run_args).await,
+            args::EvalCommand::Agent(agent_args) => match agent_args.command {
+                args::EvalAgentCommand::Run(run_args) => {
+                    eval_cmd::run_agent_eval_command(&run_args).await
+                }
+            },
         },
     }
 }
