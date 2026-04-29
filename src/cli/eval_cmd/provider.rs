@@ -133,11 +133,6 @@ fn default_provider_args(provider: &str, prompt: &str) -> crate::error::Result<V
             "run".to_string(),
             "--format".to_string(),
             "json".to_string(),
-            "--dir".to_string(),
-            std::env::current_dir()
-                .map_err(|error| server_error(error.to_string()))?
-                .display()
-                .to_string(),
             prompt.to_string(),
         ]),
         "codex" => Ok(vec![
@@ -544,6 +539,18 @@ mod tests {
             invocation.args,
             vec!["--prompt", "hello", "--trace", "/tmp/trace.jsonl"]
         );
+    }
+
+    #[test]
+    fn provider_invocation_uses_opencode_without_dir_flag() {
+        let args = EvalAgentRunArgs {
+            provider: "opencode".to_string(),
+            ..EvalAgentRunArgs::default()
+        };
+        let invocation = provider_invocation(&args, "hello", Path::new("/tmp/trace.jsonl"))
+            .expect("opencode provider");
+        assert_eq!(invocation.command, "opencode");
+        assert_eq!(invocation.args, vec!["run", "--format", "json", "hello"]);
     }
 
     #[test]

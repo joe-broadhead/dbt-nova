@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   eval artifact path collisions case-insensitively.
 - Eval suite validation now rejects `search_columns_rank` assertions that omit
   both `expected_column` and `expected_parent_unique_id`.
+- The default OpenCode agent-eval provider preset no longer passes a redundant
+  `--dir` flag; dbt-nova sets the provider process working directory directly.
 - The Claude provider preset now passes `--verbose` with `--output-format
   stream-json`, matching current Claude Code CLI requirements.
 - Eval artifact path generation now rejects colliding sanitized case IDs and
