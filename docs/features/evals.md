@@ -40,7 +40,7 @@ cases:
         id_or_name: model.pkg.orders
         fields:
           - data.unique_id
-          - data.name
+          - data.entity.name
 ```
 
 ## Run Bridge Evals

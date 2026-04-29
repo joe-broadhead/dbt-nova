@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
@@ -193,7 +193,7 @@ pub(super) struct ToolTraceRead {
 }
 
 pub(super) fn read_provider_tool_trace(stdout: &str) -> ToolTraceRead {
-    let mut rows = Vec::new();
+    let mut trace = ProviderTraceState::default();
     let mut errors = Vec::new();
     for (index, line) in stdout.lines().enumerate() {
         let trimmed = line.trim();
@@ -212,21 +212,91 @@ pub(super) fn read_provider_tool_trace(stdout: &str) -> ToolTraceRead {
                 continue;
             }
         };
-        rows.extend(provider_event_tool_rows(&event));
+        trace.ingest_event(&event);
     }
-    ToolTraceRead { rows, errors }
+    ToolTraceRead {
+        rows: trace.rows,
+        errors,
+    }
 }
 
-fn provider_event_tool_rows(event: &JsonValue) -> Vec<JsonValue> {
-    let mut rows = Vec::new();
-    if let Some(row) = codex_mcp_tool_row(event) {
-        rows.push(row);
+#[derive(Default)]
+struct ProviderTraceState {
+    rows: Vec<JsonValue>,
+    claude_tool_row_by_id: BTreeMap<String, usize>,
+}
+
+impl ProviderTraceState {
+    fn ingest_event(&mut self, event: &JsonValue) {
+        if let Some(row) = codex_mcp_tool_row(event) {
+            self.rows.push(row);
+        }
+        self.ingest_claude_event(event);
+        if let Some(row) = opencode_mcp_tool_row(event) {
+            self.rows.push(row);
+        }
     }
-    rows.extend(claude_tool_use_rows(event));
-    if let Some(row) = opencode_mcp_tool_row(event) {
-        rows.push(row);
+
+    fn ingest_claude_event(&mut self, event: &JsonValue) {
+        let Some(content) = claude_message_content(event) else {
+            return;
+        };
+        for part in content {
+            match part.get("type").and_then(JsonValue::as_str) {
+                Some("tool_use") => self.ingest_claude_tool_use(part),
+                Some("tool_result") => self.ingest_claude_tool_result(part),
+                _ => {}
+            }
+        }
     }
-    rows
+
+    fn ingest_claude_tool_use(&mut self, part: &JsonValue) {
+        let Some(name) = part.get("name").and_then(JsonValue::as_str) else {
+            return;
+        };
+        let Some(tool) = normalize_provider_nova_tool_name(name) else {
+            return;
+        };
+        let row_index = self.rows.len();
+        self.rows.push(provider_tool_row(
+            "provider_stdout_claude",
+            &tool,
+            true,
+            part.get("input"),
+            None,
+        ));
+        if let Some(id) = part.get("id").and_then(JsonValue::as_str)
+            && !id.trim().is_empty()
+        {
+            self.claude_tool_row_by_id.insert(id.to_string(), row_index);
+        }
+    }
+
+    fn ingest_claude_tool_result(&mut self, part: &JsonValue) {
+        let Some(tool_use_id) = part.get("tool_use_id").and_then(JsonValue::as_str) else {
+            return;
+        };
+        let Some(row_index) = self.claude_tool_row_by_id.get(tool_use_id).copied() else {
+            return;
+        };
+        let success = !part
+            .get("is_error")
+            .and_then(JsonValue::as_bool)
+            .unwrap_or(false);
+        let response = part.get("content").unwrap_or(part);
+        let selected_unique_ids = provider_selected_unique_ids(Some(response));
+        if let Some(row) = self
+            .rows
+            .get_mut(row_index)
+            .and_then(JsonValue::as_object_mut)
+        {
+            row.insert("success".to_string(), JsonValue::Bool(success));
+            row.insert(
+                "selected_unique_ids".to_string(),
+                json!(selected_unique_ids),
+            );
+        }
+    }
 }
 
 fn codex_mcp_tool_row(event: &JsonValue) -> Option<JsonValue> {
@@ -251,33 +321,12 @@ fn codex_mcp_tool_row(event: &JsonValue) -> Option<JsonValue> {
     ))
 }
 
-fn claude_tool_use_rows(event: &JsonValue) -> Vec<JsonValue> {
-    let mut rows = Vec::new();
-    let content = event
+fn claude_message_content(event: &JsonValue) -> Option<&Vec<JsonValue>> {
+    event
         .get("message")
         .and_then(|message| message.get("content"))
-        .and_then(JsonValue::as_array);
-    let Some(content) = content else {
-        return rows;
-    };
-    for part in content {
-        if part.get("type").and_then(JsonValue::as_str) != Some("tool_use") {
-            continue;
-        }
-        let Some(name) = part.get("name").and_then(JsonValue::as_str) else {
-            continue;
-        };
-        if let Some(tool) = normalize_provider_nova_tool_name(name) {
-            rows.push(provider_tool_row(
-                "provider_stdout_claude",
-                &tool,
-                true,
-                part.get("input"),
-                None,
-            ));
-        }
-    }
-    rows
+        .and_then(JsonValue::as_array)
+        .or_else(|| event.get("content").and_then(JsonValue::as_array))
 }
 
 fn opencode_mcp_tool_row(event: &JsonValue) -> Option<JsonValue> {
@@ -512,6 +561,20 @@ mod tests {
         assert_eq!(
             trace.rows[1]["params_summary"]["id_or_name"],
             "model.pkg.orders"
+        );
+    }
+
+    #[test]
+    fn provider_trace_attaches_claude_tool_results() {
+        let stdout = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"mcp__dbt_nova__search_indicator","input":{"query":"gmv"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"{\"data\":[{\"parent_unique_id\":\"model.pkg.orders\"}]}"}]}]}}"#;
+        let trace = read_provider_tool_trace(stdout);
+        assert_eq!(trace.errors, Vec::<String>::new());
+        assert_eq!(trace.rows.len(), 1);
+        assert_eq!(trace.rows[0]["tool"], "search_indicator");
+        assert_eq!(
+            trace.rows[0]["selected_unique_ids"],
+            json!(["model.pkg.orders"])
         );
     }
 

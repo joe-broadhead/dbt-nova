@@ -1505,7 +1505,7 @@ cases:
         id_or_name: model.pkg.orders
         fields:
           - data.unique_id
-          - data.name
+          - data.entity.name
 agent_cases:
   - id: analyst_metric_lookup
     task: Which canonical model and indicator should be used to analyze gross merchandise value?
