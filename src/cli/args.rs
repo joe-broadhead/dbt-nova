@@ -16,6 +16,7 @@ pub enum Command {
     Config(ConfigArgs),
     Storage(StorageArgs),
     Health(HealthArgs),
+    Eval(EvalArgs),
 }
 
 #[derive(Debug, Args)]
@@ -330,6 +331,92 @@ pub struct HealthCheckArgs {
     pub json: bool,
 }
 
+#[derive(Debug, Args)]
+pub struct EvalArgs {
+    #[command(subcommand)]
+    pub command: EvalCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EvalCommand {
+    Init(EvalInitArgs),
+    Run(EvalRunArgs),
+    Agent(EvalAgentArgs),
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct EvalInitArgs {
+    #[arg(long, value_name = "PERSONA", default_value = "analyst")]
+    pub persona: String,
+    #[arg(long, value_name = "PATH")]
+    pub out: String,
+    #[arg(long, default_value_t = false)]
+    pub force: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct EvalRunArgs {
+    #[arg(long, value_name = "PATH")]
+    pub suite: String,
+    #[arg(long, value_name = "PATH", conflicts_with = "manifest_uri")]
+    pub manifest_path: Option<String>,
+    #[arg(long, value_name = "URI", conflicts_with = "manifest_path")]
+    pub manifest_uri: Option<String>,
+    #[arg(long, value_name = "INSTANCE_ID")]
+    pub storage_instance_id: Option<String>,
+    #[arg(long, value_name = "DIR")]
+    pub output_dir: Option<String>,
+    #[arg(long, value_name = "FLOAT")]
+    pub fail_under: Option<f64>,
+    #[arg(long, default_value_t = false)]
+    pub cleanup_storage_on_start: bool,
+    #[arg(long, default_value_t = false)]
+    pub read_only: bool,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct EvalAgentArgs {
+    #[command(subcommand)]
+    pub command: EvalAgentCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EvalAgentCommand {
+    Run(EvalAgentRunArgs),
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct EvalAgentRunArgs {
+    #[arg(long, value_name = "PATH")]
+    pub suite: String,
+    #[arg(long, value_name = "PROVIDER", default_value = "opencode")]
+    pub provider: String,
+    #[arg(long, value_name = "COMMAND")]
+    pub provider_command: Option<String>,
+    #[arg(long, value_name = "JSON_ARRAY")]
+    pub provider_args_json: Option<String>,
+    #[arg(long, value_name = "PATH", conflicts_with = "manifest_uri")]
+    pub manifest_path: Option<String>,
+    #[arg(long, value_name = "URI", conflicts_with = "manifest_path")]
+    pub manifest_uri: Option<String>,
+    #[arg(long, value_name = "INSTANCE_ID")]
+    pub storage_instance_id: Option<String>,
+    #[arg(long, value_name = "DIR")]
+    pub output_dir: Option<String>,
+    #[arg(long, value_name = "SECS", default_value_t = 600)]
+    pub timeout_secs: u64,
+    #[arg(long, value_name = "FLOAT")]
+    pub fail_under: Option<f64>,
+    #[arg(long, default_value_t = false)]
+    pub cleanup_storage_on_start: bool,
+    #[arg(long, default_value_t = false)]
+    pub read_only: bool,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
@@ -379,7 +466,7 @@ mod tests {
 
     #[test]
     fn cli_parses_all_top_level_groups() {
-        let groups: [&[&str]; 7] = [
+        let groups: [&[&str]; 8] = [
             &["dbt-nova", "manifest", "load"],
             &["dbt-nova", "tool", "call", "search"],
             &["dbt-nova", "audit", "metadata-score"],
@@ -387,6 +474,7 @@ mod tests {
             &["dbt-nova", "config", "show"],
             &["dbt-nova", "storage", "inspect"],
             &["dbt-nova", "health", "check"],
+            &["dbt-nova", "eval", "run", "--suite", "suite.yml"],
         ];
         for args in groups {
             let cli = Cli::parse_from(args);

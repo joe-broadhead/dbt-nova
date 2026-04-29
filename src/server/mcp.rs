@@ -132,7 +132,17 @@ impl DbtNovaServer {
             Ok(searcher) => searcher,
             Err(err) => {
                 let out = Self::error_response(&err);
-                self.record_metrics(tool, persona, elapsed_ms_to_u64(start.elapsed()), success);
+                let duration_ms = elapsed_ms_to_u64(start.elapsed());
+                let parsed_trace_response = serde_json::from_str::<serde_json::Value>(&out).ok();
+                crate::utils::tool_trace::record_tool_call(
+                    "mcp",
+                    tool,
+                    None,
+                    parsed_trace_response.as_ref(),
+                    success,
+                    duration_ms,
+                );
+                self.record_metrics(tool, persona, duration_ms, success);
                 return out;
             }
         };
@@ -144,7 +154,17 @@ impl DbtNovaServer {
                 "error_code": "RATE_LIMITED",
             })
             .to_string();
-            self.record_metrics(tool, persona, elapsed_ms_to_u64(start.elapsed()), success);
+            let duration_ms = elapsed_ms_to_u64(start.elapsed());
+            let parsed_trace_response = serde_json::from_str::<serde_json::Value>(&out).ok();
+            crate::utils::tool_trace::record_tool_call(
+                "mcp",
+                tool,
+                None,
+                parsed_trace_response.as_ref(),
+                success,
+                duration_ms,
+            );
+            self.record_metrics(tool, persona, duration_ms, success);
             return out;
         }
 
@@ -158,7 +178,17 @@ impl DbtNovaServer {
             },
             Err(e) => Self::error_response(&e),
         };
-        self.record_metrics(tool, persona, elapsed_ms_to_u64(start.elapsed()), success);
+        let duration_ms = elapsed_ms_to_u64(start.elapsed());
+        let parsed_trace_response = serde_json::from_str::<serde_json::Value>(&out).ok();
+        crate::utils::tool_trace::record_tool_call(
+            "mcp",
+            tool,
+            None,
+            parsed_trace_response.as_ref(),
+            success,
+            duration_ms,
+        );
+        self.record_metrics(tool, persona, duration_ms, success);
         out
     }
 

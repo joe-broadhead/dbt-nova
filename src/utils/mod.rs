@@ -6,6 +6,7 @@ pub mod metrics;
 pub mod persona;
 pub mod storage;
 pub mod string;
+pub mod tool_trace;
 
 pub use circuit_breaker::{CircuitBreaker, CircuitBreakerState};
 pub use gcp_auth::{

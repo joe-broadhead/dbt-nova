@@ -7,8 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `dbt-nova eval` commands for manifest bridge evals and provider-backed
+  agent evals, including sanitized CLI/MCP tool-call tracing, YAML/JSON suite
+  definitions, score gates, and JSON/TSV/Markdown report artifacts.
+
 ### Fixed
 
+- Agent evals now score Codex/Claude/OpenCode MCP tool calls from provider JSON
+  event streams when a local dbt-nova trace file is empty, which supports remote
+  hosted MCP endpoints that cannot inherit local trace environment variables.
+- The Claude provider preset now passes `--verbose` with `--output-format
+  stream-json`, matching current Claude Code CLI requirements.
+- Eval artifact path generation now rejects colliding sanitized case IDs and
+  blocks `.`/`..` path segments; custom provider commands also reject empty
+  command values.
 - Documentation deployment now runs from `master` instead of release tags, matching
   GitHub Pages environment protection rules.
 - Release validation now fetches only the requested release tag, preventing local
