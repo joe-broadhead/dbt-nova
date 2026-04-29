@@ -154,6 +154,29 @@ fn validate_suite_rejects_case_insensitive_artifact_segment_collisions() {
 }
 
 #[test]
+fn validate_suite_rejects_vacuous_search_columns_rank_assertion() {
+    let suite = EvalSuite {
+        version: 1,
+        name: None,
+        defaults: EvalDefaults::default(),
+        cases: vec![super::EvalCase {
+            id: "columns".to_string(),
+            question: None,
+            persona: None,
+            assertions: vec![super::EvalAssertion::SearchColumnsRank {
+                query: "revenue".to_string(),
+                expected_column: None,
+                expected_parent_unique_id: None,
+                max_rank: None,
+            }],
+        }],
+        agent_cases: Vec::new(),
+    };
+    let error = validate_suite(&suite).expect_err("vacuous column rank should fail");
+    assert!(error.to_string().contains("expected_column"));
+}
+
+#[test]
 fn safe_path_segment_blocks_dot_segments_and_caps_length() {
     assert_eq!(safe_path_segment("."), "eval");
     assert_eq!(safe_path_segment(".."), "eval");

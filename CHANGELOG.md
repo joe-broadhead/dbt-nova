@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tool_result` payloads now populate `selected_entities` evidence. Provider
   fallback parsing now filters MCP events by Nova server aliases and validates
   eval artifact path collisions case-insensitively.
+- Eval suite validation now rejects `search_columns_rank` assertions that omit
+  both `expected_column` and `expected_parent_unique_id`.
 - The Claude provider preset now passes `--verbose` with `--output-format
   stream-json`, matching current Claude Code CLI requirements.
 - Eval artifact path generation now rejects colliding sanitized case IDs and

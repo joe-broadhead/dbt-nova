@@ -363,10 +363,8 @@ fn normalize_provider_nova_tool_name(name: &str) -> Option<String> {
         suffix.rsplit_once("__")?
     } else if let Some(parts) = name.rsplit_once("__") {
         parts
-    } else if let Some(parts) = name.rsplit_once('.') {
-        parts
     } else {
-        return None;
+        name.rsplit_once('.')?
     };
     let tool = tool.trim();
     (is_nova_mcp_server_alias(Some(server_alias)) && is_nova_tool_name(tool))

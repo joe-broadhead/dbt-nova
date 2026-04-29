@@ -1412,12 +1412,37 @@ fn validate_suite(suite: &EvalSuite) -> crate::error::Result<()> {
                 case.id
             )));
         }
+        for assertion in &case.assertions {
+            validate_assertion(assertion, &case.id)?;
+        }
     }
     for case in &suite.agent_cases {
         if case.task.trim().is_empty() {
             return Err(DbtNovaError::InvalidParams(format!(
                 "agent case '{}' must include a non-empty task",
                 case.id
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_assertion(assertion: &EvalAssertion, case_id: &str) -> crate::error::Result<()> {
+    if let EvalAssertion::SearchColumnsRank {
+        expected_column,
+        expected_parent_unique_id,
+        ..
+    } = assertion
+    {
+        let has_expected_column = expected_column
+            .as_ref()
+            .is_some_and(|value| !value.trim().is_empty());
+        let has_expected_parent = expected_parent_unique_id
+            .as_ref()
+            .is_some_and(|value| !value.trim().is_empty());
+        if !has_expected_column && !has_expected_parent {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "search_columns_rank assertion in case '{case_id}' must include expected_column or expected_parent_unique_id"
             )));
         }
     }
