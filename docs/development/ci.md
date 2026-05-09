@@ -4,7 +4,9 @@ This repository uses GitHub Actions for CI, releases, and documentation.
 
 Operational defaults:
 
-- Linux runners are pinned to `ubuntu-22.04` for consistency.
+- Linux x86_64 runners are pinned to `ubuntu-22.04` for consistency; release
+  jobs use native ARM and Intel macOS runners where platform artifacts require
+  that architecture.
 - Jobs that execute on local runners set explicit `timeout-minutes` budgets.
 
 ## Workflows
@@ -17,7 +19,8 @@ Operational defaults:
   `cargo test --locked --all-features`, `cargo check --locked --no-default-features --all-targets`,
   `cargo check --locked --all-features` on Rust `1.93.0` (MSRV),
   `DBT_NOVA_EVAL_ENABLE_HYBRID=0 DBT_NOVA_EVAL_ENABLE_LIFECYCLE=0 DBT_NOVA_EVAL_ALLOW_EMBEDDING_DOWNLOAD=0 cargo test --locked --test search_eval compare_lexical_vs_hybrid_search_quality -- --ignored`,
-  `cargo llvm-cov --locked --all-features --workspace --summary-only`,
+  `cargo llvm-cov --locked --all-features --workspace --summary-only` with a
+  70 percent line coverage floor,
   `mkdocs build --strict` (with `docs/requirements.txt`), `scripts/check_advisory_ignores.sh`,
   `scripts/check_dependency_watchlist.sh`,
   `scripts/check_config_reference.sh`, and `cargo deny check advisories licenses sources`
@@ -124,9 +127,10 @@ Operational defaults:
   - validates tag is on `master`
   - validates `Cargo.toml` and `CHANGELOG.md` match the release tag version
   - runs one all-features Linux test gate
-  - builds and publishes **slim** assets for `linux-x86_64` and `macos-arm64`
-  - builds, smokes, and publishes a `linux/amd64` OCI image to
-    `ghcr.io/joe-broadhead/dbt-nova`
+  - builds and publishes **slim** assets for `linux-x86_64`, `linux-arm64`,
+    `macos-arm64`, and `macos-x86_64`
+  - builds, smokes, scans, signs, and publishes a multi-arch `linux/amd64` +
+    `linux/arm64` OCI image to `ghcr.io/joe-broadhead/dbt-nova`
 
 ### Docs Deploy
 

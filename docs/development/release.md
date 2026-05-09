@@ -62,28 +62,42 @@ This repo uses four GitHub Actions workflows for releases and documentation:
      - validates tag is on `master`
      - validates the crate version and changelog entry match the tag
      - runs one all-features test gate on Linux before packaging
-     - builds and publishes slim assets for `linux-x86_64` (Cloud Run)
-       and `macos-arm64` (standard Apple Silicon macOS)
-     - builds, smokes, and publishes a `linux/amd64` OCI image to GHCR
+     - builds and publishes slim assets for `linux-x86_64`, `linux-arm64`,
+       `macos-arm64`, and `macos-x86_64`
+     - builds, smokes, scans, signs, and publishes a multi-arch
+       `linux/amd64` + `linux/arm64` OCI image to GHCR
 
 4. **Docs Deploy** (`.github/workflows/docs.yml`)
    - Trigger: `master` push or manual dispatch
    - Actions: builds MkDocs and publishes to GitHub Pages
 
-Release jobs now generate and publish checksum and cosign artifacts for every released platform,
-emit GitHub artifact provenance attestations for release files, and publish an
-OCI image to `ghcr.io/joe-broadhead/dbt-nova`.
+Release jobs generate and publish checksum, cosign, SBOM, and provenance artifacts
+for every released platform, and publish an OCI image to
+`ghcr.io/joe-broadhead/dbt-nova`.
 
 Note: GitHub provenance attestations are only emitted when supported by the repository plan/type.
 For user-owned private repositories, the attestation step is skipped.
 
 - `release.yml` emits `dbt-nova-<asset>.sha256` for each platform tarball.
+- `release.yml` emits `dbt-nova-<asset>.sbom.spdx.json` for each platform.
 - The checksum files are uploaded with slim assets.
 - Signature files are also uploaded:
   - `<tarball>.sig` / `<tarball>.crt`
   - `<checksum_file>.sig` / `<checksum_file>.crt` (for example: `dbt-nova-linux-x86_64.sha256.sig`)
+- The OCI image job uploads `dbt-nova-oci-trivy.json` with the release and fails
+  on unwaived HIGH/CRITICAL findings in the smoke-tested image.
 
 The installer validates checksum signatures by default when `DBT_NOVA_VERIFY_SIGNATURE=1`.
+
+Supported prebuilt binary targets:
+
+- `linux-x86_64`
+- `linux-arm64`
+- `macos-arm64`
+- `macos-x86_64`
+
+Windows binaries are not published in this release phase. Windows users should
+build from source until the project has a tested Windows CI/release path.
 
 Verify download integrity with:
 
@@ -118,7 +132,8 @@ gh attestation verify dbt-nova-linux-x86_64.tar.gz \
 ## Release Type
 
 - **Slim**: binary only (semantic layers are opt-in; models download only when enabled)
-- **OCI image**: hosted/server runtime image for streamable HTTP deployments
+- **OCI image**: hosted/server runtime image for streamable HTTP deployments,
+  published as a multi-arch `linux/amd64` + `linux/arm64` manifest
 
 Pull a released container image with:
 
@@ -134,6 +149,22 @@ ghcr.io/joe-broadhead/dbt-nova:sha-<git-sha>
 
 By default, releases include S3/GCS SDK support. If you need a minimal binary,
 build with `--no-default-features` and enable only the features you need.
+
+The project does not currently publish to crates.io. Supported distribution
+paths are GitHub release assets, the installer script, the GHCR OCI image, and
+source/local Cargo installs. Revisit crates.io only when the binary/native
+dependency packaging contract is intentionally supported in the release workflow.
+
+OCI scan waivers belong in `.trivyignore.yaml`. Waivers must be targeted and
+temporary: include the finding ID, optional path or package URL scope,
+`expired_at`, and a `statement` with owner, reason, and review/remediation
+context.
+
+The Dockerfile pins base image tags by digest for reproducible release rebuilds.
+Refresh digests intentionally by resolving the current manifest digest for
+`rust:1.93-bookworm` and `debian:bookworm-slim`, updating the `FROM` lines, and
+running the release container smoke path in CI. Do not update digests as part of
+unrelated code changes.
 
 ## Installer Script
 
