@@ -92,7 +92,7 @@ jobs:
 
   search-eval-smoke:
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       DBT_NOVA_STRICT_SCHEMA: "1"
       CARGO_BUILD_JOBS: "1"
@@ -112,7 +112,7 @@ jobs:
           DBT_NOVA_EVAL_ENABLE_HYBRID=0 \
           DBT_NOVA_EVAL_ALLOW_EMBEDDING_DOWNLOAD=0 \
           DBT_NOVA_EVAL_ENABLE_LIFECYCLE=0 \
-          cargo test --locked --test search_eval compare_lexical_vs_hybrid_search_quality -- --ignored
+          cargo test --locked --no-default-features --test search_eval compare_lexical_vs_hybrid_search_quality -- --ignored
 
   check-no-default:
     runs-on: ubuntu-22.04

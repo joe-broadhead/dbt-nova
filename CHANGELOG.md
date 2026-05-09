@@ -37,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   both `expected_column` and `expected_parent_unique_id`.
 - Eval `recipe_rank` assertions now match the `id` field returned by
   `search_recipes`, in addition to the legacy `recipe_id` alias.
+- CI search eval smoke now runs without default semantic/storage features and
+  has a longer timeout, avoiding cold-compile cancellations for the lexical
+  smoke profile.
 - The default OpenCode agent-eval provider preset no longer passes a redundant
   `--dir` flag; dbt-nova sets the provider process working directory directly.
 - Agent eval `final_answer` assertions now score extracted assistant final text
