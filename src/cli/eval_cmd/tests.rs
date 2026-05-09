@@ -8,9 +8,9 @@ use super::{
     AgentCalledWith, AgentEntityRank, AgentExpected, AgentOrder, AssertionResult, EvalCaseReport,
     EvalDefaults, EvalRunArgs, EvalSuite, EvalValidateArgs, FinalAnswerExpected,
     contains_rank_assertion, context_contains_assertion, context_field_equals_assertion,
-    json_has_field_path, read_tool_trace, run_eval_command, run_validate_command,
-    safe_path_segment, score_agent_expectations, selected_agent_cases, selected_bridge_cases,
-    tool_success_assertion, validate_suite,
+    json_has_field_path, read_tool_trace, recipe_rank_assertion, run_eval_command,
+    run_validate_command, safe_path_segment, score_agent_expectations, selected_agent_cases,
+    selected_bridge_cases, tool_success_assertion, validate_suite,
 };
 
 #[test]
@@ -31,6 +31,17 @@ fn contains_rank_assertion_respects_max_rank() {
     });
     let result = contains_rank_assertion("search_indicator_rank", &response, "orders", Some(1));
     assert_eq!(result.status, "fail");
+}
+
+#[test]
+fn recipe_rank_assertion_accepts_search_recipes_id_field() {
+    let response = json!({
+        "data": [
+            {"id": "reference/members", "query_count": 3}
+        ]
+    });
+    let result = recipe_rank_assertion(&response, "reference/members", Some(1));
+    assert_eq!(result.status, "pass");
 }
 
 #[test]

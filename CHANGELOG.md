@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `dbt-nova eval validate`, repeatable `--case-id` filters for bridge and
   agent eval runs, value-aware context assertions, agent `called_with` and
   ranked entity expectations, and ordered `top_unique_ids` trace evidence.
+- Added an `eval-author` packaged skill for designing, debugging, and
+  operationalizing Nova bridge and provider-backed agent eval suites.
 - Release hardening now publishes native `linux-arm64` and `macos-x86_64`
   binary assets, scans the release OCI image with Trivy, documents SBOM outputs
   and crates.io posture, and adds container digest pinning plus a `/healthz`
@@ -33,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   eval artifact path collisions case-insensitively.
 - Eval suite validation now rejects `search_columns_rank` assertions that omit
   both `expected_column` and `expected_parent_unique_id`.
+- Eval `recipe_rank` assertions now match the `id` field returned by
+  `search_recipes`, in addition to the legacy `recipe_id` alias.
+- CI search eval smoke now runs without default semantic/storage features and
+  has a longer timeout, avoiding cold-compile cancellations for the lexical
+  smoke profile.
 - The default OpenCode agent-eval provider preset no longer passes a redundant
   `--dir` flag; dbt-nova sets the provider process working directory directly.
 - Agent eval `final_answer` assertions now score extracted assistant final text

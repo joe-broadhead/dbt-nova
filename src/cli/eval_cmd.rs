@@ -539,13 +539,7 @@ async fn evaluate_bridge_assertion(
             let limit = effective_limit(*max_rank, suite.defaults.top_k);
             let params = json!({"query": query, "include_queries": false, "limit": limit});
             match call_tool(search, "search_recipes", params).await {
-                Ok(response) => rank_assertion(
-                    "recipe_rank",
-                    &response,
-                    expected_recipe_id,
-                    *max_rank,
-                    "recipe_id",
-                ),
+                Ok(response) => recipe_rank_assertion(&response, expected_recipe_id, *max_rank),
                 Err(error) => AssertionResult::error("recipe_rank", error.to_string()),
             }
         }
@@ -1191,6 +1185,42 @@ fn contains_rank_assertion(
     }
 }
 
+fn recipe_rank_assertion(
+    response: &JsonValue,
+    expected_recipe_id: &str,
+    max_rank: Option<usize>,
+) -> AssertionResult {
+    let rows = data_rows(response);
+    if let Some(index) = rows.iter().position(|row| {
+        string_field_equals(row, "recipe_id", expected_recipe_id)
+            || string_field_equals(row, "id", expected_recipe_id)
+    }) {
+        let rank = index + 1;
+        if max_rank.is_none_or(|max| rank <= max) {
+            AssertionResult::pass(
+                "recipe_rank",
+                format!("expected recipe ranked {rank}"),
+                json!({"rank": rank, "expected": expected_recipe_id}),
+            )
+        } else {
+            AssertionResult::fail(
+                "recipe_rank",
+                format!(
+                    "expected recipe ranked {rank}, above max rank {}",
+                    max_rank.unwrap_or(0)
+                ),
+                recipe_top_evidence(rows),
+            )
+        }
+    } else {
+        AssertionResult::fail(
+            "recipe_rank",
+            "expected recipe was not returned",
+            json!({"expected": expected_recipe_id, "top": recipe_top_evidence(rows)}),
+        )
+    }
+}
+
 fn search_columns_assertion(
     response: &JsonValue,
     expected_column: Option<&str>,
@@ -1498,6 +1528,21 @@ fn top_evidence(rows: &[JsonValue], field: &str) -> JsonValue {
                     field: row.get(field).cloned().unwrap_or(JsonValue::Null),
                     "name": row.get("name").cloned().unwrap_or(JsonValue::Null),
                     "unique_id": row.get("unique_id").cloned().unwrap_or(JsonValue::Null),
+                })
+            })
+            .collect(),
+    )
+}
+
+fn recipe_top_evidence(rows: &[JsonValue]) -> JsonValue {
+    JsonValue::Array(
+        rows.iter()
+            .take(10)
+            .map(|row| {
+                json!({
+                    "id": row.get("id").cloned().unwrap_or(JsonValue::Null),
+                    "recipe_id": row.get("recipe_id").cloned().unwrap_or(JsonValue::Null),
+                    "topic": row.get("topic").cloned().unwrap_or(JsonValue::Null),
                 })
             })
             .collect(),

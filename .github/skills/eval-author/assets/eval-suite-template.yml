@@ -1,0 +1,51 @@
+version: 1
+name: nova-analyst-smoke
+defaults:
+  persona: analyst
+  top_k: 5
+
+cases:
+  - id: canonical_metric_discovery
+    question: Find the canonical model and indicator for a business metric.
+    assertions:
+      - type: search_indicator_rank
+        query: gross merchandise value
+        expected: gross merchandise value
+        max_rank: 5
+        resource_types: [model]
+      - type: context_has
+        id_or_name: model.pkg.orders
+        fields:
+          - data.unique_id
+          - data.entity.name
+      - type: metadata_score_min
+        id_or_name: model.pkg.orders
+        persona: analyst
+        threshold: 70
+
+agent_cases:
+  - id: analyst_metric_lookup_flow
+    task: Which canonical model and indicator should be used to analyze gross merchandise value?
+    expected:
+      must_call:
+        - search_indicator
+        - get_context
+      must_not_call:
+        - execute_sql
+      ordered:
+        - before: get_context
+          must_have_called:
+            - search_indicator
+      selected_entities:
+        - model.pkg.orders
+      selected_entity_ranks:
+        - unique_id: model.pkg.orders
+          tool: search_indicator
+          max_rank: 5
+      called_with:
+        - tool: search_indicator
+          contains:
+            query: gross merchandise
+      final_answer:
+        must_contain:
+          - gross merchandise value
