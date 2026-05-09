@@ -13,6 +13,7 @@ const MAX_PARAM_KEYS: usize = 50;
 const MAX_ARRAY_ITEMS: usize = 20;
 const MAX_SUMMARY_STRING_CHARS: usize = 256;
 const MAX_SELECTED_UNIQUE_IDS: usize = 200;
+const MAX_TOP_UNIQUE_IDS: usize = 20;
 const MAX_UNIQUE_ID_CHARS: usize = 512;
 
 #[derive(Debug, Serialize)]
@@ -27,6 +28,7 @@ struct ToolTraceRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     params_summary: Option<Value>,
     selected_unique_ids: Vec<String>,
+    top_unique_ids: Vec<String>,
 }
 
 /// Append a sanitized tool-call trace row when `DBT_NOVA_TRACE_TOOL_CALLS_PATH` is set.
@@ -64,6 +66,7 @@ pub fn record_tool_call(
         error_code: response.and_then(extract_error_code),
         params_summary: params.map(summarize_params),
         selected_unique_ids: response.map(extract_unique_ids).unwrap_or_default(),
+        top_unique_ids: response.map(extract_top_unique_ids).unwrap_or_default(),
     };
 
     let serialized = match serde_json::to_string(&row) {
@@ -182,6 +185,83 @@ fn extract_unique_ids(response: &Value) -> Vec<String> {
     out.into_iter().collect()
 }
 
+fn extract_top_unique_ids(response: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    if let Some(rows) = response.get("data").and_then(Value::as_array) {
+        for row in rows {
+            push_first_unique_id(row, &mut out, &mut seen);
+            if out.len() >= MAX_TOP_UNIQUE_IDS {
+                return out;
+            }
+        }
+    }
+    if out.is_empty() {
+        collect_top_unique_ids(response, &mut out, &mut seen);
+    }
+    out
+}
+
+fn push_first_unique_id(value: &Value, out: &mut Vec<String>, seen: &mut BTreeSet<String>) {
+    if let Some(id) = first_unique_id(value) {
+        push_ordered_unique_id(&id, out, seen);
+    }
+}
+
+fn collect_top_unique_ids(value: &Value, out: &mut Vec<String>, seen: &mut BTreeSet<String>) {
+    if out.len() >= MAX_TOP_UNIQUE_IDS {
+        return;
+    }
+    match value {
+        Value::Object(map) => {
+            if let Some(id) = first_unique_id(value) {
+                push_ordered_unique_id(&id, out, seen);
+                if out.len() >= MAX_TOP_UNIQUE_IDS {
+                    return;
+                }
+            }
+            for child in map.values() {
+                collect_top_unique_ids(child, out, seen);
+                if out.len() >= MAX_TOP_UNIQUE_IDS {
+                    return;
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_top_unique_ids(item, out, seen);
+                if out.len() >= MAX_TOP_UNIQUE_IDS {
+                    return;
+                }
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
+fn first_unique_id(value: &Value) -> Option<String> {
+    let Value::Object(map) = value else {
+        return None;
+    };
+    for key in ["unique_id", "parent_unique_id", "root_id"] {
+        if let Some(id) = map.get(key).and_then(Value::as_str)
+            && !id.trim().is_empty()
+        {
+            return Some(truncate_string(id, MAX_UNIQUE_ID_CHARS));
+        }
+    }
+    None
+}
+
+fn push_ordered_unique_id(id: &str, out: &mut Vec<String>, seen: &mut BTreeSet<String>) {
+    if out.len() >= MAX_TOP_UNIQUE_IDS {
+        return;
+    }
+    if seen.insert(id.to_string()) {
+        out.push(id.to_string());
+    }
+}
+
 fn collect_unique_ids(value: &Value, out: &mut BTreeSet<String>) {
     match value {
         Value::Object(map) => {
@@ -227,7 +307,9 @@ fn timestamp_ms() -> u128 {
 mod tests {
     use serde_json::json;
 
-    use super::{MAX_SELECTED_UNIQUE_IDS, extract_unique_ids, summarize_params};
+    use super::{
+        MAX_SELECTED_UNIQUE_IDS, extract_top_unique_ids, extract_unique_ids, summarize_params,
+    };
 
     #[test]
     fn summarize_params_keeps_only_safe_context() {
@@ -272,5 +354,23 @@ mod tests {
             .collect();
         let ids = extract_unique_ids(&json!({"data": data}));
         assert_eq!(ids.len(), MAX_SELECTED_UNIQUE_IDS);
+    }
+
+    #[test]
+    fn extract_top_unique_ids_preserves_response_order() {
+        let ids = extract_top_unique_ids(&json!({
+            "data": [
+                {"unique_id": "model.pkg.first"},
+                {"unique_id": "model.pkg.second", "parent_unique_id": "model.pkg.parent"}
+            ],
+            "root_id": "model.pkg.root"
+        }));
+        assert_eq!(
+            ids,
+            vec![
+                "model.pkg.first".to_string(),
+                "model.pkg.second".to_string()
+            ]
+        );
     }
 }

@@ -89,6 +89,9 @@ pub async fn dispatch(command: args::Command) -> DispatchResult {
                     eval_cmd::run_agent_eval_command(&run_args).await
                 }
             },
+            args::EvalCommand::Validate(validate_args) => {
+                eval_cmd::run_validate_command(&validate_args)
+            }
         },
     }
 }

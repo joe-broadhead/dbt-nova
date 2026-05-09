@@ -339,40 +339,83 @@ pub struct EvalArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum EvalCommand {
+    /// Write a starter eval suite.
     Init(EvalInitArgs),
+    /// Run deterministic Nova tool assertions against a manifest.
     Run(EvalRunArgs),
+    /// Run provider-backed agent evals and score observed Nova tool use.
     Agent(EvalAgentArgs),
+    /// Validate an eval suite without loading a manifest or running a provider.
+    Validate(EvalValidateArgs),
 }
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct EvalInitArgs {
-    #[arg(long, value_name = "PERSONA", default_value = "analyst")]
+    #[arg(
+        long,
+        value_name = "PERSONA",
+        default_value = "analyst",
+        help = "Persona to use in the generated starter suite"
+    )]
     pub persona: String,
-    #[arg(long, value_name = "PATH")]
+    #[arg(long, value_name = "PATH", help = "Path to write the suite YAML")]
     pub out: String,
-    #[arg(long, default_value_t = false)]
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Overwrite an existing suite file"
+    )]
     pub force: bool,
 }
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct EvalRunArgs {
-    #[arg(long, value_name = "PATH")]
+    #[arg(long, value_name = "PATH", help = "YAML or JSON eval suite path")]
     pub suite: String,
-    #[arg(long, value_name = "PATH", conflicts_with = "manifest_uri")]
+    #[arg(
+        long,
+        value_name = "PATH",
+        conflicts_with = "manifest_uri",
+        help = "Local dbt manifest.json path"
+    )]
     pub manifest_path: Option<String>,
-    #[arg(long, value_name = "URI", conflicts_with = "manifest_path")]
+    #[arg(
+        long,
+        value_name = "URI",
+        conflicts_with = "manifest_path",
+        help = "Remote manifest or prebuilt artifact URI"
+    )]
     pub manifest_uri: Option<String>,
-    #[arg(long, value_name = "INSTANCE_ID")]
+    #[arg(
+        long,
+        value_name = "INSTANCE_ID",
+        help = "Storage instance id for cached Nova assets"
+    )]
     pub storage_instance_id: Option<String>,
-    #[arg(long, value_name = "DIR")]
+    #[arg(long, value_name = "DIR", help = "Directory for eval result artifacts")]
     pub output_dir: Option<String>,
-    #[arg(long, value_name = "FLOAT")]
+    #[arg(
+        long = "case-id",
+        value_name = "ID",
+        action = ArgAction::Append,
+        help = "Only run the named bridge case; repeat for multiple cases"
+    )]
+    pub case_ids: Vec<String>,
+    #[arg(
+        long,
+        value_name = "FLOAT",
+        help = "Required pass rate between 0.0 and 1.0"
+    )]
     pub fail_under: Option<f64>,
-    #[arg(long, default_value_t = false)]
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Clear the selected storage instance before loading"
+    )]
     pub cleanup_storage_on_start: bool,
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, help = "Open storage in read-only mode")]
     pub read_only: bool,
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, help = "Emit a JSON CLI envelope")]
     pub json: bool,
 }
 
@@ -384,36 +427,92 @@ pub struct EvalAgentArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum EvalAgentCommand {
+    /// Run provider-backed agent evals and score observed Nova tool use.
     Run(EvalAgentRunArgs),
 }
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct EvalAgentRunArgs {
-    #[arg(long, value_name = "PATH")]
+    #[arg(long, value_name = "PATH", help = "YAML or JSON eval suite path")]
     pub suite: String,
-    #[arg(long, value_name = "PROVIDER", default_value = "opencode")]
+    #[arg(
+        long,
+        value_name = "PROVIDER",
+        default_value = "opencode",
+        help = "Provider preset: opencode, codex, claude, goose, or custom"
+    )]
     pub provider: String,
-    #[arg(long, value_name = "COMMAND")]
+    #[arg(
+        long,
+        value_name = "COMMAND",
+        help = "Custom provider command to execute"
+    )]
     pub provider_command: Option<String>,
-    #[arg(long, value_name = "JSON_ARRAY")]
+    #[arg(
+        long,
+        value_name = "JSON_ARRAY",
+        help = "Custom provider arguments as a JSON string array with placeholders"
+    )]
     pub provider_args_json: Option<String>,
-    #[arg(long, value_name = "PATH", conflicts_with = "manifest_uri")]
+    #[arg(
+        long,
+        value_name = "PATH",
+        conflicts_with = "manifest_uri",
+        help = "Local dbt manifest.json path"
+    )]
     pub manifest_path: Option<String>,
-    #[arg(long, value_name = "URI", conflicts_with = "manifest_path")]
+    #[arg(
+        long,
+        value_name = "URI",
+        conflicts_with = "manifest_path",
+        help = "Remote manifest or prebuilt artifact URI"
+    )]
     pub manifest_uri: Option<String>,
-    #[arg(long, value_name = "INSTANCE_ID")]
+    #[arg(
+        long,
+        value_name = "INSTANCE_ID",
+        help = "Storage instance id for cached Nova assets"
+    )]
     pub storage_instance_id: Option<String>,
-    #[arg(long, value_name = "DIR")]
+    #[arg(long, value_name = "DIR", help = "Directory for eval result artifacts")]
     pub output_dir: Option<String>,
-    #[arg(long, value_name = "SECS", default_value_t = 600)]
+    #[arg(
+        long = "case-id",
+        value_name = "ID",
+        action = ArgAction::Append,
+        help = "Only run the named agent case; repeat for multiple cases"
+    )]
+    pub case_ids: Vec<String>,
+    #[arg(
+        long,
+        value_name = "SECS",
+        default_value_t = 600,
+        help = "Provider command timeout in seconds"
+    )]
     pub timeout_secs: u64,
-    #[arg(long, value_name = "FLOAT")]
+    #[arg(
+        long,
+        value_name = "FLOAT",
+        help = "Required pass rate between 0.0 and 1.0"
+    )]
     pub fail_under: Option<f64>,
-    #[arg(long, default_value_t = false)]
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Clear the selected storage instance before running the provider"
+    )]
     pub cleanup_storage_on_start: bool,
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, help = "Open storage in read-only mode")]
     pub read_only: bool,
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, help = "Emit a JSON CLI envelope")]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct EvalValidateArgs {
+    #[arg(long, value_name = "PATH", help = "YAML or JSON eval suite path")]
+    pub suite: String,
+    #[arg(long, default_value_t = false, help = "Emit a JSON CLI envelope")]
     pub json: bool,
 }
 
@@ -422,9 +521,9 @@ mod tests {
     use clap::Parser;
 
     use super::{
-        AuditCommand, Cli, Command, ConfigCommand, HealthCommand, ManifestCommand,
-        MetadataAuditSelectionModeArg, NovaMetaResourceKindArg, ServerCommand, ServerTransportArg,
-        StorageCommand, ToolCommand,
+        AuditCommand, Cli, Command, ConfigCommand, EvalAgentCommand, EvalCommand, HealthCommand,
+        ManifestCommand, MetadataAuditSelectionModeArg, NovaMetaResourceKindArg, ServerCommand,
+        ServerTransportArg, StorageCommand, ToolCommand,
     };
 
     #[test]
@@ -479,6 +578,67 @@ mod tests {
         for args in groups {
             let cli = Cli::parse_from(args);
             assert!(cli.command.is_some());
+        }
+    }
+
+    #[test]
+    fn eval_validate_parses_suite_path() {
+        let cli = Cli::parse_from(["dbt-nova", "eval", "validate", "--suite", "suite.yml"]);
+        match cli.command.expect("command") {
+            Command::Eval(eval) => match eval.command {
+                EvalCommand::Validate(args) => assert_eq!(args.suite, "suite.yml"),
+                _ => panic!("expected eval validate"),
+            },
+            _ => panic!("expected eval command"),
+        }
+    }
+
+    #[test]
+    fn eval_run_parses_repeated_case_ids() {
+        let cli = Cli::parse_from([
+            "dbt-nova",
+            "eval",
+            "run",
+            "--suite",
+            "suite.yml",
+            "--case-id",
+            "one",
+            "--case-id",
+            "two",
+        ]);
+        match cli.command.expect("command") {
+            Command::Eval(eval) => match eval.command {
+                EvalCommand::Run(args) => assert_eq!(args.case_ids, vec!["one", "two"]),
+                _ => panic!("expected eval run"),
+            },
+            _ => panic!("expected eval command"),
+        }
+    }
+
+    #[test]
+    fn eval_agent_run_parses_repeated_case_ids() {
+        let cli = Cli::parse_from([
+            "dbt-nova",
+            "eval",
+            "agent",
+            "run",
+            "--suite",
+            "suite.yml",
+            "--case-id",
+            "agent-one",
+            "--case-id",
+            "agent-two",
+        ]);
+        match cli.command.expect("command") {
+            Command::Eval(eval) => match eval.command {
+                EvalCommand::Agent(agent) => match agent.command {
+                    EvalAgentCommand::Run(args) => {
+                        assert_eq!(args.case_ids, vec!["agent-one", "agent-two"]);
+                    }
+                },
+                _ => panic!("expected eval agent run"),
+            },
+            _ => panic!("expected eval command"),
         }
     }
 

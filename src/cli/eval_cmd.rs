@@ -1,6 +1,6 @@
 #![allow(clippy::too_many_lines)]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,9 +9,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 
-use crate::cli::args::{EvalAgentRunArgs, EvalInitArgs, EvalRunArgs, ManifestLoadArgs};
+use crate::cli::args::{
+    EvalAgentRunArgs, EvalInitArgs, EvalRunArgs, EvalValidateArgs, ManifestLoadArgs,
+};
 use crate::cli::manifest::{build_manifest_load_config, execute_manifest_load};
-use crate::cli::output::CliEnvelope;
+use crate::cli::output::{CliEnvelope, error_envelope};
 use crate::cli::{DispatchError, DispatchResult};
 use crate::error::DbtNovaError;
 use crate::manifest::ManifestSearch;
@@ -91,6 +93,17 @@ enum EvalAssertion {
         id_or_name: String,
         fields: Vec<String>,
     },
+    ContextFieldEquals {
+        id_or_name: String,
+        field: String,
+        expected: JsonValue,
+    },
+    ContextContains {
+        id_or_name: String,
+        expected: String,
+        #[serde(default)]
+        field: Option<String>,
+    },
     MetadataScoreMin {
         #[serde(default)]
         id_or_name: Option<String>,
@@ -142,6 +155,10 @@ struct AgentExpected {
     #[serde(default)]
     selected_entities: Vec<String>,
     #[serde(default)]
+    selected_entity_ranks: Vec<AgentEntityRank>,
+    #[serde(default)]
+    called_with: Vec<AgentCalledWith>,
+    #[serde(default)]
     final_answer: Option<FinalAnswerExpected>,
 }
 
@@ -150,6 +167,24 @@ struct AgentOrder {
     before: String,
     #[serde(default)]
     must_have_called: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentEntityRank {
+    unique_id: String,
+    #[serde(default)]
+    tool: Option<String>,
+    #[serde(default)]
+    max_rank: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentCalledWith {
+    tool: String,
+    #[serde(default)]
+    params: BTreeMap<String, JsonValue>,
+    #[serde(default)]
+    contains: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -236,6 +271,52 @@ pub fn run_init_command(args: &EvalInitArgs) -> DispatchResult {
     Ok(())
 }
 
+/// Validates an eval suite without loading a manifest or running a provider.
+///
+/// # Errors
+/// Returns an error when the suite cannot be read or fails schema validation.
+pub fn run_validate_command(args: &EvalValidateArgs) -> DispatchResult {
+    let started = Instant::now();
+    let suite = load_suite(&args.suite).map_err(|error| {
+        if args.json {
+            let envelope = error_envelope("eval validate", &error, started.elapsed().as_millis());
+            if let Ok(out) = serde_json::to_string_pretty(&envelope) {
+                println!("{out}");
+                return DispatchError {
+                    error,
+                    rendered: true,
+                };
+            }
+        }
+        DispatchError {
+            error,
+            rendered: false,
+        }
+    })?;
+    let payload = json!({
+        "valid": true,
+        "path": args.suite,
+        "suite_name": suite.name.as_deref().unwrap_or("suite"),
+        "version": suite.version,
+        "bridge_case_count": suite.cases.len(),
+        "agent_case_count": suite.agent_cases.len(),
+    });
+    if args.json {
+        let envelope =
+            CliEnvelope::success("eval validate", payload, started.elapsed().as_millis());
+        let out = serde_json::to_string_pretty(&envelope)
+            .map_err(|error| server_error(error.to_string()))?;
+        println!("{out}");
+    } else {
+        println!("eval suite is valid");
+        println!("  suite: {}", suite.name.as_deref().unwrap_or("suite"));
+        println!("  version: {}", suite.version);
+        println!("  bridge cases: {}", suite.cases.len());
+        println!("  agent cases: {}", suite.agent_cases.len());
+    }
+    Ok(())
+}
+
 /// Runs deterministic Nova bridge assertions against a manifest.
 ///
 /// # Errors
@@ -249,6 +330,7 @@ pub async fn run_eval_command(args: &EvalRunArgs) -> DispatchResult {
             DbtNovaError::InvalidParams("eval suite contains no bridge cases".to_string()).into(),
         );
     }
+    let selected_cases = selected_bridge_cases(&suite.cases, &args.case_ids)?;
     let output_dir = resolve_output_dir(args.output_dir.as_deref(), &suite, "bridge");
     fs::create_dir_all(&output_dir).map_err(|error| server_error(error.to_string()))?;
 
@@ -262,8 +344,8 @@ pub async fn run_eval_command(args: &EvalRunArgs) -> DispatchResult {
     })?;
     let load_result = execute_manifest_load(config).await?;
 
-    let mut cases = Vec::with_capacity(suite.cases.len());
-    for case in &suite.cases {
+    let mut cases = Vec::with_capacity(selected_cases.len());
+    for case in selected_cases {
         cases.push(evaluate_bridge_case(case, &suite, &load_result.search).await);
     }
     let report = build_report(
@@ -295,12 +377,13 @@ pub async fn run_agent_eval_command(args: &EvalAgentRunArgs) -> DispatchResult {
             DbtNovaError::InvalidParams("eval suite contains no agent_cases".to_string()).into(),
         );
     }
+    let selected_cases = selected_agent_cases(&suite.agent_cases, &args.case_ids)?;
     let output_dir = resolve_output_dir(args.output_dir.as_deref(), &suite, "agent");
     fs::create_dir_all(output_dir.join("tool-calls"))
         .map_err(|error| server_error(error.to_string()))?;
 
-    let mut cases = Vec::with_capacity(suite.agent_cases.len());
-    for case in &suite.agent_cases {
+    let mut cases = Vec::with_capacity(selected_cases.len());
+    for case in selected_cases {
         cases.push(run_agent_case(case, args, &output_dir).await);
     }
     let report = build_report(
@@ -411,6 +494,28 @@ async fn evaluate_bridge_assertion(
                 Err(error) => AssertionResult::error("context_has", error.to_string()),
             }
         }
+        EvalAssertion::ContextFieldEquals {
+            id_or_name,
+            field,
+            expected,
+        } => {
+            let params = json!({"id_or_name": id_or_name});
+            match call_tool(search, "get_context", params).await {
+                Ok(response) => context_field_equals_assertion(&response, field, expected),
+                Err(error) => AssertionResult::error("context_field_equals", error.to_string()),
+            }
+        }
+        EvalAssertion::ContextContains {
+            id_or_name,
+            expected,
+            field,
+        } => {
+            let params = json!({"id_or_name": id_or_name});
+            match call_tool(search, "get_context", params).await {
+                Ok(response) => context_contains_assertion(&response, field.as_deref(), expected),
+                Err(error) => AssertionResult::error("context_contains", error.to_string()),
+            }
+        }
         EvalAssertion::MetadataScoreMin {
             id_or_name,
             threshold,
@@ -474,11 +579,7 @@ async fn evaluate_bridge_assertion(
         }
         EvalAssertion::ToolSuccess { tool, params } => {
             match call_tool(search, tool, params.clone()).await {
-                Ok(response) => AssertionResult::pass(
-                    format!("tool_success:{tool}"),
-                    "tool returned success",
-                    json!({"count": response.get("count").cloned().unwrap_or(JsonValue::Null)}),
-                ),
+                Ok(response) => tool_success_assertion(tool, &response),
                 Err(error) => {
                     AssertionResult::error(format!("tool_success:{tool}"), error.to_string())
                 }
@@ -693,6 +794,12 @@ fn score_agent_expectations(
             ));
         }
     }
+    for entity_rank in &expected.selected_entity_ranks {
+        assertions.push(selected_entity_rank_assertion(trace, entity_rank));
+    }
+    for called_with in &expected.called_with {
+        assertions.push(called_with_assertion(trace, called_with));
+    }
     if let Some(final_answer) = expected.final_answer.as_ref() {
         assertions.extend(score_final_answer(final_answer, final_answer_text));
     }
@@ -808,6 +915,146 @@ fn selected_entities(trace: &[JsonValue]) -> Vec<String> {
         }
     }
     out.into_iter().collect()
+}
+
+fn selected_entity_rank_assertion(
+    trace: &[JsonValue],
+    expected: &AgentEntityRank,
+) -> AssertionResult {
+    let rank = trace_entity_rank(trace, &expected.unique_id, expected.tool.as_deref());
+    match (rank, expected.max_rank) {
+        (Some(rank), Some(max_rank)) if rank <= max_rank => AssertionResult::pass(
+            format!("selected_entity_rank:{}", expected.unique_id),
+            format!("expected entity appeared at rank {rank}"),
+            json!({"rank": rank, "max_rank": max_rank, "tool": expected.tool}),
+        ),
+        (Some(rank), Some(max_rank)) => AssertionResult::fail(
+            format!("selected_entity_rank:{}", expected.unique_id),
+            format!("expected entity appeared at rank {rank}, above max rank {max_rank}"),
+            json!({
+                "rank": rank,
+                "max_rank": max_rank,
+                "tool": expected.tool,
+                "top_unique_ids": top_unique_ids(trace, expected.tool.as_deref()),
+            }),
+        ),
+        (Some(rank), None) => AssertionResult::pass(
+            format!("selected_entity_rank:{}", expected.unique_id),
+            format!("expected entity appeared at rank {rank}"),
+            json!({"rank": rank, "tool": expected.tool}),
+        ),
+        (None, _) => AssertionResult::fail(
+            format!("selected_entity_rank:{}", expected.unique_id),
+            "expected entity did not appear in ranked tool evidence",
+            json!({
+                "tool": expected.tool,
+                "top_unique_ids": top_unique_ids(trace, expected.tool.as_deref()),
+            }),
+        ),
+    }
+}
+
+fn trace_entity_rank(trace: &[JsonValue], entity: &str, tool: Option<&str>) -> Option<usize> {
+    trace
+        .iter()
+        .filter(|row| {
+            tool.is_none_or(|tool| row.get("tool").and_then(JsonValue::as_str) == Some(tool))
+        })
+        .filter_map(|row| {
+            row.get("top_unique_ids")
+                .and_then(JsonValue::as_array)
+                .and_then(|ids| ids.iter().position(|id| id.as_str() == Some(entity)))
+        })
+        .map(|index| index + 1)
+        .min()
+}
+
+fn top_unique_ids(trace: &[JsonValue], tool: Option<&str>) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    for row in trace.iter().filter(|row| {
+        tool.is_none_or(|tool| row.get("tool").and_then(JsonValue::as_str) == Some(tool))
+    }) {
+        if let Some(ids) = row.get("top_unique_ids").and_then(JsonValue::as_array) {
+            for id in ids {
+                if let Some(id) = id.as_str() {
+                    let id = id.to_string();
+                    if seen.insert(id.clone()) {
+                        out.push(id);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+fn called_with_assertion(trace: &[JsonValue], expected: &AgentCalledWith) -> AssertionResult {
+    if trace.iter().any(|row| called_with_matches(row, expected)) {
+        return AssertionResult::pass(
+            format!("called_with:{}", expected.tool),
+            "tool call parameters matched",
+            json!({"tool": expected.tool}),
+        );
+    }
+    AssertionResult::fail(
+        format!("called_with:{}", expected.tool),
+        "no observed tool call matched the expected safe parameters",
+        json!({
+            "expected": {
+                "params": &expected.params,
+                "contains": &expected.contains,
+            },
+            "observed": observed_params_for_tool(trace, &expected.tool),
+        }),
+    )
+}
+
+fn called_with_matches(row: &JsonValue, expected: &AgentCalledWith) -> bool {
+    if row.get("tool").and_then(JsonValue::as_str) != Some(expected.tool.as_str()) {
+        return false;
+    }
+    let Some(summary) = row.get("params_summary").and_then(JsonValue::as_object) else {
+        return expected.params.is_empty() && expected.contains.is_empty();
+    };
+    expected.params.iter().all(|(key, value)| {
+        summary
+            .get(key)
+            .is_some_and(|actual| param_value_matches(actual, value))
+    }) && expected.contains.iter().all(|(key, value)| {
+        summary
+            .get(key)
+            .is_some_and(|actual| json_contains_string(actual, value))
+    })
+}
+
+fn param_value_matches(actual: &JsonValue, expected: &JsonValue) -> bool {
+    match (actual, expected) {
+        (JsonValue::String(actual), JsonValue::String(expected)) => {
+            actual.eq_ignore_ascii_case(expected)
+        }
+        (JsonValue::Array(actual_items), JsonValue::Array(expected_items)) => {
+            expected_items.iter().all(|expected| {
+                actual_items
+                    .iter()
+                    .any(|actual| param_value_matches(actual, expected))
+            })
+        }
+        (JsonValue::Array(actual_items), expected) => actual_items
+            .iter()
+            .any(|actual| param_value_matches(actual, expected)),
+        _ => actual == expected,
+    }
+}
+
+fn observed_params_for_tool(trace: &[JsonValue], tool: &str) -> JsonValue {
+    JsonValue::Array(
+        trace
+            .iter()
+            .filter(|row| row.get("tool").and_then(JsonValue::as_str) == Some(tool))
+            .filter_map(|row| row.get("params_summary").cloned())
+            .collect(),
+    )
 }
 
 struct ToolTraceRead {
@@ -1000,6 +1247,58 @@ fn fields_assertion(name: &str, response: &JsonValue, fields: &[String]) -> Asse
     }
 }
 
+fn context_field_equals_assertion(
+    response: &JsonValue,
+    field: &str,
+    expected: &JsonValue,
+) -> AssertionResult {
+    match json_value_at_path(response, field) {
+        Some(actual) if actual == expected => AssertionResult::pass(
+            "context_field_equals",
+            "context field matched expected value",
+            json!({"field": field, "expected": expected}),
+        ),
+        Some(actual) => AssertionResult::fail(
+            "context_field_equals",
+            "context field did not match expected value",
+            json!({"field": field, "expected": expected, "actual": actual}),
+        ),
+        None => AssertionResult::fail(
+            "context_field_equals",
+            "context field was missing",
+            json!({"field": field, "expected": expected}),
+        ),
+    }
+}
+
+fn context_contains_assertion(
+    response: &JsonValue,
+    field: Option<&str>,
+    expected: &str,
+) -> AssertionResult {
+    let target = field.and_then(|field| json_value_at_path(response, field));
+    let contains = if let Some(value) = target {
+        json_contains_string(value, expected)
+    } else if field.is_some() {
+        false
+    } else {
+        json_contains_string(response, expected)
+    };
+    if contains {
+        AssertionResult::pass(
+            "context_contains",
+            "expected value appeared in context",
+            json!({"field": field, "expected": expected}),
+        )
+    } else {
+        AssertionResult::fail(
+            "context_contains",
+            "expected value did not appear in context",
+            json!({"field": field, "expected": expected}),
+        )
+    }
+}
+
 fn metadata_score_assertion(response: &JsonValue, threshold: f64) -> AssertionResult {
     let score = find_score(response);
     match score {
@@ -1054,6 +1353,60 @@ fn contains_string_assertion(name: &str, response: &JsonValue, expected: &str) -
     }
 }
 
+fn tool_success_assertion(tool: &str, response: &JsonValue) -> AssertionResult {
+    if response.get("success").and_then(JsonValue::as_bool) == Some(false) {
+        return AssertionResult::fail(
+            format!("tool_success:{tool}"),
+            "tool returned an explicit success=false response",
+            tool_failure_evidence(response),
+        );
+    }
+    AssertionResult::pass(
+        format!("tool_success:{tool}"),
+        "tool returned success",
+        json!({"count": response.get("count").cloned().unwrap_or(JsonValue::Null)}),
+    )
+}
+
+fn tool_failure_evidence(response: &JsonValue) -> JsonValue {
+    let mut evidence = serde_json::Map::new();
+    for key in ["success", "error_code", "code", "message", "count"] {
+        if let Some(value) = response.get(key).and_then(safe_evidence_scalar) {
+            evidence.insert(key.to_string(), value);
+        }
+    }
+    if let Some(error) = response.get("error").and_then(JsonValue::as_object) {
+        for key in ["error_code", "code", "message"] {
+            if let Some(value) = error.get(key).and_then(safe_evidence_scalar) {
+                evidence.insert(format!("error.{key}"), value);
+            }
+        }
+    }
+    if evidence.is_empty()
+        && let Some(map) = response.as_object()
+    {
+        evidence.insert(
+            "keys".to_string(),
+            JsonValue::Array(
+                map.keys()
+                    .take(20)
+                    .cloned()
+                    .map(JsonValue::String)
+                    .collect(),
+            ),
+        );
+    }
+    JsonValue::Object(evidence)
+}
+
+fn safe_evidence_scalar(value: &JsonValue) -> Option<JsonValue> {
+    match value {
+        JsonValue::Null | JsonValue::Bool(_) | JsonValue::Number(_) => Some(value.clone()),
+        JsonValue::String(value) => Some(JsonValue::String(truncate(value, 1000))),
+        JsonValue::Array(_) | JsonValue::Object(_) => None,
+    }
+}
+
 fn data_rows(response: &JsonValue) -> &[JsonValue] {
     response
         .get("data")
@@ -1086,14 +1439,16 @@ fn json_contains_string_lower(value: &JsonValue, expected: &str) -> bool {
 }
 
 fn json_has_field_path(value: &JsonValue, field_path: &str) -> bool {
+    json_value_at_path(value, field_path).is_some_and(|value| !value.is_null())
+}
+
+fn json_value_at_path<'a>(value: &'a JsonValue, field_path: &str) -> Option<&'a JsonValue> {
     let mut current = value;
     for part in field_path.split('.') {
-        let Some(next) = current.get(part) else {
-            return false;
-        };
+        let next = current.get(part)?;
         current = next;
     }
-    !current.is_null()
+    Some(current)
 }
 
 fn find_score(value: &JsonValue) -> Option<f64> {
@@ -1376,6 +1731,8 @@ impl AgentExpected {
             || !self.must_not_call.is_empty()
             || !self.ordered.is_empty()
             || !self.selected_entities.is_empty()
+            || !self.selected_entity_ranks.is_empty()
+            || !self.called_with.is_empty()
     }
 }
 
@@ -1428,30 +1785,125 @@ fn validate_suite(suite: &EvalSuite) -> crate::error::Result<()> {
                 case.id
             )));
         }
+        validate_agent_expected(&case.expected, &case.id)?;
     }
     Ok(())
 }
 
 fn validate_assertion(assertion: &EvalAssertion, case_id: &str) -> crate::error::Result<()> {
-    if let EvalAssertion::SearchColumnsRank {
-        expected_column,
-        expected_parent_unique_id,
-        ..
-    } = assertion
-    {
-        let has_expected_column = expected_column
-            .as_ref()
-            .is_some_and(|value| !value.trim().is_empty());
-        let has_expected_parent = expected_parent_unique_id
-            .as_ref()
-            .is_some_and(|value| !value.trim().is_empty());
-        if !has_expected_column && !has_expected_parent {
+    match assertion {
+        EvalAssertion::SearchColumnsRank {
+            expected_column,
+            expected_parent_unique_id,
+            ..
+        } => {
+            let has_expected_column = expected_column
+                .as_ref()
+                .is_some_and(|value| !value.trim().is_empty());
+            let has_expected_parent = expected_parent_unique_id
+                .as_ref()
+                .is_some_and(|value| !value.trim().is_empty());
+            if !has_expected_column && !has_expected_parent {
+                return Err(DbtNovaError::InvalidParams(format!(
+                    "search_columns_rank assertion in case '{case_id}' must include expected_column or expected_parent_unique_id"
+                )));
+            }
+        }
+        EvalAssertion::ContextFieldEquals { field, .. } if field.trim().is_empty() => {
             return Err(DbtNovaError::InvalidParams(format!(
-                "search_columns_rank assertion in case '{case_id}' must include expected_column or expected_parent_unique_id"
+                "context_field_equals assertion in case '{case_id}' must include a non-empty field"
+            )));
+        }
+        EvalAssertion::ContextContains {
+            expected, field, ..
+        } => {
+            if expected.trim().is_empty() {
+                return Err(DbtNovaError::InvalidParams(format!(
+                    "context_contains assertion in case '{case_id}' must include non-empty expected text"
+                )));
+            }
+            if field.as_ref().is_some_and(|field| field.trim().is_empty()) {
+                return Err(DbtNovaError::InvalidParams(format!(
+                    "context_contains assertion in case '{case_id}' must include a non-empty field when field is set"
+                )));
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn validate_agent_expected(expected: &AgentExpected, case_id: &str) -> crate::error::Result<()> {
+    for rank in &expected.selected_entity_ranks {
+        if rank.unique_id.trim().is_empty() {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "selected_entity_ranks in agent case '{case_id}' must include non-empty unique_id values"
+            )));
+        }
+        if rank
+            .tool
+            .as_ref()
+            .is_some_and(|tool| tool.trim().is_empty())
+        {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "selected_entity_ranks in agent case '{case_id}' must include non-empty tool values when tool is set"
+            )));
+        }
+        if rank.max_rank == Some(0) {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "selected_entity_ranks in agent case '{case_id}' must use max_rank greater than zero"
+            )));
+        }
+    }
+    for called_with in &expected.called_with {
+        if called_with.tool.trim().is_empty() {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "called_with expectations in agent case '{case_id}' must include non-empty tool values"
+            )));
+        }
+        if called_with.params.is_empty() && called_with.contains.is_empty() {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "called_with expectations in agent case '{case_id}' must include params or contains constraints"
+            )));
+        }
+        if called_with
+            .contains
+            .iter()
+            .any(|(key, value)| key.trim().is_empty() || value.trim().is_empty())
+        {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "called_with contains expectations in agent case '{case_id}' must include non-empty keys and values"
+            )));
+        }
+        if called_with.params.keys().any(|key| key.trim().is_empty()) {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "called_with params expectations in agent case '{case_id}' must include non-empty keys"
+            )));
+        }
+        if called_with
+            .params
+            .values()
+            .any(|value| !is_safe_expected_param_value(value))
+        {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "called_with params expectations in agent case '{case_id}' must use scalar values or arrays of scalar values"
             )));
         }
     }
     Ok(())
+}
+
+fn is_safe_expected_param_value(value: &JsonValue) -> bool {
+    match value {
+        JsonValue::Null | JsonValue::Bool(_) | JsonValue::Number(_) | JsonValue::String(_) => true,
+        JsonValue::Array(items) => items.iter().all(|item| {
+            matches!(
+                item,
+                JsonValue::Null | JsonValue::Bool(_) | JsonValue::Number(_) | JsonValue::String(_)
+            )
+        }),
+        JsonValue::Object(_) => false,
+    }
 }
 
 fn validate_case_ids<'a>(
@@ -1506,6 +1958,76 @@ fn validate_fail_under(value: Option<f64>) -> crate::error::Result<()> {
         ));
     }
     Ok(())
+}
+
+fn selected_bridge_cases<'a>(
+    cases: &'a [EvalCase],
+    case_ids: &[String],
+) -> crate::error::Result<Vec<&'a EvalCase>> {
+    if case_ids.is_empty() {
+        return Ok(cases.iter().collect());
+    }
+    let wanted = normalized_case_filter(case_ids)?;
+    let selected: Vec<&EvalCase> = cases
+        .iter()
+        .filter(|case| wanted.contains(case.id.as_str()))
+        .collect();
+    validate_selected_cases(
+        &wanted,
+        selected.iter().map(|case| case.id.as_str()),
+        "bridge",
+    )?;
+    Ok(selected)
+}
+
+fn selected_agent_cases<'a>(
+    cases: &'a [AgentCase],
+    case_ids: &[String],
+) -> crate::error::Result<Vec<&'a AgentCase>> {
+    if case_ids.is_empty() {
+        return Ok(cases.iter().collect());
+    }
+    let wanted = normalized_case_filter(case_ids)?;
+    let selected: Vec<&AgentCase> = cases
+        .iter()
+        .filter(|case| wanted.contains(case.id.as_str()))
+        .collect();
+    validate_selected_cases(
+        &wanted,
+        selected.iter().map(|case| case.id.as_str()),
+        "agent",
+    )?;
+    Ok(selected)
+}
+
+fn normalized_case_filter(case_ids: &[String]) -> crate::error::Result<BTreeSet<&str>> {
+    let mut wanted = BTreeSet::new();
+    for id in case_ids {
+        let trimmed = id.trim();
+        if trimmed.is_empty() {
+            return Err(DbtNovaError::InvalidParams(
+                "--case-id values must be non-empty".to_string(),
+            ));
+        }
+        wanted.insert(trimmed);
+    }
+    Ok(wanted)
+}
+
+fn validate_selected_cases<'a>(
+    wanted: &BTreeSet<&'a str>,
+    selected: impl Iterator<Item = &'a str>,
+    mode: &str,
+) -> crate::error::Result<()> {
+    let found: BTreeSet<&str> = selected.collect();
+    let missing: Vec<&str> = wanted.difference(&found).copied().collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(DbtNovaError::InvalidParams(format!(
+        "requested {mode} eval case id(s) not found: {}",
+        missing.join(", ")
+    )))
 }
 
 fn agent_prompt(case: &AgentCase) -> String {

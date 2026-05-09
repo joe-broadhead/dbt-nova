@@ -43,6 +43,12 @@ cases:
           - data.entity.name
 ```
 
+Validate suite shape before running against a manifest or provider:
+
+```bash
+dbt-nova eval validate --suite evals/analyst-smoke.yml
+```
+
 ## Run Bridge Evals
 
 ```bash
@@ -52,6 +58,9 @@ dbt-nova eval run \
   --fail-under 1.0 \
   --json
 ```
+
+Use repeatable `--case-id <ID>` to run only specific bridge cases while
+debugging a suite.
 
 Outputs are written to `.nova/eval-runs/<timestamp>-<suite>-bridge/` by default:
 
@@ -66,11 +75,30 @@ Bridge assertions currently support:
 - `search_indicator_rank`
 - `search_columns_rank`
 - `context_has`
+- `context_field_equals`
+- `context_contains`
 - `metadata_score_min`
 - `recipe_rank`
 - `recipe_has_queries`
 - `lineage_contains`
 - `tool_success`
+
+`context_has` checks that field paths are present and non-null.
+`context_field_equals` compares a field path to an exact JSON value.
+`context_contains` checks that expected text appears either anywhere in context
+or inside a specific field:
+
+```yaml
+assertions:
+  - type: context_field_equals
+    id_or_name: model.pkg.orders
+    field: data.entity.name
+    expected: orders
+  - type: context_contains
+    id_or_name: model.pkg.orders
+    field: data.entity.description
+    expected: canonical orders
+```
 
 ## Run Agent Evals
 
@@ -102,10 +130,26 @@ agent_cases:
             - search_indicator
       selected_entities:
         - model.pkg.orders
+      selected_entity_ranks:
+        - unique_id: model.pkg.orders
+          tool: search_indicator
+          max_rank: 3
+      called_with:
+        - tool: search_indicator
+          contains:
+            query: gross merchandise
       final_answer:
         must_contain:
           - gross merchandise value
 ```
+
+`selected_entities` checks that an entity appeared anywhere in tool evidence.
+`selected_entity_ranks` checks the ordered top entities captured from tool
+responses and can be scoped to a specific tool. `called_with.params` matches
+sanitized parameter values exactly where possible, while `called_with.contains`
+checks case-insensitive substring matches against sanitized parameter summaries.
+`called_with.params` supports only scalar values or arrays of scalar values
+because trace rows intentionally drop nested objects.
 
 Run against the default `opencode` adapter:
 
@@ -118,6 +162,9 @@ dbt-nova eval agent run \
   --fail-under 0.9
 ```
 
+Use repeatable `--case-id <ID>` to run only specific agent cases while
+debugging provider behavior.
+
 Supported provider presets are `opencode`, `codex`, `claude`, and `goose`.
 Presets use each CLI's normal project/user configuration; dbt-nova injects
 `DBT_MANIFEST_PATH`, `DBT_NOVA_STORAGE_INSTANCE_ID`, and
@@ -125,7 +172,10 @@ Presets use each CLI's normal project/user configuration; dbt-nova injects
 tool servers inherit the eval manifest and trace path. Remote hosted MCP
 endpoints cannot inherit local trace environment variables, so use a provider
 that emits MCP calls in its JSON output or keep the Nova server local when
-asserting tool-use traces.
+asserting tool-use traces. Provider stdout fallback parsing is implemented for
+Codex, Claude, and OpenCode event streams; Goose is supported as a provider
+preset and should be used with local trace inheritance unless its JSON stream is
+wrapped into one of the supported event shapes.
 
 `final_answer` assertions are matched against extracted assistant final text
 from provider JSON event streams. For custom providers that do not emit JSON
@@ -161,6 +211,8 @@ rows for CLI, MCP, and eval tool calls. Rows include:
 - safe parameter summaries such as `query`, `persona`, `id_or_name`, and
   `resource_types`
 - `selected_unique_ids` extracted from the response
+- `top_unique_ids` preserving the ordered top response entities where Nova can
+  infer them
 
 Trace rows deliberately do not record SQL recipe parameter maps or credential
 values. Keep eval artifacts out of public bug reports unless you have reviewed
@@ -171,6 +223,8 @@ them for project-specific identifiers.
 Use bridge evals as a fast metadata quality gate after producing a manifest:
 
 ```bash
+dbt-nova eval validate --suite evals/analyst-smoke.yml
+
 dbt-nova eval run \
   --suite evals/analyst-smoke.yml \
   --manifest-path target/manifest.json \

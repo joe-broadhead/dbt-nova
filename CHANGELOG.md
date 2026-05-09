@@ -12,9 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `dbt-nova eval` commands for manifest bridge evals and provider-backed
   agent evals, including sanitized CLI/MCP tool-call tracing, YAML/JSON suite
   definitions, score gates, and JSON/TSV/Markdown report artifacts.
+- Added `dbt-nova eval validate`, repeatable `--case-id` filters for bridge and
+  agent eval runs, value-aware context assertions, agent `called_with` and
+  ranked entity expectations, and ordered `top_unique_ids` trace evidence.
 
 ### Fixed
 
+- Eval `tool_success` assertions now fail when a tool returns an explicit
+  `success: false` response instead of treating any successful dispatch as a
+  passing tool result.
 - Agent evals now score Codex/Claude/OpenCode MCP tool calls from provider JSON
   event streams when a local dbt-nova trace file is empty, including MCP servers
   configured with aliases such as `dbt-nova` instead of `nova`, and Claude

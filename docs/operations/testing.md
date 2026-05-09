@@ -18,6 +18,8 @@ Use `dbt-nova eval run` to test that a manifest exposes the right search,
 indicator, context, lineage, recipe, and metadata-score evidence to agents:
 
 ```bash
+dbt-nova eval validate --suite evals/analyst-smoke.yml
+
 dbt-nova eval run \
   --suite evals/analyst-smoke.yml \
   --manifest-path target/manifest.json \
@@ -42,6 +44,8 @@ scores required tool calls, forbidden tool calls, order constraints, selected
 entities, and final-answer text checks from sanitized local trace rows. When a
 remote hosted MCP endpoint cannot inherit `DBT_NOVA_TRACE_TOOL_CALLS_PATH`,
 supported provider presets can also score MCP calls from JSON event streams.
+Use `--case-id <ID>` on bridge or agent eval runs to iterate on one failing case
+without re-running the whole suite.
 
 ## Test Storage Cleanup
 

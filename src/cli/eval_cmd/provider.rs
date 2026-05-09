@@ -16,6 +16,7 @@ use super::server_error;
 const PROVIDER_MCP_SERVER_ALIASES_ENV: &str = "DBT_NOVA_EVAL_MCP_SERVER_ALIASES";
 const DEFAULT_NOVA_MCP_SERVER_ALIASES: [&str; 5] =
     ["nova", "dbt-nova", "dbt_nova", "dbtnova", "dbt-nova-mcp"];
+const MAX_PROVIDER_TOP_UNIQUE_IDS: usize = 20;
 
 #[derive(Debug)]
 pub(super) struct ProviderInvocation {
@@ -388,6 +389,7 @@ impl ProviderTraceState {
             .unwrap_or(false);
         let response = part.get("content").unwrap_or(part);
         let selected_unique_ids = provider_selected_unique_ids(Some(response));
+        let top_unique_ids = provider_top_unique_ids(Some(response));
         if let Some(row) = self
             .rows
             .get_mut(row_index)
@@ -398,6 +400,7 @@ impl ProviderTraceState {
                 "selected_unique_ids".to_string(),
                 json!(selected_unique_ids),
             );
+            row.insert("top_unique_ids".to_string(), json!(top_unique_ids));
         }
     }
 }
@@ -516,6 +519,7 @@ fn provider_tool_row(
         "duration_ms": 0,
         "params_summary": provider_params_summary(params),
         "selected_unique_ids": provider_selected_unique_ids(response),
+        "top_unique_ids": provider_top_unique_ids(response),
     })
 }
 
@@ -530,15 +534,40 @@ fn provider_params_summary(params: Option<&JsonValue>) -> JsonValue {
         .map(JsonValue::String)
         .collect();
     let mut summary = serde_json::Map::from_iter([(String::from("keys"), JsonValue::Array(keys))]);
-    for key in ["query", "persona", "id_or_name", "recipe_id", "direction"] {
-        if let Some(value) = map.get(key).and_then(provider_safe_scalar) {
+    for key in [
+        "query",
+        "persona",
+        "id_or_name",
+        "resource_type",
+        "resource_types",
+        "recipe_id",
+        "direction",
+        "limit",
+        "offset",
+    ] {
+        if let Some(value) = map.get(key).and_then(provider_safe_value) {
             summary.insert(key.to_string(), value);
         }
     }
     JsonValue::Object(summary)
 }
 
-fn provider_safe_scalar(value: &JsonValue) -> Option<JsonValue> {
+fn provider_safe_value(value: &JsonValue) -> Option<JsonValue> {
+    match value {
+        JsonValue::Null | JsonValue::Bool(_) | JsonValue::Number(_) => Some(value.clone()),
+        JsonValue::String(value) => Some(JsonValue::String(value.chars().take(256).collect())),
+        JsonValue::Array(items) => Some(JsonValue::Array(
+            items
+                .iter()
+                .take(20)
+                .filter_map(provider_safe_array_value)
+                .collect(),
+        )),
+        JsonValue::Object(_) => None,
+    }
+}
+
+fn provider_safe_array_value(value: &JsonValue) -> Option<JsonValue> {
     match value {
         JsonValue::Null | JsonValue::Bool(_) | JsonValue::Number(_) => Some(value.clone()),
         JsonValue::String(value) => Some(JsonValue::String(value.chars().take(256).collect())),
@@ -552,6 +581,102 @@ fn provider_selected_unique_ids(response: Option<&JsonValue>) -> Vec<String> {
         collect_provider_unique_ids(response, &mut out);
     }
     out.into_iter().collect()
+}
+
+fn provider_top_unique_ids(response: Option<&JsonValue>) -> Vec<String> {
+    let Some(response) = response else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    if let Some(rows) = response.get("data").and_then(JsonValue::as_array) {
+        for row in rows {
+            push_provider_first_unique_id(row, &mut out, &mut seen);
+            if out.len() >= MAX_PROVIDER_TOP_UNIQUE_IDS {
+                return out;
+            }
+        }
+    }
+    if out.is_empty() {
+        collect_provider_top_unique_ids(response, &mut out, &mut seen);
+    }
+    out
+}
+
+fn push_provider_first_unique_id(
+    value: &JsonValue,
+    out: &mut Vec<String>,
+    seen: &mut BTreeSet<String>,
+) {
+    if let Some(id) = provider_first_unique_id(value) {
+        push_provider_ordered_unique_id(&id, out, seen);
+    }
+}
+
+fn collect_provider_top_unique_ids(
+    value: &JsonValue,
+    out: &mut Vec<String>,
+    seen: &mut BTreeSet<String>,
+) {
+    if out.len() >= MAX_PROVIDER_TOP_UNIQUE_IDS {
+        return;
+    }
+    match value {
+        JsonValue::Object(map) => {
+            if let Some(id) = provider_first_unique_id(value) {
+                push_provider_ordered_unique_id(&id, out, seen);
+                if out.len() >= MAX_PROVIDER_TOP_UNIQUE_IDS {
+                    return;
+                }
+            }
+            for child in map.values() {
+                collect_provider_top_unique_ids(child, out, seen);
+                if out.len() >= MAX_PROVIDER_TOP_UNIQUE_IDS {
+                    return;
+                }
+            }
+        }
+        JsonValue::Array(items) => {
+            for item in items {
+                collect_provider_top_unique_ids(item, out, seen);
+                if out.len() >= MAX_PROVIDER_TOP_UNIQUE_IDS {
+                    return;
+                }
+            }
+        }
+        JsonValue::String(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.starts_with('{')
+                && let Ok(parsed) = serde_json::from_str::<JsonValue>(trimmed)
+            {
+                collect_provider_top_unique_ids(&parsed, out, seen);
+            }
+        }
+        JsonValue::Null | JsonValue::Bool(_) | JsonValue::Number(_) => {}
+    }
+}
+
+fn provider_first_unique_id(value: &JsonValue) -> Option<String> {
+    let JsonValue::Object(map) = value else {
+        return None;
+    };
+    for key in ["unique_id", "parent_unique_id", "root_id"] {
+        if let Some(id) = map.get(key).and_then(JsonValue::as_str)
+            && !id.trim().is_empty()
+        {
+            return Some(id.chars().take(512).collect());
+        }
+    }
+    None
+}
+
+fn push_provider_ordered_unique_id(id: &str, out: &mut Vec<String>, seen: &mut BTreeSet<String>) {
+    if out.len() >= MAX_PROVIDER_TOP_UNIQUE_IDS {
+        return;
+    }
+    if seen.insert(id.to_string()) {
+        out.push(id.to_string());
+    }
 }
 
 fn collect_provider_unique_ids(value: &JsonValue, out: &mut BTreeSet<String>) {
@@ -673,6 +798,28 @@ mod tests {
     }
 
     #[test]
+    fn provider_invocation_uses_goose_stream_json() {
+        let args = EvalAgentRunArgs {
+            provider: "goose".to_string(),
+            ..EvalAgentRunArgs::default()
+        };
+        let invocation = provider_invocation(&args, "hello", Path::new("/tmp/trace.jsonl"))
+            .expect("goose provider");
+        assert_eq!(invocation.command, "goose");
+        assert_eq!(
+            invocation.args,
+            vec![
+                "run",
+                "--text",
+                "hello",
+                "--output-format",
+                "stream-json",
+                "--no-session"
+            ]
+        );
+    }
+
+    #[test]
     fn provider_trace_reads_codex_mcp_tool_events() {
         let stdout = r#"{"type":"item.completed","item":{"type":"mcp_tool_call","server":"nova","tool":"search_indicator","arguments":{"query":"gmv"},"result":{"content":[{"type":"text","text":"{\"data\":[{\"parent_unique_id\":\"model.pkg.orders\"}]}"}]},"error":null,"status":"completed"}}"#;
         let trace = read_provider_tool_trace(stdout);
@@ -684,6 +831,7 @@ mod tests {
             trace.rows[0]["selected_unique_ids"],
             json!(["model.pkg.orders"])
         );
+        assert_eq!(trace.rows[0]["top_unique_ids"], json!(["model.pkg.orders"]));
     }
 
     #[test]
@@ -733,6 +881,20 @@ mod tests {
             trace.rows[0]["selected_unique_ids"],
             json!(["model.pkg.orders"])
         );
+        assert_eq!(trace.rows[0]["top_unique_ids"], json!(["model.pkg.orders"]));
+    }
+
+    #[test]
+    fn provider_trace_keeps_safe_array_params() {
+        let stdout = r#"{"type":"item.completed","item":{"type":"mcp_tool_call","server":"nova","tool":"search","arguments":{"query":"orders","resource_types":["model",{"secret":"x"}],"limit":5},"result":{"data":[]},"error":null,"status":"completed"}}"#;
+        let trace = read_provider_tool_trace(stdout);
+        assert_eq!(trace.errors, Vec::<String>::new());
+        assert_eq!(trace.rows.len(), 1);
+        assert_eq!(
+            trace.rows[0]["params_summary"]["resource_types"],
+            json!(["model"])
+        );
+        assert_eq!(trace.rows[0]["params_summary"]["limit"], 5);
     }
 
     #[test]
