@@ -43,7 +43,7 @@ generic week boundary.
 
 1. Create or update the suite.
 2. Run `dbt-nova eval validate --suite <suite>`.
-3. Run one bridge case with `dbt-nova eval run --case-id <id>`.
+3. Run one bridge case with `dbt-nova eval run --suite <suite> --case-id <id>`.
 4. Fix expected ids, ranks, or metadata gaps.
 5. Run the full bridge suite.
 6. Add agent cases for workflows where tool-use behavior matters.
