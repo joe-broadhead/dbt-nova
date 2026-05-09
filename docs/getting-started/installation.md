@@ -4,7 +4,7 @@
 
 | Requirement | Minimum | Recommended |
 |-------------|---------|-------------|
-| **OS (prebuilt artifacts)** | Linux (x86_64), macOS (Apple Silicon) | Linux (x86_64) or macOS (Apple Silicon) |
+| **OS (prebuilt artifacts)** | Linux (x86_64/arm64), macOS (Apple Silicon/Intel) | Linux (x86_64/arm64) or macOS (Apple Silicon) |
 | **RAM** | 512 MB | 2 GB+ (4 GB with dense vectors) |
 | **Disk** | 100 MB | 500 MB+ (depends on manifest size) |
 | **Rust** | 1.93+ (edition 2024) | Latest stable |
@@ -175,9 +175,18 @@ the installer automatically falls back to slim.
 Published targets:
 
 - `linux-x86_64` (Cloud Run compatible)
+- `linux-arm64`
 - `macos-arm64` (Apple Silicon)
+- `macos-x86_64` (Intel macOS)
 
-Other platforms can build from source.
+Windows and other platforms can build from source. `cargo install dbt-nova`
+from crates.io is not currently a supported distribution path; use GitHub
+release assets, the installer script, the GHCR OCI image, or `cargo install
+--path . --locked` from a checked-out source tree.
+
+Each published target includes a `.sha256` file, cosign signature/certificate
+files for the archive and checksum, and an SPDX JSON SBOM named
+`dbt-nova-<target>.sbom.spdx.json`.
 
 Default builds include S3/GCS SDK support. If you need a minimal binary, build with
 `--no-default-features` and selectively enable `embeddings`, `s3`, and `gcs`.

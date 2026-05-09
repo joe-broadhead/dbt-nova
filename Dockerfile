@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM rust:1.93-bookworm AS builder
+FROM rust:1.93-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31 AS builder
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -23,11 +23,12 @@ COPY vendor ./vendor
 
 RUN cargo build --locked --release --bin dbt-nova
 
-FROM debian:bookworm-slim AS runtime
+FROM debian:bookworm-slim@sha256:67b30a61dc87758f0caf819646104f29ecbda97d920aaf5edc834128ac8493d3 AS runtime
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       ca-certificates \
+      curl \
       libstdc++6 && \
     rm -rf /var/lib/apt/lists/*
 
@@ -46,5 +47,8 @@ USER 10001:10001
 WORKDIR /home/nova
 
 EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -fsS "http://127.0.0.1:${PORT:-8080}/healthz" >/dev/null || exit 1
 
 ENTRYPOINT ["/usr/local/bin/dbt-nova", "server", "start"]

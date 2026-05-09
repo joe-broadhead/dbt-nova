@@ -80,6 +80,9 @@ Pull the published release image instead:
 docker pull ghcr.io/joe-broadhead/dbt-nova:v<version>
 ```
 
+Release images are published as a multi-arch manifest for `linux/amd64` and
+`linux/arm64`.
+
 Run it locally:
 
 ```bash
@@ -111,6 +114,10 @@ Use one of these tags:
 
 Pin `vX.Y.Z` for downstream deployments. Use the `sha-...` tag when you need an
 immutable rollback target tied to a specific release commit.
+
+The published Dockerfile also defines a container `HEALTHCHECK` against
+`/healthz`. Platform-level probes should still be configured explicitly:
+`/healthz` for liveness and `/readyz` for traffic readiness.
 
 ## Cloud Run Notes
 

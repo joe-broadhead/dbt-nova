@@ -1,0 +1,19 @@
+# Trivy release-image waivers.
+#
+# Policy for future entries:
+# - keep this file empty by default;
+# - add only targeted HIGH/CRITICAL waivers needed to unblock a release;
+# - include an `expired_at` review date;
+# - include owner, reason, and remediation/review context in `statement`.
+#
+# Example:
+# vulnerabilities:
+#   - id: CVE-YYYY-NNNN
+#     purls:
+#       - "pkg:deb/debian/example"
+#     expired_at: 2026-06-30
+#     statement: "owner: @maintainer; reason: no fixed package is available; review: replace when patched"
+vulnerabilities: []
+misconfigurations: []
+secrets: []
+licenses: []

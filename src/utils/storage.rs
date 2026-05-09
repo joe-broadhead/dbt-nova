@@ -119,3 +119,74 @@ fn dir_size_bytes(path: &Path) -> u64 {
 
     total
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs::{self, File, OpenOptions};
+    use std::io::Write;
+    use std::path::Path;
+    use std::thread;
+    use std::time::Duration;
+
+    use fs4::FileExt;
+    use tempfile::TempDir;
+
+    use super::{IN_USE_LOCK_FILENAME, prune_dirs};
+
+    fn create_dir_with_file(root: &Path, name: &str, bytes: usize) -> std::path::PathBuf {
+        let dir = root.join(name);
+        fs::create_dir(&dir).expect("create storage dir");
+        let mut file = File::create(dir.join("payload.bin")).expect("create payload");
+        file.write_all(&vec![b'x'; bytes]).expect("write payload");
+        dir
+    }
+
+    #[test]
+    fn prune_dirs_respects_excludes_and_keeps_newest_entries() {
+        let temp = TempDir::new().expect("temp dir");
+        let root = temp.path();
+
+        let old = create_dir_with_file(root, "old", 8);
+        thread::sleep(Duration::from_millis(20));
+        let keep = create_dir_with_file(root, "keep", 8);
+        thread::sleep(Duration::from_millis(20));
+        let newest = create_dir_with_file(root, "newest", 8);
+
+        prune_dirs(root, 1, 0, 0, &["keep"]).expect("prune dirs");
+
+        assert!(
+            !old.exists(),
+            "oldest non-excluded directory should be pruned"
+        );
+        assert!(keep.exists(), "excluded directory should be preserved");
+        assert!(newest.exists(), "newest directory should be preserved");
+    }
+
+    #[test]
+    fn prune_dirs_preserves_locked_storage_directories() {
+        let temp = TempDir::new().expect("temp dir");
+        let root = temp.path();
+
+        let locked = create_dir_with_file(root, "locked", 16);
+        let lock_file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(locked.join(IN_USE_LOCK_FILENAME))
+            .expect("open lock file");
+        lock_file.try_lock_exclusive().expect("lock storage dir");
+
+        let removable = create_dir_with_file(root, "removable", 16);
+
+        prune_dirs(root, 0, 0, 1, &[]).expect("prune dirs");
+
+        assert!(locked.exists(), "locked directory should be preserved");
+        assert!(
+            !removable.exists(),
+            "unlocked directory should be pruned to satisfy byte cap"
+        );
+
+        lock_file.unlock().expect("unlock storage dir");
+    }
+}

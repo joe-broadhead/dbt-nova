@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `dbt-nova eval validate`, repeatable `--case-id` filters for bridge and
   agent eval runs, value-aware context assertions, agent `called_with` and
   ranked entity expectations, and ordered `top_unique_ids` trace evidence.
+- Release hardening now publishes native `linux-arm64` and `macos-x86_64`
+  binary assets, scans the release OCI image with Trivy, documents SBOM outputs
+  and crates.io posture, and adds container digest pinning plus a `/healthz`
+  Docker `HEALTHCHECK`.
 
 ### Fixed
 
@@ -42,6 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   GitHub Pages environment protection rules.
 - Release validation now fetches only the requested release tag, preventing local
   tag-clobber failures on tag-triggered release runs.
+- Release OCI publishing now produces a signed, attested multi-arch
+  `linux/amd64` + `linux/arm64` manifest while preserving a smoke-tested amd64
+  image path before publication.
+- CI coverage enforcement now ratchets the line floor to 70 percent, backed by
+  storage pruning behavior tests for release-critical artifact cache cleanup.
 
 ## [0.0.4] - 2026-04-26
 
