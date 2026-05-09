@@ -20,6 +20,11 @@ Generate a starter suite:
 dbt-nova eval init --persona analyst --out evals/analyst-smoke.yml
 ```
 
+When using an agent to design or debug suites, use the packaged `eval-author`
+skill. It guides agents to discover ground truth first, separate bridge evals
+from provider-backed agent evals, and choose assertions that produce actionable
+failure signals.
+
 The suite format is YAML or JSON. A minimal bridge suite looks like this:
 
 ```yaml

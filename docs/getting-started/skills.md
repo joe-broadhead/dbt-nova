@@ -9,6 +9,7 @@ The repo now uses one standalone, persona-first skill package per workflow:
 - `analyst`
 - `bi-engineer`
 - `engineer`
+- `eval-author`
 - `governance`
 - `kpi-debugger`
 - `meta-authoring`
@@ -43,6 +44,7 @@ For one skill:
 ```bash
 bash scripts/install_skills.sh --skill analyst --skills-dir "$HOME/.agents/skills"
 bash scripts/install_skills.sh --skill engineer --skills-dir "$HOME/.agents/skills"
+bash scripts/install_skills.sh --skill eval-author --skills-dir "$HOME/.agents/skills"
 ```
 
 For all dbt-nova skills:
@@ -66,6 +68,7 @@ Codex supports Agent Skills for both the CLI and IDE extensions. You can install
 ```bash
 bash scripts/install_skills.sh --skill analyst --skills-dir .codex/skills
 bash scripts/install_skills.sh --skill engineer --skills-dir .codex/skills
+bash scripts/install_skills.sh --skill eval-author --skills-dir .codex/skills
 ```
 
 If you already use another generic persona skill in a user-level directory, prefer repo scope so this skill overrides it only for the current project.
@@ -91,6 +94,7 @@ zip -r engineer.skill.zip engineer
 ```bash
 bash /path/to/repo/scripts/install_skills.sh --skill analyst --skills-dir "$HOME/.claude/skills"
 bash /path/to/repo/scripts/install_skills.sh --skill engineer --skills-dir "$HOME/.claude/skills"
+bash /path/to/repo/scripts/install_skills.sh --skill eval-author --skills-dir "$HOME/.claude/skills"
 ```
 
 ### Gemini CLI
@@ -102,6 +106,7 @@ Gemini CLI discovers skills from three tiers: workspace (`.gemini/skills/`), use
 ```bash
 bash scripts/install_skills.sh --skill analyst --skills-dir .gemini/skills
 bash scripts/install_skills.sh --skill engineer --skills-dir .gemini/skills
+bash scripts/install_skills.sh --skill eval-author --skills-dir .gemini/skills
 ```
 
 Then reload skills:
@@ -125,6 +130,7 @@ Use the reference tooling from the Agent Skills project to validate your skills:
 skills-ref validate .github/skills/analyst
 skills-ref validate .github/skills/bi-engineer
 skills-ref validate .github/skills/engineer
+skills-ref validate .github/skills/eval-author
 skills-ref validate .github/skills/governance
 skills-ref validate .github/skills/kpi-debugger
 skills-ref validate .github/skills/meta-authoring
