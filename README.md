@@ -202,11 +202,11 @@ Producer (reusable workflow):
 jobs:
   build_nova_assets:
     # Pin to a release tag or commit SHA
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.4
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.5
     with:
       manifest_path: target/manifest.json
       storage_instance_id: analytics-prod
-      installer_ref: v0.0.4
+      installer_ref: v0.0.5
       installer_install_mode: auto
       artifact_name_prefix: analytics-prod
 ```

@@ -107,7 +107,7 @@ and across same-owner or cross-owner reusable workflow calls:
 ```yaml
 jobs:
   nova_metadata_audit:
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-metadata-audit.yml@v0.0.4
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-metadata-audit.yml@v0.0.5
     with:
       dbt_generate_manifest: true
       dbt_command_args_json: >-

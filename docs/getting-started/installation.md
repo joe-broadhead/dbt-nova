@@ -308,7 +308,7 @@ by SHA-256 verification when checksum mode is enabled.
 Example (pin fallback seed to a specific release tag):
 
 ```bash
-DBT_NOVA_WARMUP_VERSION=v0.0.4 bash scripts/warm_models.sh
+DBT_NOVA_WARMUP_VERSION=v0.0.5 bash scripts/warm_models.sh
 ```
 
 ---
