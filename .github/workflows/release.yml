@@ -210,6 +210,7 @@ jobs:
         with:
           tag_name: ${{ needs.validate.outputs.release_tag }}
           body_path: RELEASE_NOTES.md
+          overwrite_files: true
           files: |
             dbt-nova-${{ matrix.asset }}.tar.gz
             dbt-nova-${{ matrix.asset }}.sha256
@@ -280,6 +281,26 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
 
+      - name: Prepare OCI binaries
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          rm -rf dist/oci
+          rm -f dbt-nova-linux-x86_64.tar.gz dbt-nova-linux-arm64.tar.gz
+          mkdir -p dist/oci/linux-amd64 dist/oci/linux-arm64
+
+          gh release download "${RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern "dbt-nova-linux-x86_64.tar.gz" \
+            --pattern "dbt-nova-linux-arm64.tar.gz"
+
+          tar -xzf dbt-nova-linux-x86_64.tar.gz -C dist/oci/linux-amd64
+          tar -xzf dbt-nova-linux-arm64.tar.gz -C dist/oci/linux-arm64
+          chmod 0755 dist/oci/linux-amd64/dbt-nova dist/oci/linux-arm64/dbt-nova
+
       - name: Build exact release image
         shell: bash
         env:
@@ -293,7 +314,14 @@ jobs:
               label_args+=(--label "${label}")
             fi
           done <<< "${IMAGE_LABELS}"
-          docker build "${label_args[@]}" -t dbt-nova:release-smoke -t "${AMD64_IMAGE}" .
+          docker build \
+            --platform linux/amd64 \
+            -f Dockerfile.oci \
+            --build-arg TARGETARCH=amd64 \
+            "${label_args[@]}" \
+            -t dbt-nova:release-smoke \
+            -t "${AMD64_IMAGE}" \
+            .
 
       - name: Smoke HTTP container
         shell: bash
@@ -363,6 +391,7 @@ jobs:
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b
         with:
           tag_name: ${{ needs.validate.outputs.release_tag }}
+          overwrite_files: true
           files: dbt-nova-oci-trivy.json
 
       - name: Push smoke-tested AMD64 image
@@ -377,10 +406,12 @@ jobs:
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
         with:
           context: .
+          file: Dockerfile.oci
           platforms: linux/arm64
           push: true
           tags: ${{ steps.image.outputs.arm64_tag }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: TARGETARCH=arm64
           provenance: false
 
       - name: Publish multi-arch manifest

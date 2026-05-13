@@ -1,0 +1,34 @@
+# syntax=docker/dockerfile:1.7
+
+FROM debian:bookworm-slim@sha256:67b30a61dc87758f0caf819646104f29ecbda97d920aaf5edc834128ac8493d3 AS runtime
+
+ARG TARGETARCH
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      libstdc++6 && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN useradd --system --create-home --uid 10001 nova
+
+ENV DBT_NOVA_SERVER_TRANSPORT=streamable_http \
+    DBT_NOVA_HTTP_PATH=/mcp \
+    DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true \
+    DBT_NOVA_STORAGE_DIR=/tmp/dbt-nova \
+    DBT_NOVA_EMBEDDINGS_CACHE_DIR=/tmp/dbt-nova/models \
+    PORT=8080
+
+COPY dist/oci/linux-${TARGETARCH}/dbt-nova /usr/local/bin/dbt-nova
+RUN chmod 0755 /usr/local/bin/dbt-nova
+
+USER 10001:10001
+WORKDIR /home/nova
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -fsS "http://127.0.0.1:${PORT:-8080}/healthz" >/dev/null || exit 1
+
+ENTRYPOINT ["/usr/local/bin/dbt-nova", "server", "start"]
