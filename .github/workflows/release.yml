@@ -236,15 +236,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          ref: ${{ needs.validate.outputs.release_tag }}
+          fetch-depth: 0
 
       - name: Resolve image metadata
         id: image
         shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
         run: |
           set -euo pipefail
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
-          commit_sha="$(git rev-parse HEAD)"
+          git fetch --force origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          commit_sha="$(git rev-list -n1 "${RELEASE_TAG}")"
           echo "image=${image}" >> "$GITHUB_OUTPUT"
           echo "commit_sha=${commit_sha}" >> "$GITHUB_OUTPUT"
           echo "amd64_tag=${image}:sha-${commit_sha}-amd64" >> "$GITHUB_OUTPUT"
