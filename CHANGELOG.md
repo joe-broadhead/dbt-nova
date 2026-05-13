@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-05-13
+
 ### Added
 
 - Added `dbt-nova eval` commands for manifest bridge evals and provider-backed
