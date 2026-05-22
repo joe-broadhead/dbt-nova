@@ -1210,12 +1210,12 @@ fn sql_string_literal(value: &str) -> String {
 }
 
 fn catalog_preflight_statement(catalog: &str) -> String {
-    format!("SHOW DATABASES LIKE {}", sql_string_literal(catalog))
+    format!("SHOW DATABASES STARTS WITH {}", sql_string_literal(catalog))
 }
 
 fn schema_preflight_statement(catalog: &str, schema: &str) -> String {
     format!(
-        "SHOW SCHEMAS LIKE {} IN DATABASE {catalog}",
+        "SHOW SCHEMAS IN DATABASE {catalog} STARTS WITH {}",
         sql_string_literal(schema)
     )
 }
@@ -1248,6 +1248,22 @@ async fn run_preflight_statement(
 
 fn preflight_result_has_rows(result: &SnowflakeQueryResult) -> bool {
     preflight_probe_has_rows(result.rows.len(), result.stats.total_row_count)
+}
+
+fn preflight_show_result_has_exact_name(result: &SnowflakeQueryResult, expected: &str) -> bool {
+    let Some(name_index) = result
+        .columns
+        .iter()
+        .position(|column| column.eq_ignore_ascii_case("name"))
+    else {
+        return false;
+    };
+
+    result.rows.iter().any(|row| {
+        row.get(name_index)
+            .and_then(Value::as_str)
+            .is_some_and(|name| name.eq_ignore_ascii_case(expected))
+    })
 }
 
 fn detail_field(key: &str, value: impl AsRef<str>) -> JsonMap<String, Value> {
@@ -1335,7 +1351,7 @@ async fn preflight_snowflake(params: &ExecuteSqlParams) -> Result<Value> {
             async move {
                 let statement = catalog_preflight_statement(&catalog);
                 let result = run_preflight_statement(&client, &statement, warehouse).await?;
-                Ok(if preflight_result_has_rows(&result) {
+                Ok(if preflight_show_result_has_exact_name(&result, &catalog) {
                     ProbePresence::Present
                 } else {
                     ProbePresence::Empty
@@ -1380,7 +1396,7 @@ async fn preflight_snowflake(params: &ExecuteSqlParams) -> Result<Value> {
             async move {
                 let statement = schema_preflight_statement(&catalog, &schema);
                 let result = run_preflight_statement(&client, &statement, warehouse).await?;
-                Ok(if preflight_result_has_rows(&result) {
+                Ok(if preflight_show_result_has_exact_name(&result, &schema) {
                     ProbePresence::Present
                 } else {
                     ProbePresence::Empty
@@ -1832,11 +1848,12 @@ fn rsa_public_spki_der(modulus: BigInt, exponent: BigInt) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ResultColumn, build_bindings, catalog_preflight_statement,
-        decode_statement_status_response, generate_keypair_jwt, normalize_account_url,
-        normalize_jwt_identifier, normalize_preflight_relation, parse_cell_value,
-        public_key_fingerprint, relation_preflight_statement, rewrite_named_parameters,
-        schema_preflight_statement, send_json, session_parameters, summarize_error_body,
+        ResultColumn, SnowflakeQueryResult, SnowflakeQueryStats, build_bindings,
+        catalog_preflight_statement, decode_statement_status_response, generate_keypair_jwt,
+        normalize_account_url, normalize_jwt_identifier, normalize_preflight_relation,
+        parse_cell_value, preflight_show_result_has_exact_name, public_key_fingerprint,
+        relation_preflight_statement, rewrite_named_parameters, schema_preflight_statement,
+        send_json, session_parameters, summarize_error_body,
     };
     use flate2::{Compression, write::GzEncoder};
     use reqwest::Client;
@@ -2135,15 +2152,58 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
     fn preflight_statements_are_bounded_and_safe() {
         assert_eq!(
             catalog_preflight_statement("ANALYTICS"),
-            "SHOW DATABASES LIKE 'ANALYTICS'"
+            "SHOW DATABASES STARTS WITH 'ANALYTICS'"
+        );
+        assert_eq!(
+            catalog_preflight_statement("ANALYTICS_REPORTING"),
+            "SHOW DATABASES STARTS WITH 'ANALYTICS_REPORTING'"
         );
         assert_eq!(
             schema_preflight_statement("ANALYTICS", "REPORTING"),
-            "SHOW SCHEMAS LIKE 'REPORTING' IN DATABASE ANALYTICS"
+            "SHOW SCHEMAS IN DATABASE ANALYTICS STARTS WITH 'REPORTING'"
+        );
+        assert_eq!(
+            schema_preflight_statement("ANALYTICS", "REPORTING_SCHEMA"),
+            "SHOW SCHEMAS IN DATABASE ANALYTICS STARTS WITH 'REPORTING_SCHEMA'"
         );
         assert_eq!(
             relation_preflight_statement("ANALYTICS.REPORTING.ORDERS"),
             "SELECT 1 AS relation_access_check FROM ANALYTICS.REPORTING.ORDERS LIMIT 1"
         );
+    }
+
+    #[test]
+    fn preflight_show_result_requires_exact_name_match() {
+        let mut result = SnowflakeQueryResult {
+            statement_id: "01".to_string(),
+            state: "SUCCEEDED".to_string(),
+            provider: "snowflake".to_string(),
+            account_url: "https://example.snowflakecomputing.com".to_string(),
+            warehouse: "COMPUTE_WH".to_string(),
+            database: None,
+            schema: None,
+            role: None,
+            columns: vec!["created_on".to_string(), "name".to_string()],
+            column_types: vec!["TIMESTAMP".to_string(), "TEXT".to_string()],
+            rows: vec![vec![Value::Null, json!("ANALYTICS_REPORTING_DEV")]],
+            elapsed_ms: 1,
+            fetched_chunks: 1,
+            stats: SnowflakeQueryStats {
+                total_row_count: Some(1),
+                total_byte_count: None,
+                total_chunk_count: Some(1),
+            },
+            truncated: false,
+        };
+
+        assert!(!preflight_show_result_has_exact_name(
+            &result,
+            "ANALYTICS_REPORTING"
+        ));
+        result.rows = vec![vec![Value::Null, json!("ANALYTICS_REPORTING")]];
+        assert!(preflight_show_result_has_exact_name(
+            &result,
+            "analytics_reporting"
+        ));
     }
 }
