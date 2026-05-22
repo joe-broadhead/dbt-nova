@@ -268,6 +268,7 @@ Snowflake behavior notes:
 - Named `:parameter` placeholders are rewritten to Snowflake SQL API `?` binds.
 - Null SQL parameters require explicit `parameter_types`.
 - `warehouse_id` overrides `DBT_NOVA_SNOWFLAKE_WAREHOUSE` for a single call.
+- `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` must be an account root URL such as `https://<host>`, not an `/api` endpoint.
 - For key-pair auth with a private-link or custom account URL, set both `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` and `DBT_NOVA_SNOWFLAKE_JWT_ACCOUNT`.
 - Key-pair auth supports unencrypted RSA PEM keys; encrypted private keys are not supported yet.
 

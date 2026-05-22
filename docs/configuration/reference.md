@@ -56,7 +56,7 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_BIGQUERY_TIMEOUT_MS` – HTTP timeout for BigQuery API requests (default: `30000`)
 - `DBT_NOVA_BIGQUERY_TOKEN_CACHE_TTL_SECS` – cache TTL for BigQuery auth token + HTTP client reuse (default: `3000`, minimum: `60`)
 - `DBT_NOVA_SNOWFLAKE_ACCOUNT` – Snowflake account identifier when `DBT_NOVA_SQL_PROVIDER=snowflake`; used to build `https://<account>.snowflakecomputing.com`
-- `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` – optional explicit Snowflake account URL for SQL API calls
+- `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` – optional explicit Snowflake account root URL for SQL API calls; use `https://<host>`, not an `/api` path
 - `DBT_NOVA_SNOWFLAKE_WAREHOUSE` – Snowflake warehouse used by `execute_sql` and preflight
 - `DBT_NOVA_SNOWFLAKE_DATABASE` – optional default Snowflake database
 - `DBT_NOVA_SNOWFLAKE_SCHEMA` – optional default Snowflake schema

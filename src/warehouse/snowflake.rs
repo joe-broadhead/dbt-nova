@@ -6,7 +6,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
-use reqwest::{Client, StatusCode};
+use reqwest::{Client, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value};
 use sha2::{Digest, Sha256};
@@ -39,8 +39,9 @@ fn snowflake_err(message: impl Into<String>) -> DbtNovaError {
 
 fn snowflake_http(status: StatusCode, body: &str) -> DbtNovaError {
     DbtNovaError::ServerError(format!(
-        "Snowflake API error (HTTP {}): {body}",
-        status.as_u16()
+        "Snowflake API error (HTTP {}): {}",
+        status.as_u16(),
+        summarize_error_body(status, body)
     ))
 }
 
@@ -81,8 +82,7 @@ impl SnowflakeSqlConfig {
     /// # Errors
     /// Returns an error when required Snowflake configuration or credentials are missing.
     pub fn from_env() -> Result<Self> {
-        let allow_http = env_bool("DBT_NOVA_SNOWFLAKE_ALLOW_HTTP", false);
-        let (base_url, account_identifier) = resolve_base_url_from_env(allow_http)?;
+        let (base_url, account_identifier) = resolve_base_url_from_env()?;
 
         let warehouse = read_required_env(
             "DBT_NOVA_SNOWFLAKE_WAREHOUSE",
@@ -435,6 +435,17 @@ struct SnowflakeAuthorization {
     token_type: &'static str,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ErrorResponseBody {
+    #[serde(default)]
+    code: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(rename = "sqlState", default)]
+    sql_state: Option<String>,
+}
+
 /// Options controlling one Snowflake SQL execution.
 #[derive(Debug, Clone)]
 pub struct SnowflakeExecuteOptions {
@@ -656,44 +667,76 @@ async fn send_json<T: for<'de> Deserialize<'de>>(builder: reqwest::RequestBuilde
         return Err(snowflake_http(status, &body));
     }
 
-    serde_json::from_str(&body)
-        .map_err(|err| snowflake_err(format!("failed to parse JSON response: {err}; body={body}")))
+    serde_json::from_str(&body).map_err(|err| {
+        snowflake_err(format!(
+            "failed to parse JSON response: {err}; response_body_bytes={}",
+            body.len()
+        ))
+    })
+}
+
+fn summarize_error_body(status: StatusCode, body: &str) -> String {
+    if status == StatusCode::UNAUTHORIZED {
+        return "authorization failed; check Snowflake credentials".to_string();
+    }
+
+    match serde_json::from_str::<ErrorResponseBody>(body) {
+        Ok(parsed) => {
+            let code = parsed.code.as_deref().unwrap_or("unknown");
+            let sql_state = parsed
+                .sql_state
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .map(|value| format!(" sqlState={value}"))
+                .unwrap_or_default();
+            let message = parsed.message.as_deref().unwrap_or("request failed");
+            format!("{code}:{sql_state} {}", truncate_for_error(message, 512))
+        }
+        Err(_) => format!("non-JSON response ({} bytes)", body.len()),
+    }
+}
+
+fn truncate_for_error(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
 }
 
 fn session_parameters(row_limit: u64) -> JsonMap<String, Value> {
     JsonMap::from_iter([
         (
-            "BINARY_OUTPUT_FORMAT".to_string(),
+            "binary_output_format".to_string(),
             Value::String("HEX".to_string()),
         ),
         (
-            "DATE_OUTPUT_FORMAT".to_string(),
+            "date_output_format".to_string(),
             Value::String("YYYY-MM-DD".to_string()),
         ),
         (
-            "TIME_OUTPUT_FORMAT".to_string(),
+            "time_output_format".to_string(),
             Value::String("HH24:MI:SS.FF9".to_string()),
         ),
         (
-            "TIMESTAMP_NTZ_OUTPUT_FORMAT".to_string(),
+            "timestamp_ntz_output_format".to_string(),
             Value::String("YYYY-MM-DD HH24:MI:SS.FF9".to_string()),
         ),
         (
-            "TIMESTAMP_LTZ_OUTPUT_FORMAT".to_string(),
+            "timestamp_ltz_output_format".to_string(),
             Value::String("YYYY-MM-DD HH24:MI:SS.FF9 TZHTZM".to_string()),
         ),
         (
-            "TIMESTAMP_TZ_OUTPUT_FORMAT".to_string(),
+            "timestamp_tz_output_format".to_string(),
             Value::String("YYYY-MM-DD HH24:MI:SS.FF9 TZHTZM".to_string()),
         ),
         (
-            "QUERY_TAG".to_string(),
+            "query_tag".to_string(),
             Value::String(format!("dbt-nova/{}", env!("CARGO_PKG_VERSION"))),
         ),
-        (
-            "ROWS_PER_RESULTSET".to_string(),
-            Value::String(row_limit.to_string()),
-        ),
+        ("rows_per_resultset".to_string(), Value::from(row_limit)),
     ])
 }
 
@@ -799,6 +842,22 @@ fn is_identifier_continue(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
+fn colon_starts_named_parameter(bytes: &[u8], index: usize) -> bool {
+    let Some(next) = bytes.get(index + 1) else {
+        return false;
+    };
+    if *next == b':' || !is_identifier_start(*next) {
+        return false;
+    }
+
+    !matches!(
+        index.checked_sub(1).and_then(|previous| bytes.get(previous)),
+        Some(previous)
+            if is_identifier_continue(*previous)
+                || matches!(*previous, b'"' | b']' | b')' | b'$')
+    )
+}
+
 fn rewrite_named_parameters(
     statement: &str,
     parameters: &HashMap<String, Value>,
@@ -842,7 +901,7 @@ fn rewrite_named_parameters(
                         index += 2;
                         continue;
                     }
-                    if index + 1 < bytes.len() && is_identifier_start(bytes[index + 1]) {
+                    if colon_starts_named_parameter(bytes, index) {
                         let mut end = index + 2;
                         while end < bytes.len() && is_identifier_continue(bytes[end]) {
                             end += 1;
@@ -1376,28 +1435,22 @@ fn env_usize(name: &str, default_value: usize) -> usize {
         .unwrap_or(default_value)
 }
 
-fn env_bool(name: &str, default_value: bool) -> bool {
-    env::var(name).ok().map_or(default_value, |value| {
-        matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes")
-    })
-}
-
-fn resolve_base_url_from_env(allow_http: bool) -> Result<(String, Option<String>)> {
+fn resolve_base_url_from_env() -> Result<(String, Option<String>)> {
     let account = read_optional_env("DBT_NOVA_SNOWFLAKE_ACCOUNT");
     let url = if let Some(url) = read_optional_env("DBT_NOVA_SNOWFLAKE_ACCOUNT_URL") {
-        normalize_account_url(&url, allow_http)?
+        normalize_account_url(&url)?
     } else {
         let account = account.as_deref().ok_or_else(|| {
             DbtNovaError::InvalidParams(
                 "DBT_NOVA_SNOWFLAKE_ACCOUNT or DBT_NOVA_SNOWFLAKE_ACCOUNT_URL is required when DBT_NOVA_SQL_PROVIDER=snowflake".to_string(),
             )
         })?;
-        normalize_account_url(&format!("{account}.snowflakecomputing.com"), allow_http)?
+        normalize_account_url(&format!("{account}.snowflakecomputing.com"))?
     };
     Ok((url, account))
 }
 
-fn normalize_account_url(input: &str, allow_http: bool) -> Result<String> {
+fn normalize_account_url(input: &str) -> Result<String> {
     let trimmed = input.trim().trim_end_matches('/');
     if trimmed.is_empty() {
         return Err(DbtNovaError::InvalidParams(
@@ -1409,12 +1462,34 @@ fn normalize_account_url(input: &str, allow_http: bool) -> Result<String> {
     } else {
         format!("https://{trimmed}")
     };
-    if !(url.starts_with("https://") || (allow_http && url.starts_with("http://"))) {
+    let parsed = Url::parse(&url).map_err(|err| {
+        DbtNovaError::InvalidParams(format!("Invalid Snowflake account URL '{input}': {err}"))
+    })?;
+    if parsed.scheme() != "https" {
         return Err(DbtNovaError::InvalidParams(
             "Snowflake account URL must use https://".to_string(),
         ));
     }
-    Ok(url)
+    let host = parsed.host_str().ok_or_else(|| {
+        DbtNovaError::InvalidParams("Snowflake account URL must include a host".to_string())
+    })?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(DbtNovaError::InvalidParams(
+            "Snowflake account URL must not include credentials".to_string(),
+        ));
+    }
+    if parsed.path() != "/" || parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err(DbtNovaError::InvalidParams(
+            "Snowflake account URL must not include a path, query, or fragment".to_string(),
+        ));
+    }
+
+    let mut normalized = format!("https://{host}");
+    if let Some(port) = parsed.port() {
+        normalized.push(':');
+        normalized.push_str(&port.to_string());
+    }
+    Ok(normalized)
 }
 
 fn resolve_auth_from_env(account: Option<String>) -> Result<SnowflakeAuthConfig> {
@@ -1631,8 +1706,10 @@ mod tests {
         ResultColumn, build_bindings, catalog_preflight_statement, generate_keypair_jwt,
         normalize_account_url, normalize_jwt_identifier, normalize_preflight_relation,
         parse_cell_value, public_key_fingerprint, relation_preflight_statement,
-        rewrite_named_parameters, schema_preflight_statement,
+        rewrite_named_parameters, schema_preflight_statement, session_parameters,
+        summarize_error_body,
     };
+    use reqwest::StatusCode;
     use serde_json::{Value, json};
     use std::collections::HashMap;
 
@@ -1667,16 +1744,45 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
 
     #[test]
     fn normalize_account_url_defaults_to_https() {
-        let url = normalize_account_url("org-account.snowflakecomputing.com/", false)
+        let url = normalize_account_url("org-account.snowflakecomputing.com/")
             .expect("valid account url");
         assert_eq!(url, "https://org-account.snowflakecomputing.com");
     }
 
     #[test]
     fn normalize_account_url_rejects_http_by_default() {
-        let err = normalize_account_url("http://localhost:8080", false)
-            .expect_err("http should be rejected");
+        let err = normalize_account_url("http://localhost:8080").expect_err("http should fail");
         assert!(err.to_string().contains("https"));
+    }
+
+    #[test]
+    fn normalize_account_url_rejects_paths_queries_and_credentials() {
+        for input in [
+            "https://acct.snowflakecomputing.com/api",
+            "https://acct.snowflakecomputing.com?token=secret",
+            "https://user:pass@acct.snowflakecomputing.com",
+        ] {
+            assert!(
+                normalize_account_url(input).is_err(),
+                "{input} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn snowflake_http_summary_redacts_auth_bodies() {
+        let body = r#"{"code":"390303","message":"Invalid OAuth access token. ...TTTTTTTT"}"#;
+        let summary = summarize_error_body(StatusCode::UNAUTHORIZED, body);
+        assert!(!summary.contains("TTTTTTTT"));
+        assert!(summary.contains("authorization failed"));
+    }
+
+    #[test]
+    fn session_parameters_use_sql_api_field_shapes() {
+        let params = session_parameters(250);
+        assert_eq!(params["binary_output_format"], json!("HEX"));
+        assert_eq!(params["rows_per_resultset"], json!(250));
+        assert!(!params.contains_key("BINARY_OUTPUT_FORMAT"));
     }
 
     #[test]
@@ -1714,6 +1820,21 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
             "select 'literal :date', amount::number from orders where order_date >= ?"
         );
         assert_eq!(rewritten.ordered_parameters, vec!["date".to_string()]);
+    }
+
+    #[test]
+    fn rewrite_named_parameters_skips_snowflake_variant_paths() {
+        let params = HashMap::from([("country".to_string(), json!("GB"))]);
+        let rewritten = rewrite_named_parameters(
+            "select payload:customer_id::string, metadata:tags[0] from events where country = :country",
+            &params,
+        )
+        .expect("rewrite");
+        assert_eq!(
+            rewritten.sql,
+            "select payload:customer_id::string, metadata:tags[0] from events where country = ?"
+        );
+        assert_eq!(rewritten.ordered_parameters, vec!["country".to_string()]);
     }
 
     #[test]
