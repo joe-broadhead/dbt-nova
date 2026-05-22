@@ -63,7 +63,7 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_SNOWFLAKE_ROLE` – optional default Snowflake role
 - `DBT_NOVA_SNOWFLAKE_AUTH` – Snowflake auth mode (`keypair`, `oauth`, or `pat`; default: inferred from provided token variables, otherwise `keypair`)
 - `DBT_NOVA_SNOWFLAKE_USER` – Snowflake user for key-pair auth
-- `DBT_NOVA_SNOWFLAKE_JWT_ACCOUNT` – account identifier override for key-pair JWT claims; required when key-pair auth uses `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` without `DBT_NOVA_SNOWFLAKE_ACCOUNT`
+- `DBT_NOVA_SNOWFLAKE_JWT_ACCOUNT` – account identifier override for key-pair JWT claims; required when key-pair auth uses `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` without `DBT_NOVA_SNOWFLAKE_ACCOUNT`. JWT account identifiers are uppercased, periods are replaced with hyphens, and locator-style region suffixes such as `.us-east-1` are excluded.
 - `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PATH` – path to an unencrypted RSA private key PEM for key-pair auth
 - `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PEM` – inline unencrypted RSA private key PEM for key-pair auth (`\n` escapes are accepted)
 - `DBT_NOVA_SNOWFLAKE_OAUTH_TOKEN` – OAuth bearer token for `DBT_NOVA_SNOWFLAKE_AUTH=oauth`
@@ -355,7 +355,7 @@ Supported providers:
   - Service-account key path: `GOOGLE_APPLICATION_CREDENTIALS`
   - gcloud ADC (`gcloud auth application-default login`)
 - `snowflake`: requires `DBT_NOVA_SNOWFLAKE_ACCOUNT` or `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL`, `DBT_NOVA_SNOWFLAKE_WAREHOUSE`, and one of:
-  - Key-pair JWT auth: `DBT_NOVA_SNOWFLAKE_USER` plus `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PATH` or `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PEM`. If only `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` is set, also set `DBT_NOVA_SNOWFLAKE_JWT_ACCOUNT`.
+  - Key-pair JWT auth: `DBT_NOVA_SNOWFLAKE_USER` plus `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PATH` or `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PEM`. If only `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` is set, also set `DBT_NOVA_SNOWFLAKE_JWT_ACCOUNT`. Locator-style region suffixes are excluded from JWT claims.
   - OAuth token auth: `DBT_NOVA_SNOWFLAKE_AUTH=oauth` plus `DBT_NOVA_SNOWFLAKE_OAUTH_TOKEN`
   - Programmatic access token auth: `DBT_NOVA_SNOWFLAKE_AUTH=pat` plus `DBT_NOVA_SNOWFLAKE_PAT`
 - `duckdb`: requires `DBT_NOVA_DUCKDB_PATH` and executes queries against that file in read-only mode. Optional `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH` configures DuckDB `file_search_path` for external file-backed objects.

@@ -269,6 +269,7 @@ Snowflake behavior notes:
 - Null SQL parameters require explicit `parameter_types`.
 - `warehouse_id` overrides `DBT_NOVA_SNOWFLAKE_WAREHOUSE` for a single call.
 - `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` must be an account root URL such as `https://<host>`, not an `/api` endpoint.
+- Key-pair JWT claims normalize account identifiers for Snowflake: account/user values are uppercased, periods are replaced with hyphens, and locator-style account region suffixes such as `.us-east-1` are excluded.
 - For key-pair auth with a private-link or custom account URL, set both `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` and `DBT_NOVA_SNOWFLAKE_JWT_ACCOUNT`.
 - Key-pair auth supports unencrypted RSA PEM keys; encrypted private keys are not supported yet.
 

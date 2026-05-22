@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Snowflake SQL API, including key-pair JWT, OAuth, and programmatic access
   token auth, named parameter binding, partitioned result fetching, cancellation
   on local poll timeout, and provider preflight checks.
+- Snowflake key-pair JWT auth now excludes locator-style region suffixes from
+  JWT account claims while preserving organization/account identifiers.
 - Fixed release OCI publishing to build images from native Linux release binaries
   instead of compiling Rust inside the ARM64 Docker/QEMU path.
 

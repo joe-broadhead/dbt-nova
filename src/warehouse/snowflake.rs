@@ -1619,7 +1619,86 @@ fn resolve_private_key_pem() -> Result<String> {
 }
 
 fn normalize_jwt_identifier(value: &str) -> String {
-    value.trim().replace('.', "-").to_ascii_uppercase()
+    strip_locator_region_suffix(value.trim())
+        .replace('.', "-")
+        .to_ascii_uppercase()
+}
+
+fn strip_locator_region_suffix(value: &str) -> &str {
+    let mut segments = value.split('.');
+    let Some(locator) = segments.next() else {
+        return value;
+    };
+    let suffix: Vec<&str> = segments.collect();
+    if suffix.is_empty() {
+        return value;
+    }
+
+    let last = suffix
+        .last()
+        .map(|segment| segment.to_ascii_lowercase())
+        .unwrap_or_default();
+    let region_segments = if matches!(last.as_str(), "aws" | "azure" | "gcp") {
+        &suffix[..suffix.len().saturating_sub(1)]
+    } else {
+        suffix.as_slice()
+    };
+
+    let region_segments = match region_segments {
+        ["fhplus" | "dod", rest @ ..] => rest,
+        other => other,
+    };
+
+    if region_segments.len() == 1 && looks_like_snowflake_region(region_segments[0]) {
+        locator
+    } else {
+        value
+    }
+}
+
+fn looks_like_snowflake_region(segment: &str) -> bool {
+    let region = segment.to_ascii_lowercase();
+    let has_region_shape = region.contains('-') || region.chars().any(|ch| ch.is_ascii_digit());
+    let has_region_hint = [
+        "af",
+        "ap",
+        "asia",
+        "au",
+        "australia",
+        "ca",
+        "canada",
+        "central",
+        "cn",
+        "east",
+        "eu",
+        "europe",
+        "france",
+        "germany",
+        "il",
+        "india",
+        "japan",
+        "korea",
+        "me",
+        "north",
+        "norway",
+        "sa",
+        "south",
+        "sweden",
+        "switzerland",
+        "uae",
+        "uk",
+        "us",
+        "west",
+    ]
+    .iter()
+    .any(|hint| {
+        region == *hint
+            || region.starts_with(&format!("{hint}-"))
+            || region.ends_with(&format!("-{hint}"))
+            || region.contains(&format!("-{hint}-"))
+    });
+
+    has_region_shape && has_region_hint
 }
 
 #[derive(Serialize)]
@@ -1911,10 +1990,24 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
     }
 
     #[test]
-    fn normalize_jwt_identifier_uppercases_and_replaces_periods() {
+    fn normalize_jwt_identifier_strips_locator_region_suffixes() {
+        assert_eq!(normalize_jwt_identifier("xy12345.us-east-1"), "XY12345");
+        assert_eq!(normalize_jwt_identifier("xy12345.us-east-2.aws"), "XY12345");
         assert_eq!(
-            normalize_jwt_identifier("xy12345.us-east-1"),
-            "XY12345-US-EAST-1"
+            normalize_jwt_identifier("xy12345.fhplus.us-gov-west-1.aws"),
+            "XY12345"
+        );
+    }
+
+    #[test]
+    fn normalize_jwt_identifier_preserves_organization_account_names() {
+        assert_eq!(
+            normalize_jwt_identifier("myorg.myaccount"),
+            "MYORG-MYACCOUNT"
+        );
+        assert_eq!(
+            normalize_jwt_identifier("myorg-myaccount"),
+            "MYORG-MYACCOUNT"
         );
     }
 
