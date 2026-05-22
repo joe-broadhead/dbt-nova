@@ -13,7 +13,6 @@ pub const IN_USE_LOCK_FILENAME: &str = ".in_use.lock";
 pub fn dir_in_use(path: &Path) -> bool {
     let lock_path = path.join(IN_USE_LOCK_FILENAME);
     let Ok(lock_file) = std::fs::OpenOptions::new()
-        .create(true)
         .read(true)
         .write(true)
         .truncate(false)
@@ -130,7 +129,7 @@ mod tests {
     use fs4::FileExt;
     use tempfile::TempDir;
 
-    use super::{IN_USE_LOCK_FILENAME, prune_dirs};
+    use super::{IN_USE_LOCK_FILENAME, dir_in_use, prune_dirs};
 
     fn set_dir_modified(path: &Path, age: Duration) {
         let modified = SystemTime::now()
@@ -146,6 +145,19 @@ mod tests {
         let mut file = File::create(dir.join("payload.bin")).expect("create payload");
         file.write_all(&vec![b'x'; bytes]).expect("write payload");
         dir
+    }
+
+    #[test]
+    fn dir_in_use_missing_lock_is_read_only() {
+        let temp = TempDir::new().expect("temp dir");
+        let storage_dir = create_dir_with_file(temp.path(), "storage", 8);
+        let lock_path = storage_dir.join(IN_USE_LOCK_FILENAME);
+
+        assert!(!dir_in_use(&storage_dir));
+        assert!(
+            !lock_path.exists(),
+            "checking an unlocked directory should not create a lock file"
+        );
     }
 
     #[test]
