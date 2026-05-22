@@ -125,13 +125,20 @@ mod tests {
     use std::fs::{self, File, OpenOptions};
     use std::io::Write;
     use std::path::Path;
-    use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime};
 
     use fs4::FileExt;
     use tempfile::TempDir;
 
     use super::{IN_USE_LOCK_FILENAME, prune_dirs};
+
+    fn set_dir_modified(path: &Path, age: Duration) {
+        let modified = SystemTime::now()
+            .checked_sub(age)
+            .expect("test timestamp should be representable");
+        filetime::set_file_mtime(path, filetime::FileTime::from_system_time(modified))
+            .expect("set directory mtime");
+    }
 
     fn create_dir_with_file(root: &Path, name: &str, bytes: usize) -> std::path::PathBuf {
         let dir = root.join(name);
@@ -147,10 +154,11 @@ mod tests {
         let root = temp.path();
 
         let old = create_dir_with_file(root, "old", 8);
-        thread::sleep(Duration::from_millis(20));
         let keep = create_dir_with_file(root, "keep", 8);
-        thread::sleep(Duration::from_millis(20));
         let newest = create_dir_with_file(root, "newest", 8);
+        set_dir_modified(&old, Duration::from_secs(30));
+        set_dir_modified(&keep, Duration::from_secs(20));
+        set_dir_modified(&newest, Duration::from_secs(10));
 
         prune_dirs(root, 1, 0, 0, &["keep"]).expect("prune dirs");
 

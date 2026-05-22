@@ -151,6 +151,7 @@ impl SnowflakeSqlClient {
         let http = Client::builder()
             .timeout(cfg.timeout)
             .user_agent(format!("dbt-nova/{}", env!("CARGO_PKG_VERSION")))
+            .gzip(true)
             .build()
             .map_err(|err| snowflake_err(format!("failed to build HTTP client: {err}")))?;
         Ok(Self { http, cfg })
@@ -1755,11 +1756,16 @@ mod tests {
         decode_statement_status_response, generate_keypair_jwt, normalize_account_url,
         normalize_jwt_identifier, normalize_preflight_relation, parse_cell_value,
         public_key_fingerprint, relation_preflight_statement, rewrite_named_parameters,
-        schema_preflight_statement, session_parameters, summarize_error_body,
+        schema_preflight_statement, send_json, session_parameters, summarize_error_body,
     };
+    use flate2::{Compression, write::GzEncoder};
+    use reqwest::Client;
     use reqwest::StatusCode;
     use serde_json::{Value, json};
     use std::collections::HashMap;
+    use std::io::Write;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const TEST_RSA_PRIVATE_KEY_PKCS8: &str = r"-----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDJETqse41HRBsc
@@ -1823,6 +1829,32 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
         let summary = summarize_error_body(StatusCode::UNAUTHORIZED, body);
         assert!(!summary.contains("TTTTTTTT"));
         assert!(summary.contains("authorization failed"));
+    }
+
+    #[tokio::test]
+    async fn send_json_decodes_gzip_responses() {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder
+            .write_all(br#"{"data":[["compressed"]]}"#)
+            .expect("write gzip body");
+        let body = encoder.finish().expect("finish gzip body");
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/partition"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-encoding", "gzip")
+                    .insert_header("content-type", "application/json")
+                    .set_body_bytes(body),
+            )
+            .mount(&server)
+            .await;
+
+        let client = Client::builder().gzip(true).build().expect("client");
+        let response: Value = send_json(client.get(format!("{}/partition", server.uri())))
+            .await
+            .expect("decode gzip JSON");
+        assert_eq!(response["data"][0][0], json!("compressed"));
     }
 
     #[test]
