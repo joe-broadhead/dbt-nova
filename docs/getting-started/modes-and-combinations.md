@@ -88,6 +88,7 @@ Important: if bootstrap omits `models_artifact_uri` (for example producer `model
 
 - `databricks` (default): requires Databricks host/token + warehouse pointer
 - `bigquery`: requires project id + Google auth path/token
+- `snowflake`: requires account URL/account id + warehouse + key-pair, OAuth, or PAT auth
 - `duckdb`: requires `DBT_NOVA_DUCKDB_PATH` (read-only execution model)
 
 Provider diagnostics:

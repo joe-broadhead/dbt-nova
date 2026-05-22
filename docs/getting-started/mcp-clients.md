@@ -232,6 +232,65 @@ Optional:
 - `DBT_NOVA_SQL_MAX_QUEUE` (default: `20`)
 - `DBT_NOVA_SQL_QUEUE_TIMEOUT_MS` (default: `30000`)
 
+## Snowflake SQL Variables
+
+Required:
+- `DBT_NOVA_SQL_PROVIDER=snowflake`
+- One of:
+  - `DBT_NOVA_SNOWFLAKE_ACCOUNT`
+  - `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL`
+- `DBT_NOVA_SNOWFLAKE_WAREHOUSE`
+- One auth mode:
+  - Key-pair JWT: `DBT_NOVA_SNOWFLAKE_USER` plus `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PATH` or `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PEM`
+  - OAuth: `DBT_NOVA_SNOWFLAKE_AUTH=oauth` plus `DBT_NOVA_SNOWFLAKE_OAUTH_TOKEN`
+  - Programmatic access token: `DBT_NOVA_SNOWFLAKE_AUTH=pat` plus `DBT_NOVA_SNOWFLAKE_PAT`
+
+Optional:
+- `DBT_NOVA_SNOWFLAKE_DATABASE`
+- `DBT_NOVA_SNOWFLAKE_SCHEMA`
+- `DBT_NOVA_SNOWFLAKE_ROLE`
+- `DBT_NOVA_SNOWFLAKE_JWT_ACCOUNT` (JWT account identifier override; required for key-pair auth when using `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` without `DBT_NOVA_SNOWFLAKE_ACCOUNT`)
+- `DBT_NOVA_SNOWFLAKE_TIMEOUT_MS` (default: `30000`)
+- `DBT_NOVA_SNOWFLAKE_STATEMENT_TIMEOUT_S` (default: `60`)
+- `DBT_NOVA_SNOWFLAKE_POLL_INTERVAL_MS` (default: `1000`)
+- `DBT_NOVA_SNOWFLAKE_MAX_POLL_SECONDS` (default: `600`)
+- `DBT_NOVA_SNOWFLAKE_MAX_CHUNKS` (default: `50`)
+- `DBT_NOVA_SQL_MAX_ROW_LIMIT` (default: `10000`)
+- `DBT_NOVA_SQL_MAX_BYTE_LIMIT` (default: `100000000`)
+- `DBT_NOVA_SQL_MAX_CHUNKS` (default: `100`)
+- `DBT_NOVA_SQL_MAX_POLL_SECONDS` (default: `900`)
+- `DBT_NOVA_SQL_MIN_POLL_INTERVAL_MS` (default: `200`)
+- `DBT_NOVA_SQL_MAX_CONCURRENT` (default: `10`)
+- `DBT_NOVA_SQL_MAX_QUEUE` (default: `20`)
+- `DBT_NOVA_SQL_QUEUE_TIMEOUT_MS` (default: `30000`)
+
+Snowflake behavior notes:
+- Named `:parameter` placeholders are rewritten to Snowflake SQL API `?` binds.
+- Null SQL parameters require explicit `parameter_types`.
+- `warehouse_id` overrides `DBT_NOVA_SNOWFLAKE_WAREHOUSE` for a single call.
+- For key-pair auth with a private-link or custom account URL, set both `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` and `DBT_NOVA_SNOWFLAKE_JWT_ACCOUNT`.
+- Key-pair auth supports unencrypted RSA PEM keys; encrypted private keys are not supported yet.
+
+### Snowflake Example (Codex CLI)
+
+```toml
+[mcp_servers.dbt-nova]
+command = "/path/to/dbt-nova"
+startup_timeout_sec = 60
+
+[mcp_servers.dbt-nova.env]
+DBT_MANIFEST_PATH = "/path/to/manifest.json"
+DBT_NOVA_SQL_PROVIDER = "snowflake"
+DBT_NOVA_SNOWFLAKE_ACCOUNT = "myorg-myaccount"
+DBT_NOVA_SNOWFLAKE_WAREHOUSE = "ANALYST_WH"
+DBT_NOVA_SNOWFLAKE_DATABASE = "ANALYTICS"
+DBT_NOVA_SNOWFLAKE_SCHEMA = "REPORTING"
+DBT_NOVA_SNOWFLAKE_ROLE = "REPORTER"
+DBT_NOVA_SNOWFLAKE_AUTH = "pat"
+DBT_NOVA_SNOWFLAKE_PAT = "<token>"
+DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/.fastembed_cache"
+```
+
 ## DuckDB SQL Variables
 
 Required:

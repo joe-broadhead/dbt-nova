@@ -47,7 +47,7 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_DISABLE_TOOL_SCHEMAS` – strip JSON schema hints from MCP tools (useful for strict clients like Gemini; see [MCP Clients](../getting-started/mcp-clients.md))
 - `DBT_NOVA_TOOL_ALLOWLIST` – optional comma-separated allowlist of exact MCP tool names to expose; when set, only these tools are eligible for exposure
 - `DBT_NOVA_TOOL_DENYLIST` – optional comma-separated denylist of exact MCP tool names to hide after allowlist processing
-- `DBT_NOVA_SQL_PROVIDER` – SQL backend for `execute_sql` (`databricks`, `bigquery`, or `duckdb`, default: `databricks`)
+- `DBT_NOVA_SQL_PROVIDER` – SQL backend for `execute_sql` (`databricks`, `bigquery`, `snowflake`, or `duckdb`, default: `databricks`)
 - `DBT_NOVA_GCP_PROJECT_ID` – shared Google project id alias (used by BigQuery fallback resolution)
 - `DBT_NOVA_GCP_ACCESS_TOKEN` – shared Google OAuth access token alias (used by BigQuery fallback resolution)
 - `DBT_NOVA_BIGQUERY_PROJECT_ID` – BigQuery project id when `DBT_NOVA_SQL_PROVIDER=bigquery` (falls back to `DBT_NOVA_GCP_PROJECT_ID`, `GOOGLE_CLOUD_PROJECT`, `GCP_PROJECT_ID`)
@@ -55,6 +55,24 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_BIGQUERY_LOCATION` – optional BigQuery location for `execute_sql` and provider preflight
 - `DBT_NOVA_BIGQUERY_TIMEOUT_MS` – HTTP timeout for BigQuery API requests (default: `30000`)
 - `DBT_NOVA_BIGQUERY_TOKEN_CACHE_TTL_SECS` – cache TTL for BigQuery auth token + HTTP client reuse (default: `3000`, minimum: `60`)
+- `DBT_NOVA_SNOWFLAKE_ACCOUNT` – Snowflake account identifier when `DBT_NOVA_SQL_PROVIDER=snowflake`; used to build `https://<account>.snowflakecomputing.com`
+- `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` – optional explicit Snowflake account URL for SQL API calls
+- `DBT_NOVA_SNOWFLAKE_WAREHOUSE` – Snowflake warehouse used by `execute_sql` and preflight
+- `DBT_NOVA_SNOWFLAKE_DATABASE` – optional default Snowflake database
+- `DBT_NOVA_SNOWFLAKE_SCHEMA` – optional default Snowflake schema
+- `DBT_NOVA_SNOWFLAKE_ROLE` – optional default Snowflake role
+- `DBT_NOVA_SNOWFLAKE_AUTH` – Snowflake auth mode (`keypair`, `oauth`, or `pat`; default: inferred from provided token variables, otherwise `keypair`)
+- `DBT_NOVA_SNOWFLAKE_USER` – Snowflake user for key-pair auth
+- `DBT_NOVA_SNOWFLAKE_JWT_ACCOUNT` – account identifier override for key-pair JWT claims; required when key-pair auth uses `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` without `DBT_NOVA_SNOWFLAKE_ACCOUNT`
+- `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PATH` – path to an unencrypted RSA private key PEM for key-pair auth
+- `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PEM` – inline unencrypted RSA private key PEM for key-pair auth (`\n` escapes are accepted)
+- `DBT_NOVA_SNOWFLAKE_OAUTH_TOKEN` – OAuth bearer token for `DBT_NOVA_SNOWFLAKE_AUTH=oauth`
+- `DBT_NOVA_SNOWFLAKE_PAT` – programmatic access token for `DBT_NOVA_SNOWFLAKE_AUTH=pat`
+- `DBT_NOVA_SNOWFLAKE_TIMEOUT_MS` – HTTP timeout for Snowflake SQL API requests (default: `30000`)
+- `DBT_NOVA_SNOWFLAKE_STATEMENT_TIMEOUT_S` – Snowflake statement timeout in seconds when caller omits `wait_timeout_s` (default: `60`)
+- `DBT_NOVA_SNOWFLAKE_POLL_INTERVAL_MS` – provider default polling interval (default: `1000`)
+- `DBT_NOVA_SNOWFLAKE_MAX_POLL_SECONDS` – provider default polling duration before local cancellation (default: `600`)
+- `DBT_NOVA_SNOWFLAKE_MAX_CHUNKS` – provider default max result partitions fetched (default: `50`)
 - `DBT_NOVA_DUCKDB_PATH` – required DuckDB database file when `DBT_NOVA_SQL_PROVIDER=duckdb`
 - `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH` – optional DuckDB `file_search_path` used for external file-backed objects when `DBT_NOVA_SQL_PROVIDER=duckdb`
 - `DBT_NOVA_DUCKDB_POOL_MAX_SIZE` – optional max pooled DuckDB connections per `(duckdb_path,file_search_path)` key (default: falls back to `DBT_NOVA_SQL_MAX_CONCURRENT`, then `10`)
@@ -336,6 +354,10 @@ Supported providers:
   - OAuth token env: `DBT_NOVA_BIGQUERY_ACCESS_TOKEN`, `DBT_NOVA_GCP_ACCESS_TOKEN`, `GCP_ACCESS_TOKEN`, `GOOGLE_OAUTH_ACCESS_TOKEN`
   - Service-account key path: `GOOGLE_APPLICATION_CREDENTIALS`
   - gcloud ADC (`gcloud auth application-default login`)
+- `snowflake`: requires `DBT_NOVA_SNOWFLAKE_ACCOUNT` or `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL`, `DBT_NOVA_SNOWFLAKE_WAREHOUSE`, and one of:
+  - Key-pair JWT auth: `DBT_NOVA_SNOWFLAKE_USER` plus `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PATH` or `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PEM`. If only `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` is set, also set `DBT_NOVA_SNOWFLAKE_JWT_ACCOUNT`.
+  - OAuth token auth: `DBT_NOVA_SNOWFLAKE_AUTH=oauth` plus `DBT_NOVA_SNOWFLAKE_OAUTH_TOKEN`
+  - Programmatic access token auth: `DBT_NOVA_SNOWFLAKE_AUTH=pat` plus `DBT_NOVA_SNOWFLAKE_PAT`
 - `duckdb`: requires `DBT_NOVA_DUCKDB_PATH` and executes queries against that file in read-only mode. Optional `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH` configures DuckDB `file_search_path` for external file-backed objects.
 
 Databricks runtime tuning env vars:
@@ -344,6 +366,17 @@ Databricks runtime tuning env vars:
 - `DATABRICKS_MAX_POLL_SECONDS` (default: `600`)
 - `DATABRICKS_TIMEOUT_MS` (derived from wait timeout + 5 seconds, min `30000`)
 - `DATABRICKS_MAX_GET_RETRIES` (default: `2`)
+
+Snowflake notes:
+- Named `:parameter` placeholders are rewritten to Snowflake SQL API positional
+  `?` binds. Null parameters require explicit `parameter_types`.
+- `warehouse_id` overrides `DBT_NOVA_SNOWFLAKE_WAREHOUSE` for a single request.
+- Result partitions are fetched through the SQL API and remain bounded by
+  `row_limit`, `byte_limit`, `fetch_all_chunks`, and `max_chunks`.
+- If local polling exceeds `max_poll_seconds`, Nova calls Snowflake's statement
+  cancel endpoint before returning a timeout error.
+- Key-pair auth supports unencrypted RSA PEM keys. Encrypted private keys are not
+  supported yet; use OAuth or PAT auth if a passphrase-protected key is required.
 
 Provider diagnostics are available through `execute_sql` with `preflight_only=true`
 plus optional `preflight_catalog`, `preflight_schema`, and `preflight_relation`.

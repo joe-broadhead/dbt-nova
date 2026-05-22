@@ -6,7 +6,7 @@ use crate::manifest::search::ManifestSearch;
 use crate::params::ExecuteSqlParams;
 use crate::warehouse::resolve_sql_provider;
 use sqlparser::ast::Statement;
-use sqlparser::dialect::GenericDialect;
+use sqlparser::dialect::{GenericDialect, SnowflakeDialect};
 use sqlparser::parser::Parser;
 use tracing::{instrument, warn};
 
@@ -19,6 +19,14 @@ const PROVIDER_DEFAULT_MAX_CHUNKS: usize = 50;
 /// # Errors
 /// Returns an error if the statement is empty, invalid, or not permitted.
 pub(crate) fn validate_sql_statement(statement: &str) -> Result<()> {
+    validate_sql_statement_for_provider(statement, "generic")
+}
+
+/// Validate SQL statements for a specific provider dialect.
+///
+/// # Errors
+/// Returns an error if the statement is empty, invalid, or not permitted.
+pub(crate) fn validate_sql_statement_for_provider(statement: &str, provider: &str) -> Result<()> {
     if statement.trim().is_empty() {
         return Err(DbtNovaError::InvalidParams(
             "statement cannot be empty".to_string(),
@@ -31,9 +39,20 @@ pub(crate) fn validate_sql_statement(statement: &str) -> Result<()> {
         };
     }
 
-    let dialect = GenericDialect {};
-    let ast = Parser::parse_sql(&dialect, statement)
-        .map_err(|e| DbtNovaError::InvalidParams(format!("Invalid SQL syntax: {e}")))?;
+    let ast = if provider.eq_ignore_ascii_case("snowflake") {
+        let dialect = SnowflakeDialect {};
+        Parser::parse_sql(&dialect, statement)
+    } else {
+        let dialect = GenericDialect {};
+        Parser::parse_sql(&dialect, statement)
+    }
+    .map_err(|e| DbtNovaError::InvalidParams(format!("Invalid SQL syntax: {e}")))?;
+
+    if provider.eq_ignore_ascii_case("snowflake") && ast.len() > 1 {
+        reject_statement!(
+            "Snowflake provider does not support multi-statement execute_sql requests"
+        );
+    }
 
     for stmt in &ast {
         match stmt {
@@ -90,7 +109,11 @@ impl ManifestSearch {
             return provider.preflight(&bounded).await;
         }
         let statement = bounded.statement.trim();
-        validate_sql_statement(statement)?;
+        if provider.name().eq_ignore_ascii_case("snowflake") {
+            validate_sql_statement_for_provider(statement, provider.name())?;
+        } else {
+            validate_sql_statement(statement)?;
+        }
         provider.execute(&bounded).await
     }
 }
@@ -244,5 +267,21 @@ mod tests {
         assert_eq!(bounded.max_chunks, Some(10));
         assert_eq!(bounded.max_poll_seconds, Some(45));
         assert_eq!(bounded.poll_interval_ms, Some(250));
+    }
+
+    #[test]
+    fn validate_sql_statement_supports_snowflake_dialect() {
+        validate_sql_statement_for_provider(
+            "select * from analytics.orders qualify row_number() over (partition by customer_id order by order_ts desc) = 1",
+            "snowflake",
+        )
+        .expect("snowflake qualify should parse");
+    }
+
+    #[test]
+    fn validate_sql_statement_rejects_snowflake_multi_statement() {
+        let err = validate_sql_statement_for_provider("select 1; select 2", "snowflake")
+            .expect_err("snowflake multi-statement should be rejected");
+        assert!(err.to_string().contains("multi-statement"));
     }
 }

@@ -93,7 +93,7 @@ Trusted shell mode is still available for advanced cases:
 - `dbt_command` and `dbt_command_args_json` are mutually exclusive.
 
 When using `dbt_generate_manifest: true`, prefer this structured pattern so the
-workflow works across Databricks, BigQuery, DuckDB, and mixed profiles:
+workflow works across Databricks, BigQuery, Snowflake, DuckDB, and mixed profiles:
 
 ```yaml
 jobs:

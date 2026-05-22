@@ -64,7 +64,7 @@ One-page cheatsheet for all dbt-nova MCP tools.
 
 | Tool | Purpose | Key Parameters |
 |------|---------|----------------|
-| `execute_sql` | Run SQL against configured provider (`databricks`, `bigquery`, `duckdb`) | `statement`, `row_limit`, `byte_limit`, `max_poll_seconds`, `parameters` |
+| `execute_sql` | Run SQL against configured provider (`databricks`, `bigquery`, `snowflake`, `duckdb`) | `statement`, `row_limit`, `byte_limit`, `max_poll_seconds`, `parameters` |
 
 ## Operations
 
