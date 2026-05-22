@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on local poll timeout, and provider preflight checks.
 - Snowflake key-pair JWT auth now excludes locator-style region suffixes from
   JWT account claims while preserving organization/account identifiers.
+- Snowflake SQL API async status responses with code `333334` are now treated
+  as in-progress rather than failed.
 - Snowflake catalog and schema preflight checks now avoid wildcard matching for
   identifiers containing underscores by requiring exact `SHOW` result names.
 - Fixed release OCI publishing to build images from native Linux release binaries

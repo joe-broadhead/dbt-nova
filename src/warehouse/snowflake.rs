@@ -33,6 +33,7 @@ const DEFAULT_MAX_POLL_SECONDS: u64 = 600;
 const DEFAULT_MAX_CHUNKS: usize = 50;
 const DEFAULT_JWT_LIFETIME_SECONDS: u64 = 3_300;
 const STATEMENT_STILL_EXECUTING_CODE: &str = "333333";
+const STATEMENT_ASYNC_EXECUTION_CODE: &str = "333334";
 
 fn snowflake_err(message: impl Into<String>) -> DbtNovaError {
     DbtNovaError::ServerError(format!("Snowflake error: {}", message.into()))
@@ -593,7 +594,7 @@ impl StatementResponse {
         if self.result_set_meta_data.is_some() || self.data.is_some() {
             return None;
         }
-        if self.code.as_deref() == Some(STATEMENT_STILL_EXECUTING_CODE) {
+        if self.code.as_deref().is_some_and(is_pending_statement_code) {
             return None;
         }
         let code = self.code.as_deref()?;
@@ -607,6 +608,13 @@ impl StatementResponse {
             "Snowflake statement error {code}:{sql_state} {message}"
         ))
     }
+}
+
+fn is_pending_statement_code(code: &str) -> bool {
+    matches!(
+        code,
+        STATEMENT_STILL_EXECUTING_CODE | STATEMENT_ASYNC_EXECUTION_CODE
+    )
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -1965,6 +1973,25 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
         let response =
             decode_statement_status_response(StatusCode::TOO_MANY_REQUESTS, body).expect("status");
         assert!(response.is_pending());
+        assert_eq!(
+            response.statement_handle.as_deref(),
+            Some("536fad38-b564-4dc5-9892-a4543504df6c")
+        );
+    }
+
+    #[test]
+    fn statement_status_decodes_async_query_status_as_pending() {
+        let body = r#"{
+            "code": "333334",
+            "message": "Asynchronous execution in progress. Use provided query id to perform query monitoring and management.",
+            "statementHandle": "536fad38-b564-4dc5-9892-a4543504df6c",
+            "statementStatusUrl": "/api/v2/statements/536fad38-b564-4dc5-9892-a4543504df6c"
+        }"#;
+        let response =
+            decode_statement_status_response(StatusCode::ACCEPTED, body).expect("status");
+
+        assert!(response.is_pending());
+        assert_eq!(response.failure_message(), None);
         assert_eq!(
             response.statement_handle.as_deref(),
             Some("536fad38-b564-4dc5-9892-a4543504df6c")
