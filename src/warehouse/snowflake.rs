@@ -228,7 +228,7 @@ impl SnowflakeSqlClient {
 
     async fn get_statement(&self, statement_handle: &str) -> Result<StatementResponse> {
         let builder = self.authorized(self.http.get(self.statement_url(statement_handle)))?;
-        send_json(builder).await
+        send_statement_status(builder).await
     }
 
     async fn get_partition(
@@ -653,6 +653,16 @@ struct PartitionInfo {
 }
 
 async fn send_json<T: for<'de> Deserialize<'de>>(builder: reqwest::RequestBuilder) -> Result<T> {
+    let (status, body) = send_text(builder).await?;
+    decode_json_response(status, &body)
+}
+
+async fn send_statement_status(builder: reqwest::RequestBuilder) -> Result<StatementResponse> {
+    let (status, body) = send_text(builder).await?;
+    decode_statement_status_response(status, &body)
+}
+
+async fn send_text(builder: reqwest::RequestBuilder) -> Result<(StatusCode, String)> {
     let response = builder
         .send()
         .await
@@ -663,16 +673,33 @@ async fn send_json<T: for<'de> Deserialize<'de>>(builder: reqwest::RequestBuilde
         .await
         .map_err(|err| snowflake_err(format!("failed to read response body: {err}")))?;
 
+    Ok((status, body))
+}
+
+fn decode_json_response<T: for<'de> Deserialize<'de>>(status: StatusCode, body: &str) -> Result<T> {
     if !status.is_success() {
-        return Err(snowflake_http(status, &body));
+        return Err(snowflake_http(status, body));
     }
 
-    serde_json::from_str(&body).map_err(|err| {
+    serde_json::from_str(body).map_err(|err| {
         snowflake_err(format!(
             "failed to parse JSON response: {err}; response_body_bytes={}",
             body.len()
         ))
     })
+}
+
+fn decode_statement_status_response(status: StatusCode, body: &str) -> Result<StatementResponse> {
+    if status == StatusCode::TOO_MANY_REQUESTS {
+        let response = serde_json::from_str::<StatementResponse>(body)
+            .map_err(|_| snowflake_http(status, body))?;
+        if response.is_pending() {
+            return Ok(response);
+        }
+        return Err(snowflake_http(status, body));
+    }
+
+    decode_json_response(status, body)
 }
 
 fn summarize_error_body(status: StatusCode, body: &str) -> String {
@@ -1724,11 +1751,11 @@ fn rsa_public_spki_der(modulus: BigInt, exponent: BigInt) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ResultColumn, build_bindings, catalog_preflight_statement, generate_keypair_jwt,
-        normalize_account_url, normalize_jwt_identifier, normalize_preflight_relation,
-        parse_cell_value, public_key_fingerprint, relation_preflight_statement,
-        rewrite_named_parameters, schema_preflight_statement, session_parameters,
-        summarize_error_body,
+        ResultColumn, build_bindings, catalog_preflight_statement,
+        decode_statement_status_response, generate_keypair_jwt, normalize_account_url,
+        normalize_jwt_identifier, normalize_preflight_relation, parse_cell_value,
+        public_key_fingerprint, relation_preflight_statement, rewrite_named_parameters,
+        schema_preflight_statement, session_parameters, summarize_error_body,
     };
     use reqwest::StatusCode;
     use serde_json::{Value, json};
@@ -1796,6 +1823,31 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
         let summary = summarize_error_body(StatusCode::UNAUTHORIZED, body);
         assert!(!summary.contains("TTTTTTTT"));
         assert!(summary.contains("authorization failed"));
+    }
+
+    #[test]
+    fn statement_status_decodes_429_query_status_as_pending() {
+        let body = r#"{
+            "code": "333333",
+            "message": "Statement is still executing",
+            "statementHandle": "536fad38-b564-4dc5-9892-a4543504df6c",
+            "statementStatusUrl": "/api/v2/statements/536fad38-b564-4dc5-9892-a4543504df6c"
+        }"#;
+        let response =
+            decode_statement_status_response(StatusCode::TOO_MANY_REQUESTS, body).expect("status");
+        assert!(response.is_pending());
+        assert_eq!(
+            response.statement_handle.as_deref(),
+            Some("536fad38-b564-4dc5-9892-a4543504df6c")
+        );
+    }
+
+    #[test]
+    fn statement_status_keeps_non_pending_429_as_error() {
+        let body = r#"{"code":"390505","message":"Too many requests."}"#;
+        let err = decode_statement_status_response(StatusCode::TOO_MANY_REQUESTS, body)
+            .expect_err("rate limit should stay an error");
+        assert!(err.to_string().contains("390505"));
     }
 
     #[test]
