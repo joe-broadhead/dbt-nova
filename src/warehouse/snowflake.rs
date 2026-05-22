@@ -32,6 +32,7 @@ const DEFAULT_POLL_INTERVAL_MS: u64 = 1_000;
 const DEFAULT_MAX_POLL_SECONDS: u64 = 600;
 const DEFAULT_MAX_CHUNKS: usize = 50;
 const DEFAULT_JWT_LIFETIME_SECONDS: u64 = 3_300;
+const STATEMENT_STILL_EXECUTING_CODE: &str = "333333";
 
 fn snowflake_err(message: impl Into<String>) -> DbtNovaError {
     DbtNovaError::ServerError(format!("Snowflake error: {}", message.into()))
@@ -592,7 +593,7 @@ impl StatementResponse {
         if self.result_set_meta_data.is_some() || self.data.is_some() {
             return None;
         }
-        if self.statement_status_url.is_some() {
+        if self.code.as_deref() == Some(STATEMENT_STILL_EXECUTING_CODE) {
             return None;
         }
         let code = self.code.as_deref()?;
@@ -1872,6 +1873,25 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
             response.statement_handle.as_deref(),
             Some("536fad38-b564-4dc5-9892-a4543504df6c")
         );
+    }
+
+    #[test]
+    fn statement_status_url_error_is_terminal() {
+        let body = r#"{
+            "code": "604",
+            "message": "Statement was canceled",
+            "sqlState": "57014",
+            "statementHandle": "536fad38-b564-4dc5-9892-a4543504df6c",
+            "statementStatusUrl": "/api/v2/statements/536fad38-b564-4dc5-9892-a4543504df6c"
+        }"#;
+        let response =
+            decode_statement_status_response(StatusCode::OK, body).expect("terminal status");
+
+        assert!(!response.is_pending());
+        let message = response.failure_message().expect("failure message");
+        assert!(message.contains("604"));
+        assert!(message.contains("57014"));
+        assert!(message.contains("Statement was canceled"));
     }
 
     #[test]
