@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   identifiers containing underscores by requiring exact `SHOW` result names.
 - Snowflake SQL provider now supports local interactive browser SSO with
   `DBT_NOVA_SNOWFLAKE_AUTH=externalbrowser`.
+- Snowflake fixed-point numeric result values are now kept exact instead of
+  coercing scaled decimals or large integers through floating-point JSON values,
+  and Snowflake statement timeout `0` is preserved as the SQL API maximum-timeout
+  sentinel.
 - Fixed release OCI publishing to build images from native Linux release binaries
   instead of compiling Rust inside the ARM64 Docker/QEMU path.
 

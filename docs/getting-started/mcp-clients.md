@@ -252,7 +252,7 @@ Optional:
 - `DBT_NOVA_SNOWFLAKE_ROLE`
 - `DBT_NOVA_SNOWFLAKE_JWT_ACCOUNT` (JWT account identifier override; required for key-pair auth when using `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` without `DBT_NOVA_SNOWFLAKE_ACCOUNT`)
 - `DBT_NOVA_SNOWFLAKE_TIMEOUT_MS` (default: `30000`)
-- `DBT_NOVA_SNOWFLAKE_STATEMENT_TIMEOUT_S` (default: `60`)
+- `DBT_NOVA_SNOWFLAKE_STATEMENT_TIMEOUT_S` (default: `60`; `0` requests Snowflake SQL API's maximum timeout window)
 - `DBT_NOVA_SNOWFLAKE_POLL_INTERVAL_MS` (default: `1000`)
 - `DBT_NOVA_SNOWFLAKE_MAX_POLL_SECONDS` (default: `600`)
 - `DBT_NOVA_SNOWFLAKE_MAX_CHUNKS` (default: `50`)

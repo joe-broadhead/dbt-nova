@@ -72,7 +72,7 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_SNOWFLAKE_EXTERNAL_BROWSER_OPEN` – open the system browser automatically for external browser auth (`true`|`false`, default: `true`; when false, Nova prints the SSO URL for manual opening)
 - `DBT_NOVA_SNOWFLAKE_EXTERNAL_BROWSER_CALLBACK_PORT` – optional fixed loopback callback port for external browser auth (default: bind an ephemeral `127.0.0.1` port)
 - `DBT_NOVA_SNOWFLAKE_TIMEOUT_MS` – HTTP timeout for Snowflake SQL API requests (default: `30000`)
-- `DBT_NOVA_SNOWFLAKE_STATEMENT_TIMEOUT_S` – Snowflake statement timeout in seconds when caller omits `wait_timeout_s` (default: `60`)
+- `DBT_NOVA_SNOWFLAKE_STATEMENT_TIMEOUT_S` – Snowflake statement timeout in seconds when caller omits `wait_timeout_s` (default: `60`; `0` requests Snowflake SQL API's maximum timeout window)
 - `DBT_NOVA_SNOWFLAKE_POLL_INTERVAL_MS` – provider default polling interval (default: `1000`)
 - `DBT_NOVA_SNOWFLAKE_MAX_POLL_SECONDS` – provider default polling duration before local cancellation (default: `600`)
 - `DBT_NOVA_SNOWFLAKE_MAX_CHUNKS` – provider default max result partitions fetched (default: `50`)

@@ -38,6 +38,8 @@ const DEFAULT_MAX_POLL_SECONDS: u64 = 600;
 const DEFAULT_MAX_CHUNKS: usize = 50;
 const DEFAULT_JWT_LIFETIME_SECONDS: u64 = 3_300;
 const DEFAULT_EXTERNAL_BROWSER_TIMEOUT_SECONDS: u64 = 120;
+const MAX_SAFE_JSON_INTEGER: i64 = 9_007_199_254_740_991;
+const MIN_SAFE_JSON_INTEGER: i64 = -MAX_SAFE_JSON_INTEGER;
 const SESSION_EXPIRY_SAFETY_WINDOW_SECONDS: u64 = 60;
 const MAX_BROWSER_CALLBACK_REQUEST_BYTES: usize = 8192;
 const STATEMENT_STILL_EXECUTING_CODE: &str = "333333";
@@ -164,8 +166,7 @@ impl SnowflakeSqlConfig {
         let default_statement_timeout_s = env_u64(
             "DBT_NOVA_SNOWFLAKE_STATEMENT_TIMEOUT_S",
             DEFAULT_STATEMENT_TIMEOUT_S,
-        )
-        .max(1);
+        );
         let poll_interval = Duration::from_millis(
             env_u64(
                 "DBT_NOVA_SNOWFLAKE_POLL_INTERVAL_MS",
@@ -1269,8 +1270,7 @@ impl SnowflakeExecuteOptions {
             warehouse: self.warehouse.unwrap_or_else(|| config.warehouse.clone()),
             statement_timeout_s: self
                 .statement_timeout_s
-                .unwrap_or(config.default_statement_timeout_s)
-                .max(1),
+                .unwrap_or(config.default_statement_timeout_s),
             row_limit: self.row_limit.unwrap_or(DEFAULT_ROW_LIMIT).max(1),
             byte_limit: self.byte_limit.unwrap_or(DEFAULT_BYTE_LIMIT).max(1),
             poll_interval: self.poll_interval.unwrap_or(config.poll_interval),
@@ -1604,15 +1604,7 @@ fn parse_cell_value(value: &Value, field: &ResultColumn) -> Value {
     };
 
     match field.type_name.to_ascii_uppercase().as_str() {
-        "FIXED" | "NUMBER" | "DECIMAL" | "NUMERIC" => {
-            if parse_optional_u64(field.scale.as_ref()).unwrap_or(0) == 0 {
-                return text
-                    .parse::<i64>()
-                    .map_or_else(|_| Value::String(text.to_string()), Value::from);
-            }
-            text.parse::<f64>()
-                .map_or_else(|_| Value::String(text.to_string()), Value::from)
-        }
+        "FIXED" | "NUMBER" | "DECIMAL" | "NUMERIC" => parse_fixed_numeric_cell(text, field),
         "REAL" | "FLOAT" | "FLOAT4" | "FLOAT8" | "DOUBLE" | "DOUBLE PRECISION" => text
             .parse::<f64>()
             .map_or_else(|_| Value::String(text.to_string()), Value::from),
@@ -1626,6 +1618,16 @@ fn parse_cell_value(value: &Value, field: &ResultColumn) -> Value {
         }
         _ => Value::String(text.to_string()),
     }
+}
+
+fn parse_fixed_numeric_cell(text: &str, field: &ResultColumn) -> Value {
+    if parse_optional_u64(field.scale.as_ref()) == Some(0)
+        && let Ok(integer) = text.parse::<i64>()
+        && (MIN_SAFE_JSON_INTEGER..=MAX_SAFE_JSON_INTEGER).contains(&integer)
+    {
+        return Value::from(integer);
+    }
+    Value::String(text.to_string())
 }
 
 fn parse_optional_u64(value: Option<&Value>) -> Option<u64> {
@@ -3483,6 +3485,37 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
         )))
     }
 
+    fn test_snowflake_config(default_statement_timeout_s: u64) -> SnowflakeSqlConfig {
+        SnowflakeSqlConfig {
+            base_url: "https://org-account.snowflakecomputing.com".to_string(),
+            warehouse: "COMPUTE_WH".to_string(),
+            database: None,
+            schema: None,
+            role: None,
+            timeout: Duration::from_secs(5),
+            default_statement_timeout_s,
+            poll_interval: Duration::from_millis(1),
+            max_poll: Duration::from_secs(1),
+            max_chunks: 1,
+            auth: SnowflakeAuthConfig::OAuth {
+                token: "oauth-token".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn execute_options_allow_statement_timeout_zero_sentinel() {
+        let request_override = SnowflakeExecuteOptions {
+            statement_timeout_s: Some(0),
+            ..SnowflakeExecuteOptions::default()
+        }
+        .resolve(&test_snowflake_config(60));
+        assert_eq!(request_override.statement_timeout_s, 0);
+
+        let config_default = SnowflakeExecuteOptions::default().resolve(&test_snowflake_config(0));
+        assert_eq!(config_default.statement_timeout_s, 0);
+    }
+
     #[tokio::test]
     async fn send_json_decodes_gzip_responses() {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
@@ -3720,6 +3753,38 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
         assert_eq!(
             parse_cell_value(&json!("{\"a\":1}"), &variant_field),
             json!({"a": 1})
+        );
+    }
+
+    #[test]
+    fn parse_cell_value_preserves_fixed_numeric_precision() {
+        let decimal_field = ResultColumn {
+            name: "amount".to_string(),
+            type_name: "DECIMAL".to_string(),
+            scale: Some(json!(6)),
+        };
+        let large_integer_field = ResultColumn {
+            name: "external_id".to_string(),
+            type_name: "NUMBER".to_string(),
+            scale: Some(json!(0)),
+        };
+        let missing_scale_field = ResultColumn {
+            name: "metric".to_string(),
+            type_name: "FIXED".to_string(),
+            scale: None,
+        };
+
+        assert_eq!(
+            parse_cell_value(&json!("12345678901234567890.123456"), &decimal_field),
+            json!("12345678901234567890.123456")
+        );
+        assert_eq!(
+            parse_cell_value(&json!("9007199254740993"), &large_integer_field),
+            json!("9007199254740993")
+        );
+        assert_eq!(
+            parse_cell_value(&json!("42"), &missing_scale_field),
+            json!("42")
         );
     }
 
