@@ -1605,9 +1605,9 @@ fn parse_cell_value(value: &Value, field: &ResultColumn) -> Value {
 
     match field.type_name.to_ascii_uppercase().as_str() {
         "FIXED" | "NUMBER" | "DECIMAL" | "NUMERIC" => parse_fixed_numeric_cell(text, field),
-        "REAL" | "FLOAT" | "FLOAT4" | "FLOAT8" | "DOUBLE" | "DOUBLE PRECISION" => text
-            .parse::<f64>()
-            .map_or_else(|_| Value::String(text.to_string()), Value::from),
+        "REAL" | "FLOAT" | "FLOAT4" | "FLOAT8" | "DOUBLE" | "DOUBLE PRECISION" => {
+            parse_floating_numeric_cell(text)
+        }
         "BOOLEAN" => match text.to_ascii_lowercase().as_str() {
             "true" => Value::Bool(true),
             "false" => Value::Bool(false),
@@ -1628,6 +1628,13 @@ fn parse_fixed_numeric_cell(text: &str, field: &ResultColumn) -> Value {
         return Value::from(integer);
     }
     Value::String(text.to_string())
+}
+
+fn parse_floating_numeric_cell(text: &str) -> Value {
+    match text.parse::<f64>() {
+        Ok(number) if number.is_finite() => Value::from(number),
+        _ => Value::String(text.to_string()),
+    }
 }
 
 fn parse_optional_u64(value: Option<&Value>) -> Option<u64> {
@@ -3785,6 +3792,23 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
         assert_eq!(
             parse_cell_value(&json!("42"), &missing_scale_field),
             json!("42")
+        );
+    }
+
+    #[test]
+    fn parse_cell_value_preserves_non_finite_float_text() {
+        let float_field = ResultColumn {
+            name: "ratio".to_string(),
+            type_name: "FLOAT".to_string(),
+            scale: None,
+        };
+
+        assert_eq!(parse_cell_value(&json!("1.25"), &float_field), json!(1.25));
+        assert_eq!(parse_cell_value(&json!("NaN"), &float_field), json!("NaN"));
+        assert_eq!(parse_cell_value(&json!("inf"), &float_field), json!("inf"));
+        assert_eq!(
+            parse_cell_value(&json!("-inf"), &float_field),
+            json!("-inf")
         );
     }
 

@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DBT_NOVA_SNOWFLAKE_AUTH=externalbrowser`.
 - Snowflake fixed-point numeric result values are now kept exact instead of
   coercing scaled decimals or large integers through floating-point JSON values,
+  non-finite floating-point values are preserved as text instead of JSON `null`,
   and Snowflake statement timeout `0` is preserved as the SQL API maximum-timeout
   sentinel.
 - Fixed release OCI publishing to build images from native Linux release binaries
