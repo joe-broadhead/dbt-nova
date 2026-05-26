@@ -2796,12 +2796,12 @@ fn rsa_public_spki_der(modulus: BigInt, exponent: BigInt) -> Result<Vec<u8>> {
 mod tests {
     use super::{
         BrowserCallback, BrowserCallbackPreflight, BrowserCallbackRequest,
-        ExternalBrowserAuthenticatorRequest, ExternalBrowserAuthenticatorRequestData,
-        ExternalBrowserLoginRequest, ExternalBrowserLoginRequestData,
-        MAX_BROWSER_CALLBACK_REQUEST_BYTES, Result, ResultColumn, SnowflakeAuthConfig,
-        SnowflakeAuthorization, SnowflakeExecuteOptions, SnowflakeQueryResult, SnowflakeQueryStats,
-        SnowflakeSession, SnowflakeSqlClient, SnowflakeSqlConfig, build_bindings,
-        build_external_browser_auth_config, catalog_preflight_statement,
+        DEFAULT_EXTERNAL_BROWSER_TIMEOUT_SECONDS, ExternalBrowserAuthenticatorRequest,
+        ExternalBrowserAuthenticatorRequestData, ExternalBrowserLoginRequest,
+        ExternalBrowserLoginRequestData, MAX_BROWSER_CALLBACK_REQUEST_BYTES, Result, ResultColumn,
+        SnowflakeAuthConfig, SnowflakeAuthorization, SnowflakeExecuteOptions, SnowflakeQueryResult,
+        SnowflakeQueryStats, SnowflakeSession, SnowflakeSqlClient, SnowflakeSqlConfig,
+        build_bindings, build_external_browser_auth_config, catalog_preflight_statement,
         decode_external_browser_authenticator_response, decode_external_browser_login_response,
         decode_statement_status_response, external_browser_session_cache, generate_keypair_jwt,
         normalize_account_url, normalize_jwt_identifier, normalize_preflight_relation,
@@ -2896,7 +2896,7 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
             "https://org-account.snowflakecomputing.com",
             Some("org-account".to_string()),
             None,
-            Duration::from_secs(120),
+            Duration::from_secs(DEFAULT_EXTERNAL_BROWSER_TIMEOUT_SECONDS),
             true,
             None,
         ) else {
