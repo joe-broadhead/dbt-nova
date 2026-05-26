@@ -944,8 +944,16 @@ async fn read_browser_callback_request(
     let mut request = Vec::with_capacity(1024);
     let mut buffer = [0u8; 1024];
     let mut expected_length = None;
+    let deadline = Instant::now()
+        .checked_add(auth_timeout)
+        .ok_or_else(|| snowflake_err("Snowflake browser SSO callback timeout is too large"))?;
     loop {
-        let bytes_read = timeout(auth_timeout, socket.read(&mut buffer))
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return Err(snowflake_err(
+                "timed out reading Snowflake browser SSO callback",
+            ));
+        };
+        let bytes_read = timeout(remaining, socket.read(&mut buffer))
             .await
             .map_err(|_| snowflake_err("timed out reading Snowflake browser SSO callback"))?
             .map_err(|err| snowflake_err(format!("failed to read browser callback: {err}")))?;
@@ -2784,9 +2792,9 @@ mod tests {
         decode_statement_status_response, external_browser_session_cache, generate_keypair_jwt,
         normalize_account_url, normalize_jwt_identifier, normalize_preflight_relation,
         parse_browser_callback_request, parse_cell_value, preflight_show_result_has_exact_name,
-        public_key_fingerprint, relation_preflight_statement, rewrite_named_parameters,
-        schema_preflight_statement, send_json, session_parameters, snowflake_err,
-        summarize_error_body,
+        public_key_fingerprint, read_browser_callback_request, relation_preflight_statement,
+        rewrite_named_parameters, schema_preflight_statement, send_json, session_parameters,
+        snowflake_err, summarize_error_body,
     };
     use flate2::{Compression, write::GzEncoder};
     use reqwest::Client;
@@ -3104,6 +3112,41 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
                 "{request} should be rejected"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn browser_callback_reader_enforces_total_read_timeout() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind callback listener");
+        let port = listener.local_addr().expect("listener addr").port();
+        let read = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept callback");
+            let started_at = std::time::Instant::now();
+            let err = read_browser_callback_request(&mut socket, Duration::from_millis(60))
+                .await
+                .expect_err("slow callback should time out");
+            (started_at.elapsed(), err.to_string())
+        });
+
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect callback");
+        stream
+            .write_all(b"POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 4\r\n\r\na")
+            .await
+            .expect("write first chunk");
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        stream.write_all(b"b").await.expect("write second chunk");
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        let _ = stream.write_all(b"c").await;
+
+        let (elapsed, error) = read.await.expect("read task");
+        assert!(error.contains("timed out reading"));
+        assert!(
+            elapsed < Duration::from_millis(120),
+            "callback read elapsed {elapsed:?}, expected total timeout bound"
+        );
     }
 
     #[tokio::test]
