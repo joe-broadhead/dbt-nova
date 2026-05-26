@@ -38,6 +38,7 @@ const DEFAULT_MAX_POLL_SECONDS: u64 = 600;
 const DEFAULT_MAX_CHUNKS: usize = 50;
 const DEFAULT_JWT_LIFETIME_SECONDS: u64 = 3_300;
 const DEFAULT_EXTERNAL_BROWSER_TIMEOUT_SECONDS: u64 = 120;
+const SESSION_EXPIRY_SAFETY_WINDOW_SECONDS: u64 = 60;
 const MAX_BROWSER_CALLBACK_REQUEST_BYTES: usize = 8192;
 const STATEMENT_STILL_EXECUTING_CODE: &str = "333333";
 const STATEMENT_ASYNC_EXECUTION_CODE: &str = "333334";
@@ -98,7 +99,7 @@ impl SnowflakeSession {
     fn is_valid(&self) -> bool {
         let primary_valid = match self.expires_at {
             Some(expires_at) => Instant::now()
-                .checked_add(Duration::from_secs(60))
+                .checked_add(session_expiry_safety_window())
                 .is_some_and(|minimum_valid_until| expires_at > minimum_valid_until),
             None => true,
         };
@@ -112,10 +113,14 @@ fn optional_cached_token_is_valid(token: Option<&String>, expires_at: Option<Ins
     token.is_none_or(|_| {
         expires_at.is_none_or(|expires_at| {
             Instant::now()
-                .checked_add(Duration::from_secs(60))
+                .checked_add(session_expiry_safety_window())
                 .is_some_and(|minimum_valid_until| expires_at > minimum_valid_until)
         })
     })
+}
+
+fn session_expiry_safety_window() -> Duration {
+    Duration::from_secs(SESSION_EXPIRY_SAFETY_WINDOW_SECONDS)
 }
 
 /// Configuration for Snowflake SQL API execution.
