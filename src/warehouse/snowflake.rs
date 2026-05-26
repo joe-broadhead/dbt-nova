@@ -2797,8 +2797,9 @@ mod tests {
     use super::{
         BrowserCallback, BrowserCallbackPreflight, BrowserCallbackRequest,
         ExternalBrowserAuthenticatorRequest, ExternalBrowserAuthenticatorRequestData,
-        ExternalBrowserLoginRequest, ExternalBrowserLoginRequestData, Result, ResultColumn,
-        SnowflakeAuthConfig, SnowflakeExecuteOptions, SnowflakeQueryResult, SnowflakeQueryStats,
+        ExternalBrowserLoginRequest, ExternalBrowserLoginRequestData,
+        MAX_BROWSER_CALLBACK_REQUEST_BYTES, Result, ResultColumn, SnowflakeAuthConfig,
+        SnowflakeAuthorization, SnowflakeExecuteOptions, SnowflakeQueryResult, SnowflakeQueryStats,
         SnowflakeSession, SnowflakeSqlClient, SnowflakeSqlConfig, build_bindings,
         build_external_browser_auth_config, catalog_preflight_statement,
         decode_external_browser_authenticator_response, decode_external_browser_login_response,
@@ -2821,6 +2822,7 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
     use tokio::sync::Mutex as TokioMutex;
+    use tokio::time::timeout;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -3171,6 +3173,36 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
     }
 
     #[tokio::test]
+    async fn browser_callback_reader_rejects_oversized_requests() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind callback listener");
+        let port = listener.local_addr().expect("listener addr").port();
+        let read = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept callback");
+            read_browser_callback_request(&mut socket, Duration::from_secs(1))
+                .await
+                .expect_err("oversized callback should fail")
+                .to_string()
+        });
+
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect callback");
+        let request = format!(
+            "POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n",
+            MAX_BROWSER_CALLBACK_REQUEST_BYTES + 1
+        );
+        stream
+            .write_all(request.as_bytes())
+            .await
+            .expect("write oversized request");
+
+        let error = read.await.expect("read task");
+        assert!(error.contains("too large"));
+    }
+
+    #[tokio::test]
     async fn external_browser_session_auth_uses_snowflake_token_header() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -3301,6 +3333,98 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
     }
 
     #[tokio::test]
+    async fn external_browser_authorization_shares_concurrent_session_flow() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/session/authenticator-request"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "success": true,
+                "data": {
+                    "ssoUrl": "https://idp.example.com/start",
+                    "proofKey": "proof-key"
+                }
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/session/v1/login-request"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "success": true,
+                "data": {
+                    "token": "session-token",
+                    "validityInSeconds": 3600
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let callback_port = unused_loopback_port();
+        let session_cache = Arc::new(TokioMutex::new(None));
+        let client = Arc::new(
+            SnowflakeSqlClient::new(SnowflakeSqlConfig {
+                base_url: server.uri(),
+                warehouse: "COMPUTE_WH".to_string(),
+                database: None,
+                schema: None,
+                role: None,
+                timeout: Duration::from_secs(5),
+                default_statement_timeout_s: 60,
+                poll_interval: Duration::from_millis(1),
+                max_poll: Duration::from_secs(1),
+                max_chunks: 1,
+                auth: SnowflakeAuthConfig::ExternalBrowser {
+                    user: "analyst@example.com".to_string(),
+                    account_identifier: "org-account".to_string(),
+                    timeout: Duration::from_secs(2),
+                    open_browser: false,
+                    callback_port: Some(callback_port),
+                    session_cache: Arc::clone(&session_cache),
+                },
+            })
+            .expect("client"),
+        );
+
+        let first = {
+            let client = Arc::clone(&client);
+            tokio::spawn(async move { client.authorization().await })
+        };
+        let second = {
+            let client = Arc::clone(&client);
+            tokio::spawn(async move { client.authorization().await })
+        };
+
+        let callback_request = format!(
+            "GET /?token=callback-token&proofKey=proof-key HTTP/1.1\r\nHost: 127.0.0.1:{callback_port}\r\n\r\n"
+        );
+        let callback_response = send_raw_browser_callback(callback_port, &callback_request)
+            .await
+            .expect("callback response");
+        assert!(callback_response.starts_with("HTTP/1.1 200 OK"));
+
+        let (first, second) = timeout(Duration::from_secs(2), async {
+            tokio::join!(first, second)
+        })
+        .await
+        .expect("concurrent authorization should share one browser flow");
+        assert_eq!(
+            session_authorization_token(first.expect("first task").expect("first auth")),
+            "session-token"
+        );
+        assert_eq!(
+            session_authorization_token(second.expect("second task").expect("second auth")),
+            "session-token"
+        );
+        assert_eq!(
+            session_cache
+                .lock()
+                .await
+                .as_ref()
+                .map(|session| session.token.as_str()),
+            Some("session-token")
+        );
+    }
+
+    #[tokio::test]
     #[ignore = "requires an SSO-backed Snowflake account and opens the system browser"]
     async fn external_browser_sql_api_smoke_requires_real_snowflake() {
         let client = SnowflakeSqlClient::from_env().expect("Snowflake env");
@@ -3317,6 +3441,13 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
             .await
             .expect("SQL API accepts externalbrowser session token");
         assert_eq!(result.rows.len(), 1);
+    }
+
+    fn session_authorization_token(auth: SnowflakeAuthorization) -> String {
+        match auth {
+            SnowflakeAuthorization::Session { token } => token,
+            SnowflakeAuthorization::Bearer { .. } => panic!("expected Snowflake session auth"),
+        }
     }
 
     fn unused_loopback_port() -> u16 {
