@@ -1089,9 +1089,9 @@ fn parse_browser_callback_request(
         )?
     };
 
-    if let Some(proof_key) = proof_key.as_deref()
-        && proof_key != expected_proof_key
-    {
+    let proof_key =
+        proof_key.ok_or_else(|| snowflake_err("external browser callback missing proof key"))?;
+    if proof_key != expected_proof_key {
         return Err(snowflake_err(
             "external browser callback proof key did not match",
         ));
@@ -1102,7 +1102,7 @@ fn parse_browser_callback_request(
         .ok_or_else(|| snowflake_err("external browser callback missing token"))?;
     Ok(BrowserCallbackRequest::Callback(BrowserCallback {
         token,
-        proof_key,
+        proof_key: Some(proof_key),
         origin: request_header_value(request, "Origin").map(str::to_string),
     }))
 }
@@ -3125,6 +3125,14 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
                 "{request} should be rejected"
             );
         }
+    }
+
+    #[test]
+    fn browser_callback_parser_rejects_missing_proof_key() {
+        let request = "GET /?token=callback-token HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+        let err =
+            parse_browser_callback_request(request, "proof-key").expect_err("missing proof key");
+        assert!(err.to_string().contains("proof key"));
     }
 
     #[tokio::test]
