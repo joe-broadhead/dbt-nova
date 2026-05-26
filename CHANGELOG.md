@@ -15,8 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   JWT account claims while preserving organization/account identifiers.
 - Snowflake SQL API async status responses with code `333334` are now treated
   as in-progress rather than failed.
-- Snowflake catalog and schema preflight checks now avoid wildcard matching for
-  identifiers containing underscores by requiring exact `SHOW` result names.
+- Snowflake catalog and schema preflight checks now use bounded `SHOW` probes and
+  avoid wildcard matching for identifiers containing underscores by requiring
+  exact result names.
 - Snowflake SQL provider now supports local interactive browser SSO with
   `DBT_NOVA_SNOWFLAKE_AUTH=externalbrowser`.
 - Snowflake fixed-point numeric result values are now kept exact instead of

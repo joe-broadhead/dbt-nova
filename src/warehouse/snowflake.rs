@@ -40,6 +40,7 @@ const DEFAULT_JWT_LIFETIME_SECONDS: u64 = 3_300;
 const DEFAULT_EXTERNAL_BROWSER_TIMEOUT_SECONDS: u64 = 120;
 const MAX_SAFE_JSON_INTEGER: i64 = 9_007_199_254_740_991;
 const MIN_SAFE_JSON_INTEGER: i64 = -MAX_SAFE_JSON_INTEGER;
+const PREFLIGHT_SHOW_LIMIT: u16 = 1;
 const SESSION_EXPIRY_SAFETY_WINDOW_SECONDS: u64 = 60;
 const MAX_BROWSER_CALLBACK_REQUEST_BYTES: usize = 8192;
 const STATEMENT_STILL_EXECUTING_CODE: &str = "333333";
@@ -2020,12 +2021,15 @@ fn sql_string_literal(value: &str) -> String {
 }
 
 fn catalog_preflight_statement(catalog: &str) -> String {
-    format!("SHOW DATABASES STARTS WITH {}", sql_string_literal(catalog))
+    format!(
+        "SHOW DATABASES STARTS WITH {} LIMIT {PREFLIGHT_SHOW_LIMIT}",
+        sql_string_literal(catalog)
+    )
 }
 
 fn schema_preflight_statement(catalog: &str, schema: &str) -> String {
     format!(
-        "SHOW SCHEMAS IN DATABASE {catalog} STARTS WITH {}",
+        "SHOW SCHEMAS IN DATABASE {catalog} STARTS WITH {} LIMIT {PREFLIGHT_SHOW_LIMIT}",
         sql_string_literal(schema)
     )
 }
@@ -3828,19 +3832,19 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
     fn preflight_statements_are_bounded_and_safe() {
         assert_eq!(
             catalog_preflight_statement("ANALYTICS"),
-            "SHOW DATABASES STARTS WITH 'ANALYTICS'"
+            "SHOW DATABASES STARTS WITH 'ANALYTICS' LIMIT 1"
         );
         assert_eq!(
             catalog_preflight_statement("ANALYTICS_REPORTING"),
-            "SHOW DATABASES STARTS WITH 'ANALYTICS_REPORTING'"
+            "SHOW DATABASES STARTS WITH 'ANALYTICS_REPORTING' LIMIT 1"
         );
         assert_eq!(
             schema_preflight_statement("ANALYTICS", "REPORTING"),
-            "SHOW SCHEMAS IN DATABASE ANALYTICS STARTS WITH 'REPORTING'"
+            "SHOW SCHEMAS IN DATABASE ANALYTICS STARTS WITH 'REPORTING' LIMIT 1"
         );
         assert_eq!(
             schema_preflight_statement("ANALYTICS", "REPORTING_SCHEMA"),
-            "SHOW SCHEMAS IN DATABASE ANALYTICS STARTS WITH 'REPORTING_SCHEMA'"
+            "SHOW SCHEMAS IN DATABASE ANALYTICS STARTS WITH 'REPORTING_SCHEMA' LIMIT 1"
         );
         assert_eq!(
             relation_preflight_statement("ANALYTICS.REPORTING.ORDERS"),
