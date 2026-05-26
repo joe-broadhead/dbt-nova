@@ -1754,6 +1754,19 @@ fn rewrite_named_parameters(
                 index += next.len_utf8();
             }
             RewriteState::SingleQuotedString => {
+                if bytes[index] == b'\\' {
+                    rewritten.push('\\');
+                    index += 1;
+                    if index < bytes.len() {
+                        let escaped = statement[index..]
+                            .chars()
+                            .next()
+                            .ok_or_else(|| snowflake_err("failed to parse SQL while rewriting"))?;
+                        rewritten.push(escaped);
+                        index += escaped.len_utf8();
+                    }
+                    continue;
+                }
                 if bytes[index] == b'\'' {
                     if index + 1 < bytes.len() && bytes[index + 1] == b'\'' {
                         rewritten.push_str("''");
@@ -3505,6 +3518,19 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
         assert_eq!(
             rewritten.sql,
             "select $$literal :missing\nand 'quoted' text$$ as body where id = ?"
+        );
+        assert_eq!(rewritten.ordered_parameters, vec!["id".to_string()]);
+    }
+
+    #[test]
+    fn rewrite_named_parameters_skips_backslash_escaped_quotes() {
+        let params = HashMap::from([("id".to_string(), json!(42))]);
+        let rewritten =
+            rewrite_named_parameters("select 'can\\'t :missing' as body where id = :id", &params)
+                .expect("rewrite");
+        assert_eq!(
+            rewritten.sql,
+            "select 'can\\'t :missing' as body where id = ?"
         );
         assert_eq!(rewritten.ordered_parameters, vec!["id".to_string()]);
     }
