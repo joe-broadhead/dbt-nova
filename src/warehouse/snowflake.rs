@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 use std::env;
+use std::process::Command;
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
@@ -11,7 +13,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value};
 use sha2::{Digest, Sha256};
 use simple_asn1::{ASN1Block, BigInt, oid};
-use tokio::time::sleep;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
+use tokio::sync::Mutex as TokioMutex;
+use tokio::time::{sleep, timeout};
 use tracing::warn;
 
 use crate::error::{DbtNovaError, Result};
@@ -32,8 +37,17 @@ const DEFAULT_POLL_INTERVAL_MS: u64 = 1_000;
 const DEFAULT_MAX_POLL_SECONDS: u64 = 600;
 const DEFAULT_MAX_CHUNKS: usize = 50;
 const DEFAULT_JWT_LIFETIME_SECONDS: u64 = 3_300;
+const DEFAULT_EXTERNAL_BROWSER_TIMEOUT_SECONDS: u64 = 120;
+const MAX_BROWSER_CALLBACK_REQUEST_BYTES: usize = 8192;
 const STATEMENT_STILL_EXECUTING_CODE: &str = "333333";
 const STATEMENT_ASYNC_EXECUTION_CODE: &str = "333334";
+const SUPPORTED_SNOWFLAKE_AUTH_MODES: &str = "keypair, oauth, pat, or externalbrowser";
+const EXTERNAL_BROWSER_AUTHENTICATOR: &str = "EXTERNALBROWSER";
+
+type ExternalBrowserSessionCache = Arc<TokioMutex<Option<SnowflakeSession>>>;
+type ExternalBrowserSessionCacheMap = StdMutex<HashMap<String, ExternalBrowserSessionCache>>;
+
+static EXTERNAL_BROWSER_SESSION_CACHES: OnceLock<ExternalBrowserSessionCacheMap> = OnceLock::new();
 
 fn snowflake_err(message: impl Into<String>) -> DbtNovaError {
     DbtNovaError::ServerError(format!("Snowflake error: {}", message.into()))
@@ -60,6 +74,48 @@ enum SnowflakeAuthConfig {
     ProgrammaticAccessToken {
         token: String,
     },
+    ExternalBrowser {
+        user: String,
+        account_identifier: String,
+        timeout: Duration,
+        open_browser: bool,
+        callback_port: Option<u16>,
+        session_cache: Arc<TokioMutex<Option<SnowflakeSession>>>,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct SnowflakeSession {
+    token: String,
+    expires_at: Option<Instant>,
+    master_token: Option<String>,
+    master_expires_at: Option<Instant>,
+    id_token: Option<String>,
+    id_token_expires_at: Option<Instant>,
+}
+
+impl SnowflakeSession {
+    fn is_valid(&self) -> bool {
+        let primary_valid = match self.expires_at {
+            Some(expires_at) => Instant::now()
+                .checked_add(Duration::from_secs(60))
+                .is_some_and(|minimum_valid_until| expires_at > minimum_valid_until),
+            None => true,
+        };
+        primary_valid
+            && optional_cached_token_is_valid(self.master_token.as_ref(), self.master_expires_at)
+            && optional_cached_token_is_valid(self.id_token.as_ref(), self.id_token_expires_at)
+    }
+}
+
+fn optional_cached_token_is_valid(token: Option<&String>, expires_at: Option<Instant>) -> bool {
+    token.is_none_or(|_| {
+        expires_at.is_none_or(|expires_at| {
+            Instant::now()
+                .checked_add(Duration::from_secs(60))
+                .is_some_and(|minimum_valid_until| expires_at > minimum_valid_until)
+        })
+    })
 }
 
 /// Configuration for Snowflake SQL API execution.
@@ -95,7 +151,7 @@ impl SnowflakeSqlConfig {
         let schema = read_optional_env("DBT_NOVA_SNOWFLAKE_SCHEMA");
         let role = read_optional_env("DBT_NOVA_SNOWFLAKE_ROLE");
 
-        let auth = resolve_auth_from_env(account_identifier)?;
+        let auth = resolve_auth_from_env(account_identifier, &base_url)?;
 
         let timeout = Duration::from_millis(
             env_u64("DBT_NOVA_SNOWFLAKE_TIMEOUT_MS", DEFAULT_TIMEOUT_MS).max(1_000),
@@ -222,16 +278,20 @@ impl SnowflakeSqlClient {
         request: &StatementRequest,
         request_id: &str,
     ) -> Result<StatementResponse> {
-        let builder = self
-            .authorized(self.http.post(self.statements_url()))?
-            .query(&[("async", "true"), ("requestId", request_id)])
-            .json(request);
-        send_json(builder).await
+        self.send_authorized_json(|| {
+            self.http
+                .post(self.statements_url())
+                .query(&[("async", "true"), ("requestId", request_id)])
+                .json(request)
+        })
+        .await
     }
 
     async fn get_statement(&self, statement_handle: &str) -> Result<StatementResponse> {
-        let builder = self.authorized(self.http.get(self.statement_url(statement_handle)))?;
-        send_statement_status(builder).await
+        self.send_authorized_statement_status(|| {
+            self.http.get(self.statement_url(statement_handle))
+        })
+        .await
     }
 
     async fn get_partition(
@@ -239,15 +299,18 @@ impl SnowflakeSqlClient {
         statement_handle: &str,
         partition: usize,
     ) -> Result<StatementResponse> {
-        let builder = self
-            .authorized(self.http.get(self.statement_url(statement_handle)))?
-            .query(&[("partition", partition.to_string())]);
-        send_json(builder).await
+        self.send_authorized_json(|| {
+            self.http
+                .get(self.statement_url(statement_handle))
+                .query(&[("partition", partition.to_string())])
+        })
+        .await
     }
 
     async fn cancel_statement(&self, statement_handle: &str) -> Result<()> {
-        let builder = self.authorized(self.http.post(self.cancel_url(statement_handle)))?;
-        let _: Value = send_json(builder).await?;
+        let _: Value = self
+            .send_authorized_json(|| self.http.post(self.cancel_url(statement_handle)))
+            .await?;
         Ok(())
     }
 
@@ -387,34 +450,207 @@ impl SnowflakeSqlClient {
         })
     }
 
-    fn authorized(&self, builder: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder> {
-        let auth = self.authorization()?;
-        Ok(builder
-            .header("Accept", "application/json")
-            .header("Content-Type", "application/json")
-            .bearer_auth(auth.token)
-            .header("X-Snowflake-Authorization-Token-Type", auth.token_type))
+    async fn send_authorized_json<T, F>(&self, make_builder: F) -> Result<T>
+    where
+        T: for<'de> Deserialize<'de>,
+        F: Fn() -> reqwest::RequestBuilder,
+    {
+        let (mut status, mut body) = self.send_authorized_text(make_builder()).await?;
+        if self.should_retry_external_browser_auth(status, &body) {
+            self.clear_external_browser_session().await;
+            (status, body) = self.send_authorized_text(make_builder()).await?;
+        }
+        decode_json_response(status, &body)
     }
 
-    fn authorization(&self) -> Result<SnowflakeAuthorization> {
+    async fn send_authorized_statement_status<F>(
+        &self,
+        make_builder: F,
+    ) -> Result<StatementResponse>
+    where
+        F: Fn() -> reqwest::RequestBuilder,
+    {
+        let (mut status, mut body) = self.send_authorized_text(make_builder()).await?;
+        if self.should_retry_external_browser_auth(status, &body) {
+            self.clear_external_browser_session().await;
+            (status, body) = self.send_authorized_text(make_builder()).await?;
+        }
+        decode_statement_status_response(status, &body)
+    }
+
+    async fn send_authorized_text(
+        &self,
+        builder: reqwest::RequestBuilder,
+    ) -> Result<(StatusCode, String)> {
+        send_text(self.authorized(builder).await?).await
+    }
+
+    async fn authorized(
+        &self,
+        builder: reqwest::RequestBuilder,
+    ) -> Result<reqwest::RequestBuilder> {
+        let auth = self.authorization().await?;
+        let builder = builder
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json");
+        Ok(match auth {
+            SnowflakeAuthorization::Bearer { token, token_type } => builder
+                .bearer_auth(token)
+                .header("X-Snowflake-Authorization-Token-Type", token_type),
+            SnowflakeAuthorization::Session { token } => {
+                builder.header("Authorization", format!("Snowflake Token=\"{token}\""))
+            }
+        })
+    }
+
+    async fn authorization(&self) -> Result<SnowflakeAuthorization> {
         match &self.cfg.auth {
-            SnowflakeAuthConfig::OAuth { token } => Ok(SnowflakeAuthorization {
+            SnowflakeAuthConfig::OAuth { token } => Ok(SnowflakeAuthorization::Bearer {
                 token: token.clone(),
                 token_type: "OAUTH",
             }),
-            SnowflakeAuthConfig::ProgrammaticAccessToken { token } => Ok(SnowflakeAuthorization {
-                token: token.clone(),
-                token_type: "PROGRAMMATIC_ACCESS_TOKEN",
-            }),
+            SnowflakeAuthConfig::ProgrammaticAccessToken { token } => {
+                Ok(SnowflakeAuthorization::Bearer {
+                    token: token.clone(),
+                    token_type: "PROGRAMMATIC_ACCESS_TOKEN",
+                })
+            }
             SnowflakeAuthConfig::KeyPair {
                 user,
                 account_identifier,
                 private_key_pem,
-            } => Ok(SnowflakeAuthorization {
+            } => Ok(SnowflakeAuthorization::Bearer {
                 token: generate_keypair_jwt(account_identifier, user, private_key_pem)?,
                 token_type: "KEYPAIR_JWT",
             }),
+            SnowflakeAuthConfig::ExternalBrowser {
+                user,
+                account_identifier,
+                timeout,
+                open_browser,
+                callback_port,
+                session_cache,
+            } => {
+                let mut cached = session_cache.lock().await;
+                if let Some(session) = cached.as_ref()
+                    && session.is_valid()
+                {
+                    return Ok(SnowflakeAuthorization::Session {
+                        token: session.token.clone(),
+                    });
+                }
+
+                let session = self
+                    .login_external_browser(
+                        account_identifier,
+                        user,
+                        *timeout,
+                        *open_browser,
+                        *callback_port,
+                    )
+                    .await?;
+                let token = session.token.clone();
+                *cached = Some(session);
+                Ok(SnowflakeAuthorization::Session { token })
+            }
         }
+    }
+
+    async fn clear_external_browser_session(&self) {
+        if let SnowflakeAuthConfig::ExternalBrowser { session_cache, .. } = &self.cfg.auth {
+            *session_cache.lock().await = None;
+        }
+    }
+
+    fn should_retry_external_browser_auth(&self, status: StatusCode, body: &str) -> bool {
+        if !matches!(self.cfg.auth, SnowflakeAuthConfig::ExternalBrowser { .. }) {
+            return false;
+        }
+        if status == StatusCode::UNAUTHORIZED {
+            return true;
+        }
+        serde_json::from_str::<ErrorResponseBody>(body)
+            .ok()
+            .and_then(|parsed| parsed.code)
+            .is_some_and(|code| matches!(code.as_str(), "390303" | "390111" | "390112"))
+    }
+
+    async fn login_external_browser(
+        &self,
+        account_identifier: &str,
+        user: &str,
+        auth_timeout: Duration,
+        open_browser: bool,
+        callback_port: Option<u16>,
+    ) -> Result<SnowflakeSession> {
+        let listener = bind_browser_callback_listener(callback_port).await?;
+        let port = listener
+            .local_addr()
+            .map_err(|err| snowflake_err(format!("failed to inspect callback listener: {err}")))?
+            .port();
+        let request = self
+            .request_external_browser_authenticator(account_identifier, user, port)
+            .await?;
+
+        open_external_browser_url(&request.sso_url, open_browser);
+        let callback = receive_browser_callback(listener, &request.proof_key, auth_timeout).await?;
+        let session = self
+            .exchange_external_browser_token(
+                account_identifier,
+                user,
+                &callback.token,
+                &request.proof_key,
+            )
+            .await?;
+        Ok(session)
+    }
+
+    async fn request_external_browser_authenticator(
+        &self,
+        account_identifier: &str,
+        user: &str,
+        callback_port: u16,
+    ) -> Result<ExternalBrowserAuthenticatorInfo> {
+        let request = ExternalBrowserAuthenticatorRequest {
+            data: ExternalBrowserAuthenticatorRequestData {
+                client_app_id: "dbt-nova",
+                client_app_version: env!("CARGO_PKG_VERSION"),
+                account_name: account_identifier,
+                login_name: user,
+                authenticator: EXTERNAL_BROWSER_AUTHENTICATOR,
+                browser_mode_redirect_port: callback_port.to_string(),
+            },
+        };
+        let (status, body) = send_text(
+            self.http
+                .post(self.authenticator_request_url())
+                .json(&request),
+        )
+        .await?;
+        decode_external_browser_authenticator_response(status, &body)
+    }
+
+    async fn exchange_external_browser_token(
+        &self,
+        account_identifier: &str,
+        user: &str,
+        callback_token: &str,
+        proof_key: &str,
+    ) -> Result<SnowflakeSession> {
+        let request = ExternalBrowserLoginRequest {
+            data: ExternalBrowserLoginRequestData {
+                client_app_id: "dbt-nova",
+                client_app_version: env!("CARGO_PKG_VERSION"),
+                account_name: account_identifier,
+                login_name: user,
+                authenticator: EXTERNAL_BROWSER_AUTHENTICATOR,
+                token: callback_token,
+                proof_key,
+            },
+        };
+        let (status, body) =
+            send_text(self.http.post(self.login_request_url()).json(&request)).await?;
+        decode_external_browser_login_response(status, &body)
     }
 
     fn statements_url(&self) -> String {
@@ -431,11 +667,546 @@ impl SnowflakeSqlClient {
             self.cfg.base_url
         )
     }
+
+    fn authenticator_request_url(&self) -> String {
+        format!("{}/session/authenticator-request", self.cfg.base_url)
+    }
+
+    fn login_request_url(&self) -> String {
+        format!("{}/session/v1/login-request", self.cfg.base_url)
+    }
 }
 
-struct SnowflakeAuthorization {
+enum SnowflakeAuthorization {
+    Bearer {
+        token: String,
+        token_type: &'static str,
+    },
+    Session {
+        token: String,
+    },
+}
+
+#[derive(Serialize)]
+struct ExternalBrowserAuthenticatorRequest<'a> {
+    data: ExternalBrowserAuthenticatorRequestData<'a>,
+}
+
+#[derive(Serialize)]
+struct ExternalBrowserAuthenticatorRequestData<'a> {
+    #[serde(rename = "CLIENT_APP_ID")]
+    client_app_id: &'static str,
+    #[serde(rename = "CLIENT_APP_VERSION")]
+    client_app_version: &'static str,
+    #[serde(rename = "ACCOUNT_NAME")]
+    account_name: &'a str,
+    #[serde(rename = "LOGIN_NAME")]
+    login_name: &'a str,
+    #[serde(rename = "AUTHENTICATOR")]
+    authenticator: &'static str,
+    #[serde(rename = "BROWSER_MODE_REDIRECT_PORT")]
+    browser_mode_redirect_port: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExternalBrowserAuthenticatorResponse {
+    #[serde(default)]
+    success: Option<bool>,
+    #[serde(default)]
+    data: Option<ExternalBrowserAuthenticatorResponseData>,
+    #[serde(default)]
+    code: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExternalBrowserAuthenticatorResponseData {
+    #[serde(rename = "ssoUrl", alias = "SSO_URL", default)]
+    sso_url: Option<String>,
+    #[serde(rename = "proofKey", alias = "PROOF_KEY", default)]
+    proof_key: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExternalBrowserAuthenticatorInfo {
+    sso_url: String,
+    proof_key: String,
+}
+
+#[derive(Serialize)]
+struct ExternalBrowserLoginRequest<'a> {
+    data: ExternalBrowserLoginRequestData<'a>,
+}
+
+#[derive(Serialize)]
+struct ExternalBrowserLoginRequestData<'a> {
+    #[serde(rename = "CLIENT_APP_ID")]
+    client_app_id: &'static str,
+    #[serde(rename = "CLIENT_APP_VERSION")]
+    client_app_version: &'static str,
+    #[serde(rename = "ACCOUNT_NAME")]
+    account_name: &'a str,
+    #[serde(rename = "LOGIN_NAME")]
+    login_name: &'a str,
+    #[serde(rename = "AUTHENTICATOR")]
+    authenticator: &'static str,
+    #[serde(rename = "TOKEN")]
+    token: &'a str,
+    #[serde(rename = "PROOF_KEY")]
+    proof_key: &'a str,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExternalBrowserLoginResponse {
+    #[serde(default)]
+    success: Option<bool>,
+    #[serde(default)]
+    data: Option<ExternalBrowserLoginResponseData>,
+    #[serde(default)]
+    code: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExternalBrowserLoginResponseData {
+    #[serde(rename = "token", alias = "sessionToken", default)]
+    token: Option<String>,
+    #[serde(rename = "validityInSeconds", alias = "validity_in_seconds", default)]
+    validity_in_seconds: Option<Value>,
+    #[serde(rename = "masterToken", alias = "master_token", default)]
+    master_token: Option<String>,
+    #[serde(
+        rename = "masterValidityInSeconds",
+        alias = "master_validity_in_seconds",
+        default
+    )]
+    master_validity_in_seconds: Option<Value>,
+    #[serde(rename = "idToken", alias = "id_token", default)]
+    id_token: Option<String>,
+    #[serde(
+        rename = "idTokenValidityInSeconds",
+        alias = "id_token_validity_in_seconds",
+        default
+    )]
+    id_token_validity_in_seconds: Option<Value>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct BrowserCallback {
     token: String,
-    token_type: &'static str,
+    proof_key: Option<String>,
+    origin: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum BrowserCallbackRequest {
+    Callback(BrowserCallback),
+    Preflight(BrowserCallbackPreflight),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct BrowserCallbackPreflight {
+    origin: Option<String>,
+    requested_headers: Option<String>,
+}
+
+fn decode_external_browser_authenticator_response(
+    status: StatusCode,
+    body: &str,
+) -> Result<ExternalBrowserAuthenticatorInfo> {
+    let response = decode_json_response::<ExternalBrowserAuthenticatorResponse>(status, body)?;
+    if response.success == Some(false) {
+        return Err(snowflake_err(format!(
+            "external browser authenticator request failed: {}",
+            summarize_snowflake_auth_response(
+                response.code.as_deref(),
+                response.message.as_deref()
+            )
+        )));
+    }
+    let data = response
+        .data
+        .ok_or_else(|| snowflake_err("external browser authenticator response missing data"))?;
+    let sso_url = data
+        .sso_url
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| snowflake_err("external browser authenticator response missing ssoUrl"))?;
+    let proof_key = data
+        .proof_key
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| snowflake_err("external browser authenticator response missing proofKey"))?;
+    Ok(ExternalBrowserAuthenticatorInfo { sso_url, proof_key })
+}
+
+fn decode_external_browser_login_response(
+    status: StatusCode,
+    body: &str,
+) -> Result<SnowflakeSession> {
+    let response = decode_json_response::<ExternalBrowserLoginResponse>(status, body)?;
+    if response.success == Some(false) {
+        return Err(snowflake_err(format!(
+            "external browser login failed: {}",
+            summarize_snowflake_auth_response(
+                response.code.as_deref(),
+                response.message.as_deref()
+            )
+        )));
+    }
+    let data = response
+        .data
+        .ok_or_else(|| snowflake_err("external browser login response missing data"))?;
+    let token = data
+        .token
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| snowflake_err("external browser login response missing session token"))?;
+    Ok(SnowflakeSession {
+        token,
+        expires_at: expires_at_from_validity(data.validity_in_seconds.as_ref()),
+        master_token: data.master_token.filter(|value| !value.trim().is_empty()),
+        master_expires_at: expires_at_from_validity(data.master_validity_in_seconds.as_ref()),
+        id_token: data.id_token.filter(|value| !value.trim().is_empty()),
+        id_token_expires_at: expires_at_from_validity(data.id_token_validity_in_seconds.as_ref()),
+    })
+}
+
+fn summarize_snowflake_auth_response(code: Option<&str>, _message: Option<&str>) -> String {
+    let code = code.unwrap_or("unknown");
+    format!("{code}: request failed; check Snowflake externalbrowser configuration")
+}
+
+fn expires_at_from_validity(value: Option<&Value>) -> Option<Instant> {
+    parse_optional_u64(value)
+        .and_then(|seconds| Instant::now().checked_add(Duration::from_secs(seconds)))
+}
+
+async fn bind_browser_callback_listener(callback_port: Option<u16>) -> Result<TcpListener> {
+    TcpListener::bind(("127.0.0.1", callback_port.unwrap_or(0)))
+        .await
+        .map_err(|err| snowflake_err(format!("failed to bind external browser callback: {err}")))
+}
+
+async fn receive_browser_callback(
+    listener: TcpListener,
+    expected_proof_key: &str,
+    auth_timeout: Duration,
+) -> Result<BrowserCallback> {
+    let started_at = Instant::now();
+    loop {
+        let Some(remaining) = auth_timeout.checked_sub(started_at.elapsed()) else {
+            return Err(snowflake_err(
+                "timed out waiting for Snowflake browser SSO callback",
+            ));
+        };
+        let accept = timeout(remaining, listener.accept())
+            .await
+            .map_err(|_| snowflake_err("timed out waiting for Snowflake browser SSO callback"))?;
+        let (mut socket, peer_addr) = accept
+            .map_err(|err| snowflake_err(format!("failed to accept browser callback: {err}")))?;
+        if !peer_addr.ip().is_loopback() {
+            let _ = write_browser_callback_response(&mut socket, false, None).await;
+            return Err(snowflake_err(
+                "external browser callback must originate from loopback",
+            ));
+        }
+
+        let parsed = read_browser_callback_request(&mut socket, remaining)
+            .await
+            .and_then(|request| parse_browser_callback_request(&request, expected_proof_key));
+        match parsed {
+            Ok(BrowserCallbackRequest::Callback(callback)) => {
+                let _ =
+                    write_browser_callback_response(&mut socket, true, callback.origin.as_deref())
+                        .await;
+                return Ok(callback);
+            }
+            Ok(BrowserCallbackRequest::Preflight(preflight)) => {
+                let _ = write_browser_preflight_response(&mut socket, &preflight).await;
+            }
+            Err(err) => {
+                let _ = write_browser_callback_response(&mut socket, false, None).await;
+                return Err(err);
+            }
+        }
+    }
+}
+
+async fn read_browser_callback_request(
+    socket: &mut tokio::net::TcpStream,
+    auth_timeout: Duration,
+) -> Result<String> {
+    let mut request = Vec::with_capacity(1024);
+    let mut buffer = [0u8; 1024];
+    let mut expected_length = None;
+    loop {
+        let bytes_read = timeout(auth_timeout, socket.read(&mut buffer))
+            .await
+            .map_err(|_| snowflake_err("timed out reading Snowflake browser SSO callback"))?
+            .map_err(|err| snowflake_err(format!("failed to read browser callback: {err}")))?;
+        if bytes_read == 0 {
+            break;
+        }
+        request.extend_from_slice(&buffer[..bytes_read]);
+        if request.len() > MAX_BROWSER_CALLBACK_REQUEST_BYTES {
+            return Err(snowflake_err(
+                "external browser callback request is too large",
+            ));
+        }
+        if expected_length.is_none()
+            && let Some(header_end) = browser_callback_header_end(&request)
+        {
+            let headers = std::str::from_utf8(&request[..header_end])
+                .map_err(|_| snowflake_err("external browser callback was not valid UTF-8"))?;
+            let content_length = parse_content_length_header(headers)?;
+            let total_length = header_end
+                .checked_add(4)
+                .and_then(|value| value.checked_add(content_length))
+                .ok_or_else(|| snowflake_err("external browser callback request is too large"))?;
+            if total_length > MAX_BROWSER_CALLBACK_REQUEST_BYTES {
+                return Err(snowflake_err(
+                    "external browser callback request is too large",
+                ));
+            }
+            expected_length = Some(total_length);
+        }
+        if expected_length.is_some_and(|length| request.len() >= length) {
+            break;
+        }
+    }
+
+    String::from_utf8(request)
+        .map_err(|_| snowflake_err("external browser callback was not valid UTF-8"))
+}
+
+async fn write_browser_callback_response(
+    socket: &mut tokio::net::TcpStream,
+    ok: bool,
+    origin: Option<&str>,
+) -> Result<()> {
+    let body = if ok {
+        "Snowflake authentication complete. You can close this tab."
+    } else {
+        "Snowflake authentication failed. Return to dbt-nova for details."
+    };
+    let status = if ok { "200 OK" } else { "400 Bad Request" };
+    let cors = origin.map_or_else(String::new, |origin| {
+        format!("Access-Control-Allow-Origin: {origin}\r\nVary: Origin\r\n")
+    });
+    let response = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: text/plain; charset=utf-8\r\n{cors}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    socket
+        .write_all(response.as_bytes())
+        .await
+        .map_err(|err| snowflake_err(format!("failed to write browser callback response: {err}")))
+}
+
+async fn write_browser_preflight_response(
+    socket: &mut tokio::net::TcpStream,
+    preflight: &BrowserCallbackPreflight,
+) -> Result<()> {
+    let origin = preflight.origin.as_deref().unwrap_or("null");
+    let requested_headers = preflight
+        .requested_headers
+        .as_deref()
+        .unwrap_or("content-type");
+    let response = format!(
+        "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: {origin}\r\nAccess-Control-Allow-Methods: POST, GET, OPTIONS\r\nAccess-Control-Allow-Headers: {requested_headers}\r\nAccess-Control-Max-Age: 86400\r\nVary: Origin\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    socket
+        .write_all(response.as_bytes())
+        .await
+        .map_err(|err| snowflake_err(format!("failed to write browser callback response: {err}")))
+}
+
+fn parse_browser_callback_request(
+    request: &str,
+    expected_proof_key: &str,
+) -> Result<BrowserCallbackRequest> {
+    let request_line = request
+        .lines()
+        .next()
+        .ok_or_else(|| snowflake_err("external browser callback was empty"))?;
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or_default();
+    let target = parts.next().unwrap_or_default();
+    let version = parts.next().unwrap_or_default();
+    if !matches!(method, "GET" | "POST" | "OPTIONS")
+        || !version.starts_with("HTTP/")
+        || parts.next().is_some()
+    {
+        return Err(snowflake_err(
+            "external browser callback must be an HTTP GET or POST request",
+        ));
+    }
+    if !target.starts_with('/') {
+        return Err(snowflake_err(
+            "external browser callback target must be a rooted path",
+        ));
+    }
+    let url = Url::parse(&format!("http://127.0.0.1{target}"))
+        .map_err(|err| snowflake_err(format!("invalid external browser callback URL: {err}")))?;
+    if url.path() != "/" {
+        return Err(snowflake_err(
+            "external browser callback path must be the root path",
+        ));
+    }
+
+    if method == "OPTIONS" {
+        return Ok(BrowserCallbackRequest::Preflight(
+            BrowserCallbackPreflight {
+                origin: request_header_value(request, "Origin").map(str::to_string),
+                requested_headers: request_header_value(request, "Access-Control-Request-Headers")
+                    .map(str::to_string),
+            },
+        ));
+    }
+
+    let (token, proof_key) = if method == "GET" {
+        token_and_proof_key_from_pairs(
+            url.query_pairs()
+                .map(|(key, value)| (key.into_owned(), value.into_owned())),
+        )
+    } else {
+        token_and_proof_key_from_post_body(
+            browser_callback_body(request),
+            request_header_value(request, "Content-Type").unwrap_or_default(),
+        )?
+    };
+
+    if let Some(proof_key) = proof_key.as_deref()
+        && proof_key != expected_proof_key
+    {
+        return Err(snowflake_err(
+            "external browser callback proof key did not match",
+        ));
+    }
+
+    let token = token
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| snowflake_err("external browser callback missing token"))?;
+    Ok(BrowserCallbackRequest::Callback(BrowserCallback {
+        token,
+        proof_key,
+        origin: request_header_value(request, "Origin").map(str::to_string),
+    }))
+}
+
+fn browser_callback_header_end(request: &[u8]) -> Option<usize> {
+    request.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+fn parse_content_length_header(headers: &str) -> Result<usize> {
+    let Some(value) = request_header_value(headers, "Content-Length") else {
+        return Ok(0);
+    };
+    value.parse::<usize>().map_err(|err| {
+        snowflake_err(format!(
+            "invalid external browser callback Content-Length: {err}"
+        ))
+    })
+}
+
+fn request_header_value<'a>(request: &'a str, name: &str) -> Option<&'a str> {
+    request.lines().skip(1).find_map(|line| {
+        let (header, value) = line.split_once(':')?;
+        header
+            .trim()
+            .eq_ignore_ascii_case(name)
+            .then_some(value.trim())
+    })
+}
+
+fn browser_callback_body(request: &str) -> &str {
+    request
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .unwrap_or_default()
+}
+
+fn token_and_proof_key_from_post_body(
+    body: &str,
+    content_type: &str,
+) -> Result<(Option<String>, Option<String>)> {
+    if content_type
+        .to_ascii_lowercase()
+        .starts_with("application/json")
+    {
+        let parsed = serde_json::from_str::<Value>(body)
+            .map_err(|err| snowflake_err(format!("invalid browser callback JSON body: {err}")))?;
+        let token = parsed
+            .get("token")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let proof_key = parsed
+            .get("proofKey")
+            .or_else(|| parsed.get("proof_key"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        return Ok((token, proof_key));
+    }
+
+    let form_url = Url::parse(&format!("http://127.0.0.1/?{body}")).map_err(|err| {
+        snowflake_err(format!("invalid browser callback form-encoded body: {err}"))
+    })?;
+    Ok(token_and_proof_key_from_pairs(form_url.query_pairs().map(
+        |(key, value)| (key.into_owned(), value.into_owned()),
+    )))
+}
+
+fn token_and_proof_key_from_pairs<I>(pairs: I) -> (Option<String>, Option<String>)
+where
+    I: IntoIterator<Item = (String, String)>,
+{
+    let mut token = None;
+    let mut proof_key = None;
+    for (key, value) in pairs {
+        match key.as_str() {
+            "token" => token = Some(value),
+            "proofKey" | "proof_key" => proof_key = Some(value),
+            _ => {}
+        }
+    }
+    (token, proof_key)
+}
+
+fn open_external_browser_url(url: &str, open_browser: bool) {
+    if !open_browser {
+        eprintln!("Open this Snowflake SSO URL to authenticate dbt-nova:\n{url}");
+        return;
+    }
+
+    let mut command = browser_open_command(url);
+    if let Err(err) = command.spawn() {
+        warn!(
+            error = %err,
+            "failed to open system browser for Snowflake externalbrowser auth"
+        );
+        eprintln!("Open this Snowflake SSO URL to authenticate dbt-nova:\n{url}");
+    }
+}
+
+fn browser_open_command(url: &str) -> Command {
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = Command::new("open");
+        command.arg(url);
+        command
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let mut command = Command::new("cmd");
+        command.args(["/C", "start", "", url]);
+        command
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
+        let mut command = Command::new("xdg-open");
+        command.arg(url);
+        command
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -662,14 +1433,10 @@ struct PartitionInfo {
     uncompressed_size: Option<Value>,
 }
 
+#[cfg(test)]
 async fn send_json<T: for<'de> Deserialize<'de>>(builder: reqwest::RequestBuilder) -> Result<T> {
     let (status, body) = send_text(builder).await?;
     decode_json_response(status, &body)
-}
-
-async fn send_statement_status(builder: reqwest::RequestBuilder) -> Result<StatementResponse> {
-    let (status, body) = send_text(builder).await?;
-    decode_statement_status_response(status, &body)
 }
 
 async fn send_text(builder: reqwest::RequestBuilder) -> Result<(StatusCode, String)> {
@@ -1509,6 +2276,30 @@ fn env_usize(name: &str, default_value: usize) -> usize {
         .unwrap_or(default_value)
 }
 
+fn env_bool(name: &str, default_value: bool) -> Result<bool> {
+    let Some(value) = read_optional_env(name) else {
+        return Ok(default_value);
+    };
+    match value.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(DbtNovaError::InvalidParams(format!(
+            "{name} must be true or false"
+        ))),
+    }
+}
+
+fn env_u16_optional(name: &str) -> Result<Option<u16>> {
+    let Some(value) = read_optional_env(name) else {
+        return Ok(None);
+    };
+    value.parse::<u16>().map(Some).map_err(|err| {
+        DbtNovaError::InvalidParams(format!(
+            "{name} must be a TCP port between 0 and 65535: {err}"
+        ))
+    })
+}
+
 fn resolve_base_url_from_env() -> Result<(String, Option<String>)> {
     let account = read_optional_env("DBT_NOVA_SNOWFLAKE_ACCOUNT");
     let url = if let Some(url) = read_optional_env("DBT_NOVA_SNOWFLAKE_ACCOUNT_URL") {
@@ -1566,7 +2357,7 @@ fn normalize_account_url(input: &str) -> Result<String> {
     Ok(normalized)
 }
 
-fn resolve_auth_from_env(account: Option<String>) -> Result<SnowflakeAuthConfig> {
+fn resolve_auth_from_env(account: Option<String>, base_url: &str) -> Result<SnowflakeAuthConfig> {
     let auth = read_optional_env("DBT_NOVA_SNOWFLAKE_AUTH")
         .map(|value| value.to_ascii_lowercase())
         .or_else(|| {
@@ -1593,6 +2384,27 @@ fn resolve_auth_from_env(account: Option<String>) -> Result<SnowflakeAuthConfig>
                 "DBT_NOVA_SNOWFLAKE_PAT is required for Snowflake PAT auth",
             )?,
         }),
+        "externalbrowser" | "external_browser" | "browser" => {
+            ensure_external_browser_allowed()?;
+            let timeout = Duration::from_secs(
+                env_u64(
+                    "DBT_NOVA_SNOWFLAKE_EXTERNAL_BROWSER_TIMEOUT_S",
+                    DEFAULT_EXTERNAL_BROWSER_TIMEOUT_SECONDS,
+                )
+                .max(1),
+            );
+            let open_browser = env_bool("DBT_NOVA_SNOWFLAKE_EXTERNAL_BROWSER_OPEN", true)?;
+            let callback_port =
+                env_u16_optional("DBT_NOVA_SNOWFLAKE_EXTERNAL_BROWSER_CALLBACK_PORT")?;
+            build_external_browser_auth_config(
+                base_url,
+                account,
+                read_optional_env("DBT_NOVA_SNOWFLAKE_USER"),
+                timeout,
+                open_browser,
+                callback_port,
+            )
+        }
         "keypair" | "snowflake_jwt" => {
             if read_optional_env("DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PASSPHRASE").is_some() {
                 return Err(DbtNovaError::InvalidParams(
@@ -1618,9 +2430,110 @@ fn resolve_auth_from_env(account: Option<String>) -> Result<SnowflakeAuthConfig>
             })
         }
         other => Err(DbtNovaError::InvalidParams(format!(
-            "Unsupported DBT_NOVA_SNOWFLAKE_AUTH '{other}' (expected keypair, oauth, or pat)"
+            "Unsupported DBT_NOVA_SNOWFLAKE_AUTH '{other}' (expected {SUPPORTED_SNOWFLAKE_AUTH_MODES})"
         ))),
     }
+}
+
+fn build_external_browser_auth_config(
+    base_url: &str,
+    account: Option<String>,
+    user: Option<String>,
+    timeout: Duration,
+    open_browser: bool,
+    callback_port: Option<u16>,
+) -> Result<SnowflakeAuthConfig> {
+    let user = user
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            DbtNovaError::InvalidParams(
+                "DBT_NOVA_SNOWFLAKE_USER is required for Snowflake externalbrowser auth"
+                    .to_string(),
+            )
+        })?;
+    let account_identifier = account
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            DbtNovaError::InvalidParams(
+                "DBT_NOVA_SNOWFLAKE_ACCOUNT is required for Snowflake externalbrowser auth; DBT_NOVA_SNOWFLAKE_ACCOUNT_URL alone is not enough for browser SSO login".to_string(),
+            )
+        })?;
+    let session_cache =
+        external_browser_session_cache(base_url, &account_identifier, &user, callback_port);
+    Ok(SnowflakeAuthConfig::ExternalBrowser {
+        user,
+        account_identifier,
+        timeout,
+        open_browser,
+        callback_port,
+        session_cache,
+    })
+}
+
+fn external_browser_session_cache(
+    base_url: &str,
+    account_identifier: &str,
+    user: &str,
+    callback_port: Option<u16>,
+) -> ExternalBrowserSessionCache {
+    let key = format!(
+        "{}|{}|{}|{}",
+        base_url.to_ascii_lowercase(),
+        account_identifier.to_ascii_lowercase(),
+        user.to_ascii_lowercase(),
+        callback_port.map_or_else(|| "ephemeral".to_string(), |port| port.to_string())
+    );
+    let caches = EXTERNAL_BROWSER_SESSION_CACHES.get_or_init(|| StdMutex::new(HashMap::new()));
+    let mut caches = match caches.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    caches
+        .entry(key)
+        .or_insert_with(|| Arc::new(TokioMutex::new(None)))
+        .clone()
+}
+
+fn ensure_external_browser_allowed() -> Result<()> {
+    if env_bool("CI", false)? {
+        return Err(DbtNovaError::InvalidParams(
+            "Snowflake externalbrowser auth is interactive and cannot run in CI; use keypair, oauth, or pat auth".to_string(),
+        ));
+    }
+    if streamable_http_env_binds_non_loopback() {
+        return Err(DbtNovaError::InvalidParams(
+            "Snowflake externalbrowser auth is local-only and cannot be used with non-loopback streamable HTTP binds; use keypair, oauth, or pat auth for hosted deployments".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn streamable_http_env_binds_non_loopback() -> bool {
+    let transport = read_optional_env("DBT_NOVA_SERVER_TRANSPORT")
+        .map_or_else(|| "stdio".to_string(), |value| value.to_ascii_lowercase());
+    if !matches!(
+        transport.as_str(),
+        "streamable_http" | "streamable-http" | "http"
+    ) {
+        return false;
+    }
+    let host = read_optional_env("DBT_NOVA_HTTP_HOST").unwrap_or_else(|| {
+        if read_optional_env("PORT").is_some() {
+            "0.0.0.0".to_string()
+        } else {
+            "127.0.0.1".to_string()
+        }
+    });
+    !is_loopback_host(&host)
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    let normalized = host
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_ascii_lowercase();
+    matches!(normalized.as_str(), "localhost" | "127.0.0.1" | "::1")
 }
 
 fn resolve_private_key_pem() -> Result<String> {
@@ -1856,12 +2769,19 @@ fn rsa_public_spki_der(modulus: BigInt, exponent: BigInt) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ResultColumn, SnowflakeQueryResult, SnowflakeQueryStats, build_bindings,
-        catalog_preflight_statement, decode_statement_status_response, generate_keypair_jwt,
+        BrowserCallback, BrowserCallbackPreflight, BrowserCallbackRequest,
+        ExternalBrowserAuthenticatorRequest, ExternalBrowserAuthenticatorRequestData,
+        ExternalBrowserLoginRequest, ExternalBrowserLoginRequestData, Result, ResultColumn,
+        SnowflakeAuthConfig, SnowflakeExecuteOptions, SnowflakeQueryResult, SnowflakeQueryStats,
+        SnowflakeSession, SnowflakeSqlClient, SnowflakeSqlConfig, build_bindings,
+        build_external_browser_auth_config, catalog_preflight_statement,
+        decode_external_browser_authenticator_response, decode_external_browser_login_response,
+        decode_statement_status_response, external_browser_session_cache, generate_keypair_jwt,
         normalize_account_url, normalize_jwt_identifier, normalize_preflight_relation,
-        parse_cell_value, preflight_show_result_has_exact_name, public_key_fingerprint,
-        relation_preflight_statement, rewrite_named_parameters, schema_preflight_statement,
-        send_json, session_parameters, summarize_error_body,
+        parse_browser_callback_request, parse_cell_value, preflight_show_result_has_exact_name,
+        public_key_fingerprint, relation_preflight_statement, rewrite_named_parameters,
+        schema_preflight_statement, send_json, session_parameters, snowflake_err,
+        summarize_error_body,
     };
     use flate2::{Compression, write::GzEncoder};
     use reqwest::Client;
@@ -1869,7 +2789,13 @@ mod tests {
     use serde_json::{Value, json};
     use std::collections::HashMap;
     use std::io::Write;
-    use wiremock::matchers::{method, path};
+    use std::net::TcpListener as StdTcpListener;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+    use tokio::sync::Mutex as TokioMutex;
+    use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const TEST_RSA_PRIVATE_KEY_PKCS8: &str = r"-----BEGIN PRIVATE KEY-----
@@ -1934,6 +2860,427 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
         let summary = summarize_error_body(StatusCode::UNAUTHORIZED, body);
         assert!(!summary.contains("TTTTTTTT"));
         assert!(summary.contains("authorization failed"));
+    }
+
+    #[test]
+    fn external_browser_auth_env_requires_user() {
+        let Err(err) = build_external_browser_auth_config(
+            "https://org-account.snowflakecomputing.com",
+            Some("org-account".to_string()),
+            None,
+            Duration::from_secs(120),
+            true,
+            None,
+        ) else {
+            panic!("externalbrowser without user should fail");
+        };
+        assert!(err.to_string().contains("DBT_NOVA_SNOWFLAKE_USER"));
+    }
+
+    #[test]
+    fn external_browser_auth_env_resolves_aliases_and_options() {
+        let auth = build_external_browser_auth_config(
+            "https://org-account.snowflakecomputing.com",
+            Some("org-account".to_string()),
+            Some("analyst@example.com".to_string()),
+            Duration::from_secs(45),
+            false,
+            Some(4567),
+        )
+        .expect("externalbrowser auth");
+        let SnowflakeAuthConfig::ExternalBrowser {
+            user,
+            account_identifier,
+            timeout,
+            open_browser,
+            callback_port,
+            ..
+        } = auth
+        else {
+            panic!("expected externalbrowser auth");
+        };
+        assert_eq!(user, "analyst@example.com");
+        assert_eq!(account_identifier, "org-account");
+        assert_eq!(timeout, Duration::from_secs(45));
+        assert!(!open_browser);
+        assert_eq!(callback_port, Some(4567));
+    }
+
+    #[test]
+    fn external_browser_session_cache_reuses_matching_keys() {
+        let first = external_browser_session_cache(
+            "https://org-account.snowflakecomputing.com",
+            "org-account",
+            "ANALYST",
+            None,
+        );
+        let second = external_browser_session_cache(
+            "https://ORG-ACCOUNT.snowflakecomputing.com",
+            "ORG-ACCOUNT",
+            "analyst",
+            None,
+        );
+        assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn external_browser_request_bodies_use_snowflake_field_names() {
+        let auth_request = serde_json::to_value(ExternalBrowserAuthenticatorRequest {
+            data: ExternalBrowserAuthenticatorRequestData {
+                client_app_id: "dbt-nova",
+                client_app_version: "0.0.0-test",
+                account_name: "org-account",
+                login_name: "analyst@example.com",
+                authenticator: "EXTERNALBROWSER",
+                browser_mode_redirect_port: "4567".to_string(),
+            },
+        })
+        .expect("auth request JSON");
+        assert_eq!(
+            auth_request["data"]["LOGIN_NAME"],
+            json!("analyst@example.com")
+        );
+        assert_eq!(auth_request["data"]["CLIENT_APP_ID"], json!("dbt-nova"));
+        assert_eq!(auth_request["data"]["ACCOUNT_NAME"], json!("org-account"));
+        assert_eq!(
+            auth_request["data"]["AUTHENTICATOR"],
+            json!("EXTERNALBROWSER")
+        );
+        assert_eq!(
+            auth_request["data"]["BROWSER_MODE_REDIRECT_PORT"],
+            json!("4567")
+        );
+
+        let login_request = serde_json::to_value(ExternalBrowserLoginRequest {
+            data: ExternalBrowserLoginRequestData {
+                client_app_id: "dbt-nova",
+                client_app_version: "0.0.0-test",
+                account_name: "org-account",
+                login_name: "analyst@example.com",
+                authenticator: "EXTERNALBROWSER",
+                token: "callback-token",
+                proof_key: "proof-key",
+            },
+        })
+        .expect("login request JSON");
+        assert_eq!(login_request["data"]["CLIENT_APP_ID"], json!("dbt-nova"));
+        assert_eq!(login_request["data"]["ACCOUNT_NAME"], json!("org-account"));
+        assert_eq!(login_request["data"]["TOKEN"], json!("callback-token"));
+        assert_eq!(login_request["data"]["PROOF_KEY"], json!("proof-key"));
+    }
+
+    #[test]
+    fn external_browser_response_decoders_parse_success_and_sanitize_failures() {
+        let auth_body = r#"{
+            "success": true,
+            "data": {
+                "ssoUrl": "https://idp.example.com/start",
+                "proofKey": "proof-key"
+            }
+        }"#;
+        let auth = decode_external_browser_authenticator_response(StatusCode::OK, auth_body)
+            .expect("authenticator response");
+        assert_eq!(auth.sso_url, "https://idp.example.com/start");
+        assert_eq!(auth.proof_key, "proof-key");
+
+        let login_body = r#"{
+            "success": true,
+            "data": {
+                "token": "session-token",
+                "validityInSeconds": 3600,
+                "masterToken": "master-token",
+                "masterValidityInSeconds": 7200,
+                "idToken": "id-token",
+                "idTokenValidityInSeconds": 1800
+            }
+        }"#;
+        let session =
+            decode_external_browser_login_response(StatusCode::OK, login_body).expect("login");
+        assert_eq!(session.token, "session-token");
+        assert!(session.expires_at.is_some());
+        assert_eq!(session.master_token.as_deref(), Some("master-token"));
+        assert!(session.master_expires_at.is_some());
+        assert_eq!(session.id_token.as_deref(), Some("id-token"));
+        assert!(session.id_token_expires_at.is_some());
+
+        let failure_body = r#"{
+            "success": false,
+            "code": "390303",
+            "message": "Invalid token SECRET_TOKEN_VALUE"
+        }"#;
+        let err = decode_external_browser_login_response(StatusCode::OK, failure_body)
+            .expect_err("login failure");
+        assert!(err.to_string().contains("390303"));
+        assert!(!err.to_string().contains("SECRET_TOKEN_VALUE"));
+    }
+
+    #[test]
+    fn external_browser_login_response_accepts_session_token_alias() {
+        let login_body = r#"{
+            "success": true,
+            "data": {
+                "sessionToken": "session-token",
+                "validityInSeconds": "3600"
+            }
+        }"#;
+        let session =
+            decode_external_browser_login_response(StatusCode::OK, login_body).expect("login");
+        assert_eq!(session.token, "session-token");
+        assert!(session.expires_at.is_some());
+    }
+
+    #[test]
+    fn browser_callback_parser_extracts_token_and_checks_proof_key() {
+        let request =
+            "GET /?token=callback%2Ftoken&proofKey=proof-key HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+        let callback =
+            parse_browser_callback_request(request, "proof-key").expect("browser callback");
+        assert_eq!(
+            callback,
+            BrowserCallbackRequest::Callback(BrowserCallback {
+                token: "callback/token".to_string(),
+                proof_key: Some("proof-key".to_string()),
+                origin: None,
+            })
+        );
+
+        let err =
+            parse_browser_callback_request(request, "other-proof").expect_err("proof mismatch");
+        assert!(err.to_string().contains("proof key"));
+    }
+
+    #[test]
+    fn browser_callback_parser_accepts_post_and_preflight() {
+        let json_request = "POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: https://org-account.snowflakecomputing.com\r\nContent-Type: application/json\r\nContent-Length: 52\r\n\r\n{\"token\":\"callback-token\",\"proofKey\":\"proof-key\"}";
+        let callback =
+            parse_browser_callback_request(json_request, "proof-key").expect("json callback");
+        assert_eq!(
+            callback,
+            BrowserCallbackRequest::Callback(BrowserCallback {
+                token: "callback-token".to_string(),
+                proof_key: Some("proof-key".to_string()),
+                origin: Some("https://org-account.snowflakecomputing.com".to_string()),
+            })
+        );
+
+        let form_request = "POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 40\r\n\r\ntoken=callback%2Ftoken&proof_key=proof-key";
+        let callback =
+            parse_browser_callback_request(form_request, "proof-key").expect("form callback");
+        assert_eq!(
+            callback,
+            BrowserCallbackRequest::Callback(BrowserCallback {
+                token: "callback/token".to_string(),
+                proof_key: Some("proof-key".to_string()),
+                origin: None,
+            })
+        );
+
+        let options_request = "OPTIONS / HTTP/1.1\r\nHost: 127.0.0.1\r\nOrigin: https://org-account.snowflakecomputing.com\r\nAccess-Control-Request-Headers: content-type\r\n\r\n";
+        let preflight =
+            parse_browser_callback_request(options_request, "proof-key").expect("preflight");
+        assert_eq!(
+            preflight,
+            BrowserCallbackRequest::Preflight(BrowserCallbackPreflight {
+                origin: Some("https://org-account.snowflakecomputing.com".to_string()),
+                requested_headers: Some("content-type".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn browser_callback_parser_rejects_wrong_method_path_and_missing_token() {
+        for request in [
+            "POST /?token=callback HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            "GET /callback?token=callback HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            "GET /?proofKey=proof-key HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+        ] {
+            assert!(
+                parse_browser_callback_request(request, "proof-key").is_err(),
+                "{request} should be rejected"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn external_browser_session_auth_uses_snowflake_token_header() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/resource"))
+            .and(header("authorization", "Snowflake Token=\"session-token\""))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
+            .mount(&server)
+            .await;
+
+        let session_cache = Arc::new(TokioMutex::new(Some(SnowflakeSession {
+            token: "session-token".to_string(),
+            expires_at: None,
+            master_token: None,
+            master_expires_at: None,
+            id_token: None,
+            id_token_expires_at: None,
+        })));
+        let client = SnowflakeSqlClient::new(SnowflakeSqlConfig {
+            base_url: server.uri(),
+            warehouse: "COMPUTE_WH".to_string(),
+            database: None,
+            schema: None,
+            role: None,
+            timeout: Duration::from_secs(5),
+            default_statement_timeout_s: 60,
+            poll_interval: Duration::from_millis(1),
+            max_poll: Duration::from_secs(1),
+            max_chunks: 1,
+            auth: SnowflakeAuthConfig::ExternalBrowser {
+                user: "analyst@example.com".to_string(),
+                account_identifier: "org-account".to_string(),
+                timeout: Duration::from_secs(5),
+                open_browser: false,
+                callback_port: None,
+                session_cache,
+            },
+        })
+        .expect("client");
+        let response: Value = client
+            .send_authorized_json(|| client.http.get(format!("{}/resource", server.uri())))
+            .await
+            .expect("authorized request");
+        assert_eq!(response["ok"], json!(true));
+    }
+
+    #[tokio::test]
+    async fn external_browser_login_flow_exchanges_callback_token() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/session/authenticator-request"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "success": true,
+                "data": {
+                    "ssoUrl": "https://idp.example.com/start",
+                    "proofKey": "proof-key"
+                }
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/session/v1/login-request"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "success": true,
+                "data": {
+                    "token": "session-token",
+                    "validityInSeconds": 3600
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let callback_port = unused_loopback_port();
+        let client = SnowflakeSqlClient::new(SnowflakeSqlConfig {
+            base_url: server.uri(),
+            warehouse: "COMPUTE_WH".to_string(),
+            database: None,
+            schema: None,
+            role: None,
+            timeout: Duration::from_secs(5),
+            default_statement_timeout_s: 60,
+            poll_interval: Duration::from_millis(1),
+            max_poll: Duration::from_secs(1),
+            max_chunks: 1,
+            auth: SnowflakeAuthConfig::ExternalBrowser {
+                user: "analyst@example.com".to_string(),
+                account_identifier: "org-account".to_string(),
+                timeout: Duration::from_secs(5),
+                open_browser: false,
+                callback_port: Some(callback_port),
+                session_cache: Arc::new(TokioMutex::new(None)),
+            },
+        })
+        .expect("client");
+
+        let login = tokio::spawn(async move {
+            client
+                .login_external_browser(
+                    "org-account",
+                    "analyst@example.com",
+                    Duration::from_secs(5),
+                    false,
+                    Some(callback_port),
+                )
+                .await
+        });
+
+        let preflight_request = format!(
+            "OPTIONS / HTTP/1.1\r\nHost: 127.0.0.1:{callback_port}\r\nOrigin: https://org-account.snowflakecomputing.com\r\nAccess-Control-Request-Headers: content-type\r\n\r\n"
+        );
+        let preflight_response = send_raw_browser_callback(callback_port, &preflight_request)
+            .await
+            .expect("preflight response");
+        assert!(preflight_response.starts_with("HTTP/1.1 204 No Content"));
+
+        let callback_body = r#"{"token":"callback-token","proofKey":"proof-key"}"#;
+        let callback_request = format!(
+            "POST / HTTP/1.1\r\nHost: 127.0.0.1:{callback_port}\r\nOrigin: https://org-account.snowflakecomputing.com\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{callback_body}",
+            callback_body.len()
+        );
+        let callback_response = send_raw_browser_callback(callback_port, &callback_request)
+            .await
+            .expect("callback response");
+        assert!(callback_response.starts_with("HTTP/1.1 200 OK"));
+
+        let session = login.await.expect("login task").expect("login result");
+        assert_eq!(session.token, "session-token");
+        assert!(session.expires_at.is_some());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires an SSO-backed Snowflake account and opens the system browser"]
+    async fn external_browser_sql_api_smoke_requires_real_snowflake() {
+        let client = SnowflakeSqlClient::from_env().expect("Snowflake env");
+        let result = client
+            .execute(
+                "select current_user() as current_user",
+                SnowflakeExecuteOptions {
+                    row_limit: Some(1),
+                    byte_limit: Some(1024),
+                    max_chunks: Some(1),
+                    ..SnowflakeExecuteOptions::default()
+                },
+            )
+            .await
+            .expect("SQL API accepts externalbrowser session token");
+        assert_eq!(result.rows.len(), 1);
+    }
+
+    fn unused_loopback_port() -> u16 {
+        let listener = StdTcpListener::bind("127.0.0.1:0").expect("bind free port");
+        listener.local_addr().expect("local addr").port()
+    }
+
+    async fn send_raw_browser_callback(port: u16, request: &str) -> Result<String> {
+        let mut last_err = None;
+        for _ in 0..100 {
+            match TcpStream::connect(("127.0.0.1", port)).await {
+                Ok(mut stream) => {
+                    stream
+                        .write_all(request.as_bytes())
+                        .await
+                        .map_err(|err| snowflake_err(format!("write callback: {err}")))?;
+                    let mut response = String::new();
+                    stream
+                        .read_to_string(&mut response)
+                        .await
+                        .map_err(|err| snowflake_err(format!("read callback: {err}")))?;
+                    return Ok(response);
+                }
+                Err(err) => {
+                    last_err = Some(err);
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+        }
+        Err(snowflake_err(format!(
+            "callback listener did not accept connection: {}",
+            last_err.map_or_else(|| "unknown error".to_string(), |err| err.to_string())
+        )))
     }
 
     #[tokio::test]

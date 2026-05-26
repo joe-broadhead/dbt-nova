@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as in-progress rather than failed.
 - Snowflake catalog and schema preflight checks now avoid wildcard matching for
   identifiers containing underscores by requiring exact `SHOW` result names.
+- Snowflake SQL provider now supports local interactive browser SSO with
+  `DBT_NOVA_SNOWFLAKE_AUTH=externalbrowser`.
 - Fixed release OCI publishing to build images from native Linux release binaries
   instead of compiling Rust inside the ARM64 Docker/QEMU path.
 

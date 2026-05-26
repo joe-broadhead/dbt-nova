@@ -20,7 +20,8 @@ This page documents practical limits and edge cases to consider in production.
 - SQL validation blocks destructive statements (DROP/DELETE/UPDATE/INSERT/ALTER/CREATE).
 - Parameterized queries are supported, but only for providers that implement them.
 - Snowflake provider uses the Snowflake SQL API. Multi-statement execution is not
-  supported, and key-pair auth currently requires an unencrypted RSA PEM key.
+  supported, key-pair auth currently requires an unencrypted RSA PEM key, and
+  external browser SSO is local interactive only.
 - DuckDB provider is read-only and requires `DBT_NOVA_DUCKDB_PATH`; DuckDB `parameter_types` hints are not supported.
 - DuckDB uses a bounded per-process connection pool keyed by `(duckdb_path,file_search_path)`; tune with `DBT_NOVA_DUCKDB_POOL_MAX_SIZE` if needed.
 - Object-level preflight checks (`preflight_catalog`, `preflight_schema`, `preflight_relation`) require non-empty probe results across providers.

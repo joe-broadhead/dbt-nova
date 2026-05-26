@@ -710,7 +710,7 @@ Notes:
 - DuckDB reuses pooled read-only connections per `(duckdb_path,file_search_path)` key (`DBT_NOVA_DUCKDB_POOL_MAX_SIZE`).
 - Object-level preflight checks (`preflight_catalog`, `preflight_schema`, `preflight_relation`) require a non-empty probe result across providers; missing/inaccessible targets return `ok=false`.
 - BigQuery credentials can come from OAuth token env vars, `GOOGLE_APPLICATION_CREDENTIALS`, or gcloud ADC (same auth family used by GCS SDK mode).
-- Snowflake credentials can use key-pair JWT, OAuth bearer tokens, or Snowflake programmatic access tokens.
+- Snowflake credentials can use key-pair JWT, OAuth bearer tokens, Snowflake programmatic access tokens, or local interactive external browser SSO (`DBT_NOVA_SNOWFLAKE_AUTH=externalbrowser`).
 
 ```json
 {"name":"execute_sql","arguments":{"statement":"select * from orders where order_date > :date","parameters":{"date":"2024-01-01"},"row_limit":100}}

@@ -61,13 +61,16 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_SNOWFLAKE_DATABASE` – optional default Snowflake database
 - `DBT_NOVA_SNOWFLAKE_SCHEMA` – optional default Snowflake schema
 - `DBT_NOVA_SNOWFLAKE_ROLE` – optional default Snowflake role
-- `DBT_NOVA_SNOWFLAKE_AUTH` – Snowflake auth mode (`keypair`, `oauth`, or `pat`; default: inferred from provided token variables, otherwise `keypair`)
-- `DBT_NOVA_SNOWFLAKE_USER` – Snowflake user for key-pair auth
+- `DBT_NOVA_SNOWFLAKE_AUTH` – Snowflake auth mode (`keypair`, `oauth`, `pat`, or `externalbrowser`; default: inferred from provided token variables, otherwise `keypair`)
+- `DBT_NOVA_SNOWFLAKE_USER` – Snowflake user for key-pair or external browser auth
 - `DBT_NOVA_SNOWFLAKE_JWT_ACCOUNT` – account identifier override for key-pair JWT claims; required when key-pair auth uses `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` without `DBT_NOVA_SNOWFLAKE_ACCOUNT`. JWT account identifiers are uppercased, periods are replaced with hyphens, and locator-style region suffixes such as `.us-east-1` are excluded.
 - `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PATH` – path to an unencrypted RSA private key PEM for key-pair auth
 - `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PEM` – inline unencrypted RSA private key PEM for key-pair auth (`\n` escapes are accepted)
 - `DBT_NOVA_SNOWFLAKE_OAUTH_TOKEN` – OAuth bearer token for `DBT_NOVA_SNOWFLAKE_AUTH=oauth`
 - `DBT_NOVA_SNOWFLAKE_PAT` – programmatic access token for `DBT_NOVA_SNOWFLAKE_AUTH=pat`
+- `DBT_NOVA_SNOWFLAKE_EXTERNAL_BROWSER_TIMEOUT_S` – local browser SSO timeout for `DBT_NOVA_SNOWFLAKE_AUTH=externalbrowser` (default: `120`)
+- `DBT_NOVA_SNOWFLAKE_EXTERNAL_BROWSER_OPEN` – open the system browser automatically for external browser auth (`true`|`false`, default: `true`; when false, Nova prints the SSO URL for manual opening)
+- `DBT_NOVA_SNOWFLAKE_EXTERNAL_BROWSER_CALLBACK_PORT` – optional fixed loopback callback port for external browser auth (default: bind an ephemeral `127.0.0.1` port)
 - `DBT_NOVA_SNOWFLAKE_TIMEOUT_MS` – HTTP timeout for Snowflake SQL API requests (default: `30000`)
 - `DBT_NOVA_SNOWFLAKE_STATEMENT_TIMEOUT_S` – Snowflake statement timeout in seconds when caller omits `wait_timeout_s` (default: `60`)
 - `DBT_NOVA_SNOWFLAKE_POLL_INTERVAL_MS` – provider default polling interval (default: `1000`)
@@ -358,6 +361,7 @@ Supported providers:
   - Key-pair JWT auth: `DBT_NOVA_SNOWFLAKE_USER` plus `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PATH` or `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PEM`. If only `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` is set, also set `DBT_NOVA_SNOWFLAKE_JWT_ACCOUNT`. Locator-style region suffixes are excluded from JWT claims.
   - OAuth token auth: `DBT_NOVA_SNOWFLAKE_AUTH=oauth` plus `DBT_NOVA_SNOWFLAKE_OAUTH_TOKEN`
   - Programmatic access token auth: `DBT_NOVA_SNOWFLAKE_AUTH=pat` plus `DBT_NOVA_SNOWFLAKE_PAT`
+  - External browser SSO auth: `DBT_NOVA_SNOWFLAKE_AUTH=externalbrowser` plus `DBT_NOVA_SNOWFLAKE_USER`; requires `DBT_NOVA_SNOWFLAKE_ACCOUNT` because browser SSO login needs the account name.
 - `duckdb`: requires `DBT_NOVA_DUCKDB_PATH` and executes queries against that file in read-only mode. Optional `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH` configures DuckDB `file_search_path` for external file-backed objects.
 
 Databricks runtime tuning env vars:
@@ -377,6 +381,10 @@ Snowflake notes:
   cancel endpoint before returning a timeout error.
 - Key-pair auth supports unencrypted RSA PEM keys. Encrypted private keys are not
   supported yet; use OAuth or PAT auth if a passphrase-protected key is required.
+- External browser auth is a local interactive mode. It binds a loopback callback
+  listener, opens the system browser to Snowflake SSO, keeps the returned session
+  token only in process memory, and rejects CI or non-loopback streamable HTTP
+  deployments.
 
 Provider diagnostics are available through `execute_sql` with `preflight_only=true`
 plus optional `preflight_catalog`, `preflight_schema`, and `preflight_relation`.

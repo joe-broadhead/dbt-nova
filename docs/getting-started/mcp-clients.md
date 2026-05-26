@@ -244,6 +244,7 @@ Required:
   - Key-pair JWT: `DBT_NOVA_SNOWFLAKE_USER` plus `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PATH` or `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PEM`
   - OAuth: `DBT_NOVA_SNOWFLAKE_AUTH=oauth` plus `DBT_NOVA_SNOWFLAKE_OAUTH_TOKEN`
   - Programmatic access token: `DBT_NOVA_SNOWFLAKE_AUTH=pat` plus `DBT_NOVA_SNOWFLAKE_PAT`
+  - External browser SSO: `DBT_NOVA_SNOWFLAKE_AUTH=externalbrowser` plus `DBT_NOVA_SNOWFLAKE_USER` and `DBT_NOVA_SNOWFLAKE_ACCOUNT`
 
 Optional:
 - `DBT_NOVA_SNOWFLAKE_DATABASE`
@@ -255,6 +256,9 @@ Optional:
 - `DBT_NOVA_SNOWFLAKE_POLL_INTERVAL_MS` (default: `1000`)
 - `DBT_NOVA_SNOWFLAKE_MAX_POLL_SECONDS` (default: `600`)
 - `DBT_NOVA_SNOWFLAKE_MAX_CHUNKS` (default: `50`)
+- `DBT_NOVA_SNOWFLAKE_EXTERNAL_BROWSER_TIMEOUT_S` (default: `120`)
+- `DBT_NOVA_SNOWFLAKE_EXTERNAL_BROWSER_OPEN` (`true`|`false`, default: `true`)
+- `DBT_NOVA_SNOWFLAKE_EXTERNAL_BROWSER_CALLBACK_PORT` (optional fixed loopback callback port)
 - `DBT_NOVA_SQL_MAX_ROW_LIMIT` (default: `10000`)
 - `DBT_NOVA_SQL_MAX_BYTE_LIMIT` (default: `100000000`)
 - `DBT_NOVA_SQL_MAX_CHUNKS` (default: `100`)
@@ -272,6 +276,10 @@ Snowflake behavior notes:
 - Key-pair JWT claims normalize account identifiers for Snowflake: account/user values are uppercased, periods are replaced with hyphens, and locator-style account region suffixes such as `.us-east-1` are excluded.
 - For key-pair auth with a private-link or custom account URL, set both `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` and `DBT_NOVA_SNOWFLAKE_JWT_ACCOUNT`.
 - Key-pair auth supports unencrypted RSA PEM keys; encrypted private keys are not supported yet.
+- External browser auth is for local interactive use. Nova binds a `127.0.0.1`
+  callback listener, opens the system browser for Snowflake SSO, and keeps the
+  returned Snowflake session token only in memory. Use key-pair JWT, OAuth, or
+  PAT auth for CI and hosted/non-loopback streamable HTTP deployments.
 
 ### Snowflake Example (Codex CLI)
 
@@ -290,6 +298,26 @@ DBT_NOVA_SNOWFLAKE_SCHEMA = "REPORTING"
 DBT_NOVA_SNOWFLAKE_ROLE = "REPORTER"
 DBT_NOVA_SNOWFLAKE_AUTH = "pat"
 DBT_NOVA_SNOWFLAKE_PAT = "<token>"
+DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/.fastembed_cache"
+```
+
+External browser SSO example:
+
+```toml
+[mcp_servers.dbt-nova]
+command = "/path/to/dbt-nova"
+startup_timeout_sec = 60
+
+[mcp_servers.dbt-nova.env]
+DBT_MANIFEST_PATH = "/path/to/manifest.json"
+DBT_NOVA_SQL_PROVIDER = "snowflake"
+DBT_NOVA_SNOWFLAKE_ACCOUNT = "myorg-myaccount"
+DBT_NOVA_SNOWFLAKE_USER = "you@example.com"
+DBT_NOVA_SNOWFLAKE_WAREHOUSE = "ANALYST_WH"
+DBT_NOVA_SNOWFLAKE_DATABASE = "ANALYTICS"
+DBT_NOVA_SNOWFLAKE_SCHEMA = "REPORTING"
+DBT_NOVA_SNOWFLAKE_ROLE = "REPORTER"
+DBT_NOVA_SNOWFLAKE_AUTH = "externalbrowser"
 DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/.fastembed_cache"
 ```
 
