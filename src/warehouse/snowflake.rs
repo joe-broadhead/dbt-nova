@@ -2625,11 +2625,22 @@ fn strip_locator_region_suffix(value: &str) -> &str {
         other => other,
     };
 
-    if region_segments.len() == 1 && looks_like_snowflake_region(region_segments[0]) {
+    let has_explicit_locator_suffix = suffix.len() > 1;
+    if region_segments.len() == 1
+        && looks_like_snowflake_region(region_segments[0])
+        && (has_explicit_locator_suffix || looks_like_generated_account_locator(locator))
+    {
         locator
     } else {
         value
     }
+}
+
+fn looks_like_generated_account_locator(segment: &str) -> bool {
+    let bytes = segment.as_bytes();
+    bytes.len() == 7
+        && bytes[..2].iter().all(u8::is_ascii_alphabetic)
+        && bytes[2..].iter().all(u8::is_ascii_digit)
 }
 
 fn looks_like_snowflake_region(segment: &str) -> bool {
@@ -3639,6 +3650,14 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
         assert_eq!(
             normalize_jwt_identifier("myorg.myaccount"),
             "MYORG-MYACCOUNT"
+        );
+        assert_eq!(
+            normalize_jwt_identifier("myorg.us-east-1"),
+            "MYORG-US-EAST-1"
+        );
+        assert_eq!(
+            normalize_jwt_identifier("myorg2.us-east-1"),
+            "MYORG2-US-EAST-1"
         );
         assert_eq!(
             normalize_jwt_identifier("myorg-myaccount"),

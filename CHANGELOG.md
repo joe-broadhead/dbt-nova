@@ -11,8 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Snowflake SQL API, including key-pair JWT, OAuth, and programmatic access
   token auth, named parameter binding, partitioned result fetching, cancellation
   on local poll timeout, and provider preflight checks.
-- Snowflake key-pair JWT auth now excludes locator-style region suffixes from
-  JWT account claims while preserving organization/account identifiers.
+- Snowflake key-pair JWT auth now excludes legacy locator-style region suffixes
+  from JWT account claims while preserving organization/account identifiers,
+  including account names that resemble Snowflake region IDs.
 - Snowflake SQL API async status responses with code `333334` are now treated
   as in-progress rather than failed.
 - Snowflake catalog and schema preflight checks now use bounded `SHOW` probes and
