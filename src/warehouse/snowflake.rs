@@ -3578,7 +3578,7 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
             Duration::from_millis(200),
             client.poll_statement(
                 "statement-handle",
-                Duration::from_secs(60),
+                Duration::from_mins(1),
                 Duration::from_millis(20),
             ),
         )
