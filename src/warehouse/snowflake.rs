@@ -330,19 +330,17 @@ impl SnowflakeSqlClient {
         let started = Instant::now();
         loop {
             if started.elapsed() >= max_poll {
-                if let Err(err) = self.cancel_statement(statement_handle).await {
-                    warn!(
-                        statement_handle,
-                        error = %err,
-                        "failed to cancel Snowflake statement after local poll timeout"
-                    );
-                }
-                return Err(snowflake_err(format!(
-                    "Timed out waiting for Snowflake statement {statement_handle}"
-                )));
+                return Err(self.poll_timeout_error(statement_handle).await);
             }
 
-            sleep(poll_interval).await;
+            let remaining = max_poll
+                .checked_sub(started.elapsed())
+                .unwrap_or_else(|| Duration::from_secs(0));
+            sleep(poll_interval.min(remaining)).await;
+            if started.elapsed() >= max_poll {
+                return Err(self.poll_timeout_error(statement_handle).await);
+            }
+
             let response = self.get_statement(statement_handle).await?;
             if let Some(message) = response.failure_message() {
                 return Err(snowflake_err(message));
@@ -351,6 +349,19 @@ impl SnowflakeSqlClient {
                 return Ok(response);
             }
         }
+    }
+
+    async fn poll_timeout_error(&self, statement_handle: &str) -> DbtNovaError {
+        if let Err(err) = self.cancel_statement(statement_handle).await {
+            warn!(
+                statement_handle,
+                error = %err,
+                "failed to cancel Snowflake statement after local poll timeout"
+            );
+        }
+        snowflake_err(format!(
+            "Timed out waiting for Snowflake statement {statement_handle}"
+        ))
     }
 
     async fn process_success(
@@ -2034,6 +2045,27 @@ fn schema_preflight_statement(catalog: &str, schema: &str) -> String {
     )
 }
 
+fn resolve_schema_preflight_target(
+    preflight_catalog: Option<&str>,
+    default_catalog: Option<&str>,
+    schema: &str,
+) -> Result<(String, String)> {
+    let catalog = match preflight_catalog {
+        Some(catalog) => normalize_preflight_identifier(catalog, "catalog")?,
+        None => default_catalog
+            .map(|catalog| normalize_preflight_identifier(catalog, "catalog"))
+            .transpose()?
+            .ok_or_else(|| {
+                DbtNovaError::InvalidParams(
+                    "preflight_schema requires DBT_NOVA_SNOWFLAKE_DATABASE or preflight_catalog"
+                        .to_string(),
+                )
+            })?,
+    };
+    let schema = normalize_preflight_identifier(schema, "schema")?;
+    Ok((catalog, schema))
+}
+
 fn relation_preflight_statement(relation: &str) -> String {
     format!("SELECT 1 AS relation_access_check FROM {relation} LIMIT 1")
 }
@@ -2187,20 +2219,11 @@ async fn preflight_snowflake(params: &ExecuteSqlParams) -> Result<Value> {
         params.preflight_schema.as_deref(),
         "schema_access",
         |schema| {
-            let catalog = params
-                .preflight_catalog
-                .as_deref()
-                .map(|catalog| normalize_preflight_identifier(catalog, "catalog"))
-                .transpose()?
-                .or_else(|| default_catalog.clone())
-                .ok_or_else(|| {
-                    DbtNovaError::InvalidParams(
-                        "preflight_schema requires DBT_NOVA_SNOWFLAKE_DATABASE or preflight_catalog"
-                            .to_string(),
-                    )
-                })?;
-            let schema = normalize_preflight_identifier(schema, "schema")?;
-            Ok((catalog, schema))
+            resolve_schema_preflight_target(
+                params.preflight_catalog.as_deref(),
+                default_catalog.as_deref(),
+                schema,
+            )
         },
         |(catalog, schema)| {
             let catalog = catalog.clone();
@@ -2831,8 +2854,8 @@ mod tests {
         normalize_account_url, normalize_jwt_identifier, normalize_preflight_relation,
         parse_browser_callback_request, parse_cell_value, preflight_show_result_has_exact_name,
         public_key_fingerprint, read_browser_callback_request, relation_preflight_statement,
-        rewrite_named_parameters, schema_preflight_statement, send_json, session_parameters,
-        snowflake_err, summarize_error_body,
+        resolve_schema_preflight_target, rewrite_named_parameters, schema_preflight_statement,
+        send_json, session_parameters, snowflake_err, summarize_error_body,
     };
     use flate2::{Compression, write::GzEncoder};
     use reqwest::Client;
@@ -3539,6 +3562,33 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
     }
 
     #[tokio::test]
+    async fn poll_statement_respects_max_poll_when_interval_is_larger() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v2/statements/statement-handle/cancel"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"status": "ok"})))
+            .mount(&server)
+            .await;
+
+        let mut config = test_snowflake_config(60);
+        config.base_url = server.uri();
+        let client = SnowflakeSqlClient::new(config).expect("client");
+
+        let result = timeout(
+            Duration::from_millis(200),
+            client.poll_statement(
+                "statement-handle",
+                Duration::from_secs(60),
+                Duration::from_millis(20),
+            ),
+        )
+        .await
+        .expect("poll timeout should be locally bounded");
+        let err = result.expect_err("statement should time out");
+        assert!(err.to_string().contains("Timed out waiting"));
+    }
+
+    #[tokio::test]
     async fn send_json_decodes_gzip_responses() {
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         encoder
@@ -3869,6 +3919,20 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
             relation_preflight_statement("ANALYTICS.REPORTING.ORDERS"),
             "SELECT 1 AS relation_access_check FROM ANALYTICS.REPORTING.ORDERS LIMIT 1"
         );
+    }
+
+    #[test]
+    fn schema_preflight_target_normalizes_default_catalog() {
+        let target =
+            resolve_schema_preflight_target(None, Some("analytics"), "reporting").expect("target");
+        assert_eq!(target, ("ANALYTICS".to_string(), "REPORTING".to_string()));
+    }
+
+    #[test]
+    fn schema_preflight_target_rejects_unsafe_default_catalog() {
+        let err = resolve_schema_preflight_target(None, Some("analytics;drop"), "reporting")
+            .expect_err("unsafe default catalog should fail");
+        assert!(err.to_string().contains("Invalid catalog identifier"));
     }
 
     #[test]
