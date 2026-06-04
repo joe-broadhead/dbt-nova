@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed the Monthly workflow by refreshing advisory/dependency-watchlist review
   metadata and making the fuzz workspace use the same vendored dependency
   patches as the main workspace.
+- Made storage pruning deterministic when directories have equal modification
+  timestamps, avoiding arbitrary cache eviction on coarse timestamp filesystems.
 
 ## [0.0.5] - 2026-05-13
 

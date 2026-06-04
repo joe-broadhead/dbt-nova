@@ -79,7 +79,9 @@ pub fn prune_dirs(
     }
 
     let mut total_bytes: u64 = dirs.iter().map(|(_, size, _)| *size).sum();
-    dirs.sort_by_key(|(modified, _, _)| *modified);
+    dirs.sort_by(|(modified_a, _, path_a), (modified_b, _, path_b)| {
+        modified_a.cmp(modified_b).then_with(|| path_a.cmp(path_b))
+    });
 
     let mut keep_limit = max_keep;
     if keep_limit == 0 {
@@ -146,11 +148,13 @@ mod tests {
         let temp = TempDir::new().expect("temp dir");
         let root = temp.path();
 
-        let old = create_dir_with_file(root, "old", 8);
+        // Some CI filesystems report equal mtimes for quickly created dirs.
+        // Keep names aligned with the deterministic tie-breaker.
+        let old = create_dir_with_file(root, "a_old", 8);
         thread::sleep(Duration::from_millis(20));
         let keep = create_dir_with_file(root, "keep", 8);
         thread::sleep(Duration::from_millis(20));
-        let newest = create_dir_with_file(root, "newest", 8);
+        let newest = create_dir_with_file(root, "z_newest", 8);
 
         prune_dirs(root, 1, 0, 0, &["keep"]).expect("prune dirs");
 
