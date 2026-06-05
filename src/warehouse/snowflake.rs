@@ -1102,9 +1102,10 @@ fn parse_browser_callback_request(
         )?
     };
 
-    let proof_key =
-        proof_key.ok_or_else(|| snowflake_err("external browser callback missing proof key"))?;
-    if proof_key != expected_proof_key {
+    if proof_key
+        .as_deref()
+        .is_some_and(|value| value != expected_proof_key)
+    {
         return Err(snowflake_err(
             "external browser callback proof key did not match",
         ));
@@ -1115,7 +1116,7 @@ fn parse_browser_callback_request(
         .ok_or_else(|| snowflake_err("external browser callback missing token"))?;
     Ok(BrowserCallbackRequest::Callback(BrowserCallback {
         token,
-        proof_key: Some(proof_key),
+        proof_key,
         origin: request_header_value(request, "Origin").map(str::to_string),
     }))
 }
@@ -3122,6 +3123,18 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
         let err =
             parse_browser_callback_request(request, "other-proof").expect_err("proof mismatch");
         assert!(err.to_string().contains("proof key"));
+
+        let token_only_request = "GET /?token=callback%2Ftoken HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+        let callback = parse_browser_callback_request(token_only_request, "proof-key")
+            .expect("token-only browser callback");
+        assert_eq!(
+            callback,
+            BrowserCallbackRequest::Callback(BrowserCallback {
+                token: "callback/token".to_string(),
+                proof_key: None,
+                origin: None,
+            })
+        );
     }
 
     #[test]
@@ -3174,14 +3187,6 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
                 "{request} should be rejected"
             );
         }
-    }
-
-    #[test]
-    fn browser_callback_parser_rejects_missing_proof_key() {
-        let request = "GET /?token=callback-token HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
-        let err =
-            parse_browser_callback_request(request, "proof-key").expect_err("missing proof key");
-        assert!(err.to_string().contains("proof key"));
     }
 
     #[tokio::test]
@@ -3364,7 +3369,7 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
             .expect("preflight response");
         assert!(preflight_response.starts_with("HTTP/1.1 204 No Content"));
 
-        let callback_body = r#"{"token":"callback-token","proofKey":"proof-key"}"#;
+        let callback_body = r#"{"token":"callback-token"}"#;
         let callback_request = format!(
             "POST / HTTP/1.1\r\nHost: 127.0.0.1:{callback_port}\r\nOrigin: https://org-account.snowflakecomputing.com\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{callback_body}",
             callback_body.len()
