@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DBT_NOVA_SNOWFLAKE_AUTH=externalbrowser`.
 - Snowflake externalbrowser auth now accepts token-only browser callbacks used
   by Okta SAML SSO while still validating callback proof keys when they are
-  supplied.
+  supplied, and omits `PROOF_KEY` from the login request when the callback did
+  not return one.
 - Snowflake fixed-point numeric result values are now kept exact instead of
   coercing scaled decimals or large integers through floating-point JSON values,
   non-finite floating-point values are preserved as text instead of JSON `null`,

@@ -15,6 +15,14 @@ pub mod snowflake;
 
 pub trait SqlProvider: Send + Sync {
     fn name(&self) -> &'static str;
+    /// Validate runtime conditions that are not part of provider selection.
+    ///
+    /// # Errors
+    /// Returns an error when the provider configuration is unsafe or unsupported
+    /// for the resolved server runtime.
+    fn validate_runtime(&self, _config: &DbtNovaConfig) -> Result<()> {
+        Ok(())
+    }
     fn execute<'a>(
         &'a self,
         params: &'a ExecuteSqlParams,

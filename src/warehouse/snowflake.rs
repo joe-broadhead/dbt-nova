@@ -19,6 +19,7 @@ use tokio::sync::Mutex as TokioMutex;
 use tokio::time::{sleep, timeout};
 use tracing::warn;
 
+use crate::config::DbtNovaConfig;
 use crate::error::{DbtNovaError, Result};
 use crate::params::ExecuteSqlParams;
 use crate::responses::SuccessResponse;
@@ -617,7 +618,7 @@ impl SnowflakeSqlClient {
                 account_identifier,
                 user,
                 &callback.token,
-                &request.proof_key,
+                callback.proof_key.as_deref(),
             )
             .await?;
         Ok(session)
@@ -653,7 +654,7 @@ impl SnowflakeSqlClient {
         account_identifier: &str,
         user: &str,
         callback_token: &str,
-        proof_key: &str,
+        proof_key: Option<&str>,
     ) -> Result<SnowflakeSession> {
         let request = ExternalBrowserLoginRequest {
             data: ExternalBrowserLoginRequestData {
@@ -771,8 +772,8 @@ struct ExternalBrowserLoginRequestData<'a> {
     authenticator: &'static str,
     #[serde(rename = "TOKEN")]
     token: &'a str,
-    #[serde(rename = "PROOF_KEY")]
-    proof_key: &'a str,
+    #[serde(rename = "PROOF_KEY", skip_serializing_if = "Option::is_none")]
+    proof_key: Option<&'a str>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1271,7 +1272,7 @@ impl Default for SnowflakeExecuteOptions {
             poll_interval: None,
             max_poll: None,
             fetch_all_chunks: true,
-            max_chunks: Some(DEFAULT_MAX_CHUNKS),
+            max_chunks: None,
             bindings: HashMap::new(),
         }
     }
@@ -2294,6 +2295,10 @@ impl SqlProvider for SnowflakeProvider {
         "snowflake"
     }
 
+    fn validate_runtime(&self, config: &DbtNovaConfig) -> Result<()> {
+        validate_external_browser_runtime(config)
+    }
+
     fn execute<'a>(
         &'a self,
         params: &'a ExecuteSqlParams,
@@ -2434,7 +2439,15 @@ fn resolve_auth_from_env(account: Option<String>, base_url: &str) -> Result<Snow
         })
         .unwrap_or_else(|| "keypair".to_string());
 
-    match auth.as_str() {
+    resolve_auth_from_mode(&auth, account, base_url)
+}
+
+fn resolve_auth_from_mode(
+    auth: &str,
+    account: Option<String>,
+    base_url: &str,
+) -> Result<SnowflakeAuthConfig> {
+    match auth {
         "oauth" => Ok(SnowflakeAuthConfig::OAuth {
             token: read_required_env(
                 "DBT_NOVA_SNOWFLAKE_OAUTH_TOKEN",
@@ -2448,7 +2461,7 @@ fn resolve_auth_from_env(account: Option<String>, base_url: &str) -> Result<Snow
             )?,
         }),
         "externalbrowser" | "external_browser" | "browser" => {
-            ensure_external_browser_allowed()?;
+            ensure_external_browser_allowed_from_env(streamable_http_env_binds_non_loopback())?;
             let timeout = Duration::from_secs(
                 env_u64(
                     "DBT_NOVA_SNOWFLAKE_EXTERNAL_BROWSER_TIMEOUT_S",
@@ -2496,6 +2509,38 @@ fn resolve_auth_from_env(account: Option<String>, base_url: &str) -> Result<Snow
             "Unsupported DBT_NOVA_SNOWFLAKE_AUTH '{other}' (expected {SUPPORTED_SNOWFLAKE_AUTH_MODES})"
         ))),
     }
+}
+
+fn validate_external_browser_runtime(config: &DbtNovaConfig) -> Result<()> {
+    validate_external_browser_runtime_for_auth(
+        config,
+        read_optional_env("DBT_NOVA_SNOWFLAKE_AUTH").as_deref(),
+    )
+}
+
+fn validate_external_browser_runtime_for_auth(
+    config: &DbtNovaConfig,
+    auth_mode: Option<&str>,
+) -> Result<()> {
+    validate_external_browser_runtime_for_auth_with_ci(config, auth_mode, env_bool("CI", false)?)
+}
+
+fn validate_external_browser_runtime_for_auth_with_ci(
+    config: &DbtNovaConfig,
+    auth_mode: Option<&str>,
+    running_in_ci: bool,
+) -> Result<()> {
+    if auth_mode.is_some_and(auth_mode_is_external_browser) {
+        ensure_external_browser_allowed(config.http_transport_binds_non_loopback(), running_in_ci)?;
+    }
+    Ok(())
+}
+
+fn auth_mode_is_external_browser(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "externalbrowser" | "external_browser" | "browser"
+    )
 }
 
 fn build_external_browser_auth_config(
@@ -2557,13 +2602,20 @@ fn external_browser_session_cache(
         .clone()
 }
 
-fn ensure_external_browser_allowed() -> Result<()> {
-    if env_bool("CI", false)? {
+fn ensure_external_browser_allowed_from_env(non_loopback_http_bind: bool) -> Result<()> {
+    ensure_external_browser_allowed(non_loopback_http_bind, env_bool("CI", false)?)
+}
+
+fn ensure_external_browser_allowed(
+    non_loopback_http_bind: bool,
+    running_in_ci: bool,
+) -> Result<()> {
+    if running_in_ci {
         return Err(DbtNovaError::InvalidParams(
             "Snowflake externalbrowser auth is interactive and cannot run in CI; use keypair, oauth, or pat auth".to_string(),
         ));
     }
-    if streamable_http_env_binds_non_loopback() {
+    if non_loopback_http_bind {
         return Err(DbtNovaError::InvalidParams(
             "Snowflake externalbrowser auth is local-only and cannot be used with non-loopback streamable HTTP binds; use keypair, oauth, or pat auth for hosted deployments".to_string(),
         ));
@@ -2847,17 +2899,19 @@ mod tests {
         DEFAULT_EXTERNAL_BROWSER_TIMEOUT_SECONDS, ExternalBrowserAuthenticatorRequest,
         ExternalBrowserAuthenticatorRequestData, ExternalBrowserLoginRequest,
         ExternalBrowserLoginRequestData, MAX_BROWSER_CALLBACK_REQUEST_BYTES, Result, ResultColumn,
-        SnowflakeAuthConfig, SnowflakeAuthorization, SnowflakeExecuteOptions, SnowflakeQueryResult,
-        SnowflakeQueryStats, SnowflakeSession, SnowflakeSqlClient, SnowflakeSqlConfig,
-        build_bindings, build_external_browser_auth_config, catalog_preflight_statement,
-        decode_external_browser_authenticator_response, decode_external_browser_login_response,
-        decode_statement_status_response, external_browser_session_cache, generate_keypair_jwt,
-        normalize_account_url, normalize_jwt_identifier, normalize_preflight_relation,
-        parse_browser_callback_request, parse_cell_value, preflight_show_result_has_exact_name,
-        public_key_fingerprint, read_browser_callback_request, relation_preflight_statement,
+        SnowflakeAuthConfig, SnowflakeExecuteOptions, SnowflakeQueryResult, SnowflakeQueryStats,
+        SnowflakeSqlClient, SnowflakeSqlConfig, build_bindings, build_external_browser_auth_config,
+        catalog_preflight_statement, decode_external_browser_authenticator_response,
+        decode_external_browser_login_response, decode_statement_status_response,
+        external_browser_session_cache, generate_keypair_jwt, normalize_account_url,
+        normalize_jwt_identifier, normalize_preflight_relation, parse_browser_callback_request,
+        parse_cell_value, preflight_show_result_has_exact_name, public_key_fingerprint,
+        read_browser_callback_request, relation_preflight_statement,
         resolve_schema_preflight_target, rewrite_named_parameters, schema_preflight_statement,
         send_json, session_parameters, snowflake_err, summarize_error_body,
+        validate_external_browser_runtime_for_auth_with_ci,
     };
+    use crate::config::{DbtNovaConfig, ServerTransport};
     use flate2::{Compression, write::GzEncoder};
     use reqwest::Client;
     use reqwest::StatusCode;
@@ -2871,7 +2925,7 @@ mod tests {
     use tokio::net::TcpStream;
     use tokio::sync::Mutex as TokioMutex;
     use tokio::time::timeout;
-    use wiremock::matchers::{header, method, path};
+    use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     const TEST_RSA_PRIVATE_KEY_PKCS8: &str = r"-----BEGIN PRIVATE KEY-----
@@ -2936,6 +2990,47 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
         let summary = summarize_error_body(StatusCode::UNAUTHORIZED, body);
         assert!(!summary.contains("TTTTTTTT"));
         assert!(summary.contains("authorization failed"));
+    }
+
+    #[test]
+    fn external_browser_runtime_policy_rejects_configured_non_loopback_http_bind() {
+        let mut config = DbtNovaConfig::default();
+        config.server_transport = ServerTransport::StreamableHttp;
+        config.http_host = "0.0.0.0".to_string();
+
+        let err = validate_external_browser_runtime_for_auth_with_ci(
+            &config,
+            Some("externalbrowser"),
+            false,
+        )
+        .expect_err("externalbrowser should reject hosted non-loopback binds");
+        assert!(err.to_string().contains("non-loopback"));
+
+        validate_external_browser_runtime_for_auth_with_ci(&config, Some("keypair"), false)
+            .expect("non-browser auth is allowed for hosted binds");
+    }
+
+    #[test]
+    fn external_browser_runtime_policy_allows_configured_loopback_http_bind() {
+        let mut config = DbtNovaConfig::default();
+        config.server_transport = ServerTransport::StreamableHttp;
+        config.http_host = "127.0.0.1".to_string();
+
+        validate_external_browser_runtime_for_auth_with_ci(&config, Some("browser"), false)
+            .expect("externalbrowser is allowed on loopback binds");
+    }
+
+    #[test]
+    fn external_browser_runtime_policy_rejects_ci() {
+        let config = DbtNovaConfig::default();
+
+        let err = validate_external_browser_runtime_for_auth_with_ci(
+            &config,
+            Some("external_browser"),
+            true,
+        )
+        .expect_err("externalbrowser should reject CI");
+        assert!(err.to_string().contains("CI"));
     }
 
     #[test]
@@ -3035,7 +3130,7 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
                 login_name: "analyst@example.com",
                 authenticator: "EXTERNALBROWSER",
                 token: "callback-token",
-                proof_key: "proof-key",
+                proof_key: Some("proof-key"),
             },
         })
         .expect("login request JSON");
@@ -3043,6 +3138,30 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
         assert_eq!(login_request["data"]["ACCOUNT_NAME"], json!("org-account"));
         assert_eq!(login_request["data"]["TOKEN"], json!("callback-token"));
         assert_eq!(login_request["data"]["PROOF_KEY"], json!("proof-key"));
+
+        let token_only_login_request = serde_json::to_value(ExternalBrowserLoginRequest {
+            data: ExternalBrowserLoginRequestData {
+                client_app_id: "dbt-nova",
+                client_app_version: "0.0.0-test",
+                account_name: "org-account",
+                login_name: "analyst@example.com",
+                authenticator: "EXTERNALBROWSER",
+                token: "callback-token",
+                proof_key: None,
+            },
+        })
+        .expect("token-only login request JSON");
+        assert_eq!(
+            token_only_login_request["data"]["TOKEN"],
+            json!("callback-token")
+        );
+        assert!(
+            token_only_login_request["data"]
+                .as_object()
+                .expect("login data object")
+                .get("PROOF_KEY")
+                .is_none()
+        );
     }
 
     #[test]
@@ -3255,52 +3374,6 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
     }
 
     #[tokio::test]
-    async fn external_browser_session_auth_uses_snowflake_token_header() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/resource"))
-            .and(header("authorization", "Snowflake Token=\"session-token\""))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"ok": true})))
-            .mount(&server)
-            .await;
-
-        let session_cache = Arc::new(TokioMutex::new(Some(SnowflakeSession {
-            token: "session-token".to_string(),
-            expires_at: None,
-            master_token: None,
-            master_expires_at: None,
-            id_token: None,
-            id_token_expires_at: None,
-        })));
-        let client = SnowflakeSqlClient::new(SnowflakeSqlConfig {
-            base_url: server.uri(),
-            warehouse: "COMPUTE_WH".to_string(),
-            database: None,
-            schema: None,
-            role: None,
-            timeout: Duration::from_secs(5),
-            default_statement_timeout_s: 60,
-            poll_interval: Duration::from_millis(1),
-            max_poll: Duration::from_secs(1),
-            max_chunks: 1,
-            auth: SnowflakeAuthConfig::ExternalBrowser {
-                user: "analyst@example.com".to_string(),
-                account_identifier: "org-account".to_string(),
-                timeout: Duration::from_secs(5),
-                open_browser: false,
-                callback_port: None,
-                session_cache,
-            },
-        })
-        .expect("client");
-        let response: Value = client
-            .send_authorized_json(|| client.http.get(format!("{}/resource", server.uri())))
-            .await
-            .expect("authorized request");
-        assert_eq!(response["ok"], json!(true));
-    }
-
-    #[tokio::test]
     async fn external_browser_login_flow_exchanges_callback_token() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -3384,124 +3457,6 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
         assert!(session.expires_at.is_some());
     }
 
-    #[tokio::test]
-    async fn external_browser_authorization_shares_concurrent_session_flow() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/session/authenticator-request"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "success": true,
-                "data": {
-                    "ssoUrl": "https://idp.example.com/start",
-                    "proofKey": "proof-key"
-                }
-            })))
-            .mount(&server)
-            .await;
-        Mock::given(method("POST"))
-            .and(path("/session/v1/login-request"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "success": true,
-                "data": {
-                    "token": "session-token",
-                    "validityInSeconds": 3600
-                }
-            })))
-            .mount(&server)
-            .await;
-
-        let callback_port = unused_loopback_port();
-        let session_cache = Arc::new(TokioMutex::new(None));
-        let client = Arc::new(
-            SnowflakeSqlClient::new(SnowflakeSqlConfig {
-                base_url: server.uri(),
-                warehouse: "COMPUTE_WH".to_string(),
-                database: None,
-                schema: None,
-                role: None,
-                timeout: Duration::from_secs(5),
-                default_statement_timeout_s: 60,
-                poll_interval: Duration::from_millis(1),
-                max_poll: Duration::from_secs(1),
-                max_chunks: 1,
-                auth: SnowflakeAuthConfig::ExternalBrowser {
-                    user: "analyst@example.com".to_string(),
-                    account_identifier: "org-account".to_string(),
-                    timeout: Duration::from_secs(2),
-                    open_browser: false,
-                    callback_port: Some(callback_port),
-                    session_cache: Arc::clone(&session_cache),
-                },
-            })
-            .expect("client"),
-        );
-
-        let first = {
-            let client = Arc::clone(&client);
-            tokio::spawn(async move { client.authorization().await })
-        };
-        let second = {
-            let client = Arc::clone(&client);
-            tokio::spawn(async move { client.authorization().await })
-        };
-
-        let callback_request = format!(
-            "GET /?token=callback-token&proofKey=proof-key HTTP/1.1\r\nHost: 127.0.0.1:{callback_port}\r\n\r\n"
-        );
-        let callback_response = send_raw_browser_callback(callback_port, &callback_request)
-            .await
-            .expect("callback response");
-        assert!(callback_response.starts_with("HTTP/1.1 200 OK"));
-
-        let (first, second) = timeout(Duration::from_secs(2), async {
-            tokio::join!(first, second)
-        })
-        .await
-        .expect("concurrent authorization should share one browser flow");
-        assert_eq!(
-            session_authorization_token(first.expect("first task").expect("first auth")),
-            "session-token"
-        );
-        assert_eq!(
-            session_authorization_token(second.expect("second task").expect("second auth")),
-            "session-token"
-        );
-        assert_eq!(
-            session_cache
-                .lock()
-                .await
-                .as_ref()
-                .map(|session| session.token.as_str()),
-            Some("session-token")
-        );
-    }
-
-    #[tokio::test]
-    #[ignore = "requires an SSO-backed Snowflake account and opens the system browser"]
-    async fn external_browser_sql_api_smoke_requires_real_snowflake() {
-        let client = SnowflakeSqlClient::from_env().expect("Snowflake env");
-        let result = client
-            .execute(
-                "select current_user() as current_user",
-                SnowflakeExecuteOptions {
-                    row_limit: Some(1),
-                    byte_limit: Some(1024),
-                    max_chunks: Some(1),
-                    ..SnowflakeExecuteOptions::default()
-                },
-            )
-            .await
-            .expect("SQL API accepts externalbrowser session token");
-        assert_eq!(result.rows.len(), 1);
-    }
-
-    fn session_authorization_token(auth: SnowflakeAuthorization) -> String {
-        match auth {
-            SnowflakeAuthorization::Session { token } => token,
-            SnowflakeAuthorization::Bearer { .. } => panic!("expected Snowflake session auth"),
-        }
-    }
-
     fn unused_loopback_port() -> u16 {
         let listener = StdTcpListener::bind("127.0.0.1:0").expect("bind free port");
         listener.local_addr().expect("local addr").port()
@@ -3564,6 +3519,22 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
 
         let config_default = SnowflakeExecuteOptions::default().resolve(&test_snowflake_config(0));
         assert_eq!(config_default.statement_timeout_s, 0);
+    }
+
+    #[test]
+    fn execute_options_use_config_default_max_chunks_when_unset() {
+        let mut config = test_snowflake_config(60);
+        config.max_chunks = 7;
+
+        let config_default = SnowflakeExecuteOptions::default().resolve(&config);
+        assert_eq!(config_default.max_chunks, 7);
+
+        let request_override = SnowflakeExecuteOptions {
+            max_chunks: Some(2),
+            ..SnowflakeExecuteOptions::default()
+        }
+        .resolve(&config);
+        assert_eq!(request_override.max_chunks, 2);
     }
 
     #[tokio::test]

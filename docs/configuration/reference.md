@@ -383,8 +383,8 @@ Snowflake notes:
   supported yet; use OAuth or PAT auth if a passphrase-protected key is required.
 - External browser auth is a local interactive mode. It binds a loopback callback
   listener, opens the system browser to Snowflake SSO, keeps the returned session
-  token only in process memory, and rejects CI or non-loopback streamable HTTP
-  deployments.
+  token only in process memory, rejects CI or non-loopback streamable HTTP
+  deployments, and supports Okta SAML callbacks that omit `proofKey`.
 
 Provider diagnostics are available through `execute_sql` with `preflight_only=true`
 plus optional `preflight_catalog`, `preflight_schema`, and `preflight_relation`.

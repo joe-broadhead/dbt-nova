@@ -277,9 +277,10 @@ Snowflake behavior notes:
 - For key-pair auth with a private-link or custom account URL, set both `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` and `DBT_NOVA_SNOWFLAKE_JWT_ACCOUNT`.
 - Key-pair auth supports unencrypted RSA PEM keys; encrypted private keys are not supported yet.
 - External browser auth is for local interactive use. Nova binds a `127.0.0.1`
-  callback listener, opens the system browser for Snowflake SSO, and keeps the
-  returned Snowflake session token only in memory. Use key-pair JWT, OAuth, or
-  PAT auth for CI and hosted/non-loopback streamable HTTP deployments.
+  callback listener, opens the system browser for Snowflake SSO, keeps the
+  returned Snowflake session token only in memory, and supports Okta SAML
+  callbacks that omit `proofKey`. Use key-pair JWT, OAuth, or PAT auth for CI
+  and hosted/non-loopback streamable HTTP deployments.
 
 ### Snowflake Example (Codex CLI)
 

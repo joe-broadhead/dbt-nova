@@ -105,6 +105,7 @@ impl ManifestSearch {
     pub async fn execute_sql(&self, params: &ExecuteSqlParams) -> Result<JsonValue> {
         let bounded = self.apply_sql_limits(params);
         let provider = resolve_sql_provider(self.config())?;
+        provider.validate_runtime(self.config())?;
         if bounded.preflight_only {
             return provider.preflight(&bounded).await;
         }
