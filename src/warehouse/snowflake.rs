@@ -2994,9 +2994,11 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
 
     #[test]
     fn external_browser_runtime_policy_rejects_configured_non_loopback_http_bind() {
-        let mut config = DbtNovaConfig::default();
-        config.server_transport = ServerTransport::StreamableHttp;
-        config.http_host = "0.0.0.0".to_string();
+        let config = DbtNovaConfig {
+            server_transport: ServerTransport::StreamableHttp,
+            http_host: "0.0.0.0".to_string(),
+            ..DbtNovaConfig::default()
+        };
 
         let err = validate_external_browser_runtime_for_auth_with_ci(
             &config,
@@ -3012,9 +3014,11 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
 
     #[test]
     fn external_browser_runtime_policy_allows_configured_loopback_http_bind() {
-        let mut config = DbtNovaConfig::default();
-        config.server_transport = ServerTransport::StreamableHttp;
-        config.http_host = "127.0.0.1".to_string();
+        let config = DbtNovaConfig {
+            server_transport: ServerTransport::StreamableHttp,
+            http_host: "127.0.0.1".to_string(),
+            ..DbtNovaConfig::default()
+        };
 
         validate_external_browser_runtime_for_auth_with_ci(&config, Some("browser"), false)
             .expect("externalbrowser is allowed on loopback binds");
