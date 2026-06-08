@@ -2,8 +2,10 @@
 /site
 /local
 *.log
+tests/fixtures/*.duckdb
 
 .dbt-nova
+.nova
 .fastembed_cache
 
 .env

@@ -39,6 +39,13 @@
   "tool_rate_limit_window_secs": 60,
   "tool_allowlist": "",
   "tool_denylist": "",
+  "result_profile": "standard",
+  "mcp_result_profile": "compact",
+  "mcp_default_limit": 10,
+  "mcp_max_page_size": 100,
+  "mcp_max_response_bytes": 65536,
+  "mcp_max_string_chars": 4096,
+  "mcp_include_truncation_meta": true,
   "sql_provider": "databricks",
   "sql_max_row_limit": 10000,
   "sql_max_byte_limit": 100000000,
@@ -333,17 +340,17 @@
   },
   "layer_rules": [],
   "governance_required_fields": {
+    "source": [
+      "nova.domains",
+      "nova.governance.sensitivity",
+      "nova.governance.pii",
+      "nova.governance.compliance"
+    ],
     "model": [
       "nova.domains",
       "nova.use_cases",
       "nova.synonyms",
       "nova.tier",
-      "nova.governance.sensitivity",
-      "nova.governance.pii",
-      "nova.governance.compliance"
-    ],
-    "source": [
-      "nova.domains",
       "nova.governance.sensitivity",
       "nova.governance.pii",
       "nova.governance.compliance"

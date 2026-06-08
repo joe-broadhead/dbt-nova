@@ -1,0 +1,124 @@
+version: 1
+name: agent-tokenomics-opencode
+defaults:
+  persona: analyst
+  top_k: 5
+agent_cases:
+  - id: uk_checkout_conversion_answer
+    task: >
+      For UK digital sessions (country_code = 'GB', channel = 'digital'), compute conversion rate and checkout step conversion for
+      2026-05-24 through 2026-05-30 inclusive, compared to 2025-05-25 through
+      2025-05-31 inclusive using 364-day YoY alignment. Use Nova to find the
+      canonical model and execute the aggregate against DuckDB. Finish with the
+      current values, prior-year values, absolute deltas, and YoY growth. Format
+      percentages and percentage-point deltas with one decimal place.
+    expected:
+      must_call:
+        - search_indicator
+        - execute_sql
+      must_not_call:
+        - get_context
+        - get_lineage
+        - get_sql
+        - get_test_coverage
+      ordered:
+        - before: execute_sql
+          must_have_called:
+            - search_indicator
+      selected_entities:
+        - model.tokenomics_fixture.base__amplitude_sessions
+      selected_entity_ranks:
+        - unique_id: model.tokenomics_fixture.base__amplitude_sessions
+          tool: search_indicator
+          max_rank: 3
+      called_with:
+        - tool: search_indicator
+          params:
+            detail: compact
+            group_mode: top
+            indicator_types:
+              - metric
+            include_support_signals: true
+            limit: 3
+          contains:
+            query: conversion
+      max_tool_calls: 4
+      max_distinct_tools: 4
+      max_total_response_bytes: 65536
+      max_response_bytes_by_tool:
+        search_indicator: 12000
+        get_entity: 12000
+        execute_sql: 20000
+      final_answer:
+        must_contain:
+          - GB
+          - digital
+          - conversion_rate
+          - checkout
+          - 12.0%
+          - 10.0%
+          - 60.0%
+          - 50.0%
+          - +20.0%
+        must_not_contain:
+          - 10.67
+          - 9.28
+          - 14.9
+
+  - id: metric_contract_no_execution
+    task: >
+      Which model and metric expressions should an analyst use for ecommerce
+      conversion rate and checkout step conversion? Do not execute SQL.
+    expected:
+      must_call:
+        - search_indicator
+      must_not_call:
+        - execute_sql
+        - get_context
+        - get_lineage
+        - get_sql
+      selected_entities:
+        - model.tokenomics_fixture.base__amplitude_sessions
+      selected_entity_ranks:
+        - unique_id: model.tokenomics_fixture.base__amplitude_sessions
+          tool: search_indicator
+          max_rank: 3
+      max_tool_calls: 3
+      max_distinct_tools: 2
+      max_total_response_bytes: 24000
+      max_response_bytes_by_tool:
+        search_indicator: 12000
+        get_entity: 12000
+      final_answer:
+        must_contain:
+          - base__amplitude_sessions
+          - nova_tokenomics.base__amplitude_sessions
+          - conversion_rate
+          - checkout_completion_rate
+
+  - id: broad_conversion_query_converges
+    task: >
+      Find the right canonical Nova model for UK ecommerce conversion and checkout
+      funnel analysis. No SQL execution is needed.
+    expected:
+      must_call:
+        - search_indicator
+      must_not_call:
+        - execute_sql
+        - get_context
+        - get_lineage
+        - get_sql
+      selected_entity_ranks:
+        - unique_id: model.tokenomics_fixture.base__amplitude_sessions
+          tool: search_indicator
+          max_rank: 3
+      max_tool_calls: 3
+      max_distinct_tools: 2
+      max_total_response_bytes: 24000
+      max_response_bytes_by_tool:
+        search_indicator: 12000
+      final_answer:
+        must_contain:
+          - base__amplitude_sessions
+          - nova_tokenomics.base__amplitude_sessions
+          - ecommerce

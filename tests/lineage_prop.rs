@@ -42,8 +42,8 @@ proptest! {
             package: None,
             tags: vec![],
             database_schema: None,
-            detail: DetailLevel::Standard,
-            pagination: PaginationParams { limit: 100, offset: 0 },
+            detail: Some(DetailLevel::Standard),
+            pagination: PaginationParams { limit: Some(100), offset: 0 },
 };
         let listed = rt.block_on(searcher.list_entities(&list_params)).unwrap();
         let ids: Vec<String> = listed
@@ -64,7 +64,7 @@ proptest! {
             direction: "downstream".to_string(),
             depth: Some(depth),
             resource_types: vec![],
-            detail: DetailLevel::Full,
+            detail: Some(DetailLevel::Full),
         };
 
         if let Ok(res) = rt.block_on(searcher.get_lineage(&params)) {

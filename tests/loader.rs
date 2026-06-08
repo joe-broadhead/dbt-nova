@@ -18,9 +18,9 @@ async fn loads_minimal_manifest_and_indexes() {
         package: None,
         tags: vec![],
         database_schema: None,
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         pagination: PaginationParams {
-            limit: 10,
+            limit: Some(10),
             offset: 0,
         },
     };
@@ -35,14 +35,14 @@ async fn loads_minimal_manifest_and_indexes() {
         query: "model_a".to_string(),
         resource_types: vec!["model".into()],
         persona: None,
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 5,
+            limit: Some(5),
             offset: 0,
         },
     };

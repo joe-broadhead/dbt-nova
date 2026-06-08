@@ -41,7 +41,7 @@ fn bench_lineage(c: &mut Criterion) {
         direction: "upstream".to_string(),
         depth: Some(2),
         resource_types: Vec::new(),
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
     };
 
     c.bench_function("lineage_upstream_fct_orders", |b| {

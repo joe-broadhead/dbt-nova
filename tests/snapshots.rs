@@ -70,7 +70,7 @@ async fn snapshot_get_entity_orders() {
     let params = GetEntityParams {
         id_or_name: "model.nova_test.fct__orders".into(),
         resource_type: None,
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
     };
     let result = json(searcher.get_entity_data(&params).await);
     insta::assert_json_snapshot!("get_entity_orders", result);
@@ -101,14 +101,14 @@ async fn snapshot_search_standard_models() {
         query: "int__campaign_features".into(),
         resource_types: vec!["model".into()],
         persona: None,
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 5,
+            limit: Some(5),
             offset: 0,
         },
     };
@@ -124,7 +124,7 @@ async fn snapshot_get_lineage_orders_upstream() {
         direction: "upstream".into(),
         depth: Some(2),
         resource_types: vec![],
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
     };
     let result = canonicalize_lineage_snapshot(json(searcher.get_lineage(&params).await));
     insta::assert_json_snapshot!("get_lineage_orders_upstream", result);

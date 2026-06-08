@@ -14,7 +14,7 @@ impl ManifestSearch {
     ///
     /// # Errors
     /// Returns an error if the path pattern is invalid or entities cannot be resolved.
-    #[instrument(skip(self, params), fields(tool = "find_by_path", pattern_len = params.path_pattern.len(), limit = params.pagination.limit, offset = params.pagination.offset))]
+    #[instrument(skip(self, params), fields(tool = "find_by_path", pattern_len = params.path_pattern.len(), limit = ?params.pagination.limit, offset = params.pagination.offset))]
     #[allow(clippy::too_many_lines)]
     pub async fn find_by_path(&self, params: &FindByPathParams) -> Result<JsonValue> {
         if params.path_pattern.chars().count() > self.config.search.max_path_pattern_length {
@@ -31,7 +31,7 @@ impl ManifestSearch {
         let matcher = compile_glob(pattern, true);
         let is_match = |path: &str| -> bool { glob_match_compiled(&matcher, path) };
 
-        let detail = params.detail;
+        let detail = self.detail_level(params.detail);
         let limit = self.page_limit(params.pagination.limit);
         let offset = params.pagination.offset;
 
@@ -90,7 +90,14 @@ impl ManifestSearch {
                 if detail == DetailLevel::Full {
                     result_rows.push(ManifestSearch::with_unique_id(entity_json, &unique_id));
                 } else {
-                    let mut summary = self.entity_summary(&unique_id).unwrap_or(JsonValue::Null);
+                    let archived = self.get_entity_archived(&unique_id)?;
+                    let mut summary = if detail == DetailLevel::Compact {
+                        archived.map_or(JsonValue::Null, |entity| {
+                            self.summary_for_compact(&unique_id, entity)
+                        })
+                    } else {
+                        self.entity_summary(&unique_id).unwrap_or(JsonValue::Null)
+                    };
                     if let Some(obj) = summary.as_object_mut() {
                         let output_path = if original_path.is_empty() {
                             matched_path.to_string()

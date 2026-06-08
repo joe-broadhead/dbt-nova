@@ -146,7 +146,7 @@ impl ManifestSearch {
             tool = "search_recipes",
             query_len = params.query.len(),
             topic = %params.topic,
-            limit = params.pagination.limit,
+            limit = ?params.pagination.limit,
             offset = params.pagination.offset
         )
     )]

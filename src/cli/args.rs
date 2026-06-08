@@ -444,6 +444,12 @@ pub struct EvalAgentRunArgs {
     pub provider: String,
     #[arg(
         long,
+        value_name = "MODEL",
+        help = "Model id to pass to provider presets that support --model, for example opencode/deepseek-v4-flash-free"
+    )]
+    pub provider_model: Option<String>,
+    #[arg(
+        long,
         value_name = "COMMAND",
         help = "Custom provider command to execute"
     )]

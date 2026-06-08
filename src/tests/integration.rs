@@ -10,14 +10,14 @@ async fn test_full_workflow() {
         query: "model".to_string(),
         resource_types: vec!["model".to_string()],
         persona: None,
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 5,
+            limit: Some(5),
             offset: 0,
         },
     };
@@ -68,7 +68,7 @@ async fn test_full_workflow() {
         direction: "upstream".to_string(),
         depth: Some(2),
         resource_types: vec![],
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
     };
     let lineage_result = searcher.get_lineage(&lineage_params).await.json();
     let success = lineage_result

@@ -18,14 +18,14 @@ async fn rejects_too_short_query() {
         query: "a".into(),
         resource_types: vec![],
         persona: None,
-        detail: DetailLevel::Full,
+        detail: Some(DetailLevel::Full),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 10,
+            limit: Some(10),
             offset: 0,
         },
     };
@@ -44,14 +44,14 @@ async fn rejects_offset_over_limit() {
         query: "model".into(),
         resource_types: vec![],
         persona: None,
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 10,
+            limit: Some(10),
             offset: 50_000,
         },
     };
@@ -70,14 +70,14 @@ async fn include_full_false_returns_summary() {
         query: "model".into(),
         resource_types: vec!["model".into()],
         persona: None,
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 5,
+            limit: Some(5),
             offset: 0,
         },
     };
@@ -99,14 +99,14 @@ async fn analyst_search_has_high_signal_persona_payload() {
         query: "perfect model".into(),
         resource_types: vec!["model".into()],
         persona: Some("analyst".into()),
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 3,
+            limit: Some(3),
             offset: 0,
         },
     };
@@ -155,14 +155,14 @@ async fn analyst_key_dimensions_excludes_metric_value_columns() {
         query: "country device period checkout step 1".into(),
         resource_types: vec!["model".into()],
         persona: Some("analyst".into()),
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 3,
+            limit: Some(3),
             offset: 0,
         },
     };
@@ -219,17 +219,17 @@ async fn analyst_key_dimensions_excludes_metric_value_columns() {
 async fn search_respects_resource_type_filter_after_hybrid_fusion() {
     let searcher = load_fixture("perfect_model.json").unwrap();
     let unfiltered = SearchParams {
-        query: "model_level_test".into(),
+        query: "perfect_model".into(),
         resource_types: vec![],
         persona: Some("engineer".into()),
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 10,
+            limit: Some(10),
             offset: 0,
         },
     };
@@ -260,6 +260,13 @@ async fn search_respects_resource_type_filter_after_hybrid_fusion() {
             .all(|row| row.get("resource_type").and_then(|v| v.as_str()) == Some("model")),
         "model-filtered query should return only models"
     );
+    assert_eq!(
+        filtered_result
+            .get("total_available")
+            .and_then(|value| value.as_u64()),
+        Some(filtered_rows.len() as u64),
+        "total_available should count the filtered result set"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -269,14 +276,14 @@ async fn engineer_search_has_impact_focused_payload() {
         query: "campaign features rollup".into(),
         resource_types: vec!["model".into()],
         persona: Some("engineer".into()),
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 3,
+            limit: Some(3),
             offset: 0,
         },
     };
@@ -356,14 +363,14 @@ async fn engineer_payload_does_not_flag_docs_gap_when_coverage_is_100pct() {
         query: "perfect model".into(),
         resource_types: vec!["model".into()],
         persona: Some("engineer".into()),
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 3,
+            limit: Some(3),
             offset: 0,
         },
     };
@@ -405,14 +412,14 @@ async fn governance_search_has_policy_payload() {
         query: "referring domain test".into(),
         resource_types: vec![],
         persona: Some("governance".into()),
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 5,
+            limit: Some(5),
             offset: 0,
         },
     };
@@ -498,14 +505,14 @@ async fn governance_payload_docs_gate_matches_100pct_coverage() {
         query: "perfect model".into(),
         resource_types: vec!["model".into()],
         persona: Some("governance".into()),
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 3,
+            limit: Some(3),
             offset: 0,
         },
     };

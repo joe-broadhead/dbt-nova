@@ -32,6 +32,7 @@ Use this prompt when needed:
    - provenance or trust audit
 2. Look for a recipe first only when the request is for the recurring deliverable itself.
 3. Resolve indicators directly, one requested indicator at a time.
+   - Use domain-specific query terms and compact indicator search defaults.
 4. Choose one execution entity from the top shared parent, not isolated indicator rows.
    - If the requested indicators do not share a credible parent, do not force a synthetic combined query.
 5. Confirm the compact semantic contract on that entity.
@@ -77,6 +78,23 @@ If two candidates tie, prefer the one with clearer definitions and fewer assumpt
 
 Use direct KPI resolution first.
 Use supporting discovery only when the ask is not yet KPI-shaped.
+
+Low-token KPI discovery defaults:
+- `search_indicator` with `limit: 3`
+- `detail: compact`
+- `group_mode: top`
+- `indicator_types: ["metric"]` for rate, conversion, funnel, or ratio questions unless you are explicitly searching for raw measures
+- `include_support_signals: true` when the question includes filter values
+- `include_support_signals: false` only when definitions and parent evidence are already clear and no filter-value mapping is needed
+
+When a metric row returns an `expression`, use that expression as the contract
+for SQL. Do not replace it with a similarly named measure or a guessed
+numerator/denominator.
+
+When compact indicator rows include `relation_name`, `grain`, and metric
+`expression`, treat them as sufficient execution evidence. Do not spend a tool
+call on `DESCRIBE`, `information_schema`, or full context unless execution
+actually fails because the contract is incomplete.
 
 ## Contract check rule
 
@@ -146,7 +164,7 @@ Every final answer must include:
 - selected execution entity
 - selected grain
 - selected time field
-- selected filter fields and validated values
+- selected filter fields and explicit validated values, including coded values such as `country_code = 'GB'`
 - comparison basis and exact comparison period when applicable
 - recipe id/query names when used, or a concise calculation-method summary when direct execution was used
 - exact execution blocker if warehouse execution could not complete

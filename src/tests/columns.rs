@@ -120,7 +120,7 @@ async fn test_column_inventory_lists_all_columns_with_context() {
             semantic_types: vec![],
             annotated_only: false,
             pagination: PaginationParams {
-                limit: 50,
+                limit: Some(50),
                 offset: 0,
             },
         })
@@ -171,7 +171,7 @@ async fn test_column_inventory_filters_annotated_dimension_columns() {
             semantic_types: vec![],
             annotated_only: true,
             pagination: PaginationParams {
-                limit: 50,
+                limit: Some(50),
                 offset: 0,
             },
         })
@@ -200,7 +200,7 @@ async fn test_search_columns_matches_example_values() {
             roles: vec![],
             semantic_types: vec![],
             pagination: PaginationParams {
-                limit: 10,
+                limit: Some(10),
                 offset: 0,
             },
             min_score: None,
@@ -234,7 +234,7 @@ async fn test_search_columns_matches_synonyms() {
             roles: vec![],
             semantic_types: vec![],
             pagination: PaginationParams {
-                limit: 10,
+                limit: Some(10),
                 offset: 0,
             },
             min_score: None,

@@ -94,7 +94,7 @@ Every final answer must include:
 - selected execution entity
 - selected grain
 - selected time field
-- selected filter field(s) and validated value(s)
+- selected filter field(s) and explicit validated value(s), including coded values such as `country_code = 'GB'`
 - comparison basis and exact prior period when a comparison is included
 - recipe id/query names when a recipe was used, or a concise calculation-method summary when direct execution was used
 - any trust caveat that materially affects interpretation

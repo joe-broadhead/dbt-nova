@@ -13,7 +13,7 @@ async fn test_get_undocumented_models() {
         include_columns: false,
         include_full: false,
         pagination: PaginationParams {
-            limit: 50,
+            limit: Some(50),
             offset: 0,
         },
     };
@@ -59,7 +59,7 @@ async fn test_get_undocumented_with_columns() {
         include_columns: true,
         include_full: false,
         pagination: PaginationParams {
-            limit: 50,
+            limit: Some(50),
             offset: 0,
         },
     };
@@ -110,7 +110,7 @@ async fn test_get_undocumented_respects_limit() {
         include_columns: false,
         include_full: false,
         pagination: PaginationParams {
-            limit: 3,
+            limit: Some(3),
             offset: 0,
         },
     };
@@ -133,7 +133,7 @@ async fn test_get_undocumented_invalid_resource_type() {
         include_columns: false,
         include_full: false,
         pagination: PaginationParams {
-            limit: 50,
+            limit: Some(50),
             offset: 0,
         },
     };
@@ -160,7 +160,7 @@ async fn test_get_undocumented_include_full() {
         include_columns: false,
         include_full: true,
         pagination: PaginationParams {
-            limit: 5,
+            limit: Some(5),
             offset: 0,
         },
     };
@@ -188,7 +188,7 @@ async fn test_get_undocumented_sources() {
         include_columns: true,
         include_full: false,
         pagination: PaginationParams {
-            limit: 20,
+            limit: Some(20),
             offset: 0,
         },
     };

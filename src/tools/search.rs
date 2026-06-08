@@ -22,7 +22,7 @@ use crate::manifest::tantivy_search::{SearchHit, SearchRequest, SearchScope, Tan
 use crate::manifest::vector_search::embedding_text_from_archived;
 use crate::params::{
     ColumnInventoryParams, DetailLevel, IndicatorInventoryParams, ListEntitiesParams,
-    SearchColumnsParams, SearchIndicatorParams, SearchParams,
+    ParentGroupMode, SearchColumnsParams, SearchIndicatorParams, SearchParams,
 };
 use crate::responses::{SearchResponse, SuccessResponse};
 use crate::utils::{SearchPersona, has_query_syntax, tokenize_alnum_lowercase};
@@ -34,12 +34,12 @@ impl ManifestSearch {
     /// # Errors
     /// Returns an error if the query is invalid or search execution fails.
     #[allow(clippy::too_many_lines)]
-    #[instrument(skip(self, params), fields(tool = "search", query_len = params.query.len(), limit = params.pagination.limit, offset = params.pagination.offset, fuzzy = params.fuzzy))]
+    #[instrument(skip(self, params), fields(tool = "search", query_len = params.query.len(), limit = ?params.pagination.limit, offset = params.pagination.offset, fuzzy = params.fuzzy))]
     pub async fn search(&self, params: &SearchParams) -> Result<JsonValue> {
         debug!(
             query = %params.query,
             resource_types = ?params.resource_types,
-            limit = params.pagination.limit,
+            limit = ?params.pagination.limit,
             offset = params.pagination.offset,
             fuzzy = params.fuzzy,
             include_highlights = params.include_highlights,
@@ -71,7 +71,7 @@ impl ManifestSearch {
 
         let limit = self.page_limit(params.pagination.limit);
 
-        let detail = params.detail;
+        let detail = self.detail_level(params.detail);
         let persona = params
             .persona
             .as_deref()
@@ -223,19 +223,28 @@ impl ManifestSearch {
         let total_hits = fused_hits.len();
         let mut candidates: Vec<SearchCandidate<'_>> = Vec::with_capacity(total_hits);
         let mut prev_score: Option<f32> = None;
+        let mut score_cutoff_active = false;
+        let mut total_available = 0usize;
         for (id, base_score) in fused_hits {
-            if let Some(previous) = prev_score
-                && base_score < previous * 0.01
-                && candidates.len() >= base_limit
-            {
-                break;
+            if !score_cutoff_active {
+                if let Some(previous) = prev_score
+                    && base_score < previous * 0.01
+                    && candidates.len() >= base_limit
+                {
+                    score_cutoff_active = true;
+                } else {
+                    prev_score = Some(base_score);
+                }
             }
-            prev_score = Some(base_score);
             let entity = self.get_entity_archived(&id)?;
             if !resource_type_allowed_for_search(
                 entity.and_then(ArchivedEntity::resource_type_str),
                 allowed_resource_types.as_ref(),
             ) {
+                continue;
+            }
+            total_available += 1;
+            if score_cutoff_active {
                 continue;
             }
             let support_signals = match entity {
@@ -283,8 +292,8 @@ impl ManifestSearch {
             Vec::new()
         };
 
-        let start = params.pagination.offset.min(candidates.len());
-        let end = (start + limit).min(candidates.len());
+        let start = params.pagination.offset.min(total_available);
+        let end = (start + limit).min(total_available);
 
         let mut results: Vec<JsonValue> = Vec::new();
         for candidate in candidates.into_iter().skip(start).take(end - start) {
@@ -321,6 +330,29 @@ impl ManifestSearch {
                     }
                     results.push(entity_json);
                 }
+            } else if detail == DetailLevel::Compact {
+                if let Some(entity) = candidate.entity {
+                    let mut summary = self.summary_for_compact(&candidate.unique_id, entity);
+                    if let Some(obj) = summary.as_object_mut() {
+                        obj.insert("score".to_string(), JsonValue::from(candidate.score));
+                        if let Some(highlights) = highlight_value {
+                            obj.insert("highlights".to_string(), highlights);
+                        }
+                        if let Some(support_signals) = candidate.support_signals {
+                            obj.insert(
+                                "support_signals".to_string(),
+                                serde_json::to_value(support_signals).unwrap_or(JsonValue::Null),
+                            );
+                        }
+                        if let Some(explain) = candidate.explain {
+                            obj.insert(
+                                "explain".to_string(),
+                                serde_json::to_value(explain).unwrap_or(JsonValue::Null),
+                            );
+                        }
+                    }
+                    results.push(summary);
+                }
             } else {
                 let mut summary = self.summary_from_archived(
                     &candidate.unique_id,
@@ -351,7 +383,6 @@ impl ManifestSearch {
         }
 
         let count = results.len();
-        let total_available = total_hits;
         let mut response =
             SearchResponse::new(results, count, persona_label).with_total(total_available);
         let truncated = total_available > end;
@@ -387,7 +418,7 @@ impl ManifestSearch {
     ///
     /// # Errors
     /// Returns an error if the query is invalid or indicator filtering is invalid.
-    #[instrument(skip(self, params), fields(tool = "search_indicator", query_len = params.query.len(), limit = params.pagination.limit, offset = params.pagination.offset))]
+    #[instrument(skip(self, params), fields(tool = "search_indicator", query_len = params.query.len(), limit = ?params.pagination.limit, offset = params.pagination.offset))]
     pub async fn search_indicator(&self, params: &SearchIndicatorParams) -> Result<JsonValue> {
         let (tokens, query_has_syntax, resource_filter, indicator_filter, persona) =
             self.prepare_indicator_search(params)?;
@@ -407,7 +438,7 @@ impl ManifestSearch {
     ///
     /// # Errors
     /// Returns an error if indicator filtering is invalid or pagination exceeds configured limits.
-    #[instrument(skip(self, params), fields(tool = "indicator_inventory", limit = params.pagination.limit, offset = params.pagination.offset))]
+    #[instrument(skip(self, params), fields(tool = "indicator_inventory", limit = ?params.pagination.limit, offset = params.pagination.offset))]
     pub async fn indicator_inventory(
         &self,
         params: &IndicatorInventoryParams,
@@ -450,7 +481,7 @@ impl ManifestSearch {
     ///
     /// # Errors
     /// Returns an error if the query is invalid, filters are invalid, or pagination exceeds configured limits.
-    #[instrument(skip(self, params), fields(tool = "search_columns", query_len = params.query.len(), limit = params.pagination.limit, offset = params.pagination.offset))]
+    #[instrument(skip(self, params), fields(tool = "search_columns", query_len = params.query.len(), limit = ?params.pagination.limit, offset = params.pagination.offset))]
     pub async fn search_columns(&self, params: &SearchColumnsParams) -> Result<JsonValue> {
         if params.query.chars().count() > self.config.search.max_query_length {
             return Err(DbtNovaError::InvalidParams(format!(
@@ -511,7 +542,7 @@ impl ManifestSearch {
     ///
     /// # Errors
     /// Returns an error if filters are invalid or pagination exceeds configured limits.
-    #[instrument(skip(self, params), fields(tool = "column_inventory", limit = params.pagination.limit, offset = params.pagination.offset))]
+    #[instrument(skip(self, params), fields(tool = "column_inventory", limit = ?params.pagination.limit, offset = params.pagination.offset))]
     pub async fn column_inventory(&self, params: &ColumnInventoryParams) -> Result<JsonValue> {
         if params.pagination.offset > self.config.search.max_offset {
             return Err(DbtNovaError::InvalidParams(format!(
@@ -673,22 +704,23 @@ impl ManifestSearch {
                 }),
             )
         });
-        let parent_groups = build_indicator_parent_groups(
+        let mut parent_groups = build_indicator_parent_groups(
             &rows,
             &self.config.search.indicator_ranking,
             &self.config.search.metadata_support,
         );
+        parent_groups = filter_indicator_parent_groups(parent_groups, params);
         let total_available = rows.len();
         let limit = self.page_limit(params.pagination.limit);
         let start = params.pagination.offset.min(rows.len());
         let end = (start + limit).min(rows.len());
+        let detail = self.detail_level(params.detail);
         let results: Vec<JsonValue> = rows
             .into_iter()
             .skip(start)
             .take(end.saturating_sub(start))
-            .map(serde_json::to_value)
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|error| DbtNovaError::ServerError(error.to_string()))?;
+            .map(|row| indicator_row_value(row, detail, params.include_support_signals))
+            .collect();
 
         let count = results.len();
         let mut response = SearchResponse::new(results, count, persona.as_str().to_string())
@@ -698,10 +730,13 @@ impl ManifestSearch {
         }
         let mut response_json = serde_json::to_value(response)?;
         if let Some(obj) = response_json.as_object_mut() {
-            obj.insert(
-                "parent_groups".to_string(),
-                serde_json::to_value(parent_groups)?,
-            );
+            if params.group_mode.unwrap_or_default() != ParentGroupMode::None {
+                let mut value = serde_json::to_value(parent_groups)?;
+                if !params.include_support_signals {
+                    strip_support_signals(&mut value);
+                }
+                obj.insert("parent_groups".to_string(), value);
+            }
             if let Some(explain) = explain_payload {
                 obj.insert("explain".to_string(), serde_json::to_value(explain)?);
             }
@@ -721,9 +756,9 @@ impl ManifestSearch {
             query: params.query.clone(),
             resource_types: params.resource_types.clone(),
             persona: Some(persona.as_str().to_string()),
-            detail: DetailLevel::Standard,
+            detail: Some(DetailLevel::Standard),
             pagination: crate::params::PaginationParams {
-                limit: fetch_limit,
+                limit: Some(fetch_limit),
                 offset: 0,
             },
             min_score: None,
@@ -1667,7 +1702,7 @@ impl ManifestSearch {
     ///
     /// # Errors
     /// Returns an error if manifest access fails.
-    #[instrument(skip(self, params), fields(tool = "list_entities", resource_type = %params.resource_type, limit = params.pagination.limit, offset = params.pagination.offset))]
+    #[instrument(skip(self, params), fields(tool = "list_entities", resource_type = %params.resource_type, limit = ?params.pagination.limit, offset = params.pagination.offset))]
     #[allow(clippy::too_many_lines)]
     pub async fn list_entities(&self, params: &ListEntitiesParams) -> Result<JsonValue> {
         let resource_type_key = self.normalize_resource_type_key(&params.resource_type)?;
@@ -1750,7 +1785,7 @@ impl ManifestSearch {
             }
         }
 
-        let detail = params.detail;
+        let detail = self.detail_level(params.detail);
         let limit = self.page_limit(params.pagination.limit);
         let mut total = 0usize;
         let mut skipped = 0usize;
@@ -1774,12 +1809,18 @@ impl ManifestSearch {
                 continue;
             }
 
-            if detail == DetailLevel::Full {
-                if let Some(entity) = self.get_entity_archived(id)? {
-                    results.push(ManifestSearch::with_unique_id(entity.to_json_value(), id));
+            if let Some(entity) = self.get_entity_archived(id)? {
+                match detail {
+                    DetailLevel::Full => {
+                        results.push(ManifestSearch::with_unique_id(entity.to_json_value(), id));
+                    }
+                    DetailLevel::Compact => {
+                        results.push(self.summary_for_compact(id, entity));
+                    }
+                    DetailLevel::Standard => {
+                        results.push(self.summary_for_standard(id, entity));
+                    }
                 }
-            } else if let Ok(summary) = self.entity_summary(id) {
-                results.push(summary);
             }
         }
 
@@ -4311,6 +4352,54 @@ fn build_indicator_parent_groups(
     }
 
     groups
+}
+
+fn filter_indicator_parent_groups(
+    mut groups: Vec<IndicatorParentGroup>,
+    params: &SearchIndicatorParams,
+) -> Vec<IndicatorParentGroup> {
+    let max_groups = match params.group_mode.unwrap_or_default() {
+        ParentGroupMode::None => 0,
+        ParentGroupMode::Top => params.max_parent_groups.unwrap_or(1).min(1),
+        ParentGroupMode::All => params.max_parent_groups.unwrap_or(groups.len()),
+    };
+    groups.truncate(max_groups);
+    groups
+}
+
+fn indicator_row_value(
+    row: IndicatorSearchRow,
+    detail: DetailLevel,
+    include_support_signals: bool,
+) -> JsonValue {
+    let mut value = serde_json::to_value(row).unwrap_or(JsonValue::Null);
+    if let Some(obj) = value.as_object_mut() {
+        if detail == DetailLevel::Compact {
+            obj.remove("description");
+            obj.remove("explain");
+        }
+        if !include_support_signals {
+            obj.remove("support_signals");
+        }
+    }
+    value
+}
+
+fn strip_support_signals(value: &mut JsonValue) {
+    match value {
+        JsonValue::Object(obj) => {
+            obj.remove("support_signals");
+            for child in obj.values_mut() {
+                strip_support_signals(child);
+            }
+        }
+        JsonValue::Array(items) => {
+            for item in items {
+                strip_support_signals(item);
+            }
+        }
+        JsonValue::Null | JsonValue::Bool(_) | JsonValue::Number(_) | JsonValue::String(_) => {}
+    }
 }
 
 fn indicator_row_key(row: &IndicatorSearchRow) -> String {

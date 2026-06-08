@@ -48,7 +48,7 @@ impl ManifestSearch {
     ///
     /// # Errors
     /// Returns an error if the focus entity cannot be resolved or pagination exceeds configured limits.
-    #[instrument(skip(self, params), fields(tool = "find_entity_overlap", limit = params.pagination.limit, offset = params.pagination.offset))]
+    #[instrument(skip(self, params), fields(tool = "find_entity_overlap", limit = ?params.pagination.limit, offset = params.pagination.offset))]
     pub async fn find_entity_overlap(&self, params: &FindEntityOverlapParams) -> Result<JsonValue> {
         if params.pagination.offset > self.config.search.max_offset {
             return Err(DbtNovaError::InvalidParams(format!(
@@ -92,7 +92,7 @@ impl ManifestSearch {
     ///
     /// # Errors
     /// Returns an error if pagination exceeds configured limits.
-    #[instrument(skip(self, params), fields(tool = "modelling_consistency_report", limit = params.pagination.limit, offset = params.pagination.offset))]
+    #[instrument(skip(self, params), fields(tool = "modelling_consistency_report", limit = ?params.pagination.limit, offset = params.pagination.offset))]
     pub async fn modelling_consistency_report(
         &self,
         params: &ModellingConsistencyReportParams,

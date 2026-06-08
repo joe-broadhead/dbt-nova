@@ -17,22 +17,13 @@ pub fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
 #[serde(default)]
 pub struct PaginationParams {
-    /// Maximum results
-    pub limit: usize,
+    /// Maximum results. Omit or pass 0 to use the configured default limit.
+    pub limit: Option<usize>,
     /// Pagination offset
     pub offset: usize,
-}
-
-impl Default for PaginationParams {
-    fn default() -> Self {
-        Self {
-            limit: DEFAULT_LIMIT,
-            offset: 0,
-        }
-    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
@@ -60,9 +51,23 @@ impl Default for ContextLimits {
 #[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum DetailLevel {
+    Compact,
     #[default]
     Standard,
     Full,
+}
+
+/// Parent-group output for indicator search responses.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ParentGroupMode {
+    /// Do not include parent_groups.
+    None,
+    /// Include only the highest-signal parent group.
+    Top,
+    /// Include all parent groups up to configured or requested caps.
+    #[default]
+    All,
 }
 
 /// Parameters for the search tool.
@@ -79,9 +84,9 @@ pub struct SearchParams {
     /// Optional search persona: "analyst", "engineer", "governance"
     #[serde(default)]
     pub persona: Option<String>,
-    /// Response detail level: standard (summary) or full (entire entity)
+    /// Response detail level: compact, standard, or full. Omit to use the active result profile.
     #[serde(default)]
-    pub detail: DetailLevel,
+    pub detail: Option<DetailLevel>,
     #[serde(default, flatten)]
     pub pagination: PaginationParams,
     /// Minimum relevance score threshold (0.0+, default: no threshold). Higher values return only the most relevant results.
@@ -102,7 +107,7 @@ pub struct SearchParams {
 }
 
 /// Parameters for the search_indicator tool.
-#[derive(Debug, Deserialize, JsonSchema, Default)]
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct SearchIndicatorParams {
     /// Search query - resolves Nova measures and metrics by name, synonym, field, description, or expression.
     #[serde(default)]
@@ -118,12 +123,42 @@ pub struct SearchIndicatorParams {
     pub persona: Option<String>,
     #[serde(default, flatten)]
     pub pagination: PaginationParams,
+    /// Response detail level: compact, standard, or full. Omit to use the active result profile.
+    #[serde(default)]
+    pub detail: Option<DetailLevel>,
+    /// Parent-group output: none, top, or all. Omit to use the active transport default.
+    #[serde(default)]
+    pub group_mode: Option<ParentGroupMode>,
+    /// Optional cap for parent_groups when group_mode is top or all.
+    #[serde(default)]
+    pub max_parent_groups: Option<usize>,
+    /// Include support signal details in indicator rows and parent groups.
+    #[serde(default = "default_true")]
+    pub include_support_signals: bool,
     /// Minimum relevance score threshold (0.0+, default: no threshold).
     #[serde(default)]
     pub min_score: Option<f32>,
     /// Include deterministic ranking/debug explanations in the response (default: false)
     #[serde(default)]
     pub explain: bool,
+}
+
+impl Default for SearchIndicatorParams {
+    fn default() -> Self {
+        Self {
+            query: String::new(),
+            resource_types: Vec::new(),
+            indicator_types: Vec::new(),
+            persona: None,
+            pagination: PaginationParams::default(),
+            detail: None,
+            group_mode: None,
+            max_parent_groups: None,
+            include_support_signals: true,
+            min_score: None,
+            explain: false,
+        }
+    }
 }
 
 /// Parameters for the indicator_inventory tool.
@@ -235,12 +270,13 @@ pub struct ModellingConsistencyReportParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetEntityParams {
     /// Unique ID (e.g., "model.package.name") or entity name
+    #[serde(alias = "unique_id")]
     pub id_or_name: String,
     /// Optional: specify resource_type to disambiguate when using name
     pub resource_type: Option<String>,
-    /// Response detail level: standard (summary) or full (entire entity)
+    /// Response detail level: compact, standard, or full. Omit to use the active result profile.
     #[serde(default)]
-    pub detail: DetailLevel,
+    pub detail: Option<DetailLevel>,
 }
 
 /// Parameters for the list_entities tool.
@@ -255,9 +291,9 @@ pub struct ListEntitiesParams {
     pub tags: Vec<String>,
     /// Filter by database.schema pattern
     pub database_schema: Option<String>,
-    /// Response detail level: standard (summary) or full (entire entity)
+    /// Response detail level: compact, standard, or full. Omit to use the active result profile.
     #[serde(default)]
-    pub detail: DetailLevel,
+    pub detail: Option<DetailLevel>,
     #[serde(default, flatten)]
     pub pagination: PaginationParams,
 }
@@ -370,9 +406,9 @@ pub struct GetLineageParams {
     /// Filter results by resource types
     #[serde(default)]
     pub resource_types: Vec<String>,
-    /// Response detail level: standard (summary) or full (entire entity)
+    /// Response detail level: compact, standard, or full. Omit to use the active result profile.
     #[serde(default)]
-    pub detail: DetailLevel,
+    pub detail: Option<DetailLevel>,
 }
 
 /// Parameters for the get_sql tool.
@@ -457,9 +493,9 @@ pub struct GetTestCoverageParams {
 pub struct BatchGetParams {
     /// List of unique IDs to retrieve
     pub unique_ids: Vec<String>,
-    /// Response detail level: standard (summary) or full (entire entity)
+    /// Response detail level: compact, standard, or full. Omit to use the active result profile.
     #[serde(default)]
-    pub detail: DetailLevel,
+    pub detail: Option<DetailLevel>,
 }
 
 /// Parameters for the find_by_path tool.
@@ -470,9 +506,9 @@ pub struct FindByPathParams {
     /// Filter by resource types (empty = all types)
     #[serde(default)]
     pub resource_types: Vec<String>,
-    /// Response detail level: standard (summary) or full (entire entity)
+    /// Response detail level: compact, standard, or full. Omit to use the active result profile.
     #[serde(default)]
-    pub detail: DetailLevel,
+    pub detail: Option<DetailLevel>,
     #[serde(default, flatten)]
     pub pagination: PaginationParams,
 }
@@ -627,7 +663,7 @@ pub struct ReloadManifestParams {
 pub struct ExecuteSqlParams {
     /// SQL statement to execute.
     /// Optional when `preflight_only=true`.
-    #[serde(default)]
+    #[serde(default, alias = "sql")]
     pub statement: String,
     /// Optional override for Databricks warehouse id or http path
     pub warehouse_id: Option<String>,
@@ -670,4 +706,27 @@ pub struct ExecuteSqlParams {
     /// Max chunks to fetch when fetch_all_chunks is true
     #[serde(default)]
     pub max_chunks: Option<usize>,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{ExecuteSqlParams, GetEntityParams};
+
+    #[test]
+    fn get_entity_accepts_unique_id_alias() {
+        let params: GetEntityParams =
+            serde_json::from_value(json!({"unique_id": "model.pkg.orders"})).expect("params");
+
+        assert_eq!(params.id_or_name, "model.pkg.orders");
+    }
+
+    #[test]
+    fn execute_sql_accepts_sql_alias() {
+        let params: ExecuteSqlParams =
+            serde_json::from_value(json!({"sql": "select 1"})).expect("params");
+
+        assert_eq!(params.statement, "select 1");
+    }
 }

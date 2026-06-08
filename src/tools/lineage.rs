@@ -52,8 +52,15 @@ impl ManifestSearch {
             ));
         }
         let max_results = self.config.lineage_max_results.max(1);
+        let detail = self.detail_level(params.detail);
         let cache_key = if self.config.search.lineage_cache_size > 0 {
-            Some(lineage_cache_key(&root_id, params, max_depth, max_results))
+            Some(lineage_cache_key(
+                &root_id,
+                params,
+                detail,
+                max_depth,
+                max_results,
+            ))
         } else {
             None
         };
@@ -134,21 +141,31 @@ impl ManifestSearch {
 
         let mut results: Vec<JsonValue> = Vec::with_capacity(result.len());
         for id in &result {
-            if params.detail == DetailLevel::Full {
-                let mut entity = self.get_entity_archived(id)?.map_or(
-                    JsonValue::Null,
-                    crate::manifest::entity::ArchivedEntity::to_json_value,
-                );
-                ManifestSearch::insert_unique_id(&mut entity, id);
-                results.push(entity);
-            } else if let Ok(summary) = self.entity_summary(id) {
-                results.push(summary);
-            } else {
-                results.push(serde_json::json!({
-                    "unique_id": id,
-                    "name": null,
-                    "resource_type": null
-                }));
+            match detail {
+                DetailLevel::Full => {
+                    let mut entity = self.get_entity_archived(id)?.map_or(
+                        JsonValue::Null,
+                        crate::manifest::entity::ArchivedEntity::to_json_value,
+                    );
+                    ManifestSearch::insert_unique_id(&mut entity, id);
+                    results.push(entity);
+                }
+                DetailLevel::Compact => {
+                    if let Some(entity) = self.get_entity_archived(id)? {
+                        results.push(self.summary_for_compact(id, entity));
+                    }
+                }
+                DetailLevel::Standard => {
+                    if let Ok(summary) = self.entity_summary(id) {
+                        results.push(summary);
+                    } else {
+                        results.push(serde_json::json!({
+                            "unique_id": id,
+                            "name": null,
+                            "resource_type": null
+                        }));
+                    }
+                }
             }
         }
 
@@ -207,7 +224,7 @@ impl ManifestSearch {
             direction: "downstream".to_string(),
             depth: None,
             resource_types: vec![],
-            detail: DetailLevel::Standard,
+            detail: Some(DetailLevel::Standard),
         };
 
         let downstream_result = self.get_lineage(&lineage_params).await?;
@@ -247,12 +264,14 @@ impl ManifestSearch {
 fn lineage_cache_key(
     unique_id: &str,
     params: &GetLineageParams,
+    detail: DetailLevel,
     depth: usize,
     max_results: usize,
 ) -> String {
     let mut resource_types = params.resource_types.clone();
     resource_types.sort();
-    let detail = match params.detail {
+    let detail = match detail {
+        DetailLevel::Compact => "compact",
         DetailLevel::Standard => "standard",
         DetailLevel::Full => "full",
     };

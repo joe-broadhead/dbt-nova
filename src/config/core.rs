@@ -6,6 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use blake3;
 
 use crate::error::{DbtNovaError, Result};
+use crate::params::DetailLevel;
 use crate::tools::catalog::MCP_TOOL_NAMES;
 
 use super::column_lineage::ColumnLineageConfig;
@@ -132,6 +133,40 @@ impl ServerTransport {
     }
 }
 
+/// Default result shaping profile for tools that support `detail`.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultProfile {
+    /// Compact agent-first contract.
+    Compact,
+    /// Standard summary contract.
+    #[default]
+    Standard,
+    /// Full entity payloads when the tool supports them.
+    Full,
+}
+
+impl ResultProfile {
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "compact" => Some(Self::Compact),
+            "standard" => Some(Self::Standard),
+            "full" => Some(Self::Full),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn detail_level(self) -> DetailLevel {
+        match self {
+            Self::Compact => DetailLevel::Compact,
+            Self::Standard => DetailLevel::Standard,
+            Self::Full => DetailLevel::Full,
+        }
+    }
+}
+
 /// Configuration for the dbt-nova server.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
@@ -220,6 +255,20 @@ pub struct DbtNovaConfig {
     pub tool_allowlist: String,
     /// Optional tool denylist (comma-separated exact MCP tool names)
     pub tool_denylist: String,
+    /// Default result profile for non-MCP tool calls when detail is omitted
+    pub result_profile: ResultProfile,
+    /// Default result profile for MCP tool calls when detail is omitted
+    pub mcp_result_profile: ResultProfile,
+    /// Default MCP result limit when limit is omitted or 0
+    pub mcp_default_limit: usize,
+    /// Maximum MCP result page size before core search caps are applied (0 disables MCP-specific cap)
+    pub mcp_max_page_size: usize,
+    /// Maximum serialized MCP tool response bytes (0 disables central response budgeting)
+    pub mcp_max_response_bytes: usize,
+    /// Maximum characters retained for long strings when MCP response budgeting truncates
+    pub mcp_max_string_chars: usize,
+    /// Include `_nova_result_meta` on MCP responses when the central budget pass runs
+    pub mcp_include_truncation_meta: bool,
     /// SQL provider for `execute_sql` (default: "databricks")
     pub sql_provider: String,
     /// Max rows allowed for `execute_sql` requests (0 = unlimited)
@@ -310,6 +359,13 @@ impl Default for DbtNovaConfig {
             tool_rate_limit_window_secs: 60,
             tool_allowlist: String::new(),
             tool_denylist: String::new(),
+            result_profile: ResultProfile::Standard,
+            mcp_result_profile: ResultProfile::Compact,
+            mcp_default_limit: 10,
+            mcp_max_page_size: 100,
+            mcp_max_response_bytes: 65_536,
+            mcp_max_string_chars: 4_096,
+            mcp_include_truncation_meta: true,
             sql_provider: DEFAULT_SQL_PROVIDER.to_string(),
             sql_max_row_limit: 10_000,
             sql_max_byte_limit: 100_000_000,
@@ -598,6 +654,7 @@ impl DbtNovaConfig {
                 "reranker enabled but reranker_model is empty".to_string(),
             ));
         }
+        self.validate_result_profile_config()?;
 
         if self.entity_cache_size == 0 {
             warn!("entity cache disabled (entity_cache_size=0)");
@@ -683,6 +740,15 @@ impl DbtNovaConfig {
 
         self.validate_tool_filters()?;
 
+        Ok(())
+    }
+
+    fn validate_result_profile_config(&self) -> Result<()> {
+        if self.mcp_default_limit == 0 {
+            return Err(DbtNovaError::InvalidParams(
+                "mcp_default_limit must be greater than 0".to_string(),
+            ));
+        }
         Ok(())
     }
 
@@ -1011,6 +1077,43 @@ impl DbtNovaConfig {
         if let Some(value) = env_string("DBT_NOVA_TOOL_DENYLIST") {
             self.tool_denylist = value;
         }
+        if let Some(value) = env_string("DBT_NOVA_RESULT_PROFILE") {
+            if let Some(profile) = ResultProfile::parse(&value) {
+                self.result_profile = profile;
+            } else {
+                self.env_errors.push(format!(
+                    "Invalid DBT_NOVA_RESULT_PROFILE value '{value}'; expected compact|standard|full"
+                ));
+            }
+        }
+        if let Some(value) = env_string("DBT_NOVA_MCP_RESULT_PROFILE") {
+            if let Some(profile) = ResultProfile::parse(&value) {
+                self.mcp_result_profile = profile;
+            } else {
+                self.env_errors.push(format!(
+                    "Invalid DBT_NOVA_MCP_RESULT_PROFILE value '{value}'; expected compact|standard|full"
+                ));
+            }
+        }
+        if let Some(v) = parse_usize("DBT_NOVA_MCP_DEFAULT_LIMIT")
+            && v > 0
+        {
+            self.mcp_default_limit = v;
+        }
+        if let Some(v) = parse_usize("DBT_NOVA_MCP_MAX_PAGE_SIZE") {
+            self.mcp_max_page_size = v;
+        }
+        if let Some(v) = parse_usize("DBT_NOVA_MCP_MAX_RESPONSE_BYTES") {
+            self.mcp_max_response_bytes = v;
+        }
+        if let Some(v) = parse_usize("DBT_NOVA_MCP_MAX_STRING_CHARS")
+            && v > 0
+        {
+            self.mcp_max_string_chars = v;
+        }
+        if let Some(v) = parse_bool("DBT_NOVA_MCP_INCLUDE_TRUNCATION_META") {
+            self.mcp_include_truncation_meta = v;
+        }
         set_string("DBT_NOVA_SQL_PROVIDER", &mut self.sql_provider);
         if let Some(v) = parse_u64("DBT_NOVA_SQL_MAX_ROW_LIMIT") {
             self.sql_max_row_limit = v;
@@ -1233,7 +1336,7 @@ fn http_host_is_non_loopback(host: &str) -> bool {
 mod tests {
     use std::sync::{LazyLock, Mutex};
 
-    use super::{ArtifactFetchPolicy, DbtNovaConfig, ServerTransport};
+    use super::{ArtifactFetchPolicy, DbtNovaConfig, ResultProfile, ServerTransport};
 
     static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -1280,6 +1383,27 @@ mod tests {
             Some(ServerTransport::StreamableHttp)
         );
         assert_eq!(ServerTransport::parse("unknown"), None);
+    }
+
+    #[test]
+    fn default_result_profiles_keep_cli_standard_and_mcp_compact() {
+        let config = DbtNovaConfig::default();
+
+        assert_eq!(config.result_profile, ResultProfile::Standard);
+        assert_eq!(config.mcp_result_profile, ResultProfile::Compact);
+        assert_eq!(config.mcp_default_limit, 10);
+        assert_eq!(config.mcp_max_page_size, 100);
+    }
+
+    #[test]
+    fn validate_rejects_zero_mcp_default_limit() {
+        let mut config = base_config();
+        config.mcp_default_limit = 0;
+
+        let error = config
+            .validate()
+            .expect_err("zero MCP default limit should fail validation");
+        assert!(error.to_string().contains("mcp_default_limit"));
     }
 
     #[test]
@@ -1730,6 +1854,89 @@ mod tests {
             config.parsed_tool_denylist(),
             vec!["execute_sql".to_string()]
         );
+    }
+
+    #[test]
+    fn from_env_reads_result_profile_settings() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [
+            ("DBT_NOVA_RESULT_PROFILE", Some("full")),
+            ("DBT_NOVA_MCP_RESULT_PROFILE", Some("standard")),
+            ("DBT_NOVA_MCP_DEFAULT_LIMIT", Some("7")),
+            ("DBT_NOVA_MCP_MAX_PAGE_SIZE", Some("25")),
+        ];
+        let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let config = DbtNovaConfig::from_env();
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        assert_eq!(config.result_profile, ResultProfile::Full);
+        assert_eq!(config.mcp_result_profile, ResultProfile::Standard);
+        assert_eq!(config.mcp_default_limit, 7);
+        assert_eq!(config.mcp_max_page_size, 25);
+    }
+
+    #[test]
+    fn from_env_records_invalid_result_profile() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [("DBT_NOVA_RESULT_PROFILE", Some("verbose"))];
+        let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let config = DbtNovaConfig::from_env();
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let error = config
+            .validate()
+            .expect_err("invalid result profile should fail validation");
+        assert!(error.to_string().contains("DBT_NOVA_RESULT_PROFILE"));
     }
 
     #[test]

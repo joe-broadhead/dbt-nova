@@ -10,7 +10,7 @@ async fn test_search_recipes_discovers_fixture_recipes() {
         topic: String::new(),
         include_queries: true,
         pagination: PaginationParams {
-            limit: 20,
+            limit: Some(20),
             offset: 0,
         },
     };
@@ -84,7 +84,7 @@ async fn test_search_recipes_query_filter_applies_to_query_names() {
         topic: String::new(),
         include_queries: false,
         pagination: PaginationParams {
-            limit: 20,
+            limit: Some(20),
             offset: 0,
         },
     };
@@ -118,7 +118,7 @@ async fn test_search_recipes_query_filter_normalizes_spaces_and_separators() {
         topic: String::new(),
         include_queries: false,
         pagination: PaginationParams {
-            limit: 20,
+            limit: Some(20),
             offset: 0,
         },
     };
@@ -152,7 +152,7 @@ async fn test_search_recipes_topic_filter_normalizes_spaces_and_separators() {
         topic: "marketplace weekly".to_string(),
         include_queries: false,
         pagination: PaginationParams {
-            limit: 20,
+            limit: Some(20),
             offset: 0,
         },
     };
@@ -264,7 +264,7 @@ async fn test_search_recipes_discovers_manifest_driven_recipes() {
         topic: String::from("marketplace"),
         include_queries: true,
         pagination: PaginationParams {
-            limit: 20,
+            limit: Some(20),
             offset: 0,
         },
     };

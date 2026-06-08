@@ -16,7 +16,7 @@ Required:
 Common:
 - `resource_types` (array)
 - `persona` (string)
-- `detail` (`standard` | `full`)
+- `detail` (`compact` | `standard` | `full`)
 - `include_highlights` (bool)
 - `include_sql` (bool, only for `detail=full`)
 - `explain` (bool, includes deterministic ranking/debug breakdowns)
@@ -72,8 +72,13 @@ Common:
 
 **detail** controls result payload:
 
-- `standard`: persona‑optimized summary (default)
+- `compact`: identity, relation, grain, primary-key, and compact Nova indicator names
+- `standard`: persona‑optimized summary
 - `full`: complete entity payload (same as `get_entity` with `detail: "full"`)
+
+When omitted, `detail` uses the active result profile: `standard` for CLI/tool
+calls by default and `compact` for MCP by default. Explicit `detail` values
+override the profile.
 
 When `detail: "standard"` and the query matches Nova measures or metrics, search
 results include a compact `semantic_preview` with the matched measure/metric
@@ -95,11 +100,15 @@ Common:
 - `indicator_types` (`["metric"]`, `["measure"]`, or omitted for both)
 - `resource_types` (filters parent entity types)
 - `persona` (string, defaults to `analyst`)
+- `detail` (`compact` | `standard` | `full`; defaults from the active result profile)
+- `group_mode` (`none` | `top` | `all`; defaults to `top` for omitted MCP compact-profile calls, otherwise `all`)
+- `max_parent_groups` (integer cap for `parent_groups`)
+- `include_support_signals` (bool, default: `true`)
 - `explain` (bool, includes deterministic ranking/debug breakdowns)
 - `limit`, `offset`, `min_score`
 
 ```json
-{"name":"search_indicator","arguments":{"query":"average order value","indicator_types":["metric"],"resource_types":["model"],"persona":"analyst","limit":5,"offset":0}}
+{"name":"search_indicator","arguments":{"query":"average order value","indicator_types":["metric"],"resource_types":["model"],"persona":"analyst","detail":"compact","group_mode":"top","limit":5,"offset":0}}
 ```
 
 Example response shape:
@@ -136,6 +145,11 @@ When `explain: true`, indicator rows include a per-row `explain` block with the
 base semantic match score, parent coherence, RRF contribution, reranker bonus,
 and final score. The top-level response also includes an `explain` payload with
 query tokens, retrievers used, and the active indicator-ranking config snapshot.
+
+For agent workflows, prefer `detail: "compact"`, `group_mode: "top"`, and a
+small `limit` such as `3`. `group_mode: "all"` preserves richer parent-group
+diagnostics for debugging, while `group_mode: "none"` removes `parent_groups`
+entirely.
 
 ### `indicator_inventory`
 List Nova measures and metrics deterministically, with parent execution context.
@@ -306,9 +320,12 @@ Required:
 
 Optional:
 - `resource_type`
-- `detail` (`standard` | `full`, default: `standard`)
+- `detail` (`compact` | `standard` | `full`; defaults from the active result profile)
 
 Notes:
+- `unique_id` is accepted as a compatibility alias for `id_or_name`.
+- `detail: "compact"` includes identity, relation, grain, primary-key columns,
+  domains, canonical status, and capped metric/measure names.
 - `detail: "standard"` includes `nova_summary` (metrics/measures/grain/domains) and `primary_key_columns` when available.
 
 ```json
@@ -323,7 +340,7 @@ Required:
 
 Optional:
 - `package`, `tags`, `database_schema`
-- `detail`, `limit`, `offset`
+- `detail` (`compact` | `standard` | `full`), `limit`, `offset`
 
 ```json
 {"name":"list_entities","arguments":{"resource_type":"model","tags":["pii"],"detail":"standard","limit":100}}
@@ -336,7 +353,7 @@ Required:
 - `unique_ids`
 
 Optional:
-- `detail`
+- `detail` (`compact` | `standard` | `full`)
 
 ```json
 {"name":"batch_get_entities","arguments":{"unique_ids":["model.a","model.b"],"detail":"full"}}
@@ -349,7 +366,7 @@ Required:
 - `path_pattern`
 
 Optional:
-- `resource_types`, `detail`, `limit`, `offset`
+- `resource_types`, `detail` (`compact` | `standard` | `full`), `limit`, `offset`
 
 ```json
 {"name":"find_by_path","arguments":{"path_pattern":"models/staging/**","resource_types":["model"],"detail":"standard"}}
@@ -685,6 +702,7 @@ Required:
 - `statement` (optional when `preflight_only=true`)
 
 Optional:
+- `sql` - Compatibility alias for `statement`
 - `row_limit` - Maximum rows to return
 - `byte_limit` - Maximum bytes to return
 - `wait_timeout_s` - Timeout for query completion

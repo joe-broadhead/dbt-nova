@@ -45,14 +45,14 @@ fn search_params(query: &str, persona: Option<&str>) -> SearchParams {
         query: query.to_string(),
         resource_types: vec![],
         persona: persona.map(str::to_string),
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 10,
+            limit: Some(10),
             offset: 0,
         },
     }
@@ -114,14 +114,14 @@ async fn test_search_by_name() {
         query: "campaign".to_string(),
         resource_types: vec![],
         persona: None,
-        detail: DetailLevel::Full,
+        detail: Some(DetailLevel::Full),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 10,
+            limit: Some(10),
             offset: 0,
         },
     };
@@ -149,14 +149,14 @@ async fn test_search_filter_by_resource_type() {
         query: "int".to_string(),
         resource_types: vec!["model".to_string()],
         persona: None,
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 50,
+            limit: Some(50),
             offset: 0,
         },
     };
@@ -186,14 +186,14 @@ async fn test_search_include_full_false() {
         query: "base".to_string(),
         resource_types: vec![],
         persona: None,
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 5,
+            limit: Some(5),
             offset: 0,
         },
     };
@@ -215,14 +215,14 @@ async fn test_search_respects_limit() {
         query: "model".to_string(),
         resource_types: vec![],
         persona: None,
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 5,
+            limit: Some(5),
             offset: 0,
         },
     };
@@ -240,14 +240,14 @@ async fn test_search_invalid_query() {
         query: "x".to_string(), // Too short
         resource_types: vec![],
         persona: None,
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 10,
+            limit: Some(10),
             offset: 0,
         },
     };
@@ -269,14 +269,14 @@ async fn test_search_query_too_long() {
         query: long_query,
         resource_types: vec![],
         persona: None,
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 10,
+            limit: Some(10),
             offset: 0,
         },
     };
@@ -301,9 +301,9 @@ async fn test_find_by_path_pattern_too_long() {
     let params = FindByPathParams {
         path_pattern: long_pattern,
         resource_types: vec![],
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         pagination: PaginationParams {
-            limit: 10,
+            limit: Some(10),
             offset: 0,
         },
     };
@@ -557,11 +557,12 @@ async fn test_search_indicator_returns_canonical_measure_context() {
             indicator_types: vec!["measure".to_string()],
             persona: Some("analyst".to_string()),
             pagination: PaginationParams {
-                limit: 10,
+                limit: Some(10),
                 offset: 0,
             },
             min_score: None,
             explain: false,
+            ..Default::default()
         })
         .await
         .json();
@@ -600,11 +601,12 @@ async fn test_search_indicator_prefers_generic_canonical_measure_for_generic_que
             indicator_types: vec!["measure".to_string()],
             persona: Some("analyst".to_string()),
             pagination: PaginationParams {
-                limit: 10,
+                limit: Some(10),
                 offset: 0,
             },
             min_score: None,
             explain: false,
+            ..Default::default()
         })
         .await
         .json();
@@ -654,11 +656,12 @@ async fn test_search_indicator_returns_metric_with_parent_grain() {
             indicator_types: vec!["metric".to_string()],
             persona: Some("analyst".to_string()),
             pagination: PaginationParams {
-                limit: 10,
+                limit: Some(10),
                 offset: 0,
             },
             min_score: None,
             explain: false,
+            ..Default::default()
         })
         .await
         .json();
@@ -695,7 +698,7 @@ async fn test_indicator_inventory_lists_indicator_context_deterministically() {
             indicator_types: vec!["measure".to_string()],
             canonical_only: false,
             pagination: PaginationParams {
-                limit: 10,
+                limit: Some(10),
                 offset: 0,
             },
         })
@@ -737,7 +740,7 @@ async fn test_indicator_inventory_canonical_only_filters_noncanonical_rows() {
             indicator_types: vec![],
             canonical_only: true,
             pagination: PaginationParams {
-                limit: 20,
+                limit: Some(20),
                 offset: 0,
             },
         })
@@ -869,11 +872,12 @@ async fn test_search_indicator_explain_surfaces_rrf_breakdown() {
             indicator_types: vec!["measure".to_string()],
             persona: Some("analyst".to_string()),
             pagination: PaginationParams {
-                limit: 10,
+                limit: Some(10),
                 offset: 0,
             },
             min_score: None,
             explain: true,
+            ..Default::default()
         })
         .await
         .json();
@@ -978,14 +982,14 @@ async fn test_governance_persona_gate_policy_supports_advisory_mode() {
         query,
         resource_types: vec!["model".to_string()],
         persona: Some("governance".to_string()),
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 10,
+            limit: Some(10),
             offset: 0,
         },
     };
@@ -1059,14 +1063,14 @@ async fn test_governance_persona_gate_policy_can_force_pass_band() {
         query: "model".to_string(),
         resource_types: vec!["model".to_string()],
         persona: Some("governance".to_string()),
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 1,
+            limit: Some(1),
             offset: 0,
         },
     };

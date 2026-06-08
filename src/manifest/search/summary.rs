@@ -37,6 +37,7 @@ struct SummaryProfile {
     include_nova_role: bool,
     include_nova_measures: bool,
     include_nova_metrics: bool,
+    include_nova_compact_summary: bool,
     include_nova_governance: bool,
     include_nova_tier: bool,
     include_nova_canonical: bool,
@@ -75,6 +76,7 @@ impl SummaryProfile {
             include_nova_role: false,
             include_nova_measures: false,
             include_nova_metrics: false,
+            include_nova_compact_summary: false,
             include_nova_governance: false,
             include_nova_tier: false,
             include_nova_canonical: false,
@@ -184,6 +186,21 @@ impl SummaryProfile {
             ..Self::empty()
         }
     }
+
+    fn compact() -> Self {
+        Self {
+            include_package_name: true,
+            include_alias: true,
+            include_relation_fields: true,
+            include_original_file_path: true,
+            include_primary_key_columns: true,
+            include_nova_domains: true,
+            include_nova_tier: true,
+            include_nova_canonical: true,
+            include_nova_compact_summary: true,
+            ..Self::empty()
+        }
+    }
 }
 
 impl ManifestSearch {
@@ -214,6 +231,14 @@ impl ManifestSearch {
         entity: &ArchivedEntity,
     ) -> JsonValue {
         self.build_summary(unique_id, entity, SummaryProfile::standard(), None, None)
+    }
+
+    pub(crate) fn summary_for_compact(
+        &self,
+        unique_id: &str,
+        entity: &ArchivedEntity,
+    ) -> JsonValue {
+        self.build_summary(unique_id, entity, SummaryProfile::compact(), None, None)
     }
 
     #[allow(clippy::too_many_lines)]
@@ -375,6 +400,7 @@ impl ManifestSearch {
             || profile.include_nova_role
             || profile.include_nova_measures
             || profile.include_nova_metrics
+            || profile.include_nova_compact_summary
             || profile.include_nova_governance
             || profile.include_nova_tier
             || profile.include_nova_canonical
@@ -425,6 +451,11 @@ impl ManifestSearch {
                 if !metrics.is_empty() {
                     obj.insert("nova_metrics".to_string(), JsonValue::Array(metrics));
                 }
+            }
+            if profile.include_nova_compact_summary
+                && let Some(nova_summary) = Self::nova_compact_summary(nova)
+            {
+                obj.insert("nova_summary".to_string(), nova_summary);
             }
             if profile.include_nova_summary
                 && let Some(nova_summary) = Self::nova_summary(nova)

@@ -10,15 +10,18 @@ use super::{
     contains_rank_assertion, context_contains_assertion, context_field_equals_assertion,
     json_has_field_path, read_tool_trace, recipe_rank_assertion, run_eval_command,
     run_validate_command, safe_path_segment, score_agent_expectations, selected_agent_cases,
-    selected_bridge_cases, tool_success_assertion, validate_suite,
+    selected_bridge_cases, tool_response_budget_assertion, tool_success_assertion, validate_suite,
 };
 
 #[test]
 fn field_path_checks_nested_response() {
-    let response = json!({"data": {"name": "orders", "nested": {"value": 1}}});
+    let response =
+        json!({"data": {"name": "orders", "nested": {"value": 1}}, "rows": [{"name": "first"}]});
     assert!(json_has_field_path(&response, "data.name"));
     assert!(json_has_field_path(&response, "data.nested.value"));
+    assert!(json_has_field_path(&response, "rows.0.name"));
     assert!(!json_has_field_path(&response, "data.missing"));
+    assert!(!json_has_field_path(&response, "rows.1.name"));
 }
 
 #[test]
@@ -68,6 +71,7 @@ fn agent_expectations_score_tool_trace() {
             must_contain: vec!["gmv".to_string()],
             must_not_contain: vec!["secret".to_string()],
         }),
+        ..AgentExpected::default()
     };
     let trace = vec![
         json!({
@@ -151,6 +155,43 @@ fn called_with_matches_safe_params() {
 }
 
 #[test]
+fn response_byte_budgets_require_trace_telemetry() {
+    let expected = AgentExpected {
+        max_total_response_bytes: Some(1024),
+        max_response_bytes_by_tool: BTreeMap::from([(String::from("search"), 1024)]),
+        ..AgentExpected::default()
+    };
+    let trace = vec![json!({"tool": "search"})];
+    let results = score_agent_expectations(&expected, &trace, "");
+
+    assert_eq!(results.len(), 2);
+    assert!(results.iter().all(|result| result.status == "fail"));
+    assert!(
+        results
+            .iter()
+            .all(|result| result.message.contains("missing response byte telemetry"))
+    );
+}
+
+#[test]
+fn response_byte_budgets_score_observed_bytes() {
+    let expected = AgentExpected {
+        max_total_response_bytes: Some(100),
+        max_response_bytes_by_tool: BTreeMap::from([(String::from("search"), 40)]),
+        ..AgentExpected::default()
+    };
+    let trace = vec![
+        json!({"tool": "search", "response_bytes": 41}),
+        json!({"tool": "execute_sql", "response_bytes": 20}),
+    ];
+    let results = score_agent_expectations(&expected, &trace, "");
+
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0].status, "pass");
+    assert_eq!(results[1].status, "fail");
+}
+
+#[test]
 fn context_value_assertions_check_equals_and_contains() {
     let response = json!({
         "data": {
@@ -191,6 +232,27 @@ fn tool_success_fails_explicit_false_response() {
 }
 
 #[test]
+fn tool_response_budget_checks_bytes_and_shape() {
+    let response = json!({
+        "data": [{"parent_unique_id": "model.pkg.orders", "expression": "count(*)"}],
+        "parent_groups": [{"parent_unique_id": "model.pkg.orders"}]
+    });
+
+    let result = tool_response_budget_assertion(
+        "search_indicator",
+        &response,
+        512,
+        &[
+            "data.0.parent_unique_id".to_string(),
+            "data.0.expression".to_string(),
+        ],
+        &["parent_groups.1".to_string()],
+    );
+
+    assert_eq!(result.status, "pass");
+}
+
+#[test]
 fn case_report_counts_statuses() {
     let report = EvalCaseReport::new(
         "case".to_string(),
@@ -212,13 +274,15 @@ fn read_tool_trace_reports_parse_errors() {
     let file = NamedTempFile::new().expect("temp file");
     std::fs::write(
         file.path(),
-        "{\"tool\":\"search\"}\nnot-json\n{\"tool\":\"get_context\"}\n",
+        "{\"tool\":\"search\",\"tool_call_index\":0}\nnot-json\n{\"tool\":\"get_context\",\"tool_call_index\":0}\n",
     )
     .expect("write trace");
     let trace = read_tool_trace(file.path());
     assert_eq!(trace.rows.len(), 2);
     assert_eq!(trace.errors.len(), 1);
     assert!(!trace.missing);
+    assert_eq!(trace.rows[0]["tool_call_index"], json!(0));
+    assert_eq!(trace.rows[1]["tool_call_index"], json!(1));
 }
 
 #[test]
