@@ -45,21 +45,24 @@ generic week boundary.
 2. Run `dbt-nova eval validate --suite <suite>`.
 3. Run one bridge case with `dbt-nova eval run --suite <suite> --case-id <id>`.
 4. Fix expected ids, ranks, or metadata gaps.
-5. Run the full bridge suite.
+5. Run the full bridge suite with `--telemetry` when the suite will be readiness-gated.
 6. Add agent cases for workflows where tool-use behavior matters.
-7. Run one agent case with the target provider.
+7. Run one agent case with the target provider for iteration; run the full agent suite with `--telemetry` before checking a readiness gate.
 8. Inspect `tool-calls/<case>.jsonl`, `stdout.log`, and `report.md`.
 9. Set the CI gate only after the suite has at least one clean local run.
+10. For high-stakes, launch-readiness, or recurring production suites, check `dbt-nova eval gate <suite_name> --json` after full-suite telemetry-producing runs.
 
 ## Gate Selection
 
 Use strict gates for smoke suites:
 - `--fail-under 1.0`
+- `gate.threshold: 1.0`
 - small number of high-signal cases
 - should run after every manifest build
 
 Use realistic gates for broad regression suites:
 - `--fail-under 0.90` to `0.98`
+- `gate.threshold: 0.90` to `0.98`
 - larger coverage across domains
 - should run on a schedule or before metadata releases
 
