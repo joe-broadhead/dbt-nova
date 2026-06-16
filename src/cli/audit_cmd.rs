@@ -52,6 +52,7 @@ struct AuditSummary {
     advisory_fail_count: usize,
     pass_count: usize,
     no_target: bool,
+    no_target_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -308,16 +309,11 @@ async fn build_metadata_audit_report(
     args: &MetadataAuditArgs,
 ) -> Result<MetadataAuditReport> {
     let selected_entity_ids = select_entity_ids(search, inputs)?;
-    if selected_entity_ids.is_empty() && args.fail_on_no_targets {
-        return Err(DbtNovaError::ServerError(
-            "metadata audit selected no entities".to_string(),
-        ));
-    }
-
     let mut entities = Vec::with_capacity(selected_entity_ids.len());
     let mut required_fail_count = 0usize;
     let mut advisory_fail_count = 0usize;
     let mut pass_count = 0usize;
+    let no_target_reason = no_target_reason(inputs, args.fail_on_no_targets, &selected_entity_ids);
 
     for unique_id in &selected_entity_ids {
         let entity = search
@@ -352,6 +348,16 @@ async fn build_metadata_audit_report(
         None
     };
 
+    if selected_entity_ids.is_empty() {
+        if args.fail_on_no_targets {
+            required_fail_count = 1;
+        } else if inputs.selection_mode == MetadataAuditSelectionModeArg::Changed
+            && changed_files_include_dbt_model_or_schema_paths(&inputs.changed_files)
+        {
+            advisory_fail_count = 1;
+        }
+    }
+
     let gate_status = match (required_fail_count, advisory_fail_count) {
         (required, _) if required > 0 => "fail",
         (0, advisory) if advisory > 0 => "advisory",
@@ -375,6 +381,7 @@ async fn build_metadata_audit_report(
             advisory_fail_count,
             pass_count,
             no_target: selected_entity_ids.is_empty(),
+            no_target_reason,
         },
         project_summary,
         entities,
@@ -570,6 +577,42 @@ fn entity_matches_changed_files(entity: &ArchivedEntity, changed_files: &BTreeSe
             .is_some_and(|path| changed_files.contains(&path))
 }
 
+fn no_target_reason(
+    inputs: &AuditInputs,
+    fail_on_no_targets: bool,
+    selected_entity_ids: &[String],
+) -> Option<String> {
+    if !selected_entity_ids.is_empty() {
+        return None;
+    }
+    if inputs.selection_mode == MetadataAuditSelectionModeArg::Changed
+        && changed_files_include_dbt_model_or_schema_paths(&inputs.changed_files)
+    {
+        return Some(
+            "selection_mode=changed found dbt model/schema-looking changed files, but none matched manifest original_file_path or patch_path"
+                .to_string(),
+        );
+    }
+    fail_on_no_targets.then(|| "metadata audit selected no entities".to_string())
+}
+
+fn changed_files_include_dbt_model_or_schema_paths(changed_files: &[String]) -> bool {
+    changed_files
+        .iter()
+        .map(|path| normalize_path(path))
+        .any(|path| {
+            let extension = Path::new(&path)
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .map(str::to_ascii_lowercase);
+            let is_model_path = path.starts_with("models/");
+            let is_sql_model = is_model_path && extension.as_deref() == Some("sql");
+            let is_yaml_patch =
+                is_model_path && matches!(extension.as_deref(), Some("yml" | "yaml"));
+            is_sql_model || is_yaml_patch
+        })
+}
+
 fn patch_path_from_entity(entity: &ArchivedEntity) -> Option<String> {
     entity
         .to_json_value()
@@ -640,7 +683,7 @@ fn render_markdown_report(report: &MetadataAuditReport) -> String {
     );
 
     if report.summary.no_target {
-        out.push_str("No entities matched the selection.\n");
+        append_no_target_markdown(&mut out, report);
         return out;
     }
 
@@ -732,6 +775,13 @@ fn render_markdown_report(report: &MetadataAuditReport) -> String {
     }
 
     out
+}
+
+fn append_no_target_markdown(out: &mut String, report: &MetadataAuditReport) {
+    out.push_str("No entities matched the selection.\n");
+    if let Some(reason) = &report.summary.no_target_reason {
+        let _ = writeln!(out, "Reason: {reason}");
+    }
 }
 
 fn title_case(value: &str) -> String {
@@ -927,6 +977,109 @@ mod tests {
         assert!(entity_matches_changed_files(archived, &changed));
     }
 
+    #[tokio::test]
+    async fn changed_selection_no_target_for_model_yaml_is_advisory() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let args = MetadataAuditArgs {
+            selection_mode: MetadataAuditSelectionModeArg::Changed,
+            changed_files_json: Some("[\"models/marts/missing_model.yml\"]".to_string()),
+            manifest_path: Some(fixture_manifest_path_string()),
+            storage_instance_id: Some("audit-changed-no-target-advisory-test".to_string()),
+            cleanup_storage_on_start: true,
+            ..MetadataAuditArgs::default()
+        };
+        let inputs = super::parse_audit_inputs(&args).expect("audit inputs");
+        let load_args = crate::cli::args::ManifestLoadArgs {
+            manifest_path: args.manifest_path.clone(),
+            storage_instance_id: args.storage_instance_id.clone(),
+            cleanup_storage_on_start: args.cleanup_storage_on_start,
+            ..crate::cli::args::ManifestLoadArgs::default()
+        };
+        let mut config = build_manifest_load_config(&load_args).expect("config");
+        config.storage_dir = temp_dir.path().to_string_lossy().to_string();
+        let loaded = execute_manifest_load(config).await.expect("load");
+        let report = super::build_metadata_audit_report(&loaded.search, &inputs, &args)
+            .await
+            .expect("report");
+        assert_eq!(report.target_count, 0);
+        assert_eq!(report.gate_status, "advisory");
+        assert_eq!(report.summary.required_fail_count, 0);
+        assert_eq!(report.summary.advisory_fail_count, 1);
+        assert!(
+            report
+                .summary
+                .no_target_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("dbt model/schema-looking changed files")
+        );
+        assert!(render_markdown_report(&report).contains("Reason:"));
+    }
+
+    #[tokio::test]
+    async fn changed_selection_no_target_respects_fail_on_no_targets() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let args = MetadataAuditArgs {
+            selection_mode: MetadataAuditSelectionModeArg::Changed,
+            changed_files_json: Some("[\"models/marts/missing_model.sql\"]".to_string()),
+            manifest_path: Some(fixture_manifest_path_string()),
+            storage_instance_id: Some("audit-changed-no-target-fail-test".to_string()),
+            cleanup_storage_on_start: true,
+            fail_on_no_targets: true,
+            ..MetadataAuditArgs::default()
+        };
+        let inputs = super::parse_audit_inputs(&args).expect("audit inputs");
+        let load_args = crate::cli::args::ManifestLoadArgs {
+            manifest_path: args.manifest_path.clone(),
+            storage_instance_id: args.storage_instance_id.clone(),
+            cleanup_storage_on_start: args.cleanup_storage_on_start,
+            ..crate::cli::args::ManifestLoadArgs::default()
+        };
+        let mut config = build_manifest_load_config(&load_args).expect("config");
+        config.storage_dir = temp_dir.path().to_string_lossy().to_string();
+        let loaded = execute_manifest_load(config).await.expect("load");
+        let report = super::build_metadata_audit_report(&loaded.search, &inputs, &args)
+            .await
+            .expect("report");
+        assert_eq!(report.target_count, 0);
+        assert_eq!(report.gate_status, "fail");
+        assert_eq!(report.summary.required_fail_count, 1);
+        assert_eq!(report.summary.advisory_fail_count, 0);
+    }
+
+    #[tokio::test]
+    async fn project_selection_no_target_ignores_changed_file_advisory() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let args = MetadataAuditArgs {
+            selection_mode: MetadataAuditSelectionModeArg::Project,
+            changed_files_json: Some("[\"models/marts/missing_model.sql\"]".to_string()),
+            resource_types_json: Some("[\"model\"]".to_string()),
+            manifest_path: Some(fixture_manifest_path_string()),
+            storage_instance_id: Some("audit-project-no-target-changed-files-test".to_string()),
+            cleanup_storage_on_start: true,
+            ..MetadataAuditArgs::default()
+        };
+        let mut inputs = super::parse_audit_inputs(&args).expect("audit inputs");
+        inputs.resource_types.clear();
+        let load_args = crate::cli::args::ManifestLoadArgs {
+            manifest_path: args.manifest_path.clone(),
+            storage_instance_id: args.storage_instance_id.clone(),
+            cleanup_storage_on_start: args.cleanup_storage_on_start,
+            ..crate::cli::args::ManifestLoadArgs::default()
+        };
+        let mut config = build_manifest_load_config(&load_args).expect("config");
+        config.storage_dir = temp_dir.path().to_string_lossy().to_string();
+        let loaded = execute_manifest_load(config).await.expect("load");
+        let report = super::build_metadata_audit_report(&loaded.search, &inputs, &args)
+            .await
+            .expect("report");
+        assert_eq!(report.target_count, 0);
+        assert_eq!(report.gate_status, "pass");
+        assert_eq!(report.summary.required_fail_count, 0);
+        assert_eq!(report.summary.advisory_fail_count, 0);
+        assert_eq!(report.summary.no_target_reason, None);
+    }
+
     #[test]
     fn markdown_report_includes_gate_status() {
         let report = MetadataAuditReport {
@@ -946,6 +1099,7 @@ mod tests {
                 advisory_fail_count: 0,
                 pass_count: 0,
                 no_target: false,
+                no_target_reason: None,
             },
             project_summary: None,
             entities: vec![super::EntityAuditReport {
