@@ -36,9 +36,9 @@ async fn concurrent_searches() {
         tasks.spawn(async move {
             let params = SearchParams {
                 query: format!("model {}", i),
-                detail: DetailLevel::Standard,
+                detail: Some(DetailLevel::Standard),
                 pagination: PaginationParams {
-                    limit: 10,
+                    limit: Some(10),
                     offset: 0,
                 },
                 ..Default::default()

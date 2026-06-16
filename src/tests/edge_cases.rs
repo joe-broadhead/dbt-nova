@@ -36,7 +36,7 @@ async fn test_max_limit() {
     let params = SearchParams {
         query: "model".to_string(),
         pagination: PaginationParams {
-            limit: 10_000,
+            limit: Some(10_000),
             offset: 0,
         },
         ..Default::default()
@@ -96,7 +96,7 @@ async fn test_deeply_nested_lineage() {
         direction: "upstream".to_string(),
         depth: Some(200),
         resource_types: vec![],
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
     };
     let result = searcher.get_lineage(&params).await.json();
     let success = result
@@ -115,7 +115,7 @@ async fn test_nonexistent_entity() {
     let params = GetEntityParams {
         id_or_name: "model.fake.does_not_exist_12345".to_string(),
         resource_type: None,
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
     };
     let result = searcher.get_entity_data(&params).await.json();
     let success = result

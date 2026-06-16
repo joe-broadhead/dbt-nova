@@ -12,7 +12,7 @@ async fn test_batch_get_entities_all_found() {
     let ids: Vec<String> = models.iter().take(3).cloned().collect();
     let params = BatchGetParams {
         unique_ids: ids.clone(),
-        detail: DetailLevel::Full,
+        detail: Some(DetailLevel::Full),
     };
     let result = searcher.batch_get_entities(&params).await.json();
     let success = result
@@ -54,7 +54,7 @@ async fn test_batch_get_entities_some_not_found() {
     ids.push("also.nonexistent.abc".to_string());
     let params = BatchGetParams {
         unique_ids: ids,
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
     };
     let result = searcher.batch_get_entities(&params).await.json();
     let success = result
@@ -94,7 +94,7 @@ async fn test_batch_get_entities_include_full_false() {
     let ids: Vec<String> = models.iter().take(1).cloned().collect();
     let params = BatchGetParams {
         unique_ids: ids,
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
     };
     let result = searcher.batch_get_entities(&params).await.json();
     let entities = result
@@ -116,7 +116,7 @@ async fn test_batch_get_entities_empty_list() {
     let searcher = get_searcher();
     let params = BatchGetParams {
         unique_ids: vec![],
-        detail: DetailLevel::Full,
+        detail: Some(DetailLevel::Full),
     };
     let result = searcher.batch_get_entities(&params).await.json();
     let success = result
@@ -168,7 +168,7 @@ async fn test_batch_get_entities_over_limit_returns_error() {
 
     let params = BatchGetParams {
         unique_ids: vec![models[0].clone(), models[1].clone()],
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
     };
     let result = searcher.batch_get_entities(&params).await.json();
     let success = result

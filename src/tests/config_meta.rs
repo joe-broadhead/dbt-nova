@@ -82,14 +82,14 @@ async fn test_search_supports_config_meta_only_nova_metadata() {
             query: "revenue".to_string(),
             resource_types: vec!["model".to_string()],
             persona: None,
-            detail: DetailLevel::Standard,
+            detail: Some(DetailLevel::Standard),
             min_score: None,
             fuzzy: false,
             include_highlights: false,
             include_sql: false,
             explain: false,
             pagination: PaginationParams {
-                limit: 5,
+                limit: Some(5),
                 offset: 0,
             },
         })
@@ -112,14 +112,14 @@ async fn test_search_supports_mixed_legacy_and_config_column_nova_metadata() {
             query: "purchase_id".to_string(),
             resource_types: vec!["model".to_string()],
             persona: None,
-            detail: DetailLevel::Standard,
+            detail: Some(DetailLevel::Standard),
             min_score: None,
             fuzzy: false,
             include_highlights: false,
             include_sql: false,
             explain: false,
             pagination: PaginationParams {
-                limit: 5,
+                limit: Some(5),
                 offset: 0,
             },
         })

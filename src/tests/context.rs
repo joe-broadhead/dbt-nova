@@ -9,14 +9,14 @@ async fn test_get_context_basic() {
         query: "model".to_string(),
         resource_types: vec!["model".to_string()],
         persona: None,
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 1,
+            limit: Some(1),
             offset: 0,
         },
     };

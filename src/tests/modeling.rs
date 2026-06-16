@@ -61,7 +61,7 @@ async fn test_find_entity_overlap_surfaces_closest_order_entities() {
             resource_type: None,
             resource_types: vec!["model".to_string()],
             pagination: PaginationParams {
-                limit: 10,
+                limit: Some(10),
                 offset: 0,
             },
             min_score: None,
@@ -110,7 +110,7 @@ async fn test_modelling_consistency_report_surfaces_duplicate_indicators() {
         .modelling_consistency_report(&ModellingConsistencyReportParams {
             resource_types: vec!["model".to_string()],
             pagination: PaginationParams {
-                limit: 10,
+                limit: Some(10),
                 offset: 0,
             },
             min_score: None,
@@ -142,7 +142,7 @@ async fn test_modelling_consistency_report_applies_section_offset() {
         .modelling_consistency_report(&ModellingConsistencyReportParams {
             resource_types: vec!["model".to_string()],
             pagination: PaginationParams {
-                limit: 1,
+                limit: Some(1),
                 offset: 0,
             },
             min_score: None,
@@ -153,7 +153,7 @@ async fn test_modelling_consistency_report_applies_section_offset() {
         .modelling_consistency_report(&ModellingConsistencyReportParams {
             resource_types: vec!["model".to_string()],
             pagination: PaginationParams {
-                limit: 1,
+                limit: Some(1),
                 offset: 1,
             },
             min_score: None,

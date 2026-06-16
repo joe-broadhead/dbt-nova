@@ -17,6 +17,7 @@ use crate::manifest::semantic_cache::{self, SemanticCacheComponent};
 use crate::manifest::store::EntityStore;
 use crate::manifest::tantivy_search::TantivySearcher;
 use crate::manifest::vector_search::{Reranker, SparseSearcher, VectorSearcher};
+use crate::params::DetailLevel;
 use crate::utils::CircuitBreaker;
 use crate::utils::SearchPersona;
 
@@ -152,12 +153,12 @@ impl ManifestSearch {
         &self.config
     }
 
-    pub(crate) fn page_limit(&self, requested: usize) -> usize {
+    pub(crate) fn page_limit(&self, requested: Option<usize>) -> usize {
         let default_limit = self.config.search.default_limit.max(1);
-        let limit = if requested == 0 {
+        let limit = if requested.unwrap_or(0) == 0 {
             default_limit
         } else {
-            requested
+            requested.unwrap_or(default_limit)
         };
         let max_page_size = self.config.search.max_page_size;
         if max_page_size == 0 {
@@ -165,6 +166,10 @@ impl ManifestSearch {
         } else {
             limit.min(max_page_size)
         }
+    }
+
+    pub(crate) fn detail_level(&self, requested: Option<DetailLevel>) -> DetailLevel {
+        requested.unwrap_or_else(|| self.config.result_profile.detail_level())
     }
 
     /// Resolve an ID or name to `unique_id` values.

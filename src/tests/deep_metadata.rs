@@ -148,14 +148,14 @@ async fn test_search_returns_full_nested_meta_when_include_full() {
         query: "traffic".to_string(),
         resource_types: vec!["model".to_string()],
         persona: None,
-        detail: DetailLevel::Full,
+        detail: Some(DetailLevel::Full),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
         include_sql: false,
         explain: false,
         pagination: PaginationParams {
-            limit: 5,
+            limit: Some(5),
             offset: 0,
         },
     };

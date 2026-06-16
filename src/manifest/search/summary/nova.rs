@@ -10,6 +10,7 @@ use crate::manifest::search::{SemanticPreviewItem, match_nova_semantics};
 use super::{ManifestSearch, collect_limited_strings, path_present, truncate_str};
 
 const NOVA_SUMMARY_SYNONYM_LIMIT: usize = 5;
+const NOVA_COMPACT_INDICATOR_LIMIT: usize = 12;
 const SEMANTIC_PREVIEW_LIMIT: usize = 2;
 const SEMANTIC_PREVIEW_DESCRIPTION_LIMIT: usize = 100;
 const SEMANTIC_PREVIEW_EXPRESSION_LIMIT: usize = 140;
@@ -305,6 +306,29 @@ impl ManifestSearch {
         }
     }
 
+    pub(super) fn nova_compact_summary(nova: &ArchivedNovaMeta) -> Option<JsonValue> {
+        let mut obj = serde_json::Map::new();
+        if let Some(grain) = nova.grain.as_ref().and_then(Self::nova_grain_summary) {
+            obj.insert("grain".to_string(), grain);
+        }
+        if nova.canonical {
+            obj.insert("canonical".to_string(), JsonValue::from(true));
+        }
+        let measures = compact_measure_names(nova);
+        if !measures.is_empty() {
+            obj.insert("measures".to_string(), serde_json::json!(measures));
+        }
+        let metrics = compact_metric_names(nova);
+        if !metrics.is_empty() {
+            obj.insert("metrics".to_string(), serde_json::json!(metrics));
+        }
+        if obj.is_empty() {
+            None
+        } else {
+            Some(JsonValue::Object(obj))
+        }
+    }
+
     pub(super) fn nova_search_candidates_summary(nova: &ArchivedNovaMeta) -> Option<JsonValue> {
         let candidates = nova.search.as_ref()?.candidates.as_ref()?;
         if !candidates.has_non_default_flags() {
@@ -366,4 +390,26 @@ impl ManifestSearch {
             Some(JsonValue::Object(obj))
         }
     }
+}
+
+fn compact_measure_names(nova: &ArchivedNovaMeta) -> Vec<String> {
+    nova.measures
+        .iter()
+        .take(NOVA_COMPACT_INDICATOR_LIMIT)
+        .map(|measure| measure.name.as_str().to_string())
+        .collect()
+}
+
+fn compact_metric_names(nova: &ArchivedNovaMeta) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(metric) = nova.metric.as_ref() {
+        out.push(metric.name.as_str().to_string());
+    }
+    for metric in nova.metrics.iter() {
+        if out.len() >= NOVA_COMPACT_INDICATOR_LIMIT {
+            break;
+        }
+        out.push(metric.name.as_str().to_string());
+    }
+    out
 }

@@ -30,6 +30,7 @@ Common mappings:
 - Use `tool call` for tool-surface parity first.
 - Keep one stable manifest and storage instance for the whole session.
 - Prefer `--params-file` or `--params-json` to avoid shell-escaping mistakes.
+- Prefer `--params-file` for `execute_sql` when SQL contains quotes or newlines.
 - Treat warehouse auth failures as execution blockers, not discovery failures.
 
 ## Execution
@@ -55,9 +56,14 @@ KPI resolution:
 dbt-nova tool call search_indicator \
   --manifest-path /path/to/manifest.json \
   --storage-instance-id analyst-session \
-  --params-json '{"query":"conversion rate","indicator_types":["metric"],"resource_types":["model"],"persona":"analyst","limit":10}' \
+  --params-json '{"query":"ecommerce conversion rate checkout digital sessions","indicator_types":["metric"],"resource_types":["model"],"persona":"analyst","detail":"compact","group_mode":"top","limit":3,"include_support_signals":true}' \
   --json
 ```
+
+For rate, conversion, funnel, or ratio questions, request metric indicators
+first and copy any returned metric `expression` exactly into downstream SQL.
+If the compact indicator row includes `relation_name`, `grain`, and
+`expression`, do not run schema-inspection SQL before execution.
 
 Compact entity inspection:
 
@@ -65,7 +71,7 @@ Compact entity inspection:
 dbt-nova tool call get_entity \
   --manifest-path /path/to/manifest.json \
   --storage-instance-id analyst-session \
-  --params-json '{"id_or_name":"model.package.model_name","detail":"standard"}' \
+  --params-json '{"id_or_name":"model.package.model_name","detail":"compact"}' \
   --json
 ```
 
@@ -78,6 +84,10 @@ dbt-nova tool call execute_sql \
   --params-file /tmp/execute-sql-params.json \
   --json
 ```
+
+For multiline SQL, write JSON such as
+`{"statement":"select ...","row_limit":50}` to the params file and pass that
+file with `--params-file`.
 
 When you need exact CLI flag or payload shapes, open:
 - `docs/getting-started/cli.md`

@@ -1,0 +1,81 @@
+version: 1
+name: agent-tokenomics-bridge
+defaults:
+  persona: analyst
+  top_k: 5
+cases:
+  - id: conversion_rate_indicator_rank
+    question: Find the canonical ecommerce conversion-rate metric.
+    assertions:
+      - type: search_indicator_rank
+        query: ecommerce digital sessions conversion rate order completed
+        expected: conversion_rate
+        max_rank: 3
+        resource_types: [model]
+        indicator_types: [metric]
+
+  - id: checkout_completion_indicator_rank
+    question: Find the checkout step conversion metric.
+    assertions:
+      - type: search_indicator_rank
+        query: checkout step conversion checkout completed checkout started
+        expected: checkout_completion_rate
+        max_rank: 3
+        resource_types: [model]
+        indicator_types: [metric]
+
+  - id: search_indicator_compact_budget
+    question: Compact indicator discovery should preserve execution evidence without unrelated parent groups.
+    assertions:
+      - type: tool_response_budget
+        tool: search_indicator
+        params:
+          query: checkout completion rate order completed checkout start ecommerce sessions
+          resource_types: [model]
+          indicator_types: [metric]
+          persona: analyst
+          limit: 2
+          detail: compact
+          group_mode: top
+          include_support_signals: false
+        max_response_bytes: 12000
+        must_contain_paths:
+          - data.0.parent_unique_id
+          - data.0.expression
+          - data.0.grain.time_field
+          - parent_groups.0.parent_unique_id
+        must_not_contain_paths:
+          - parent_groups.1
+          - data.0.description
+          - data.0.explain
+          - data.0.support_signals
+
+  - id: entity_compact_contract_budget
+    question: Compact entity lookup should return enough contract to execute without full context payloads.
+    assertions:
+      - type: tool_response_budget
+        tool: get_entity
+        params:
+          id_or_name: model.tokenomics_fixture.base__amplitude_sessions
+          detail: compact
+        max_response_bytes: 12000
+        must_contain_paths:
+          - data.unique_id
+          - data.relation_name
+          - data.primary_key_columns
+          - data.nova_summary.grain.time_field
+          - data.nova_summary.metrics.0
+        must_not_contain_paths:
+          - data.description
+          - data.columns
+          - data.raw_code
+          - data.compiled_code
+
+  - id: ecommerce_parent_search_rank
+    question: Broad ecommerce conversion search should surface the canonical sessions model.
+    assertions:
+      - type: search_rank
+        query: uk ecommerce conversion checkout digital sessions
+        expected_unique_id: model.tokenomics_fixture.base__amplitude_sessions
+        max_rank: 3
+        resource_types: [model]

@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -14,6 +14,7 @@ use rmcp::{
 };
 use tracing::instrument;
 
+use crate::config::DbtNovaConfig;
 use crate::error::DbtNovaError;
 use crate::manifest::search::{ManifestSearch, ManifestSearchHandle};
 use crate::params::{
@@ -22,8 +23,9 @@ use crate::params::{
     GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams, GetLineageParams,
     GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
     GetUndocumentedParams, IndicatorInventoryParams, ListEntitiesParams,
-    ModellingConsistencyReportParams, ReloadManifestParams, RunRecipeParams, SearchColumnsParams,
-    SearchIndicatorParams, SearchParams, SearchRecipesParams, ValidateDagParams,
+    ModellingConsistencyReportParams, PaginationParams, ParentGroupMode, ReloadManifestParams,
+    RunRecipeParams, SearchColumnsParams, SearchIndicatorParams, SearchParams, SearchRecipesParams,
+    ValidateDagParams,
 };
 use crate::responses::SuccessResponse;
 use crate::server::health::build_manifest_health_payload;
@@ -107,6 +109,23 @@ impl DbtNovaServer {
             .unwrap_or_else(|ser_err| Self::serialization_error_response(&ser_err))
     }
 
+    fn serialize_budgeted_value(
+        value: serde_json::Value,
+        config: &DbtNovaConfig,
+    ) -> std::result::Result<String, serde_json::Error> {
+        Self::serialize_budgeted_value_with_pagination(value, config, None)
+    }
+
+    fn serialize_budgeted_value_with_pagination(
+        value: serde_json::Value,
+        config: &DbtNovaConfig,
+        pagination: Option<&PaginationParams>,
+    ) -> std::result::Result<String, serde_json::Error> {
+        let mut budgeted = apply_mcp_response_budget(value, config);
+        apply_mcp_next_offset_meta(&mut budgeted, config, pagination);
+        serde_json::to_string(&budgeted)
+    }
+
     fn permit_from_result(
         permit_result: Result<Option<ConcurrencyPermit>, DbtNovaError>,
     ) -> std::result::Result<Option<ConcurrencyPermit>, String> {
@@ -125,6 +144,40 @@ impl DbtNovaServer {
     where
         F: FnOnce(Arc<ManifestSearch>) -> Fut,
         Fut: Future<Output = Result<serde_json::Value, DbtNovaError>>,
+    {
+        self.handle_async_result(tool, persona, |searcher| async move {
+            f(searcher).await.map(|value| (value, None))
+        })
+        .await
+    }
+
+    async fn handle_async_paged<F, Fut>(
+        &self,
+        tool: &'static str,
+        persona: Option<&str>,
+        f: F,
+    ) -> String
+    where
+        F: FnOnce(Arc<ManifestSearch>) -> Fut,
+        Fut: Future<Output = Result<(serde_json::Value, PaginationParams), DbtNovaError>>,
+    {
+        self.handle_async_result(tool, persona, |searcher| async move {
+            f(searcher)
+                .await
+                .map(|(value, pagination)| (value, Some(pagination)))
+        })
+        .await
+    }
+
+    async fn handle_async_result<F, Fut>(
+        &self,
+        tool: &'static str,
+        persona: Option<&str>,
+        f: F,
+    ) -> String
+    where
+        F: FnOnce(Arc<ManifestSearch>) -> Fut,
+        Fut: Future<Output = Result<(serde_json::Value, Option<PaginationParams>), DbtNovaError>>,
     {
         let start = Instant::now();
         let mut success = false;
@@ -168,8 +221,13 @@ impl DbtNovaServer {
             return out;
         }
 
+        let config = searcher.config().clone();
         let out = match f(searcher).await {
-            Ok(v) => match serde_json::to_string(&v) {
+            Ok((v, pagination)) => match Self::serialize_budgeted_value_with_pagination(
+                v,
+                &config,
+                pagination.as_ref(),
+            ) {
                 Ok(out) => {
                     success = true;
                     out
@@ -191,7 +249,738 @@ impl DbtNovaServer {
         self.record_metrics(tool, persona, duration_ms, success);
         out
     }
+}
 
+fn apply_mcp_response_budget(
+    mut value: serde_json::Value,
+    config: &DbtNovaConfig,
+) -> serde_json::Value {
+    let budget = config.mcp_max_response_bytes;
+    if budget == 0 {
+        return value;
+    }
+    let initial_bytes = serialized_len(&value);
+    if initial_bytes <= budget {
+        return value;
+    }
+    let original_shape = ResponseShapeSnapshot::capture(&value);
+
+    let mut omitted_paths = Vec::new();
+    truncate_json_for_budget(
+        &mut value,
+        "$".to_string(),
+        config.mcp_max_string_chars.max(1),
+        50,
+        50,
+        &mut omitted_paths,
+    );
+    if serialized_len(&value) > budget {
+        truncate_json_for_budget(
+            &mut value,
+            "$".to_string(),
+            1024,
+            20,
+            20,
+            &mut omitted_paths,
+        );
+    }
+    if serialized_len(&value) > budget {
+        truncate_json_for_budget(&mut value, "$".to_string(), 512, 5, 5, &mut omitted_paths);
+    }
+    normalize_budgeted_response_shape(&mut value, &original_shape, !omitted_paths.is_empty());
+    finalize_mcp_budgeted_response(
+        value,
+        budget,
+        config.mcp_include_truncation_meta,
+        omitted_paths,
+        original_shape.total_count_hint,
+    )
+}
+
+fn serialized_len(value: &serde_json::Value) -> usize {
+    serde_json::to_string(value).map_or(0, |serialized| serialized.len())
+}
+
+fn attach_result_meta(
+    value: &mut serde_json::Value,
+    response_bytes: usize,
+    budget_bytes: usize,
+    truncated: bool,
+    mut omitted_paths: Vec<String>,
+    original_count: Option<u64>,
+) {
+    omitted_paths.sort();
+    omitted_paths.dedup();
+    let mut meta = serde_json::json!({
+        "response_bytes": response_bytes,
+        "budget_bytes": budget_bytes,
+        "truncated": truncated,
+        "omitted_paths": omitted_paths
+    });
+    if let Some(original_count) = original_count
+        && let Some(obj) = meta.as_object_mut()
+    {
+        obj.insert(
+            "original_count".to_string(),
+            serde_json::Value::from(original_count),
+        );
+    }
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert("_nova_result_meta".to_string(), meta);
+    }
+}
+
+fn update_result_meta_response_bytes(value: &mut serde_json::Value) {
+    let response_bytes = serialized_len(value);
+    if let Some(obj) = value.as_object_mut()
+        && let Some(meta) = obj
+            .get_mut("_nova_result_meta")
+            .and_then(serde_json::Value::as_object_mut)
+    {
+        meta.insert(
+            "response_bytes".to_string(),
+            serde_json::Value::from(response_bytes),
+        );
+    }
+}
+
+fn apply_mcp_next_offset_meta(
+    value: &mut serde_json::Value,
+    config: &DbtNovaConfig,
+    pagination: Option<&PaginationParams>,
+) {
+    if !config.mcp_include_truncation_meta {
+        return;
+    }
+    let Some(pagination) = pagination else {
+        return;
+    };
+    let total_available = value
+        .get("total_available")
+        .and_then(serde_json::Value::as_u64);
+    let count = value.get("count").and_then(serde_json::Value::as_u64);
+    let (Some(total_available), Some(count)) = (total_available, count) else {
+        return;
+    };
+    if count == 0 {
+        return;
+    }
+    let Some(offset) = u64::try_from(pagination.offset).ok() else {
+        return;
+    };
+    let next_offset = offset.saturating_add(count);
+    if next_offset >= total_available {
+        return;
+    }
+    let truncated = response_is_truncated(value);
+
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    let had_result_meta = obj.contains_key("_nova_result_meta");
+    let meta = obj
+        .entry("_nova_result_meta".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    let Some(meta) = meta.as_object_mut() else {
+        return;
+    };
+    meta.insert(
+        "next_offset".to_string(),
+        serde_json::Value::from(next_offset),
+    );
+    meta.entry("truncated".to_string())
+        .or_insert_with(|| serde_json::Value::from(truncated));
+    update_result_meta_response_bytes(value);
+    let mut refresh_response_bytes = false;
+    if config.mcp_max_response_bytes > 0
+        && serialized_len(value) > config.mcp_max_response_bytes
+        && let Some(obj) = value.as_object_mut()
+    {
+        if had_result_meta {
+            if let Some(meta) = obj
+                .get_mut("_nova_result_meta")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                meta.remove("next_offset");
+            }
+            refresh_response_bytes = true;
+        } else {
+            obj.remove("_nova_result_meta");
+        }
+    }
+    if refresh_response_bytes {
+        update_result_meta_response_bytes(value);
+    }
+}
+
+fn response_is_truncated(value: &serde_json::Value) -> bool {
+    value
+        .get("truncated")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+        || value
+            .get("_nova_result_meta")
+            .and_then(|meta| meta.get("truncated"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+}
+
+fn finalize_mcp_budgeted_response(
+    value: serde_json::Value,
+    budget: usize,
+    include_meta: bool,
+    mut omitted_paths: Vec<String>,
+    original_count: Option<u64>,
+) -> serde_json::Value {
+    if serialized_len(&value) <= budget {
+        if !include_meta {
+            return value;
+        }
+        let mut with_meta = value.clone();
+        let response_bytes = serialized_len(&with_meta);
+        attach_result_meta(
+            &mut with_meta,
+            response_bytes,
+            budget,
+            true,
+            omitted_paths.clone(),
+            original_count,
+        );
+        trim_result_meta_paths_for_budget(&mut with_meta, budget);
+        update_result_meta_response_bytes(&mut with_meta);
+        if serialized_len(&with_meta) <= budget {
+            return with_meta;
+        }
+        return value;
+    }
+
+    omitted_paths.push("$".to_string());
+    let mut fallback = compact_truncated_response(&value);
+    if include_meta {
+        let response_bytes = serialized_len(&fallback);
+        attach_result_meta(
+            &mut fallback,
+            response_bytes,
+            budget,
+            true,
+            omitted_paths,
+            original_count,
+        );
+        trim_result_meta_for_budget(&mut fallback, budget);
+        update_result_meta_response_bytes(&mut fallback);
+    }
+    fallback
+}
+
+fn trim_result_meta_paths_for_budget(value: &mut serde_json::Value, budget: usize) {
+    if serialized_len(value) <= budget {
+        return;
+    }
+    if let Some(obj) = value.as_object_mut()
+        && let Some(meta) = obj
+            .get_mut("_nova_result_meta")
+            .and_then(serde_json::Value::as_object_mut)
+    {
+        meta.insert("omitted_paths".to_string(), serde_json::json!(["$"]));
+    }
+}
+
+fn compact_truncated_response(value: &serde_json::Value) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+    if let Some(source) = value.as_object() {
+        for key in ["success", "total_available", "persona"] {
+            if let Some(child) = source.get(key) {
+                obj.insert(key.to_string(), child.clone());
+            }
+        }
+        match source.get("data") {
+            Some(serde_json::Value::Array(_)) => {
+                obj.insert("count".to_string(), serde_json::Value::from(0));
+                obj.insert("data".to_string(), serde_json::Value::Array(Vec::new()));
+            }
+            Some(serde_json::Value::Object(data)) if data.contains_key("rows") => {
+                obj.insert("count".to_string(), serde_json::Value::from(0));
+                obj.insert(
+                    "data".to_string(),
+                    serde_json::json!({
+                        "rows": [],
+                        "truncated": true
+                    }),
+                );
+            }
+            Some(serde_json::Value::Object(data)) if data_contains_collection_payload(data) => {
+                compact_collection_payload(data, &mut obj);
+            }
+            Some(serde_json::Value::Object(_)) => {
+                if let Some(count) = source.get("count") {
+                    obj.insert("count".to_string(), count.clone());
+                }
+                obj.insert("data".to_string(), serde_json::json!({"_truncated": true}));
+            }
+            Some(serde_json::Value::String(_)) => {
+                if let Some(count) = source.get("count") {
+                    obj.insert("count".to_string(), count.clone());
+                }
+                obj.insert(
+                    "data".to_string(),
+                    serde_json::Value::String("[truncated]".to_string()),
+                );
+            }
+            Some(
+                serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_),
+            )
+            | None => {
+                if let Some(count) = source.get("count") {
+                    obj.insert("count".to_string(), count.clone());
+                }
+                obj.insert("data".to_string(), serde_json::Value::Null);
+            }
+        }
+    } else {
+        obj.insert("data".to_string(), serde_json::Value::Null);
+    }
+    obj.insert("truncated".to_string(), serde_json::Value::from(true));
+    serde_json::Value::Object(obj)
+}
+
+fn data_contains_collection_payload(data: &serde_json::Map<String, serde_json::Value>) -> bool {
+    [
+        "columns",
+        "entities",
+        "lineage",
+        "edges",
+        "not_found",
+        "undocumented_columns",
+    ]
+    .iter()
+    .any(|key| data.get(*key).is_some_and(serde_json::Value::is_array))
+}
+
+fn compact_collection_payload(
+    data: &serde_json::Map<String, serde_json::Value>,
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+) {
+    let mut compact = serde_json::Map::new();
+
+    for key in [
+        "columns",
+        "entities",
+        "lineage",
+        "edges",
+        "not_found",
+        "undocumented_columns",
+    ] {
+        if data.get(key).is_some_and(serde_json::Value::is_array) {
+            compact.insert(key.to_string(), serde_json::Value::Array(Vec::new()));
+        }
+    }
+    for key in ["found_count", "not_found_count"] {
+        if data.contains_key(key) {
+            compact.insert(key.to_string(), serde_json::Value::from(0));
+        }
+    }
+    if let Some(summary) = data
+        .get("summary")
+        .and_then(serde_json::Value::as_object)
+        .filter(|summary| {
+            ["entities_returned", "columns_returned", "items_returned"]
+                .iter()
+                .any(|key| summary.contains_key(*key))
+        })
+    {
+        let mut compact_summary = summary.clone();
+        for key in ["entities_returned", "columns_returned", "items_returned"] {
+            if compact_summary.contains_key(key) {
+                compact_summary.insert(key.to_string(), serde_json::Value::from(0));
+            }
+        }
+        compact.insert(
+            "summary".to_string(),
+            serde_json::Value::Object(compact_summary),
+        );
+    }
+
+    compact.insert("truncated".to_string(), serde_json::Value::from(true));
+    obj.insert("count".to_string(), serde_json::Value::from(0));
+    obj.insert("data".to_string(), serde_json::Value::Object(compact));
+}
+
+fn trim_result_meta_for_budget(value: &mut serde_json::Value, budget: usize) {
+    trim_result_meta_paths_for_budget(value, budget);
+    if serialized_len(value) <= budget {
+        return;
+    }
+    if let Some(obj) = value.as_object_mut() {
+        obj.retain(|key, _| key == "_nova_result_meta");
+    }
+}
+
+fn result_count_hint(value: &serde_json::Value) -> Option<u64> {
+    value
+        .get("total_available")
+        .or_else(|| value.get("count"))
+        .and_then(serde_json::Value::as_u64)
+}
+
+struct ResponseShapeSnapshot {
+    count: Option<u64>,
+    total_count_hint: Option<u64>,
+    data_rows_len: Option<u64>,
+    data_object_array_lens: BTreeMap<String, u64>,
+}
+
+impl ResponseShapeSnapshot {
+    fn capture(value: &serde_json::Value) -> Self {
+        let mut data_object_array_lens = BTreeMap::new();
+        let data_rows_len = value
+            .get("data")
+            .and_then(serde_json::Value::as_object)
+            .and_then(|data| {
+                for (key, child) in data {
+                    if let Some(len) = array_len(Some(child)) {
+                        data_object_array_lens.insert(key.clone(), len);
+                    }
+                }
+                data.get("rows")
+            })
+            .and_then(|rows| array_len(Some(rows)));
+
+        Self {
+            count: value.get("count").and_then(serde_json::Value::as_u64),
+            total_count_hint: result_count_hint(value),
+            data_rows_len,
+            data_object_array_lens,
+        }
+    }
+
+    fn original_data_array_len(&self, key: &str) -> Option<u64> {
+        self.data_object_array_lens.get(key).copied()
+    }
+}
+
+fn array_len(value: Option<&serde_json::Value>) -> Option<u64> {
+    value
+        .and_then(serde_json::Value::as_array)
+        .and_then(|items| u64::try_from(items.len()).ok())
+}
+
+fn normalize_budgeted_response_shape(
+    value: &mut serde_json::Value,
+    original_shape: &ResponseShapeSnapshot,
+    budget_truncated: bool,
+) {
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    if budget_truncated {
+        obj.insert("truncated".to_string(), serde_json::Value::from(true));
+    }
+    if let Some(returned_count) = array_len(obj.get("data")) {
+        normalize_budgeted_count(obj, returned_count, original_shape.total_count_hint);
+        return;
+    }
+
+    let Some(data) = obj
+        .get_mut("data")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+
+    let mut top_count = None;
+    let mut data_truncated = false;
+
+    if let Some(returned_count) = array_len(data.get("rows")) {
+        top_count = Some(returned_count);
+        data_truncated |= original_shape
+            .data_rows_len
+            .is_some_and(|original_len| original_len > returned_count);
+        data.insert("truncated".to_string(), serde_json::Value::from(true));
+    }
+
+    let entities_returned = array_len(data.get("entities"));
+    if let Some(returned_count) = entities_returned {
+        update_data_returned_count(data, "found_count", returned_count);
+        data_truncated |= original_shape
+            .original_data_array_len("entities")
+            .is_some_and(|original_len| original_len > returned_count);
+        if original_shape
+            .original_data_array_len("entities")
+            .is_some_and(|original_len| original_shape.count == Some(original_len))
+        {
+            top_count = Some(returned_count);
+        }
+    }
+
+    if let Some(returned_count) = array_len(data.get("lineage")) {
+        data_truncated |= original_shape
+            .original_data_array_len("lineage")
+            .is_some_and(|original_len| original_len > returned_count);
+        if original_shape
+            .original_data_array_len("lineage")
+            .is_some_and(|original_len| original_shape.count == Some(original_len))
+        {
+            top_count = Some(returned_count);
+        }
+    }
+
+    if let Some(returned_count) = array_len(data.get("not_found")) {
+        update_data_returned_count(data, "not_found_count", returned_count);
+        data_truncated |= original_shape
+            .original_data_array_len("not_found")
+            .is_some_and(|original_len| original_len > returned_count);
+    }
+
+    if let Some(returned_count) = array_len(data.get("edges")) {
+        data_truncated |= original_shape
+            .original_data_array_len("edges")
+            .is_some_and(|original_len| original_len > returned_count);
+    }
+
+    if !data.contains_key("rows")
+        && let Some(returned_count) = array_len(data.get("columns"))
+    {
+        data_truncated |= original_shape
+            .original_data_array_len("columns")
+            .is_some_and(|original_len| original_len > returned_count);
+        if original_shape
+            .original_data_array_len("columns")
+            .is_some_and(|original_len| original_shape.count == Some(original_len))
+        {
+            top_count = Some(returned_count);
+        }
+    }
+
+    if normalize_undocumented_summary(data) {
+        top_count = data
+            .get("summary")
+            .and_then(|summary| summary.get("items_returned"))
+            .and_then(serde_json::Value::as_u64);
+    }
+
+    if data_truncated || budget_truncated {
+        data.insert("truncated".to_string(), serde_json::Value::from(true));
+    }
+
+    let Some(returned_count) = top_count else {
+        return;
+    };
+    normalize_budgeted_count(obj, returned_count, original_shape.total_count_hint);
+}
+
+fn update_data_returned_count(
+    data: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    returned_count: u64,
+) {
+    if data.contains_key(key) {
+        data.insert(key.to_string(), serde_json::Value::from(returned_count));
+    }
+}
+
+fn normalize_undocumented_summary(data: &mut serde_json::Map<String, serde_json::Value>) -> bool {
+    let entities_returned = array_len(data.get("entities"));
+    let columns_returned = array_len(data.get("undocumented_columns"));
+    let Some(summary) = data
+        .get_mut("summary")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return false;
+    };
+    if !["entities_returned", "columns_returned", "items_returned"]
+        .iter()
+        .any(|key| summary.contains_key(*key))
+    {
+        return false;
+    }
+
+    if let Some(entities_returned) = entities_returned
+        && summary.contains_key("entities_returned")
+    {
+        summary.insert(
+            "entities_returned".to_string(),
+            serde_json::Value::from(entities_returned),
+        );
+    }
+    if let Some(columns_returned) = columns_returned
+        && summary.contains_key("columns_returned")
+    {
+        summary.insert(
+            "columns_returned".to_string(),
+            serde_json::Value::from(columns_returned),
+        );
+    }
+    let items_returned = entities_returned
+        .unwrap_or_else(|| {
+            summary
+                .get("entities_returned")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+        })
+        .saturating_add(columns_returned.unwrap_or_else(|| {
+            summary
+                .get("columns_returned")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0)
+        }));
+    if summary.contains_key("items_returned") {
+        summary.insert(
+            "items_returned".to_string(),
+            serde_json::Value::from(items_returned),
+        );
+    }
+    true
+}
+
+fn normalize_budgeted_count(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    returned_count: u64,
+    original_count: Option<u64>,
+) -> bool {
+    let count_changed = obj
+        .get("count")
+        .and_then(serde_json::Value::as_u64)
+        .is_some_and(|count| count != returned_count);
+    if count_changed {
+        obj.insert("count".to_string(), serde_json::Value::from(returned_count));
+    }
+    if original_count.is_some_and(|count| count > returned_count) || count_changed {
+        obj.insert("truncated".to_string(), serde_json::Value::from(true));
+        true
+    } else {
+        false
+    }
+}
+
+fn truncate_json_for_budget(
+    value: &mut serde_json::Value,
+    path: String,
+    max_string_chars: usize,
+    max_array_items: usize,
+    max_object_entries: usize,
+    omitted_paths: &mut Vec<String>,
+) {
+    match value {
+        serde_json::Value::String(text) => {
+            if text.chars().count() > max_string_chars {
+                let truncated: String = text.chars().take(max_string_chars).collect();
+                *text = format!("{truncated}...[truncated]");
+                omitted_paths.push(path);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            if items.len() > max_array_items {
+                items.truncate(max_array_items);
+                omitted_paths.push(path.clone());
+            }
+            for (idx, item) in items.iter_mut().enumerate() {
+                truncate_json_for_budget(
+                    item,
+                    format!("{path}.{idx}"),
+                    max_string_chars,
+                    max_array_items,
+                    max_object_entries,
+                    omitted_paths,
+                );
+            }
+        }
+        serde_json::Value::Object(obj) => {
+            if path != "$" && obj.len() > max_object_entries {
+                prune_object_entries(obj, &path, max_object_entries, omitted_paths);
+            }
+            for noisy_key in ["block_contents", "compiled_code", "raw_code", "sql"] {
+                if let Some(child) = obj.get_mut(noisy_key) {
+                    truncate_json_for_budget(
+                        child,
+                        format!("{path}.{noisy_key}"),
+                        max_string_chars.min(2048),
+                        max_array_items,
+                        max_object_entries,
+                        omitted_paths,
+                    );
+                }
+            }
+            for (key, child) in obj {
+                if matches!(
+                    key.as_str(),
+                    "block_contents" | "compiled_code" | "raw_code" | "sql"
+                ) {
+                    continue;
+                }
+                truncate_json_for_budget(
+                    child,
+                    format!("{path}.{key}"),
+                    max_string_chars,
+                    max_array_items,
+                    max_object_entries,
+                    omitted_paths,
+                );
+            }
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
+    }
+}
+
+fn prune_object_entries(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    path: &str,
+    max_object_entries: usize,
+    omitted_paths: &mut Vec<String>,
+) {
+    if max_object_entries == 0 {
+        obj.clear();
+        omitted_paths.push(format!("{path}.*"));
+        return;
+    }
+    let important_keys = [
+        "rows",
+        "columns",
+        "column_types",
+        "truncated",
+        "stats",
+        "state",
+        "provider",
+        "success",
+        "count",
+        "total_available",
+        "data",
+        "parent_groups",
+        "unique_id",
+        "parent_unique_id",
+        "name",
+        "resource_type",
+        "relation_name",
+        "grain",
+        "expression",
+        "indicator_name",
+        "indicator_type",
+    ];
+    let mut keep: BTreeSet<String> = important_keys
+        .iter()
+        .filter(|key| obj.contains_key(**key))
+        .take(max_object_entries)
+        .map(|key| (*key).to_string())
+        .collect();
+    for key in obj.keys() {
+        if keep.len() >= max_object_entries {
+            break;
+        }
+        keep.insert(key.clone());
+    }
+    if keep.len() < obj.len() {
+        let remove_keys: Vec<String> = obj
+            .keys()
+            .filter(|key| !keep.contains(*key))
+            .cloned()
+            .collect();
+        for key in remove_keys {
+            obj.remove(&key);
+        }
+        omitted_paths.push(format!("{path}.*"));
+    }
+}
+
+impl DbtNovaServer {
     fn record_metrics(&self, tool: &str, persona: Option<&str>, duration_ms: u64, success: bool) {
         self.metrics.record(tool, duration_ms, success);
         if let Some(persona) = persona {
@@ -256,6 +1045,40 @@ impl DbtNovaServer {
         F: FnOnce(Arc<ManifestSearch>) -> Fut,
         Fut: Future<Output = Result<serde_json::Value, DbtNovaError>>,
     {
+        self.handle_bounded_search_result(tool, persona, |searcher| async move {
+            f(searcher).await.map(|value| (value, None))
+        })
+        .await
+    }
+
+    async fn handle_bounded_search_paged<F, Fut>(
+        &self,
+        tool: &'static str,
+        persona: Option<&str>,
+        f: F,
+    ) -> String
+    where
+        F: FnOnce(Arc<ManifestSearch>) -> Fut,
+        Fut: Future<Output = Result<(serde_json::Value, PaginationParams), DbtNovaError>>,
+    {
+        self.handle_bounded_search_result(tool, persona, |searcher| async move {
+            f(searcher)
+                .await
+                .map(|(value, pagination)| (value, Some(pagination)))
+        })
+        .await
+    }
+
+    async fn handle_bounded_search_result<F, Fut>(
+        &self,
+        tool: &'static str,
+        persona: Option<&str>,
+        f: F,
+    ) -> String
+    where
+        F: FnOnce(Arc<ManifestSearch>) -> Fut,
+        Fut: Future<Output = Result<(serde_json::Value, Option<PaginationParams>), DbtNovaError>>,
+    {
         let search_started = Instant::now();
         let search_timeout_ms = match self.searcher.get().await {
             Ok(searcher) => searcher.config().search.search_timeout_ms as u64,
@@ -273,7 +1096,7 @@ impl DbtNovaServer {
             Err(response) => return response,
         };
         let result = self
-            .handle_async(tool, persona, |searcher| async move {
+            .handle_async_result(tool, persona, |searcher| async move {
                 let future = f(searcher);
                 if search_timeout_ms == 0 {
                     return future.await;
@@ -480,6 +1303,68 @@ fn filter_tool_router(
         .retain(|tool_name, _| exposed_tools.contains(tool_name.as_ref()));
 }
 
+fn apply_mcp_pagination_defaults(pagination: &mut PaginationParams, config: &DbtNovaConfig) {
+    let default_limit = config.mcp_default_limit.max(1);
+    let requested = pagination.limit.unwrap_or(0);
+    let mut effective = if requested == 0 {
+        default_limit
+    } else {
+        requested
+    };
+    if config.mcp_max_page_size > 0 {
+        effective = effective.min(config.mcp_max_page_size);
+    }
+    pagination.limit = Some(effective);
+}
+
+fn apply_mcp_metadata_score_pagination_defaults(
+    params: &mut GetMetadataScoreParams,
+    config: &DbtNovaConfig,
+) -> PaginationParams {
+    let mut pagination = PaginationParams {
+        limit: params.limit,
+        offset: params.offset.unwrap_or(0),
+    };
+    apply_mcp_pagination_defaults(&mut pagination, config);
+    params.limit = pagination.limit;
+    params.offset = Some(pagination.offset);
+    pagination
+}
+
+fn apply_mcp_detail_default(
+    detail: &mut Option<crate::params::DetailLevel>,
+    config: &DbtNovaConfig,
+) {
+    if detail.is_none() {
+        *detail = Some(config.mcp_result_profile.detail_level());
+    }
+}
+
+fn apply_mcp_search_defaults(params: &mut SearchParams, config: &DbtNovaConfig) {
+    apply_mcp_detail_default(&mut params.detail, config);
+    apply_mcp_pagination_defaults(&mut params.pagination, config);
+}
+
+fn apply_mcp_search_indicator_defaults(params: &mut SearchIndicatorParams, config: &DbtNovaConfig) {
+    let detail_was_omitted = params.detail.is_none();
+    apply_mcp_detail_default(&mut params.detail, config);
+    apply_mcp_pagination_defaults(&mut params.pagination, config);
+    if detail_was_omitted
+        && config.mcp_result_profile == crate::config::ResultProfile::Compact
+        && params.group_mode.is_none()
+    {
+        params.group_mode = Some(ParentGroupMode::Top);
+        params.max_parent_groups = Some(params.max_parent_groups.unwrap_or(1).min(1));
+    }
+}
+
+fn apply_mcp_entity_detail_default(
+    detail: &mut Option<crate::params::DetailLevel>,
+    config: &DbtNovaConfig,
+) {
+    apply_mcp_detail_default(detail, config);
+}
+
 #[tool_router]
 impl DbtNovaServer {
     /// Full-text search across all entities. Searches names, descriptions, SQL code, file paths, column names, and tags.
@@ -490,8 +1375,14 @@ impl DbtNovaServer {
     #[instrument(level = "info", skip(self, params))]
     async fn search(&self, params: Parameters<SearchParams>) -> String {
         let persona = params.0.persona.clone();
-        self.handle_bounded_search("search", persona.as_deref(), |searcher| async move {
-            searcher.search(&params.0).await
+        self.handle_bounded_search_paged("search", persona.as_deref(), |searcher| async move {
+            let mut params = params.0;
+            apply_mcp_search_defaults(&mut params, searcher.config());
+            let pagination = params.pagination;
+            searcher
+                .search(&params)
+                .await
+                .map(|value| (value, pagination))
         })
         .await
     }
@@ -504,10 +1395,18 @@ impl DbtNovaServer {
     #[instrument(level = "info", skip(self, params))]
     async fn search_indicator(&self, params: Parameters<SearchIndicatorParams>) -> String {
         let persona = params.0.persona.clone();
-        self.handle_bounded_search(
+        self.handle_bounded_search_paged(
             "search_indicator",
             persona.as_deref(),
-            |searcher| async move { searcher.search_indicator(&params.0).await },
+            |searcher| async move {
+                let mut params = params.0;
+                apply_mcp_search_indicator_defaults(&mut params, searcher.config());
+                let pagination = params.pagination;
+                searcher
+                    .search_indicator(&params)
+                    .await
+                    .map(|value| (value, pagination))
+            },
         )
         .await
     }
@@ -519,8 +1418,14 @@ impl DbtNovaServer {
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn indicator_inventory(&self, params: Parameters<IndicatorInventoryParams>) -> String {
-        self.handle_bounded_search("indicator_inventory", None, |searcher| async move {
-            searcher.indicator_inventory(&params.0).await
+        self.handle_bounded_search_paged("indicator_inventory", None, |searcher| async move {
+            let mut params = params.0;
+            apply_mcp_pagination_defaults(&mut params.pagination, searcher.config());
+            let pagination = params.pagination;
+            searcher
+                .indicator_inventory(&params)
+                .await
+                .map(|value| (value, pagination))
         })
         .await
     }
@@ -532,8 +1437,14 @@ impl DbtNovaServer {
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn search_columns(&self, params: Parameters<SearchColumnsParams>) -> String {
-        self.handle_bounded_search("search_columns", None, |searcher| async move {
-            searcher.search_columns(&params.0).await
+        self.handle_bounded_search_paged("search_columns", None, |searcher| async move {
+            let mut params = params.0;
+            apply_mcp_pagination_defaults(&mut params.pagination, searcher.config());
+            let pagination = params.pagination;
+            searcher
+                .search_columns(&params)
+                .await
+                .map(|value| (value, pagination))
         })
         .await
     }
@@ -545,8 +1456,14 @@ impl DbtNovaServer {
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn column_inventory(&self, params: Parameters<ColumnInventoryParams>) -> String {
-        self.handle_bounded_search("column_inventory", None, |searcher| async move {
-            searcher.column_inventory(&params.0).await
+        self.handle_bounded_search_paged("column_inventory", None, |searcher| async move {
+            let mut params = params.0;
+            apply_mcp_pagination_defaults(&mut params.pagination, searcher.config());
+            let pagination = params.pagination;
+            searcher
+                .column_inventory(&params)
+                .await
+                .map(|value| (value, pagination))
         })
         .await
     }
@@ -571,8 +1488,14 @@ impl DbtNovaServer {
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn find_entity_overlap(&self, params: Parameters<FindEntityOverlapParams>) -> String {
-        self.handle_bounded_search("find_entity_overlap", None, |searcher| async move {
-            searcher.find_entity_overlap(&params.0).await
+        self.handle_bounded_search_paged("find_entity_overlap", None, |searcher| async move {
+            let mut params = params.0;
+            apply_mcp_pagination_defaults(&mut params.pagination, searcher.config());
+            let pagination = params.pagination;
+            searcher
+                .find_entity_overlap(&params)
+                .await
+                .map(|value| (value, pagination))
         })
         .await
     }
@@ -587,10 +1510,18 @@ impl DbtNovaServer {
         &self,
         params: Parameters<ModellingConsistencyReportParams>,
     ) -> String {
-        self.handle_bounded_search(
+        self.handle_bounded_search_paged(
             "modelling_consistency_report",
             None,
-            |searcher| async move { searcher.modelling_consistency_report(&params.0).await },
+            |searcher| async move {
+                let mut params = params.0;
+                apply_mcp_pagination_defaults(&mut params.pagination, searcher.config());
+                let pagination = params.pagination;
+                searcher
+                    .modelling_consistency_report(&params)
+                    .await
+                    .map(|value| (value, pagination))
+            },
         )
         .await
     }
@@ -603,7 +1534,9 @@ impl DbtNovaServer {
     #[instrument(level = "info", skip(self, params))]
     async fn get_entity(&self, params: Parameters<GetEntityParams>) -> String {
         self.handle_async("get_entity", None, |searcher| async move {
-            searcher.get_entity_data(&params.0).await
+            let mut params = params.0;
+            apply_mcp_entity_detail_default(&mut params.detail, searcher.config());
+            searcher.get_entity_data(&params).await
         })
         .await
     }
@@ -615,8 +1548,15 @@ impl DbtNovaServer {
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn list_entities(&self, params: Parameters<ListEntitiesParams>) -> String {
-        self.handle_async("list_entities", None, |searcher| async move {
-            searcher.list_entities(&params.0).await
+        self.handle_async_paged("list_entities", None, |searcher| async move {
+            let mut params = params.0;
+            apply_mcp_entity_detail_default(&mut params.detail, searcher.config());
+            apply_mcp_pagination_defaults(&mut params.pagination, searcher.config());
+            let pagination = params.pagination;
+            searcher
+                .list_entities(&params)
+                .await
+                .map(|value| (value, pagination))
         })
         .await
     }
@@ -629,7 +1569,9 @@ impl DbtNovaServer {
     #[instrument(level = "info", skip(self, params))]
     async fn get_lineage(&self, params: Parameters<GetLineageParams>) -> String {
         self.handle_async("get_lineage", None, |searcher| async move {
-            searcher.get_lineage(&params.0).await
+            let mut params = params.0;
+            apply_mcp_entity_detail_default(&mut params.detail, searcher.config());
+            searcher.get_lineage(&params).await
         })
         .await
     }
@@ -720,8 +1662,9 @@ impl DbtNovaServer {
     #[instrument(level = "info", skip(self))]
     async fn health(&self) -> String {
         let mut payload = build_manifest_health_payload(&self.searcher).await.payload;
+        let searcher = self.searcher.get().await.ok();
         if let Some(base) = payload.as_object_mut() {
-            if let Ok(searcher) = self.searcher.get().await {
+            if let Some(searcher) = searcher.as_ref() {
                 let concurrency = self.search_concurrency.get_or_init(|| {
                     ConcurrencyLimiter::for_search(searcher.config()).map(Arc::new)
                 });
@@ -752,15 +1695,16 @@ impl DbtNovaServer {
         if let Some(base) = payload.as_object_mut() {
             base.insert("tool_metrics".to_string(), self.metrics.snapshot());
         }
-        match serde_json::to_string(&SuccessResponse::new(payload, 1)) {
-            Ok(out) => out,
-            Err(err) => serde_json::json!({
-                "success": false,
-                "error": format!("Serialization error: {}", err),
-                "error_code": "SERVER_ERROR"
-            })
-            .to_string(),
+        let response = match serde_json::to_value(SuccessResponse::new(payload, 1)) {
+            Ok(response) => response,
+            Err(err) => return Self::serialization_error_response(&err),
+        };
+        if let Some(searcher) = searcher.as_ref() {
+            return Self::serialize_budgeted_value(response, searcher.config())
+                .unwrap_or_else(|err| Self::serialization_error_response(&err));
         }
+        serde_json::to_string(&response)
+            .unwrap_or_else(|err| Self::serialization_error_response(&err))
     }
 
     /// Reload the manifest from a new source and rebuild indexes.
@@ -773,11 +1717,25 @@ impl DbtNovaServer {
         let start = Instant::now();
         let mut success = false;
         let out = match self.searcher.reload(&params.0).await {
-            Ok(payload) => match serde_json::to_string(&SuccessResponse::new(payload, 1)) {
-                Ok(out) => {
-                    success = true;
-                    out
-                }
+            Ok(payload) => match serde_json::to_value(SuccessResponse::new(payload, 1)) {
+                Ok(response) => match self.searcher.get().await {
+                    Ok(searcher) => {
+                        match Self::serialize_budgeted_value(response, searcher.config()) {
+                            Ok(out) => {
+                                success = true;
+                                out
+                            }
+                            Err(err) => Self::serialization_error_response(&err),
+                        }
+                    }
+                    Err(_) => match serde_json::to_string(&response) {
+                        Ok(out) => {
+                            success = true;
+                            out
+                        }
+                        Err(err) => Self::serialization_error_response(&err),
+                    },
+                },
                 Err(err) => serde_json::json!({
                     "success": false,
                     "error": format!("Serialization error: {}", err),
@@ -876,8 +1834,14 @@ impl DbtNovaServer {
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn get_metadata_score(&self, params: Parameters<GetMetadataScoreParams>) -> String {
-        self.handle_async("get_metadata_score", None, |searcher| async move {
-            searcher.get_metadata_score(&params.0).await
+        self.handle_async_paged("get_metadata_score", None, |searcher| async move {
+            let mut params = params.0;
+            let pagination =
+                apply_mcp_metadata_score_pagination_defaults(&mut params, searcher.config());
+            searcher
+                .get_metadata_score(&params)
+                .await
+                .map(|value| (value, pagination))
         })
         .await
     }
@@ -890,7 +1854,9 @@ impl DbtNovaServer {
     #[instrument(level = "info", skip(self, params))]
     async fn batch_get_entities(&self, params: Parameters<BatchGetParams>) -> String {
         self.handle_async("batch_get_entities", None, |searcher| async move {
-            searcher.batch_get_entities(&params.0).await
+            let mut params = params.0;
+            apply_mcp_entity_detail_default(&mut params.detail, searcher.config());
+            searcher.batch_get_entities(&params).await
         })
         .await
     }
@@ -902,8 +1868,15 @@ impl DbtNovaServer {
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn find_by_path(&self, params: Parameters<FindByPathParams>) -> String {
-        self.handle_async("find_by_path", None, |searcher| async move {
-            searcher.find_by_path(&params.0).await
+        self.handle_async_paged("find_by_path", None, |searcher| async move {
+            let mut params = params.0;
+            apply_mcp_entity_detail_default(&mut params.detail, searcher.config());
+            apply_mcp_pagination_defaults(&mut params.pagination, searcher.config());
+            let pagination = params.pagination;
+            searcher
+                .find_by_path(&params)
+                .await
+                .map(|value| (value, pagination))
         })
         .await
     }
@@ -915,8 +1888,14 @@ impl DbtNovaServer {
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn search_recipes(&self, params: Parameters<SearchRecipesParams>) -> String {
-        self.handle_async("search_recipes", None, |searcher| async move {
-            searcher.search_recipes(&params.0).await
+        self.handle_async_paged("search_recipes", None, |searcher| async move {
+            let mut params = params.0;
+            apply_mcp_pagination_defaults(&mut params.pagination, searcher.config());
+            let pagination = params.pagination;
+            searcher
+                .search_recipes(&params)
+                .await
+                .map(|value| (value, pagination))
         })
         .await
     }
@@ -961,8 +1940,14 @@ impl DbtNovaServer {
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn get_undocumented(&self, params: Parameters<GetUndocumentedParams>) -> String {
-        self.handle_async("get_undocumented", None, |searcher| async move {
-            searcher.get_undocumented(&params.0).await
+        self.handle_async_paged("get_undocumented", None, |searcher| async move {
+            let mut params = params.0;
+            apply_mcp_pagination_defaults(&mut params.pagination, searcher.config());
+            let pagination = params.pagination;
+            searcher
+                .get_undocumented(&params)
+                .await
+                .map(|value| (value, pagination))
         })
         .await
     }
@@ -1062,6 +2047,540 @@ mod tests {
     }
 
     #[test]
+    fn mcp_response_budget_prunes_large_object_payloads() {
+        let mut columns = serde_json::Map::new();
+        for idx in 0..500 {
+            columns.insert(
+                format!("column_{idx:04}"),
+                serde_json::json!({
+                    "name": format!("column_{idx:04}"),
+                    "description": "short but repeated metadata",
+                    "data_type": "string"
+                }),
+            );
+        }
+        let config = crate::config::DbtNovaConfig {
+            mcp_max_response_bytes: 4096,
+            mcp_max_string_chars: 128,
+            ..Default::default()
+        };
+        let response = serde_json::json!({
+            "success": true,
+            "count": 1,
+            "data": {
+                "unique_id": "model.pkg.large",
+                "name": "large",
+                "columns": columns
+            }
+        });
+
+        let budgeted = apply_mcp_response_budget(response, &config);
+        let response_bytes = serialized_len(&budgeted);
+
+        assert!(
+            response_bytes <= config.mcp_max_response_bytes,
+            "response_bytes={response_bytes}"
+        );
+        assert_eq!(
+            budgeted["_nova_result_meta"]["truncated"],
+            serde_json::json!(true)
+        );
+        assert!(
+            budgeted["_nova_result_meta"]["omitted_paths"]
+                .as_array()
+                .is_some_and(|paths| !paths.is_empty())
+        );
+    }
+
+    #[test]
+    fn mcp_response_budget_preserves_singleton_object_shape() {
+        let mut columns = serde_json::Map::new();
+        for idx in 0..100 {
+            columns.insert(
+                format!("column_{idx:03}"),
+                serde_json::json!({
+                    "name": format!("column_{idx:03}"),
+                    "description": "x".repeat(200)
+                }),
+            );
+        }
+        let config = crate::config::DbtNovaConfig {
+            mcp_max_response_bytes: 256,
+            mcp_max_string_chars: 16,
+            ..Default::default()
+        };
+        let response = serde_json::json!({
+            "success": true,
+            "count": 1,
+            "data": {
+                "unique_id": "model.pkg.large",
+                "columns": columns
+            }
+        });
+
+        let budgeted = apply_mcp_response_budget(response, &config);
+
+        assert!(
+            serialized_len(&budgeted) <= config.mcp_max_response_bytes,
+            "response_bytes={}",
+            serialized_len(&budgeted)
+        );
+        assert_eq!(budgeted["count"], serde_json::json!(1));
+        assert!(budgeted["data"].as_object().is_some());
+        assert!(budgeted["data"].as_array().is_none());
+    }
+
+    #[test]
+    fn mcp_response_budget_keeps_payload_when_only_meta_exceeds_budget() {
+        let config = crate::config::DbtNovaConfig {
+            mcp_max_response_bytes: 100,
+            mcp_max_string_chars: 10,
+            ..Default::default()
+        };
+        let response = serde_json::json!({
+            "success": true,
+            "data": {
+                "text": "x".repeat(1000)
+            }
+        });
+
+        let budgeted = apply_mcp_response_budget(response, &config);
+
+        assert!(
+            serialized_len(&budgeted) <= config.mcp_max_response_bytes,
+            "response_bytes={}",
+            serialized_len(&budgeted)
+        );
+        assert!(budgeted["data"]["text"].as_str().is_some());
+        assert!(budgeted.get("_nova_result_meta").is_none());
+    }
+
+    #[test]
+    fn mcp_response_budget_updates_count_when_data_array_is_truncated() {
+        let config = crate::config::DbtNovaConfig {
+            mcp_max_response_bytes: 8192,
+            mcp_max_string_chars: 64,
+            ..Default::default()
+        };
+        let rows: Vec<_> = (0..100)
+            .map(|idx| {
+                serde_json::json!({
+                    "unique_id": format!("model.pkg.item_{idx:03}"),
+                    "description": "x".repeat(300)
+                })
+            })
+            .collect();
+        let response = serde_json::json!({
+            "success": true,
+            "count": rows.len(),
+            "data": rows
+        });
+
+        let budgeted = apply_mcp_response_budget(response, &config);
+        let returned_count = budgeted["data"].as_array().map_or(0, Vec::len);
+
+        assert!(
+            returned_count < 100,
+            "data was not truncated: returned_count={returned_count}"
+        );
+        assert!(returned_count > 0);
+        assert_eq!(budgeted["count"], serde_json::json!(returned_count));
+        assert_eq!(budgeted["truncated"], serde_json::json!(true));
+        assert_eq!(
+            budgeted["_nova_result_meta"]["original_count"],
+            serde_json::json!(100)
+        );
+    }
+
+    #[test]
+    fn mcp_response_budget_updates_count_when_sql_rows_are_truncated() {
+        let config = crate::config::DbtNovaConfig {
+            mcp_max_response_bytes: 8192,
+            mcp_max_string_chars: 64,
+            ..Default::default()
+        };
+        let rows: Vec<_> = (0..100)
+            .map(|idx| serde_json::json!([format!("row_{idx:03}"), "x".repeat(300)]))
+            .collect();
+        let response = serde_json::json!({
+            "success": true,
+            "count": rows.len(),
+            "data": {
+                "rows": rows,
+                "columns": ["id", "description"],
+                "column_types": ["Text", "Text"],
+                "stats": {
+                    "total_row_count": 100,
+                    "total_chunk_count": 1
+                },
+                "state": "SUCCEEDED",
+                "provider": "duckdb",
+                "elapsed_ms": 12,
+                "statement_id": "stmt_123",
+                "duckdb_path": "tests/fixtures/tokenomics.duckdb",
+                "truncated": false
+            }
+        });
+
+        let budgeted = apply_mcp_response_budget(response, &config);
+        let returned_count = budgeted["data"]["rows"].as_array().map_or(0, Vec::len);
+
+        assert!(
+            returned_count < 100,
+            "rows were not truncated: returned_count={returned_count}"
+        );
+        assert!(returned_count > 0);
+        assert!(budgeted["data"]["rows"].as_array().is_some());
+        assert_eq!(budgeted["count"], serde_json::json!(returned_count));
+        assert_eq!(budgeted["truncated"], serde_json::json!(true));
+        assert_eq!(budgeted["data"]["truncated"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn mcp_response_budget_updates_count_when_nested_entities_are_truncated() {
+        let config = crate::config::DbtNovaConfig {
+            mcp_max_response_bytes: 8192,
+            mcp_max_string_chars: 64,
+            ..Default::default()
+        };
+        let entities: Vec<_> = (0..100)
+            .map(|idx| {
+                serde_json::json!({
+                    "unique_id": format!("model.pkg.entity_{idx:03}"),
+                    "description": "x".repeat(300)
+                })
+            })
+            .collect();
+        let not_found: Vec<_> = (0..100)
+            .map(|idx| format!("model.pkg.missing_{idx:03}"))
+            .collect();
+        let response = serde_json::json!({
+            "success": true,
+            "count": entities.len(),
+            "data": {
+                "entities": entities,
+                "not_found": not_found,
+                "found_count": 100,
+                "not_found_count": 100
+            }
+        });
+
+        let budgeted = apply_mcp_response_budget(response, &config);
+        let returned_entities = budgeted["data"]["entities"].as_array().map_or(0, Vec::len);
+        let returned_not_found = budgeted["data"]["not_found"].as_array().map_or(0, Vec::len);
+
+        assert!(
+            returned_entities < 100,
+            "entities were not truncated: returned_entities={returned_entities}"
+        );
+        assert!(returned_entities > 0);
+        assert_eq!(budgeted["count"], serde_json::json!(returned_entities));
+        assert_eq!(
+            budgeted["data"]["found_count"],
+            serde_json::json!(returned_entities)
+        );
+        assert_eq!(
+            budgeted["data"]["not_found_count"],
+            serde_json::json!(returned_not_found)
+        );
+        assert_eq!(budgeted["truncated"], serde_json::json!(true));
+        assert_eq!(budgeted["data"]["truncated"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn mcp_response_budget_updates_count_when_data_columns_are_truncated() {
+        let config = crate::config::DbtNovaConfig {
+            mcp_max_response_bytes: 8192,
+            mcp_max_string_chars: 64,
+            ..Default::default()
+        };
+        let columns: Vec<_> = (0..100)
+            .map(|idx| {
+                serde_json::json!({
+                    "name": format!("column_{idx:03}"),
+                    "description": "x".repeat(300),
+                    "data_type": "string"
+                })
+            })
+            .collect();
+        let response = serde_json::json!({
+            "success": true,
+            "count": columns.len(),
+            "data": {
+                "unique_id": "model.pkg.wide",
+                "columns": columns
+            }
+        });
+
+        let budgeted = apply_mcp_response_budget(response, &config);
+        let returned_columns = budgeted["data"]["columns"].as_array().map_or(0, Vec::len);
+
+        assert!(
+            returned_columns < 100,
+            "columns were not truncated: returned_columns={returned_columns}"
+        );
+        assert!(returned_columns > 0);
+        assert_eq!(budgeted["count"], serde_json::json!(returned_columns));
+        assert_eq!(budgeted["truncated"], serde_json::json!(true));
+        assert_eq!(budgeted["data"]["truncated"], serde_json::json!(true));
+        assert_eq!(
+            budgeted["_nova_result_meta"]["original_count"],
+            serde_json::json!(100)
+        );
+    }
+
+    #[test]
+    fn mcp_response_budget_keeps_lineage_count_when_only_edges_are_truncated() {
+        let config = crate::config::DbtNovaConfig {
+            mcp_max_response_bytes: 8192,
+            mcp_max_string_chars: 64,
+            ..Default::default()
+        };
+        let entities = vec![
+            serde_json::json!({"unique_id": "model.pkg.root", "description": "root"}),
+            serde_json::json!({"unique_id": "model.pkg.child", "description": "child"}),
+        ];
+        let edges: Vec<_> = (0..100)
+            .map(|idx| {
+                serde_json::json!({
+                    "source": format!("model.pkg.source_{idx:03}"),
+                    "target": format!("model.pkg.target_{idx:03}"),
+                    "description": "x".repeat(300)
+                })
+            })
+            .collect();
+        let response = serde_json::json!({
+            "success": true,
+            "count": entities.len(),
+            "data": {
+                "root_id": "model.pkg.root",
+                "entities": entities,
+                "edges": edges
+            }
+        });
+
+        let budgeted = apply_mcp_response_budget(response, &config);
+        let returned_edges = budgeted["data"]["edges"].as_array().map_or(0, Vec::len);
+
+        assert!(
+            returned_edges < 100,
+            "edges were not truncated: returned_edges={returned_edges}"
+        );
+        assert_eq!(budgeted["count"], serde_json::json!(2));
+        assert_eq!(budgeted["truncated"], serde_json::json!(true));
+        assert_eq!(budgeted["data"]["truncated"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn mcp_response_budget_updates_undocumented_summary_counts_when_truncated() {
+        let config = crate::config::DbtNovaConfig {
+            mcp_max_response_bytes: 8192,
+            mcp_max_string_chars: 64,
+            ..Default::default()
+        };
+        let entities: Vec<_> = (0..80)
+            .map(|idx| {
+                serde_json::json!({
+                    "unique_id": format!("model.pkg.entity_{idx:03}"),
+                    "description": "x".repeat(300)
+                })
+            })
+            .collect();
+        let undocumented_columns: Vec<_> = (0..80)
+            .map(|idx| {
+                serde_json::json!({
+                    "unique_id": format!("model.pkg.entity_{idx:03}"),
+                    "column": format!("column_{idx:03}"),
+                    "description": "x".repeat(300)
+                })
+            })
+            .collect();
+        let response = serde_json::json!({
+            "success": true,
+            "count": 160,
+            "data": {
+                "entities": entities,
+                "summary": {
+                    "entities_missing_docs": 80,
+                    "columns_missing_docs": 80,
+                    "entities_returned": 80,
+                    "columns_returned": 80,
+                    "items_returned": 160
+                },
+                "undocumented_columns": undocumented_columns
+            }
+        });
+
+        let budgeted = apply_mcp_response_budget(response, &config);
+        let returned_entities = budgeted["data"]["entities"].as_array().map_or(0, Vec::len);
+        let returned_columns = budgeted["data"]["undocumented_columns"]
+            .as_array()
+            .map_or(0, Vec::len);
+        let returned_total = returned_entities + returned_columns;
+
+        assert!(returned_total < 160);
+        assert!(returned_total > 0);
+        assert_eq!(budgeted["count"], serde_json::json!(returned_total));
+        assert_eq!(
+            budgeted["data"]["summary"]["entities_returned"],
+            serde_json::json!(returned_entities)
+        );
+        assert_eq!(
+            budgeted["data"]["summary"]["columns_returned"],
+            serde_json::json!(returned_columns)
+        );
+        assert_eq!(
+            budgeted["data"]["summary"]["items_returned"],
+            serde_json::json!(returned_total)
+        );
+    }
+
+    #[test]
+    fn mcp_response_budget_fallback_zeroes_nested_collection_counts() {
+        let config = crate::config::DbtNovaConfig {
+            mcp_max_response_bytes: 256,
+            mcp_max_string_chars: 16,
+            ..Default::default()
+        };
+        let entities: Vec<_> = (0..100)
+            .map(|idx| {
+                serde_json::json!({
+                    "unique_id": format!("model.pkg.entity_{idx:03}"),
+                    "description": "x".repeat(500)
+                })
+            })
+            .collect();
+        let response = serde_json::json!({
+            "success": true,
+            "count": entities.len(),
+            "data": {
+                "entities": entities,
+                "found_count": 100
+            }
+        });
+
+        let budgeted = apply_mcp_response_budget(response, &config);
+
+        assert!(
+            serialized_len(&budgeted) <= config.mcp_max_response_bytes,
+            "response_bytes={}",
+            serialized_len(&budgeted)
+        );
+        assert_eq!(budgeted["count"], serde_json::json!(0));
+        assert_eq!(budgeted["data"]["found_count"], serde_json::json!(0));
+        assert_eq!(
+            budgeted["data"]["entities"]
+                .as_array()
+                .map_or(usize::MAX, Vec::len),
+            0
+        );
+        assert_eq!(budgeted["truncated"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn mcp_compact_profile_defaults_indicator_search_for_agents() {
+        let config = crate::config::DbtNovaConfig::default();
+        let mut params = SearchIndicatorParams::default();
+
+        apply_mcp_search_indicator_defaults(&mut params, &config);
+
+        assert_eq!(params.detail, Some(crate::params::DetailLevel::Compact));
+        assert_eq!(params.pagination.limit, Some(config.mcp_default_limit));
+        assert_eq!(params.group_mode, Some(ParentGroupMode::Top));
+        assert_eq!(params.max_parent_groups, Some(1));
+    }
+
+    #[test]
+    fn mcp_profile_defaults_preserve_explicit_detail_and_group_mode() {
+        let config = crate::config::DbtNovaConfig {
+            mcp_default_limit: 10,
+            mcp_max_page_size: 20,
+            ..Default::default()
+        };
+        let mut params = SearchIndicatorParams {
+            detail: Some(crate::params::DetailLevel::Standard),
+            group_mode: Some(ParentGroupMode::All),
+            pagination: PaginationParams {
+                limit: Some(500),
+                offset: 0,
+            },
+            ..SearchIndicatorParams::default()
+        };
+
+        apply_mcp_search_indicator_defaults(&mut params, &config);
+
+        assert_eq!(params.detail, Some(crate::params::DetailLevel::Standard));
+        assert_eq!(params.group_mode, Some(ParentGroupMode::All));
+        assert_eq!(params.pagination.limit, Some(20));
+    }
+
+    #[test]
+    fn mcp_pagination_meta_adds_next_offset_when_more_results_exist() {
+        let config = crate::config::DbtNovaConfig {
+            mcp_max_response_bytes: 0,
+            ..Default::default()
+        };
+        let response = serde_json::json!({
+            "success": true,
+            "count": 2,
+            "total_available": 5,
+            "truncated": true,
+            "data": [{"unique_id": "model.pkg.a"}, {"unique_id": "model.pkg.b"}]
+        });
+        let pagination = PaginationParams {
+            limit: Some(2),
+            offset: 2,
+        };
+
+        let serialized = DbtNovaServer::serialize_budgeted_value_with_pagination(
+            response,
+            &config,
+            Some(&pagination),
+        )
+        .expect("serialize response");
+        let payload: serde_json::Value = serde_json::from_str(&serialized).expect("response JSON");
+
+        assert_eq!(
+            payload["_nova_result_meta"]["next_offset"],
+            serde_json::json!(4)
+        );
+    }
+
+    #[test]
+    fn mcp_pagination_meta_omits_next_offset_when_no_items_returned() {
+        let config = crate::config::DbtNovaConfig {
+            mcp_max_response_bytes: 0,
+            ..Default::default()
+        };
+        let response = serde_json::json!({
+            "success": true,
+            "count": 0,
+            "total_available": 5,
+            "truncated": true,
+            "data": []
+        });
+        let pagination = PaginationParams {
+            limit: Some(2),
+            offset: 2,
+        };
+
+        let serialized = DbtNovaServer::serialize_budgeted_value_with_pagination(
+            response,
+            &config,
+            Some(&pagination),
+        )
+        .expect("serialize response");
+        let payload: serde_json::Value = serde_json::from_str(&serialized).expect("response JSON");
+
+        assert!(
+            payload
+                .get("_nova_result_meta")
+                .and_then(|meta| meta.get("next_offset"))
+                .is_none()
+        );
+    }
+
+    #[test]
     fn mcp_tool_catalog_matches_registered_router_names() {
         let router_names = DbtNovaServer::tool_router()
             .map
@@ -1094,6 +2613,32 @@ mod tests {
             payload["data"]["artifact_consumer"]["enabled"],
             serde_json::json!(false)
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn health_applies_mcp_response_budget() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path());
+        config.mcp_max_response_bytes = 512;
+        config.mcp_max_string_chars = 16;
+        let handle = ManifestSearchHandle::spawn(config.clone());
+        handle
+            .wait_ready()
+            .await
+            .expect("fixture manifest should load");
+        let server = DbtNovaServer::new(handle);
+
+        let out = server.health().await;
+        let payload: serde_json::Value = serde_json::from_str(&out).expect("health response JSON");
+
+        assert!(
+            out.len() <= config.mcp_max_response_bytes,
+            "response_bytes={}",
+            out.len()
+        );
+        assert_eq!(payload["success"], serde_json::json!(true));
+        assert_eq!(payload["count"], serde_json::json!(1));
+        assert_eq!(payload["truncated"], serde_json::json!(true));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1165,6 +2710,44 @@ mod tests {
                 >= 1
         );
         assert!(tool_metrics["list_tags"]["calls"].as_u64().unwrap_or(0) >= 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn metadata_score_project_scope_applies_mcp_pagination_defaults() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path());
+        config.mcp_default_limit = 2;
+        config.mcp_max_page_size = 3;
+        config.mcp_max_response_bytes = 0;
+
+        let handle = ManifestSearchHandle::spawn(config);
+        handle
+            .wait_ready()
+            .await
+            .expect("fixture manifest should load");
+        let server = DbtNovaServer::new(handle);
+
+        let response: serde_json::Value = serde_json::from_str(
+            &server
+                .get_metadata_score(Parameters(GetMetadataScoreParams {
+                    scope: Some("project".to_string()),
+                    include_breakdown: false,
+                    include_recommendations: false,
+                    resource_types: vec!["model".to_string()],
+                    ..GetMetadataScoreParams::default()
+                }))
+                .await,
+        )
+        .expect("metadata score response JSON");
+
+        assert_eq!(response["success"], serde_json::json!(true));
+        assert_eq!(response["count"], serde_json::json!(2));
+        assert_eq!(response["data"]["limit"], serde_json::json!(2));
+        assert_eq!(response["data"]["offset"], serde_json::json!(0));
+        assert_eq!(
+            response["_nova_result_meta"]["next_offset"],
+            serde_json::json!(2)
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

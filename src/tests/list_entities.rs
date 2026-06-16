@@ -10,9 +10,9 @@ async fn test_list_entities_models() {
         package: None,
         tags: vec![],
         database_schema: None,
-        detail: DetailLevel::Full,
+        detail: Some(DetailLevel::Full),
         pagination: PaginationParams {
-            limit: 10,
+            limit: Some(10),
             offset: 0,
         },
     };
@@ -42,9 +42,9 @@ async fn test_list_entities_with_tag_filter() {
         package: None,
         tags: vec!["sql".to_string()],
         database_schema: None,
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         pagination: PaginationParams {
-            limit: 50,
+            limit: Some(50),
             offset: 0,
         },
     };
@@ -65,9 +65,9 @@ async fn test_list_entities_sources() {
         package: None,
         tags: vec![],
         database_schema: None,
-        detail: DetailLevel::Full,
+        detail: Some(DetailLevel::Full),
         pagination: PaginationParams {
-            limit: 10,
+            limit: Some(10),
             offset: 0,
         },
     };
@@ -86,9 +86,9 @@ async fn test_list_entities_groups() {
         package: None,
         tags: vec![],
         database_schema: None,
-        detail: DetailLevel::Full,
+        detail: Some(DetailLevel::Full),
         pagination: PaginationParams {
-            limit: 50,
+            limit: Some(50),
             offset: 0,
         },
     };
@@ -107,9 +107,9 @@ async fn test_list_entities_invalid_type() {
         package: None,
         tags: vec![],
         database_schema: None,
-        detail: DetailLevel::Full,
+        detail: Some(DetailLevel::Full),
         pagination: PaginationParams {
-            limit: 10,
+            limit: Some(10),
             offset: 0,
         },
     };
