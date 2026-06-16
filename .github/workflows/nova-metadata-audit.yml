@@ -830,11 +830,13 @@ jobs:
           scored_count="$(jq -r '.scored_count' "${report_path}")"
           required_fail_count="$(jq -r '.summary.required_fail_count' "${report_path}")"
           advisory_fail_count="$(jq -r '.summary.advisory_fail_count' "${report_path}")"
-          echo "gate_status=${gate_status}" >> "$GITHUB_OUTPUT"
-          echo "target_count=${target_count}" >> "$GITHUB_OUTPUT"
-          echo "scored_count=${scored_count}" >> "$GITHUB_OUTPUT"
-          echo "required_fail_count=${required_fail_count}" >> "$GITHUB_OUTPUT"
-          echo "advisory_fail_count=${advisory_fail_count}" >> "$GITHUB_OUTPUT"
+          {
+            echo "gate_status=${gate_status}"
+            echo "target_count=${target_count}"
+            echo "scored_count=${scored_count}"
+            echo "required_fail_count=${required_fail_count}"
+            echo "advisory_fail_count=${advisory_fail_count}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Append audit summary
         if: ${{ always() && hashFiles('out/metadata-audit-report.md') != '' }}
@@ -868,4 +870,6 @@ jobs:
       - name: Fail on audit gate
         if: ${{ steps.audit.outputs.exit_code != '0' }}
         shell: bash
-        run: exit "${{ steps.audit.outputs.exit_code }}"
+        run: |
+          echo "metadata audit failed with exit code ${{ steps.audit.outputs.exit_code }}" >&2
+          exit 1

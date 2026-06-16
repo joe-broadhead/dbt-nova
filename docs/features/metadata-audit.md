@@ -98,7 +98,17 @@ When `selection_mode: changed` and `changed_files_json` is omitted on
 `pull_request` events, the reusable workflow resolves changed files from the
 immutable PR event SHAs (`pull_request.base.sha` and `pull_request.head.sha`)
 instead of the moving base branch name. This keeps reruns stable even after the
-base branch has advanced.
+base branch has advanced. If the workflow cannot fetch those immutable commits,
+it fails before running the audit rather than falling back to a moving branch
+tip.
+
+Changed-mode audits match dbt manifest entities by both `original_file_path`
+and `patch_path`, so changing either a model SQL file or its YAML properties
+file selects the model when the manifest records that path. If changed files
+under `models/` look like dbt SQL or YAML model/schema files but no manifest
+entity matches, Nova records a no-target advisory by default. Set
+`fail_on_no_targets: true` to make that condition a required failure while still
+emitting the JSON and Markdown audit reports.
 
 When using `dbt_generate_manifest: true`, prefer the same secret-bundle pattern
 as the Nova assets workflow so callers can work consistently across providers
@@ -117,7 +127,11 @@ jobs:
       dbt_secret_env_map_json: >-
         {"DBT_ACCESS_TOKEN":"DBT_ACCESS_TOKEN","DBT_BIGQUERY_KEYFILE_JSON":"DBT_BIGQUERY_KEYFILE_JSON"}
       selection_mode: changed
+      # Optional. Omit on pull_request events to let the workflow resolve
+      # immutable pull_request.base.sha...pull_request.head.sha changed files.
+      # changed_files_json: '["models/marts/orders.sql","models/marts/orders.yml"]'
       resource_types_json: '["model"]'
+      fail_on_no_targets: true
       storage_instance_id: analytics-metadata-audit
     secrets:
       DBT_NOVA_SECRET_BUNDLE_JSON: ${{ secrets.DBT_NOVA_SECRET_BUNDLE_JSON }}
