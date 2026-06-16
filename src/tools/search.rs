@@ -339,7 +339,14 @@ impl ManifestSearch {
             } else if detail == DetailLevel::Compact {
                 if let Some(entity) = candidate.entity {
                     let mut summary = self.summary_for_compact(&candidate.unique_id, entity);
+                    let entity_json = entity.to_json_value();
+                    let provenance = self.provenance_for_archived_json(
+                        &candidate.unique_id,
+                        entity,
+                        &entity_json,
+                    );
                     if let Some(obj) = summary.as_object_mut() {
+                        obj.insert("provenance".to_string(), provenance);
                         obj.insert("score".to_string(), JsonValue::from(candidate.score));
                         if let Some(highlights) = highlight_value {
                             obj.insert("highlights".to_string(), highlights);
@@ -366,7 +373,14 @@ impl ManifestSearch {
                     persona,
                     Some(&tokens),
                 );
+                let provenance = candidate.entity.map(|entity| {
+                    let entity_json = entity.to_json_value();
+                    self.provenance_for_archived_json(&candidate.unique_id, entity, &entity_json)
+                });
                 if let Some(obj) = summary.as_object_mut() {
+                    if let Some(provenance) = provenance {
+                        obj.insert("provenance".to_string(), provenance);
+                    }
                     obj.insert("score".to_string(), JsonValue::from(candidate.score));
                     if let Some(highlights) = highlight_value {
                         obj.insert("highlights".to_string(), highlights);

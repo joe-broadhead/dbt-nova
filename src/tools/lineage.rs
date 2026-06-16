@@ -157,11 +157,26 @@ impl ManifestSearch {
                 }
                 DetailLevel::Compact => {
                     if let Some(entity) = self.get_entity_archived(id)? {
-                        results.push(self.summary_for_compact(id, entity));
+                        let mut summary = self.summary_for_compact(id, entity);
+                        let entity_json = entity.to_json_value();
+                        let provenance =
+                            self.provenance_for_archived_json(id, entity, &entity_json);
+                        if let Some(obj) = summary.as_object_mut() {
+                            obj.insert("provenance".to_string(), provenance);
+                        }
+                        results.push(summary);
                     }
                 }
                 DetailLevel::Standard => {
-                    if let Ok(summary) = self.entity_summary(id) {
+                    if let Ok(mut summary) = self.entity_summary(id) {
+                        if let Some(entity) = self.get_entity_archived(id)? {
+                            let entity_json = entity.to_json_value();
+                            let provenance =
+                                self.provenance_for_archived_json(id, entity, &entity_json);
+                            if let Some(obj) = summary.as_object_mut() {
+                                obj.insert("provenance".to_string(), provenance);
+                            }
+                        }
                         results.push(summary);
                     } else {
                         results.push(serde_json::json!({
