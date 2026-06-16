@@ -40,7 +40,7 @@ async fn depth_limit_applies() {
         direction: "upstream".into(),
         depth: Some(1),
         resource_types: vec![],
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
     };
     let result = json(searcher.get_lineage(&params).await);
     let count = result
@@ -69,7 +69,7 @@ async fn lineage_depth_clamps_to_config_max() {
         direction: "upstream".into(),
         depth: Some(99),
         resource_types: vec![],
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
     };
     let result = json(searcher.get_lineage(&params).await);
     let data = result.get("data").expect("data");

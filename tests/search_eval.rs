@@ -488,14 +488,14 @@ async fn evaluate_profile(
             query: case.query.clone(),
             resource_types: case.resource_types.clone(),
             persona: case.persona.clone(),
-            detail: DetailLevel::Standard,
+            detail: Some(DetailLevel::Standard),
             min_score: None,
             fuzzy: false,
             include_highlights: false,
             include_sql: false,
             explain: false,
             pagination: PaginationParams {
-                limit: top_k.max(1),
+                limit: Some(top_k.max(1)),
                 offset: 0,
             },
         };

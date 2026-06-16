@@ -16,7 +16,9 @@ pub mod warehouse;
 pub use column_lineage::{
     ColumnLineageConfig, ColumnMatchingConfig, ConfidenceTier, MatchingStrategy,
 };
-pub use core::{ArtifactFetchPolicy, DbtNovaConfig, GovernanceGateConfig, ServerTransport};
+pub use core::{
+    ArtifactFetchPolicy, DbtNovaConfig, GovernanceGateConfig, ResultProfile, ServerTransport,
+};
 pub use metadata_score::{
     MetadataCategoryWeights, MetadataScoreConfig, MetadataScoreWeightProfiles,
 };

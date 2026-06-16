@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -36,15 +37,21 @@ pub(super) async fn run_provider_command(
     trace_path: &Path,
     case_dir: &Path,
 ) -> crate::error::Result<ProviderOutput> {
+    let current_exe = current_eval_executable()?;
+    let provider_path = provider_path_with_current_exe(&current_exe)?;
     let mut command = Command::new(&invocation.command);
     command
         .args(&invocation.args)
         .current_dir(std::env::current_dir().map_err(|error| server_error(error.to_string()))?)
         .env(TRACE_ENV, trace_path)
+        .env("DBT_NOVA_EVAL_BIN", &current_exe)
         .env("DBT_NOVA_EVAL_CASE_DIR", case_dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    if let Some(path) = provider_path {
+        command.env("PATH", path);
+    }
     if let Some(path) = args.manifest_path.as_ref() {
         command.env("DBT_MANIFEST_PATH", path);
     }
@@ -84,6 +91,27 @@ pub(super) async fn run_provider_command(
     })
 }
 
+fn current_eval_executable() -> crate::error::Result<PathBuf> {
+    std::env::current_exe().map_err(|error| {
+        server_error(format!(
+            "failed to resolve current eval executable: {error}"
+        ))
+    })
+}
+
+fn provider_path_with_current_exe(current_exe: &Path) -> crate::error::Result<Option<OsString>> {
+    let Some(exe_dir) = current_exe.parent() else {
+        return Ok(None);
+    };
+    let mut paths = Vec::from([exe_dir.to_path_buf()]);
+    if let Some(existing) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&existing));
+    }
+    std::env::join_paths(paths)
+        .map(Some)
+        .map_err(|error| server_error(format!("failed to prepare provider PATH: {error}")))
+}
+
 pub(super) fn provider_invocation(
     args: &EvalAgentRunArgs,
     prompt: &str,
@@ -93,7 +121,7 @@ pub(super) fn provider_invocation(
         || default_provider_command(&args.provider),
         validate_custom_command,
     )?;
-    let raw_args = if let Some(json) = args.provider_args_json.as_ref() {
+    let mut raw_args = if let Some(json) = args.provider_args_json.as_ref() {
         let values: Vec<String> = serde_json::from_str(json).map_err(|error| {
             DbtNovaError::InvalidParams(format!("invalid --provider-args-json: {error}"))
         })?;
@@ -101,6 +129,7 @@ pub(super) fn provider_invocation(
     } else {
         default_provider_args(&args.provider, prompt)?
     };
+    apply_provider_model_arg(args, &mut raw_args)?;
     Ok(ProviderInvocation {
         command,
         args: raw_args,
@@ -167,6 +196,29 @@ fn default_provider_args(provider: &str, prompt: &str) -> crate::error::Result<V
     }
 }
 
+fn apply_provider_model_arg(
+    args: &EvalAgentRunArgs,
+    raw_args: &mut Vec<String>,
+) -> crate::error::Result<()> {
+    let Some(model) = args
+        .provider_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    if args.provider != "opencode" || args.provider_args_json.is_some() {
+        return Err(DbtNovaError::InvalidParams(
+            "--provider-model is only supported by the opencode provider preset; use --provider-args-json for custom commands".to_string(),
+        ));
+    }
+    let insert_at = raw_args.len().saturating_sub(1);
+    raw_args.insert(insert_at, "--model".to_string());
+    raw_args.insert(insert_at + 1, model.to_string());
+    Ok(())
+}
+
 fn substitute_provider_args(
     args: Vec<String>,
     prompt: &str,
@@ -214,10 +266,9 @@ pub(super) fn read_provider_tool_trace(stdout: &str) -> ToolTraceRead {
         };
         trace.ingest_event(&event);
     }
-    ToolTraceRead {
-        rows: trace.rows,
-        errors,
-    }
+    let mut rows = trace.rows;
+    normalize_provider_tool_trace_indices(&mut rows);
+    ToolTraceRead { rows, errors }
 }
 
 pub(super) fn read_provider_final_answer(stdout: &str) -> Option<String> {
@@ -241,6 +292,12 @@ fn collect_provider_final_answer_event(
     assistant_parts: &mut Vec<String>,
     result_parts: &mut Vec<String>,
 ) {
+    if event.get("type").and_then(JsonValue::as_str) == Some("text")
+        && let Some(part) = event.get("part")
+    {
+        collect_provider_text_content(part, assistant_parts);
+        return;
+    }
     if event.get("type").and_then(JsonValue::as_str) == Some("result") {
         collect_provider_text_content(event.get("result").unwrap_or(event), result_parts);
         return;
@@ -388,6 +445,7 @@ impl ProviderTraceState {
             .and_then(JsonValue::as_bool)
             .unwrap_or(false);
         let response = part.get("content").unwrap_or(part);
+        let telemetry = provider_response_telemetry(Some(response));
         let selected_unique_ids = provider_selected_unique_ids(Some(response));
         let top_unique_ids = provider_top_unique_ids(Some(response));
         if let Some(row) = self
@@ -396,6 +454,23 @@ impl ProviderTraceState {
             .and_then(JsonValue::as_object_mut)
         {
             row.insert("success".to_string(), JsonValue::Bool(success));
+            row.insert(
+                "response_bytes".to_string(),
+                JsonValue::from(telemetry.response_bytes),
+            );
+            row.insert(
+                "response_truncated".to_string(),
+                JsonValue::Bool(telemetry.response_truncated),
+            );
+            if let Some(result_count) = telemetry.result_count {
+                row.insert("result_count".to_string(), JsonValue::from(result_count));
+            }
+            if let Some(total_available) = telemetry.total_available {
+                row.insert(
+                    "total_available".to_string(),
+                    JsonValue::from(total_available),
+                );
+            }
             row.insert(
                 "selected_unique_ids".to_string(),
                 json!(selected_unique_ids),
@@ -512,15 +587,143 @@ fn provider_tool_row(
     params: Option<&JsonValue>,
     response: Option<&JsonValue>,
 ) -> JsonValue {
+    let telemetry = provider_response_telemetry(response);
     json!({
         "transport": transport,
         "tool": tool,
         "success": success,
         "duration_ms": 0,
         "params_summary": provider_params_summary(params),
+        "response_bytes": telemetry.response_bytes,
+        "response_truncated": telemetry.response_truncated,
+        "result_count": telemetry.result_count,
+        "total_available": telemetry.total_available,
         "selected_unique_ids": provider_selected_unique_ids(response),
         "top_unique_ids": provider_top_unique_ids(response),
     })
+}
+
+fn normalize_provider_tool_trace_indices(rows: &mut [JsonValue]) {
+    for (index, row) in rows.iter_mut().enumerate() {
+        if let Some(obj) = row.as_object_mut() {
+            obj.insert("tool_call_index".to_string(), JsonValue::from(index as u64));
+        }
+    }
+}
+
+struct ProviderResponseTelemetry {
+    response_bytes: usize,
+    response_truncated: bool,
+    result_count: Option<u64>,
+    total_available: Option<u64>,
+}
+
+fn provider_response_telemetry(response: Option<&JsonValue>) -> ProviderResponseTelemetry {
+    let normalized = response.and_then(provider_measurement_response);
+    let metric_source = normalized.as_ref().or(response);
+    ProviderResponseTelemetry {
+        response_bytes: response.map_or(0, provider_serialized_len),
+        response_truncated: response.is_some_and(provider_response_truncated),
+        result_count: metric_source.and_then(|value| provider_response_metric(value, "count")),
+        total_available: metric_source.and_then(|value| {
+            provider_response_metric(value, "total_available").or_else(|| {
+                value
+                    .get("_nova_result_meta")
+                    .and_then(|meta| meta.get("original_count"))
+                    .and_then(JsonValue::as_u64)
+            })
+        }),
+    }
+}
+
+fn provider_serialized_len(value: &JsonValue) -> usize {
+    if let Some(normalized) = provider_measurement_response(value) {
+        return serde_json::to_string(&normalized).map_or(0, |serialized| serialized.len());
+    }
+    serde_json::to_string(value).map_or(0, |serialized| serialized.len())
+}
+
+fn provider_measurement_response(value: &JsonValue) -> Option<JsonValue> {
+    match value {
+        JsonValue::Object(map) => {
+            if let Some(text) = map.get("text").and_then(JsonValue::as_str)
+                && let Some(parsed) = parse_provider_json_text(text)
+            {
+                return Some(parsed);
+            }
+            if let Some(content) = map.get("content")
+                && let Some(parsed) = provider_measurement_response(content)
+            {
+                return Some(parsed);
+            }
+            if let Some(result) = map.get("result")
+                && let Some(parsed) = provider_measurement_response(result)
+            {
+                return Some(parsed);
+            }
+            None
+        }
+        JsonValue::Array(items) => items.iter().find_map(provider_measurement_response),
+        JsonValue::String(raw) => parse_provider_json_text(raw),
+        JsonValue::Null | JsonValue::Bool(_) | JsonValue::Number(_) => None,
+    }
+}
+
+fn parse_provider_json_text(raw: &str) -> Option<JsonValue> {
+    let trimmed = raw.trim();
+    if !(trimmed.starts_with('{') || trimmed.starts_with('[')) {
+        return None;
+    }
+    serde_json::from_str::<JsonValue>(trimmed).ok()
+}
+
+fn provider_response_metric(value: &JsonValue, key: &str) -> Option<u64> {
+    match value {
+        JsonValue::Object(map) => {
+            if let Some(metric) = map.get(key).and_then(JsonValue::as_u64) {
+                return Some(metric);
+            }
+            map.values()
+                .find_map(|child| provider_response_metric(child, key))
+        }
+        JsonValue::Array(items) => items
+            .iter()
+            .find_map(|item| provider_response_metric(item, key)),
+        JsonValue::String(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.starts_with('{')
+                && let Ok(parsed) = serde_json::from_str::<JsonValue>(trimmed)
+            {
+                return provider_response_metric(&parsed, key);
+            }
+            None
+        }
+        JsonValue::Null | JsonValue::Bool(_) | JsonValue::Number(_) => None,
+    }
+}
+
+fn provider_response_truncated(value: &JsonValue) -> bool {
+    match value {
+        JsonValue::Object(map) => {
+            map.get("truncated")
+                .and_then(JsonValue::as_bool)
+                .unwrap_or(false)
+                || map
+                    .get("_nova_result_meta")
+                    .and_then(|meta| meta.get("truncated"))
+                    .and_then(JsonValue::as_bool)
+                    .unwrap_or(false)
+                || map.values().any(provider_response_truncated)
+        }
+        JsonValue::Array(items) => items.iter().any(provider_response_truncated),
+        JsonValue::String(raw) => {
+            let trimmed = raw.trim();
+            trimmed.starts_with('{')
+                && serde_json::from_str::<JsonValue>(trimmed)
+                    .is_ok_and(|parsed| provider_response_truncated(&parsed))
+        }
+        JsonValue::Null | JsonValue::Bool(_) | JsonValue::Number(_) => false,
+    }
 }
 
 fn provider_params_summary(params: Option<&JsonValue>) -> JsonValue {
@@ -542,6 +745,15 @@ fn provider_params_summary(params: Option<&JsonValue>) -> JsonValue {
         "resource_types",
         "recipe_id",
         "direction",
+        "detail",
+        "group_mode",
+        "indicator_types",
+        "include_support_signals",
+        "max_parent_groups",
+        "preflight_only",
+        "row_limit",
+        "byte_limit",
+        "max_poll_seconds",
         "limit",
         "offset",
     ] {
@@ -721,11 +933,14 @@ fn collect_provider_unique_ids(value: &JsonValue, out: &mut BTreeSet<String>) {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use serde_json::json;
 
-    use super::{provider_invocation, read_provider_final_answer, read_provider_tool_trace};
+    use super::{
+        provider_invocation, provider_path_with_current_exe, read_provider_final_answer,
+        read_provider_tool_trace,
+    };
     use crate::cli::args::EvalAgentRunArgs;
 
     #[test]
@@ -783,6 +998,38 @@ mod tests {
     }
 
     #[test]
+    fn provider_invocation_inserts_opencode_model_before_prompt() {
+        let args = EvalAgentRunArgs {
+            provider: "opencode".to_string(),
+            provider_model: Some("opencode/deepseek-v4-flash-free".to_string()),
+            ..EvalAgentRunArgs::default()
+        };
+        let invocation = provider_invocation(&args, "hello", Path::new("/tmp/trace.jsonl"))
+            .expect("opencode provider");
+        assert_eq!(invocation.command, "opencode");
+        assert_eq!(
+            invocation.args,
+            vec![
+                "run",
+                "--format",
+                "json",
+                "--model",
+                "opencode/deepseek-v4-flash-free",
+                "hello"
+            ]
+        );
+    }
+
+    #[test]
+    fn provider_path_prefers_current_executable_directory() {
+        let path = provider_path_with_current_exe(Path::new("/tmp/dbt-nova/bin/dbt-nova"))
+            .expect("path")
+            .expect("has parent");
+        let first = std::env::split_paths(&path).next();
+        assert_eq!(first, Some(PathBuf::from("/tmp/dbt-nova/bin")));
+    }
+
+    #[test]
     fn provider_invocation_uses_claude_verbose_stream_json() {
         let args = EvalAgentRunArgs {
             provider: "claude".to_string(),
@@ -832,6 +1079,14 @@ mod tests {
             json!(["model.pkg.orders"])
         );
         assert_eq!(trace.rows[0]["top_unique_ids"], json!(["model.pkg.orders"]));
+        assert_eq!(
+            trace.rows[0]["response_bytes"],
+            json!(
+                serde_json::to_string(&json!({"data":[{"parent_unique_id":"model.pkg.orders"}]}))
+                    .expect("serialized")
+                    .len()
+            )
+        );
     }
 
     #[test]
@@ -861,6 +1116,8 @@ mod tests {
         let trace = read_provider_tool_trace(stdout);
         assert_eq!(trace.errors, Vec::<String>::new());
         assert_eq!(trace.rows.len(), 2);
+        assert_eq!(trace.rows[0]["tool_call_index"], json!(0));
+        assert_eq!(trace.rows[1]["tool_call_index"], json!(1));
         assert_eq!(trace.rows[0]["tool"], "search_indicator");
         assert_eq!(trace.rows[1]["tool"], "get_context");
         assert_eq!(
@@ -872,11 +1129,15 @@ mod tests {
     #[test]
     fn provider_trace_attaches_claude_tool_results() {
         let stdout = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"mcp__dbt_nova__search_indicator","input":{"query":"gmv"}}]}}
-{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"{\"data\":[{\"parent_unique_id\":\"model.pkg.orders\"}]}"}]}]}}"#;
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":[{"type":"text","text":"{\"count\":1,\"total_available\":7,\"data\":[{\"parent_unique_id\":\"model.pkg.orders\"}],\"_nova_result_meta\":{\"truncated\":true}}"}]}]}}"#;
         let trace = read_provider_tool_trace(stdout);
         assert_eq!(trace.errors, Vec::<String>::new());
         assert_eq!(trace.rows.len(), 1);
         assert_eq!(trace.rows[0]["tool"], "search_indicator");
+        assert!(trace.rows[0]["response_bytes"].as_u64().unwrap_or(0) > 0);
+        assert_eq!(trace.rows[0]["response_truncated"], json!(true));
+        assert_eq!(trace.rows[0]["result_count"], json!(1));
+        assert_eq!(trace.rows[0]["total_available"], json!(7));
         assert_eq!(
             trace.rows[0]["selected_unique_ids"],
             json!(["model.pkg.orders"])
@@ -932,5 +1193,13 @@ mod tests {
 {"type":"assistant","message":{"content":[{"type":"text","text":"Clean final answer."}]}}"#;
         let final_answer = read_provider_final_answer(stdout).expect("final answer");
         assert_eq!(final_answer, "Clean final answer.");
+    }
+
+    #[test]
+    fn provider_final_answer_reads_opencode_text_events() {
+        let stdout = r#"{"type":"tool_use","part":{"type":"tool","tool":"bash","state":{"output":"tool output with 12.0%"}}}
+{"type":"text","part":{"type":"text","text":"Final answer only."}}"#;
+        let final_answer = read_provider_final_answer(stdout).expect("final answer");
+        assert_eq!(final_answer, "Final answer only.");
     }
 }

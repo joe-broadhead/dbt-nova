@@ -10,7 +10,7 @@ async fn test_get_lineage_upstream() {
         direction: "upstream".to_string(),
         depth: Some(1),
         resource_types: vec![],
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
     };
     let result = searcher.get_lineage(&params).await.json();
     let success = result
@@ -38,7 +38,7 @@ async fn test_get_lineage_downstream() {
         direction: "downstream".to_string(),
         depth: Some(1),
         resource_types: vec![],
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
     };
     let result = searcher.get_lineage(&params).await.json();
     let success = result
@@ -60,7 +60,7 @@ async fn test_get_lineage_full_depth() {
         direction: "downstream".to_string(),
         depth: None, // Unlimited
         resource_types: vec![],
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
     };
     let result = searcher.get_lineage(&params).await.json();
     let success = result
@@ -82,7 +82,7 @@ async fn test_get_lineage_filter_by_type() {
         direction: "upstream".to_string(),
         depth: None,
         resource_types: vec!["model".to_string()],
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
     };
     let result = searcher.get_lineage(&params).await.json();
     // All results should be models
@@ -109,7 +109,7 @@ async fn test_get_lineage_invalid_direction() {
         direction: "invalid".to_string(),
         depth: None,
         resource_types: vec![],
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
     };
     let result = searcher.get_lineage(&params).await.json();
     let success = result

@@ -47,6 +47,13 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_DISABLE_TOOL_SCHEMAS` – strip JSON schema hints from MCP tools (useful for strict clients like Gemini; see [MCP Clients](../getting-started/mcp-clients.md))
 - `DBT_NOVA_TOOL_ALLOWLIST` – optional comma-separated allowlist of exact MCP tool names to expose; when set, only these tools are eligible for exposure
 - `DBT_NOVA_TOOL_DENYLIST` – optional comma-separated denylist of exact MCP tool names to hide after allowlist processing
+- `DBT_NOVA_RESULT_PROFILE` – default detail profile when CLI/tool-call requests omit `detail` (`compact`, `standard`, or `full`; default: `standard`)
+- `DBT_NOVA_MCP_RESULT_PROFILE` – default detail profile when MCP requests omit `detail` (`compact`, `standard`, or `full`; default: `compact`)
+- `DBT_NOVA_MCP_DEFAULT_LIMIT` – MCP result limit used when paginated MCP requests omit `limit` or pass `limit=0` (default: `10`)
+- `DBT_NOVA_MCP_MAX_PAGE_SIZE` – MCP-specific cap for paginated result requests before the global search cap is applied (`0` disables the MCP-specific cap, default: `100`)
+- `DBT_NOVA_MCP_MAX_RESPONSE_BYTES` – central serialized MCP tool response budget in bytes (`0` disables central budgeting, default: `65536`)
+- `DBT_NOVA_MCP_MAX_STRING_CHARS` – max characters retained for long strings when central MCP budgeting truncates (default: `4096`)
+- `DBT_NOVA_MCP_INCLUDE_TRUNCATION_META` – include `_nova_result_meta` when a central MCP budget pass truncates a response (`true`|`false`, default: `true`)
 - `DBT_NOVA_SQL_PROVIDER` – SQL backend for `execute_sql` (`databricks`, `bigquery`, `snowflake`, or `duckdb`, default: `databricks`)
 - `DBT_NOVA_GCP_PROJECT_ID` – shared Google project id alias (used by BigQuery fallback resolution)
 - `DBT_NOVA_GCP_ACCESS_TOKEN` – shared Google OAuth access token alias (used by BigQuery fallback resolution)
@@ -95,6 +102,15 @@ Remote manifest notes:
 - Bootstrap precedence is deterministic: explicit env vars override bootstrap values, and bootstrap values override defaults.
 - Tool filtering precedence is deterministic: allowlist is applied first, then denylist; denylist wins when both include the same tool.
 - Tool filter names are strict and case-sensitive. Unknown names in either list fail startup validation with a hard error.
+- Result profile defaults only fill omitted `detail` values. Callers can still
+  request `detail=standard` or `detail=full` explicitly when they need richer
+  payloads. With the default compact MCP profile, omitted `search_indicator`
+  group output defaults to `group_mode=top`; explicit `group_mode=all` remains
+  available for debugging.
+- Central MCP response budgeting is a backstop, not a replacement for tool-level
+  limits. Prefer compact tool parameters first; truncated responses include
+  `_nova_result_meta` with byte budget, omitted path evidence, and `next_offset`
+  for paginated MCP responses when enabled.
 - Tool filter examples:
   - Allowlist only (expose only discovery + entity lookup):
     - `DBT_NOVA_TOOL_ALLOWLIST=search,get_entity`
@@ -159,6 +175,10 @@ Instance directories live under `<storage_root>/instances/<instance_id>`.
 - `DBT_NOVA_EMBEDDINGS_MAX_DECOMPRESSED_BYTES` – max decompressed bytes for embedding caches (`0` = unlimited, default: `4294967296`)
 - `DBT_NOVA_TOOL_RATE_LIMITS` – per-tool rate limits (default: `search=60,execute_sql=20,default=120`)
 - `DBT_NOVA_TOOL_RATE_LIMIT_WINDOW_SECS` – rate limit window seconds (default: `60`)
+- `DBT_NOVA_MCP_DEFAULT_LIMIT` – MCP default result limit when omitted or `0` (default: `10`)
+- `DBT_NOVA_MCP_MAX_PAGE_SIZE` – MCP-specific max result page size (`0` disables, default: `100`)
+- `DBT_NOVA_MCP_MAX_RESPONSE_BYTES` – max serialized MCP response bytes before deterministic truncation (`0` disables, default: `65536`)
+- `DBT_NOVA_MCP_MAX_STRING_CHARS` – max long-string characters retained during MCP truncation (default: `4096`)
 - `DBT_NOVA_SQL_MAX_ROW_LIMIT` – max rows accepted by `execute_sql` (`0` = unlimited, default: `10000`)
 - `DBT_NOVA_SQL_MAX_BYTE_LIMIT` – max bytes accepted by `execute_sql` (`0` = unlimited, default: `100000000`)
 - `DBT_NOVA_SQL_MAX_CHUNKS` – max result chunks accepted by `execute_sql` (`0` = unlimited, default: `100`)
@@ -188,7 +208,7 @@ Note: `DBT_NOVA_MAX_LINEAGE_RESULTS` applies to **column lineage** (`get_column_
 
 ## Tantivy / Lexical Search
 
-- `DBT_NOVA_DEFAULT_LIMIT` – fallback result limit when `limit=0` (default: `50`)
+- `DBT_NOVA_DEFAULT_LIMIT` – fallback result limit when `limit` is omitted or `limit=0` (default: `50`)
 - `DBT_NOVA_MIN_WORD_LENGTH` – minimum word length for indexing (default: `2`)
 - `DBT_NOVA_INDEX_DIR` – Tantivy index directory name inside storage (default: `index`)
 - `DBT_NOVA_INDEX_WRITER_HEAP_BYTES` – Tantivy writer heap size (default: `128000000`)

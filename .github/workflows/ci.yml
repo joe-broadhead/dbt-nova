@@ -114,6 +114,36 @@ jobs:
           DBT_NOVA_EVAL_ENABLE_LIFECYCLE=0 \
           cargo test --locked --no-default-features --test search_eval compare_lexical_vs_hybrid_search_quality -- --ignored
 
+  tokenomics-bridge-eval:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      DBT_NOVA_STRICT_SCHEMA: "1"
+      CARGO_BUILD_JOBS: "1"
+      RUSTFLAGS: "-C debuginfo=0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+
+      - name: Validate Tokenomics Bridge Eval
+        run: cargo run --locked --no-default-features -- eval validate --suite evals/agent-tokenomics-bridge.yml
+
+      - name: Run Tokenomics Bridge Eval
+        run: |
+          cargo run --locked --no-default-features -- eval run \
+            --suite evals/agent-tokenomics-bridge.yml \
+            --manifest-path tests/fixtures/tokenomics_manifest.json \
+            --storage-instance-id tokenomics-bridge-ci \
+            --cleanup-storage-on-start \
+            --fail-under 1.0 \
+            --json
+
   check-no-default:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
@@ -596,10 +626,12 @@ jobs:
             ) | sha256sum | awk '{print $1}'
           )"
 
-          echo "workspace_dir=${consumer_workspace}" >> "$GITHUB_OUTPUT"
-          echo "storage_dir=${storage_dir}" >> "$GITHUB_OUTPUT"
-          echo "metadata_path=${metadata_path}" >> "$GITHUB_OUTPUT"
-          echo "storage_snapshot_before=${storage_snapshot_before}" >> "$GITHUB_OUTPUT"
+          {
+            echo "workspace_dir=${consumer_workspace}"
+            echo "storage_dir=${storage_dir}"
+            echo "metadata_path=${metadata_path}"
+            echo "storage_snapshot_before=${storage_snapshot_before}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Validate metadata contract fields
         shell: bash
@@ -736,11 +768,13 @@ jobs:
           storage_uri="file://$(realpath "${storage_archive}")"
           metadata_uri="file://$(realpath "${metadata_path}")"
 
-          echo "workspace_dir=${workspace_dir}" >> "$GITHUB_OUTPUT"
-          echo "storage_root=${storage_root}" >> "$GITHUB_OUTPUT"
-          echo "manifest_path=${manifest_path}" >> "$GITHUB_OUTPUT"
-          echo "storage_uri=${storage_uri}" >> "$GITHUB_OUTPUT"
-          echo "metadata_uri=${metadata_uri}" >> "$GITHUB_OUTPUT"
+          {
+            echo "workspace_dir=${workspace_dir}"
+            echo "storage_root=${storage_root}"
+            echo "manifest_path=${manifest_path}"
+            echo "storage_uri=${storage_uri}"
+            echo "metadata_uri=${metadata_uri}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: First run materializes from file URIs
         shell: bash
@@ -872,13 +906,15 @@ jobs:
           metadata_uri="file://$(realpath "${metadata_path}")"
           models_uri="file://$(realpath "${models_archive}")"
 
-          echo "workspace_dir=${workspace_dir}" >> "$GITHUB_OUTPUT"
-          echo "storage_root=${storage_root}" >> "$GITHUB_OUTPUT"
-          echo "models_root=${models_root}" >> "$GITHUB_OUTPUT"
-          echo "manifest_path=${manifest_path}" >> "$GITHUB_OUTPUT"
-          echo "storage_uri=${storage_uri}" >> "$GITHUB_OUTPUT"
-          echo "metadata_uri=${metadata_uri}" >> "$GITHUB_OUTPUT"
-          echo "models_uri=${models_uri}" >> "$GITHUB_OUTPUT"
+          {
+            echo "workspace_dir=${workspace_dir}"
+            echo "storage_root=${storage_root}"
+            echo "models_root=${models_root}"
+            echo "manifest_path=${manifest_path}"
+            echo "storage_uri=${storage_uri}"
+            echo "metadata_uri=${metadata_uri}"
+            echo "models_uri=${models_uri}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: First run materializes semantic artifacts from file URIs
         shell: bash
@@ -1028,10 +1064,12 @@ jobs:
           }
 
           cp tests/fixtures/nova_manifest.json "${workspace_dir}/manifest.json"
-          echo "workspace_dir=${workspace_dir}" >> "$GITHUB_OUTPUT"
-          echo "storage_dir=${storage_dir}" >> "$GITHUB_OUTPUT"
-          echo "manifest_path=${workspace_dir}/manifest.json" >> "$GITHUB_OUTPUT"
-          echo "metadata_path=${metadata_path}" >> "$GITHUB_OUTPUT"
+          {
+            echo "workspace_dir=${workspace_dir}"
+            echo "storage_dir=${storage_dir}"
+            echo "manifest_path=${workspace_dir}/manifest.json"
+            echo "metadata_path=${metadata_path}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Read-only mismatch and missing-storage cases fail with actionable error
         shell: bash

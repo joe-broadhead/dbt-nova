@@ -37,9 +37,9 @@ async fn test_find_by_path_uses_index() {
     let params = FindByPathParams {
         path_pattern: format!("{prefix}/**"),
         resource_types: vec![],
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         pagination: PaginationParams {
-            limit: 100,
+            limit: Some(100),
             offset: 0,
         },
     };

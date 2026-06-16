@@ -9,9 +9,9 @@ async fn test_find_by_path_exact_match() {
     let params = FindByPathParams {
         path_pattern: test_path,
         resource_types: vec![],
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         pagination: PaginationParams {
-            limit: 50,
+            limit: Some(50),
             offset: 0,
         },
     };
@@ -38,9 +38,9 @@ async fn test_find_by_path_glob_star() {
     let params = FindByPathParams {
         path_pattern: "models/staging/*".to_string(),
         resource_types: vec![],
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         pagination: PaginationParams {
-            limit: 100,
+            limit: Some(100),
             offset: 0,
         },
     };
@@ -63,9 +63,9 @@ async fn test_find_by_path_double_star() {
     let params = FindByPathParams {
         path_pattern: "models/**".to_string(),
         resource_types: vec!["model".to_string()],
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         pagination: PaginationParams {
-            limit: 50,
+            limit: Some(50),
             offset: 0,
         },
     };
@@ -100,9 +100,9 @@ async fn test_find_by_path_with_resource_type_filter() {
     let params = FindByPathParams {
         path_pattern: "**".to_string(), // Match everything
         resource_types: vec!["model".to_string()],
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         pagination: PaginationParams {
-            limit: 10,
+            limit: Some(10),
             offset: 0,
         },
     };
@@ -131,9 +131,9 @@ async fn test_find_by_path_respects_limit() {
     let params = FindByPathParams {
         path_pattern: "**".to_string(),
         resource_types: vec![],
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         pagination: PaginationParams {
-            limit: 5,
+            limit: Some(5),
             offset: 0,
         },
     };
@@ -150,9 +150,9 @@ async fn test_find_by_path_no_matches() {
     let params = FindByPathParams {
         path_pattern: "definitely/not/a/real/path/**".to_string(),
         resource_types: vec![],
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         pagination: PaginationParams {
-            limit: 50,
+            limit: Some(50),
             offset: 0,
         },
     };

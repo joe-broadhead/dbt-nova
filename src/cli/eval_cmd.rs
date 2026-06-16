@@ -134,6 +134,16 @@ enum EvalAssertion {
         #[serde(default = "empty_object")]
         params: JsonValue,
     },
+    ToolResponseBudget {
+        tool: String,
+        #[serde(default = "empty_object")]
+        params: JsonValue,
+        max_response_bytes: usize,
+        #[serde(default)]
+        must_contain_paths: Vec<String>,
+        #[serde(default)]
+        must_not_contain_paths: Vec<String>,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -160,6 +170,14 @@ struct AgentExpected {
     called_with: Vec<AgentCalledWith>,
     #[serde(default)]
     final_answer: Option<FinalAnswerExpected>,
+    #[serde(default)]
+    max_tool_calls: Option<usize>,
+    #[serde(default)]
+    max_distinct_tools: Option<usize>,
+    #[serde(default)]
+    max_total_response_bytes: Option<usize>,
+    #[serde(default)]
+    max_response_bytes_by_tool: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -579,6 +597,24 @@ async fn evaluate_bridge_assertion(
                 }
             }
         }
+        EvalAssertion::ToolResponseBudget {
+            tool,
+            params,
+            max_response_bytes,
+            must_contain_paths,
+            must_not_contain_paths,
+        } => match call_tool(search, tool, params.clone()).await {
+            Ok(response) => tool_response_budget_assertion(
+                tool,
+                &response,
+                *max_response_bytes,
+                must_contain_paths,
+                must_not_contain_paths,
+            ),
+            Err(error) => {
+                AssertionResult::error(format!("tool_response_budget:{tool}"), error.to_string())
+            }
+        },
     }
 }
 
@@ -706,6 +742,7 @@ async fn run_agent_case(
             trace.missing = false;
         }
     }
+    normalize_tool_trace_indices(&mut trace.rows);
     if trace.rows.is_empty() && case.expected.requires_trace() {
         assertions.push(AssertionResult::error(
             "tool_trace_missing",
@@ -794,10 +831,151 @@ fn score_agent_expectations(
     for called_with in &expected.called_with {
         assertions.push(called_with_assertion(trace, called_with));
     }
+    if let Some(max_tool_calls) = expected.max_tool_calls {
+        assertions.push(max_tool_calls_assertion(trace, max_tool_calls));
+    }
+    if let Some(max_distinct_tools) = expected.max_distinct_tools {
+        assertions.push(max_distinct_tools_assertion(trace, max_distinct_tools));
+    }
+    if let Some(max_total_response_bytes) = expected.max_total_response_bytes {
+        assertions.push(max_total_response_bytes_assertion(
+            trace,
+            max_total_response_bytes,
+        ));
+    }
+    for (tool, max_bytes) in &expected.max_response_bytes_by_tool {
+        assertions.push(max_response_bytes_by_tool_assertion(
+            trace, tool, *max_bytes,
+        ));
+    }
     if let Some(final_answer) = expected.final_answer.as_ref() {
         assertions.extend(score_final_answer(final_answer, final_answer_text));
     }
     assertions
+}
+
+fn max_tool_calls_assertion(trace: &[JsonValue], max_tool_calls: usize) -> AssertionResult {
+    let observed = trace.len();
+    if observed <= max_tool_calls {
+        AssertionResult::pass(
+            "max_tool_calls",
+            "observed tool call count stayed within budget",
+            json!({"observed": observed, "max": max_tool_calls}),
+        )
+    } else {
+        AssertionResult::fail(
+            "max_tool_calls",
+            "observed tool call count exceeded budget",
+            json!({"observed": observed, "max": max_tool_calls, "tools": observed_tools(trace)}),
+        )
+    }
+}
+
+fn max_distinct_tools_assertion(trace: &[JsonValue], max_distinct_tools: usize) -> AssertionResult {
+    let distinct: BTreeSet<String> = trace
+        .iter()
+        .filter_map(|row| row.get("tool").and_then(JsonValue::as_str))
+        .map(ToString::to_string)
+        .collect();
+    let observed = distinct.len();
+    if observed <= max_distinct_tools {
+        AssertionResult::pass(
+            "max_distinct_tools",
+            "observed distinct tool count stayed within budget",
+            json!({"observed": observed, "max": max_distinct_tools}),
+        )
+    } else {
+        AssertionResult::fail(
+            "max_distinct_tools",
+            "observed distinct tool count exceeded budget",
+            json!({"observed": observed, "max": max_distinct_tools, "tools": distinct}),
+        )
+    }
+}
+
+fn max_total_response_bytes_assertion(
+    trace: &[JsonValue],
+    max_total_response_bytes: usize,
+) -> AssertionResult {
+    let missing_response_bytes = trace_rows_missing_response_bytes(trace);
+    if missing_response_bytes > 0 {
+        return AssertionResult::fail(
+            "max_total_response_bytes",
+            "tool trace rows were missing response byte telemetry",
+            json!({"missing_response_bytes": missing_response_bytes, "trace_rows": trace.len()}),
+        );
+    }
+    let observed = total_response_bytes(trace);
+    if observed <= max_total_response_bytes {
+        AssertionResult::pass(
+            "max_total_response_bytes",
+            "observed total response bytes stayed within budget",
+            json!({"observed": observed, "max": max_total_response_bytes}),
+        )
+    } else {
+        AssertionResult::fail(
+            "max_total_response_bytes",
+            "observed total response bytes exceeded budget",
+            json!({"observed": observed, "max": max_total_response_bytes}),
+        )
+    }
+}
+
+fn max_response_bytes_by_tool_assertion(
+    trace: &[JsonValue],
+    tool: &str,
+    max_response_bytes: usize,
+) -> AssertionResult {
+    let matching_rows: Vec<&JsonValue> = trace
+        .iter()
+        .filter(|row| row.get("tool").and_then(JsonValue::as_str) == Some(tool))
+        .collect();
+    let missing_response_bytes = matching_rows
+        .iter()
+        .filter(|row| response_bytes_from_trace_row(row).is_none())
+        .count();
+    if missing_response_bytes > 0 {
+        return AssertionResult::fail(
+            format!("max_response_bytes_by_tool:{tool}"),
+            "tool trace rows were missing response byte telemetry",
+            json!({"missing_response_bytes": missing_response_bytes, "tool": tool}),
+        );
+    }
+    let observed = matching_rows
+        .iter()
+        .filter_map(|row| response_bytes_from_trace_row(row))
+        .max()
+        .unwrap_or(0);
+    if observed <= max_response_bytes {
+        AssertionResult::pass(
+            format!("max_response_bytes_by_tool:{tool}"),
+            "observed per-tool response bytes stayed within budget",
+            json!({"observed": observed, "max": max_response_bytes}),
+        )
+    } else {
+        AssertionResult::fail(
+            format!("max_response_bytes_by_tool:{tool}"),
+            "observed per-tool response bytes exceeded budget",
+            json!({"observed": observed, "max": max_response_bytes}),
+        )
+    }
+}
+
+fn total_response_bytes(trace: &[JsonValue]) -> usize {
+    trace.iter().filter_map(response_bytes_from_trace_row).sum()
+}
+
+fn trace_rows_missing_response_bytes(trace: &[JsonValue]) -> usize {
+    trace
+        .iter()
+        .filter(|row| response_bytes_from_trace_row(row).is_none())
+        .count()
+}
+
+fn response_bytes_from_trace_row(row: &JsonValue) -> Option<usize> {
+    row.get("response_bytes")
+        .and_then(JsonValue::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
 }
 
 fn order_assertion(trace: &[JsonValue], order: &AgentOrder) -> AssertionResult {
@@ -1103,10 +1281,19 @@ fn read_tool_trace(path: &Path) -> ToolTraceRead {
             )),
         }
     }
+    normalize_tool_trace_indices(&mut rows);
     ToolTraceRead {
         rows,
         errors,
         missing: false,
+    }
+}
+
+fn normalize_tool_trace_indices(rows: &mut [JsonValue]) {
+    for (index, row) in rows.iter_mut().enumerate() {
+        if let Some(obj) = row.as_object_mut() {
+            obj.insert("tool_call_index".to_string(), JsonValue::from(index as u64));
+        }
     }
 }
 
@@ -1398,6 +1585,47 @@ fn tool_success_assertion(tool: &str, response: &JsonValue) -> AssertionResult {
     )
 }
 
+fn tool_response_budget_assertion(
+    tool: &str,
+    response: &JsonValue,
+    max_response_bytes: usize,
+    must_contain_paths: &[String],
+    must_not_contain_paths: &[String],
+) -> AssertionResult {
+    let response_bytes = serde_json::to_string(response).map_or(usize::MAX, |value| value.len());
+    let missing_paths: Vec<&str> = must_contain_paths
+        .iter()
+        .map(String::as_str)
+        .filter(|path| !json_has_field_path(response, path))
+        .collect();
+    let present_forbidden_paths: Vec<&str> = must_not_contain_paths
+        .iter()
+        .map(String::as_str)
+        .filter(|path| json_has_field_path(response, path))
+        .collect();
+    if response_bytes <= max_response_bytes
+        && missing_paths.is_empty()
+        && present_forbidden_paths.is_empty()
+    {
+        AssertionResult::pass(
+            format!("tool_response_budget:{tool}"),
+            "tool response stayed within budget and shape constraints",
+            json!({"response_bytes": response_bytes, "max_response_bytes": max_response_bytes}),
+        )
+    } else {
+        AssertionResult::fail(
+            format!("tool_response_budget:{tool}"),
+            "tool response exceeded budget or shape constraints",
+            json!({
+                "response_bytes": response_bytes,
+                "max_response_bytes": max_response_bytes,
+                "missing_paths": missing_paths,
+                "present_forbidden_paths": present_forbidden_paths,
+            }),
+        )
+    }
+}
+
 fn tool_failure_evidence(response: &JsonValue) -> JsonValue {
     let mut evidence = serde_json::Map::new();
     for key in ["success", "error_code", "code", "message", "count"] {
@@ -1475,8 +1703,11 @@ fn json_has_field_path(value: &JsonValue, field_path: &str) -> bool {
 fn json_value_at_path<'a>(value: &'a JsonValue, field_path: &str) -> Option<&'a JsonValue> {
     let mut current = value;
     for part in field_path.split('.') {
-        let next = current.get(part)?;
-        current = next;
+        current = match current {
+            JsonValue::Array(items) => items.get(part.parse::<usize>().ok()?)?,
+            JsonValue::Object(_) => current.get(part)?,
+            _ => return None,
+        };
     }
     Some(current)
 }
@@ -1778,6 +2009,10 @@ impl AgentExpected {
             || !self.selected_entities.is_empty()
             || !self.selected_entity_ranks.is_empty()
             || !self.called_with.is_empty()
+            || self.max_tool_calls.is_some()
+            || self.max_distinct_tools.is_some()
+            || self.max_total_response_bytes.is_some()
+            || !self.max_response_bytes_by_tool.is_empty()
     }
 }
 
@@ -1873,6 +2108,33 @@ fn validate_assertion(assertion: &EvalAssertion, case_id: &str) -> crate::error:
                 )));
             }
         }
+        EvalAssertion::ToolResponseBudget {
+            tool,
+            max_response_bytes,
+            must_contain_paths,
+            must_not_contain_paths,
+            ..
+        } => {
+            if tool.trim().is_empty() {
+                return Err(DbtNovaError::InvalidParams(format!(
+                    "tool_response_budget assertion in case '{case_id}' must include a non-empty tool"
+                )));
+            }
+            if *max_response_bytes == 0 {
+                return Err(DbtNovaError::InvalidParams(format!(
+                    "tool_response_budget assertion in case '{case_id}' must use max_response_bytes greater than zero"
+                )));
+            }
+            if must_contain_paths
+                .iter()
+                .chain(must_not_contain_paths)
+                .any(|path| path.trim().is_empty())
+            {
+                return Err(DbtNovaError::InvalidParams(format!(
+                    "tool_response_budget assertion in case '{case_id}' must use non-empty field paths"
+                )));
+            }
+        }
         _ => {}
     }
     Ok(())
@@ -1934,6 +2196,27 @@ fn validate_agent_expected(expected: &AgentExpected, case_id: &str) -> crate::er
                 "called_with params expectations in agent case '{case_id}' must use scalar values or arrays of scalar values"
             )));
         }
+    }
+    if expected.max_tool_calls == Some(0)
+        || expected.max_distinct_tools == Some(0)
+        || expected.max_total_response_bytes == Some(0)
+        || expected
+            .max_response_bytes_by_tool
+            .values()
+            .any(|max| *max == 0)
+    {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "agent case '{case_id}' budget expectations must use positive thresholds"
+        )));
+    }
+    if expected
+        .max_response_bytes_by_tool
+        .keys()
+        .any(|tool| tool.trim().is_empty())
+    {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "agent case '{case_id}' max_response_bytes_by_tool keys must be non-empty tool names"
+        )));
     }
     Ok(())
 }
@@ -2077,7 +2360,7 @@ fn validate_selected_cases<'a>(
 
 fn agent_prompt(case: &AgentCase) -> String {
     format!(
-        "You are running a dbt-nova eval case.\n\nTask:\n{}\n\nUse Nova tools when they are needed. Do not mutate repository files. Finish with a concise answer that cites the evidence you used.",
+        "You are running a dbt-nova analytics-agent eval.\n\nTask:\n{}\n\nRules:\n- Use Nova discovery and execution tools directly. Do not inspect repository files, source code, fixtures, or Rust params unless a Nova command fails and you cannot recover from the error message.\n- For KPI, metric, conversion, funnel, checkout, or business-concept questions, start with search_indicator using compact results: detail=\"compact\", group_mode=\"top\", include_support_signals=true, limit=3, persona=\"analyst\".\n- For rate, conversion, or funnel questions, include the requested metric names literally in the query and set indicator_types=[\"metric\"] unless you are explicitly searching for raw measures.\n- When a metric row returns an expression, copy that expression exactly into SQL; do not substitute similarly named measures or invent a numerator/denominator.\n- Use support_signals, grain dimensions, and relation_name from search_indicator to apply every requested filter before SQL. Do not aggregate across a grain dimension named in the task, such as country, market, channel, segment, or device.\n- Treat relation_name, grain, and expression fields returned by search_indicator as the execution contract. Do not run schema inspection SQL such as DESCRIBE or information_schema when those fields are present.\n- Use execute_sql only after Nova discovery identifies the canonical execution entity or relation. Use one aggregate SQL statement for current and comparison periods when possible. Skip get_entity when search_indicator already returns the relation, grain, measures, and metric expressions you need; otherwise use get_entity with id_or_name and detail=\"compact\".\n- Keep Nova calls to the minimum needed: usually search_indicator plus one execute_sql for calculations, and only search_indicator for model or metric lookup tasks. Avoid get_context, get_lineage, get_sql, and full-detail responses unless blocked.\n- If using the CLI, assume $DBT_NOVA_EVAL_BIN is set. For search/get calls, use --params-json. For execute_sql with quotes or newlines, write a JSON params file like {{\"statement\":\"select ...\",\"row_limit\":50}} and call $DBT_NOVA_EVAL_BIN tool call execute_sql --params-file <file> --json; do not inline multiline SQL in --params-json. Parameter reminders: get_entity uses id_or_name; execute_sql uses statement. Do not run echo, grep, read, or source inspection for normal tool usage.\n\nFinish with a concise answer that cites the Nova evidence, the SQL result, and the explicit filter values used.",
         case.task
     )
 }

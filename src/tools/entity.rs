@@ -17,7 +17,7 @@ impl ManifestSearch {
     #[instrument(skip(self, params), fields(tool = "get_entity", id_or_name = %params.id_or_name, resource_type = ?params.resource_type))]
     pub async fn get_entity_data(&self, params: &GetEntityParams) -> Result<JsonValue> {
         let keys = self.resolve_id_or_name(&params.id_or_name, params.resource_type.as_deref());
-        let detail = params.detail;
+        let detail = self.detail_level(params.detail);
 
         if keys.is_empty() {
             return Err(self.entity_not_found(&params.id_or_name, params.resource_type.as_deref()));
@@ -38,12 +38,10 @@ impl ManifestSearch {
 
         let entity = self.get_entity_archived(&keys[0])?.map_or_else(
             || JsonValue::Null,
-            |entity| {
-                if detail == DetailLevel::Full {
-                    entity.to_json_value()
-                } else {
-                    self.summary_for_standard(&keys[0], entity)
-                }
+            |entity| match detail {
+                DetailLevel::Full => entity.to_json_value(),
+                DetailLevel::Compact => self.summary_for_compact(&keys[0], entity),
+                DetailLevel::Standard => self.summary_for_standard(&keys[0], entity),
             },
         );
         Ok(serde_json::to_value(SuccessResponse::new(entity, 1))?)
@@ -158,7 +156,7 @@ impl ManifestSearch {
         }
         let ids: Vec<String> = params.unique_ids.clone();
 
-        let detail = params.detail;
+        let detail = self.detail_level(params.detail);
         let store = self.entities.clone();
         let results: Vec<(String, Option<JsonValue>)> = tokio::task::spawn_blocking(move || {
             ids.par_iter()
@@ -183,12 +181,24 @@ impl ManifestSearch {
 
         for (id, entity_json) in results {
             if let Some(entity_json) = entity_json {
-                if detail == DetailLevel::Full {
-                    found.push(ManifestSearch::with_unique_id(entity_json, &id));
-                } else if let Some(entity) = self.get_entity_archived(&id)? {
-                    found.push(self.summary_for_standard(&id, entity));
-                } else {
-                    not_found.push(id);
+                match detail {
+                    DetailLevel::Full => {
+                        found.push(ManifestSearch::with_unique_id(entity_json, &id));
+                    }
+                    DetailLevel::Compact => {
+                        if let Some(entity) = self.get_entity_archived(&id)? {
+                            found.push(self.summary_for_compact(&id, entity));
+                        } else {
+                            not_found.push(id);
+                        }
+                    }
+                    DetailLevel::Standard => {
+                        if let Some(entity) = self.get_entity_archived(&id)? {
+                            found.push(self.summary_for_standard(&id, entity));
+                        } else {
+                            not_found.push(id);
+                        }
+                    }
                 }
             } else {
                 not_found.push(id);

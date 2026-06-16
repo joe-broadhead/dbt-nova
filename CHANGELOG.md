@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   non-finite floating-point values are preserved as text instead of JSON `null`,
   and Snowflake statement timeout `0` is preserved as the SQL API maximum-timeout
   sentinel.
+- Added configurable result profiles for CLI and MCP responses, including
+  compact MCP defaults, bounded MCP page sizes, and `next_offset` metadata for
+  paginated tool responses.
+- Added tokenomics bridge eval fixtures and CI coverage to guard compact
+  response budgets, KPI discovery, and MCP trace behavior for agent workflows.
+- Eval traces now include a monotonic `tool_call_index`, and provider fallback
+  scoring captures response byte evidence for budget assertions.
 - Fixed release OCI publishing to build images from native Linux release binaries
   instead of compiling Rust inside the ARM64 Docker/QEMU path.
 - Fixed the Monthly workflow by refreshing advisory/dependency-watchlist review

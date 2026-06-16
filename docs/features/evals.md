@@ -87,6 +87,7 @@ Bridge assertions currently support:
 - `recipe_has_queries`
 - `lineage_contains`
 - `tool_success`
+- `tool_response_budget`
 
 `context_has` checks that field paths are present and non-null.
 `context_field_equals` compares a field path to an exact JSON value.
@@ -103,6 +104,30 @@ assertions:
     id_or_name: model.pkg.orders
     field: data.entity.description
     expected: canonical orders
+```
+
+`tool_response_budget` calls any Nova tool directly and asserts both serialized
+response bytes and lightweight response shape. Field paths support object keys
+and numeric array indexes:
+
+```yaml
+assertions:
+  - type: tool_response_budget
+    tool: search_indicator
+    params:
+      query: checkout conversion rate
+      resource_types: [model]
+      indicator_types: [metric]
+      detail: compact
+      group_mode: top
+      limit: 3
+    max_response_bytes: 12000
+    must_contain_paths:
+      - data.0.parent_unique_id
+      - data.0.expression
+    must_not_contain_paths:
+      - parent_groups.1
+      - data.0.explain
 ```
 
 ## Run Agent Evals
@@ -143,6 +168,12 @@ agent_cases:
         - tool: search_indicator
           contains:
             query: gross merchandise
+      max_tool_calls: 4
+      max_distinct_tools: 4
+      max_total_response_bytes: 65536
+      max_response_bytes_by_tool:
+        search_indicator: 12000
+        get_entity: 12000
       final_answer:
         must_contain:
           - gross merchandise value
@@ -155,6 +186,12 @@ sanitized parameter values exactly where possible, while `called_with.contains`
 checks case-insensitive substring matches against sanitized parameter summaries.
 `called_with.params` supports only scalar values or arrays of scalar values
 because trace rows intentionally drop nested objects.
+Budget expectations score the sanitized trace:
+
+- `max_tool_calls` caps total observed Nova calls.
+- `max_distinct_tools` caps tool-surface breadth.
+- `max_total_response_bytes` caps summed serialized response bytes.
+- `max_response_bytes_by_tool` caps the largest response for named tools.
 
 Run against the default `opencode` adapter:
 
@@ -162,10 +199,16 @@ Run against the default `opencode` adapter:
 dbt-nova eval agent run \
   --suite evals/analyst-agent.yml \
   --provider opencode \
+  --provider-model opencode/deepseek-v4-flash-free \
   --manifest-path /path/to/target/manifest.json \
   --timeout-secs 600 \
   --fail-under 0.9
 ```
+
+`--provider-model` is supported by the OpenCode preset and inserts
+`--model <MODEL>` into the default `opencode run --format json ...`
+invocation. Use `--provider-args-json` for custom provider commands or for
+presets that need non-standard model flags.
 
 Use repeatable `--case-id <ID>` to run only specific agent cases while
 debugging provider behavior.
@@ -211,10 +254,15 @@ rows for CLI, MCP, and eval tool calls. Rows include:
 
 - `transport`
 - `tool`
+- `tool_call_index`
 - `success`
 - `duration_ms`
 - safe parameter summaries such as `query`, `persona`, `id_or_name`, and
   `resource_types`
+- `response_bytes`
+- `response_truncated`
+- `result_count`
+- `total_available`
 - `selected_unique_ids` extracted from the response
 - `top_unique_ids` preserving the ordered top response entities where Nova can
   infer them

@@ -1,7 +1,8 @@
 use std::collections::BTreeSet;
-use std::fs::{OpenOptions, create_dir_all};
+use std::fs::{self, OpenOptions, create_dir_all};
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -15,10 +16,13 @@ const MAX_SUMMARY_STRING_CHARS: usize = 256;
 const MAX_SELECTED_UNIQUE_IDS: usize = 200;
 const MAX_TOP_UNIQUE_IDS: usize = 20;
 const MAX_UNIQUE_ID_CHARS: usize = 512;
+const UNINITIALIZED_TOOL_CALL_INDEX: u64 = u64::MAX;
+static TOOL_CALL_INDEX: AtomicU64 = AtomicU64::new(UNINITIALIZED_TOOL_CALL_INDEX);
 
 #[derive(Debug, Serialize)]
 struct ToolTraceRow {
     timestamp_ms: u128,
+    tool_call_index: u64,
     transport: String,
     tool: String,
     success: bool,
@@ -27,6 +31,12 @@ struct ToolTraceRow {
     error_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     params_summary: Option<Value>,
+    response_bytes: usize,
+    response_truncated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total_available: Option<u64>,
     selected_unique_ids: Vec<String>,
     top_unique_ids: Vec<String>,
 }
@@ -59,12 +69,27 @@ pub fn record_tool_call(
 
     let row = ToolTraceRow {
         timestamp_ms: timestamp_ms(),
+        tool_call_index: next_tool_call_index(trace_path),
         transport: transport.to_string(),
         tool: tool.to_string(),
         success,
         duration_ms,
         error_code: response.and_then(extract_error_code),
         params_summary: params.map(summarize_params),
+        response_bytes: response.map_or(0, serialized_len),
+        response_truncated: response.is_some_and(extract_response_truncated),
+        result_count: response.and_then(|value| value.get("count").and_then(Value::as_u64)),
+        total_available: response.and_then(|value| {
+            value
+                .get("total_available")
+                .and_then(Value::as_u64)
+                .or_else(|| {
+                    value
+                        .get("_nova_result_meta")
+                        .and_then(|meta| meta.get("original_count"))
+                        .and_then(Value::as_u64)
+                })
+        }),
         selected_unique_ids: response.map(extract_unique_ids).unwrap_or_default(),
         top_unique_ids: response.map(extract_top_unique_ids).unwrap_or_default(),
     };
@@ -93,6 +118,55 @@ pub fn record_tool_call(
     }
 }
 
+fn next_tool_call_index(trace_path: &Path) -> u64 {
+    loop {
+        let current = TOOL_CALL_INDEX.load(Ordering::Relaxed);
+        if current != UNINITIALIZED_TOOL_CALL_INDEX {
+            return TOOL_CALL_INDEX.fetch_add(1, Ordering::Relaxed);
+        }
+        let seed = existing_trace_row_count(trace_path);
+        if TOOL_CALL_INDEX
+            .compare_exchange(
+                UNINITIALIZED_TOOL_CALL_INDEX,
+                seed,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            )
+            .is_ok()
+        {
+            return TOOL_CALL_INDEX.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+fn existing_trace_row_count(trace_path: &Path) -> u64 {
+    fs::read_to_string(trace_path).map_or(0, |raw| {
+        raw.lines().filter(|line| !line.trim().is_empty()).count() as u64
+    })
+}
+
+fn serialized_len(value: &Value) -> usize {
+    serde_json::to_string(value).map_or(0, |serialized| serialized.len())
+}
+
+fn extract_response_truncated(response: &Value) -> bool {
+    match response {
+        Value::Object(map) => {
+            map.get("truncated")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+                || map
+                    .get("_nova_result_meta")
+                    .and_then(|meta| meta.get("truncated"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                || map.values().any(extract_response_truncated)
+        }
+        Value::Array(items) => items.iter().any(extract_response_truncated),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => false,
+    }
+}
+
 fn summarize_params(params: &Value) -> Value {
     let Some(map) = params.as_object() else {
         return json!({"type": params_type(params)});
@@ -112,6 +186,15 @@ fn summarize_params(params: &Value) -> Value {
         "resource_types",
         "recipe_id",
         "direction",
+        "detail",
+        "group_mode",
+        "indicator_types",
+        "include_support_signals",
+        "max_parent_groups",
+        "preflight_only",
+        "row_limit",
+        "byte_limit",
+        "max_poll_seconds",
         "limit",
         "offset",
     ] {
@@ -308,7 +391,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        MAX_SELECTED_UNIQUE_IDS, extract_top_unique_ids, extract_unique_ids, summarize_params,
+        MAX_SELECTED_UNIQUE_IDS, extract_response_truncated, extract_top_unique_ids,
+        extract_unique_ids, summarize_params,
     };
 
     #[test]
@@ -372,5 +456,16 @@ mod tests {
                 "model.pkg.second".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn extract_response_truncated_finds_nested_sql_truncation() {
+        assert!(extract_response_truncated(&json!({
+            "success": true,
+            "data": {
+                "rows": [],
+                "truncated": true
+            }
+        })));
     }
 }

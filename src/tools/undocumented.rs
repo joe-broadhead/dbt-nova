@@ -11,7 +11,7 @@ impl ManifestSearch {
     ///
     /// # Errors
     /// Returns an error if manifest access fails.
-    #[instrument(skip(self, params), fields(tool = "get_undocumented", resource_type = %params.resource_type, limit = params.pagination.limit, offset = params.pagination.offset, include_columns = params.include_columns))]
+    #[instrument(skip(self, params), fields(tool = "get_undocumented", resource_type = %params.resource_type, limit = ?params.pagination.limit, offset = params.pagination.offset, include_columns = params.include_columns))]
     #[allow(clippy::too_many_lines)]
     pub async fn get_undocumented(&self, params: &GetUndocumentedParams) -> Result<JsonValue> {
         let resource_type = self.normalize_resource_type_key(&params.resource_type)?;

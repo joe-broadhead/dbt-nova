@@ -7,7 +7,8 @@ One-page cheatsheet for all dbt-nova MCP tools.
 | Tool | Purpose | Key Parameters |
 |------|---------|----------------|
 | `search` | Full-text and hybrid search | `query`, `persona`, `resource_types`, `detail`, `include_highlights`, `include_sql` |
-| `get_entity` | Fetch single entity by ID or name | `id_or_name`, `resource_type`, `detail` |
+| `search_indicator` | Resolve Nova measures/metrics to execution parents | `query`, `indicator_types`, `resource_types`, `detail`, `group_mode`, `limit` |
+| `get_entity` | Fetch single entity by ID or name | `id_or_name` (`unique_id` alias), `resource_type`, `detail` |
 | `list_entities` | List entities by type with filters | `resource_type`, `package`, `tags`, `detail` |
 | `batch_get_entities` | Retrieve multiple entities at once | `unique_ids`, `detail` |
 | `find_by_path` | Find entities by file path glob | `path_pattern`, `resource_types`, `detail` |
@@ -64,7 +65,7 @@ One-page cheatsheet for all dbt-nova MCP tools.
 
 | Tool | Purpose | Key Parameters |
 |------|---------|----------------|
-| `execute_sql` | Run SQL against configured provider (`databricks`, `bigquery`, `snowflake`, `duckdb`) | `statement`, `row_limit`, `byte_limit`, `max_poll_seconds`, `parameters` |
+| `execute_sql` | Run SQL against configured provider (`databricks`, `bigquery`, `snowflake`, `duckdb`) | `statement` (`sql` alias), `row_limit`, `byte_limit`, `max_poll_seconds`, `parameters` |
 
 ## Operations
 
@@ -79,7 +80,7 @@ One-page cheatsheet for all dbt-nova MCP tools.
 
 ### Fast Discovery
 ```json
-{"name":"search","arguments":{"query":"customer","persona":"analyst","detail":"standard","include_highlights":true,"limit":10}}
+{"name":"search_indicator","arguments":{"query":"conversion rate checkout","persona":"analyst","resource_types":["model"],"detail":"compact","group_mode":"top","limit":3}}
 ```
 
 ### Quick Triage

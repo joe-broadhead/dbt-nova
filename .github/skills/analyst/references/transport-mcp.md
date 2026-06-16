@@ -18,12 +18,18 @@ Use this reference when the client exposes `mcp__nova__*` tools directly.
    - if discovery is still inconclusive but the folder family is obvious, corroborate with `find_by_path`
    - if a recipe run already answers the business ask, do not drift back into broad `search` or generic parent discovery
 2. `search_indicator` for KPI resolution
+   - use domain-specific query terms
+   - default to `limit: 3`, `detail: compact`, `group_mode: top`
+   - keep `include_support_signals: true` when the question includes filter
+     values such as country, channel, segment, device, or market labels
+   - set `include_support_signals: false` only when the top rows already
+     provide enough evidence and no filter-value mapping is needed
 3. `indicator_inventory` when comparing KPI families
 4. `search` for supporting entity discovery when the ask is not yet KPI-shaped
 
 ## Entity selection
 
-- `get_entity detail=standard` is the default single-entity contract check.
+- `get_entity detail=compact` is the default single-entity contract check.
 - `batch_get_entities` is the fastest compact comparison tool for 2-3 shortlisted parents.
 - `compare_grains` and `diff_entities` are tie-breakers when multiple parents remain plausible.
 
@@ -47,6 +53,9 @@ Use the compact summary to confirm:
 - `get_lineage` / `get_column_lineage` when provenance matters
 - `get_test_coverage` when reliability matters
 - `get_metadata_score` when documenting caveats or choosing between similar entities
+- Avoid `get_context`, `get_sql`, lineage tools, test coverage, and
+  `detail=full` for simple KPI answers unless compact discovery is ambiguous or
+  the user asks for provenance.
 
 ## Execution
 
@@ -79,13 +88,18 @@ Recurring workflow discovery:
 KPI resolution:
 
 ```json
-{"name":"search_indicator","arguments":{"query":"conversion rate","indicator_types":["metric"],"resource_types":["model"],"persona":"analyst","limit":10}}
+{"name":"search_indicator","arguments":{"query":"ecommerce conversion rate checkout digital sessions","indicator_types":["metric"],"resource_types":["model"],"persona":"analyst","detail":"compact","group_mode":"top","limit":3,"include_support_signals":true}}
 ```
+
+For rate, conversion, funnel, or ratio questions, request metric indicators
+first and copy any returned metric `expression` exactly into downstream SQL.
+If the compact indicator row includes `relation_name`, `grain`, and
+`expression`, do not run schema-inspection SQL before execution.
 
 Compact entity inspection:
 
 ```json
-{"name":"get_entity","arguments":{"id_or_name":"model.package.model_name","detail":"standard"}}
+{"name":"get_entity","arguments":{"id_or_name":"model.package.model_name","detail":"compact"}}
 ```
 
 Filter validation:

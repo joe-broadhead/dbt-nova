@@ -17,9 +17,9 @@ async fn glob_matches_paths() {
     let params = FindByPathParams {
         path_pattern: "models/**".into(),
         resource_types: vec![],
-        detail: DetailLevel::Standard,
+        detail: Some(DetailLevel::Standard),
         pagination: PaginationParams {
-            limit: 10,
+            limit: Some(10),
             offset: 0,
         },
     };
@@ -41,7 +41,7 @@ async fn undocumented_entities_and_columns_reported() {
         include_columns: true,
         include_full: false,
         pagination: PaginationParams {
-            limit: 10,
+            limit: Some(10),
             offset: 0,
         },
     };
