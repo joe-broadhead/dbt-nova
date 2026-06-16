@@ -4,7 +4,7 @@ Use `dbt-nova` in two modes:
 
 - No subcommand: start MCP server (backward compatible behavior)
 - Subcommand: run one-shot CLI commands and exit
-- CLI surface: `16` CLI-only leaf commands, plus `tool call` access to all `33` MCP tools
+- CLI surface: `17` CLI-only leaf commands, plus `tool call` access to all `33` MCP tools
 
 ## Command Tree
 
@@ -24,8 +24,9 @@ dbt-nova
 ├── storage cleanup [--storage-instance-id] [--json]
 ├── eval init --out <PATH> [--persona] [--force]
 ├── eval validate --suite <PATH> [--json]
-├── eval run --suite <PATH> [--manifest-path|--manifest-uri] [--storage-instance-id] [--output-dir] [--case-id <ID>...] [--fail-under] [--cleanup-storage-on-start] [--read-only] [--json]
-├── eval agent run --suite <PATH> [--provider] [--provider-command] [--provider-args-json] [--manifest-path|--manifest-uri] [--storage-instance-id] [--output-dir] [--case-id <ID>...] [--timeout-secs] [--fail-under] [--cleanup-storage-on-start] [--read-only] [--json]
+├── eval run --suite <PATH> [--manifest-path|--manifest-uri] [--storage-instance-id] [--output-dir] [--telemetry] [--telemetry-retention] [--case-id <ID>...] [--fail-under] [--cleanup-storage-on-start] [--read-only] [--json]
+├── eval agent run --suite <PATH> [--provider] [--provider-command] [--provider-args-json] [--manifest-path|--manifest-uri] [--storage-instance-id] [--output-dir] [--telemetry] [--telemetry-retention] [--case-id <ID>...] [--timeout-secs] [--fail-under] [--cleanup-storage-on-start] [--read-only] [--json]
+├── eval history --suite <NAME> --since <YYYY-MM-DD>
 └── health check [--manifest-path|--manifest-uri] [--json]
 ```
 

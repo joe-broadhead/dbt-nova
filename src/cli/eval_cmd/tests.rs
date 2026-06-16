@@ -7,10 +7,12 @@ use tempfile::{NamedTempFile, TempDir};
 use super::{
     AgentCalledWith, AgentEntityRank, AgentExpected, AgentOrder, AssertionResult, EvalCaseReport,
     EvalDefaults, EvalRunArgs, EvalSuite, EvalValidateArgs, FinalAnswerExpected,
-    contains_rank_assertion, context_contains_assertion, context_field_equals_assertion,
+    apply_telemetry_retention, contains_rank_assertion, context_contains_assertion,
+    context_field_equals_assertion, eval_case_telemetry_from_trace, format_utc_timestamp_millis,
     json_has_field_path, read_tool_trace, recipe_rank_assertion, run_eval_command,
     run_validate_command, safe_path_segment, score_agent_expectations, selected_agent_cases,
-    selected_bridge_cases, tool_response_budget_assertion, tool_success_assertion, validate_suite,
+    selected_bridge_cases, telemetry_path_for_suite, telemetry_row_matches_since,
+    tool_response_budget_assertion, tool_success_assertion, validate_since_date, validate_suite,
 };
 
 #[test]
@@ -283,6 +285,110 @@ fn read_tool_trace_reports_parse_errors() {
     assert!(!trace.missing);
     assert_eq!(trace.rows[0]["tool_call_index"], json!(0));
     assert_eq!(trace.rows[1]["tool_call_index"], json!(1));
+}
+
+#[test]
+fn telemetry_stats_summarize_trace_without_params() {
+    let trace = vec![
+        json!({
+            "tool": "search",
+            "response_bytes": 40,
+            "params_summary": {"query": "revenue"},
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5}
+        }),
+        json!({
+            "tool": "get_context",
+            "response_bytes": 60,
+            "usage": {"input_tokens": 4, "output_tokens": 3, "total_tokens": 7}
+        }),
+    ];
+
+    let telemetry = eval_case_telemetry_from_trace(&trace);
+
+    assert_eq!(telemetry.tool_call_count, 2);
+    assert_eq!(telemetry.distinct_tool_count, 2);
+    assert_eq!(telemetry.total_response_bytes, Some(100));
+    assert_eq!(telemetry.input_tokens, Some(14));
+    assert_eq!(telemetry.output_tokens, Some(8));
+    assert_eq!(telemetry.total_tokens, Some(7));
+}
+
+#[test]
+fn telemetry_history_since_filters_iso_timestamps() {
+    let since = validate_since_date("2026-06-01").expect("valid date");
+    assert!(telemetry_row_matches_since(
+        &json!({"timestamp": "2026-06-01T00:00:00.000Z"}),
+        &since
+    ));
+    assert!(telemetry_row_matches_since(
+        &json!({"timestamp": "2026-06-02T12:00:00.000Z"}),
+        &since
+    ));
+    assert!(!telemetry_row_matches_since(
+        &json!({"timestamp": "2026-05-31T23:59:59.999Z"}),
+        &since
+    ));
+    assert!(validate_since_date("2026-02-29").is_err());
+}
+
+#[test]
+fn telemetry_retention_keeps_newest_valid_jsonl_rows() {
+    let file = NamedTempFile::new().expect("temp file");
+    std::fs::write(
+        file.path(),
+        "{\"case_id\":\"one\"}\n{\"case_id\":\"two\"}\n{\"case_id\":\"three\"}\n",
+    )
+    .expect("write telemetry");
+
+    let result = apply_telemetry_retention(file.path(), 2);
+    assert!(
+        result.is_ok(),
+        "retention failed: {}",
+        result
+            .err()
+            .map_or_else(String::new, |error| error.error.to_string())
+    );
+
+    let raw = std::fs::read_to_string(file.path()).expect("read telemetry");
+    let lines: Vec<&str> = raw.lines().collect();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(lines[0]).unwrap()["case_id"],
+        "two"
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(lines[1]).unwrap()["case_id"],
+        "three"
+    );
+}
+
+#[test]
+fn telemetry_timestamp_format_is_utc_rfc3339_millis() {
+    assert_eq!(
+        format_utc_timestamp_millis(1_767_225_600_123),
+        "2026-01-01T00:00:00.123Z"
+    );
+}
+
+#[test]
+fn telemetry_paths_include_hash_to_avoid_sanitized_name_collisions() {
+    let spaced = telemetry_path_for_suite("sales smoke");
+    let slashed = telemetry_path_for_suite("sales/smoke");
+    let dashed = telemetry_path_for_suite("sales-smoke");
+
+    assert_ne!(spaced, slashed);
+    assert_ne!(spaced, dashed);
+    assert_ne!(slashed, dashed);
+    let file_name = dashed
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("telemetry file name");
+    assert!(file_name.starts_with("sales-smoke-"));
+    assert!(
+        dashed
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
+    );
 }
 
 #[test]

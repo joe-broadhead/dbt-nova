@@ -47,6 +47,13 @@ supported provider presets can also score MCP calls from JSON event streams.
 Use `--case-id <ID>` on bridge or agent eval runs to iterate on one failing case
 without re-running the whole suite.
 
+Pass `--telemetry` on bridge or agent eval runs to append per-assertion JSONL
+rows under `.nova/eval-runs/telemetry/<suite>-<hash>.jsonl`. Use
+`dbt-nova eval history --suite <NAME> --since <YYYY-MM-DD>` to print matching
+rows when comparing whether metadata or prompt changes improved a suite over
+time. Add `--telemetry-retention <ROWS>` to keep only the newest rows for that
+suite after each run.
+
 ## Test Storage Cleanup
 
 Tests use temporary storage under `target/dbt-nova-tests` and clean up automatically.

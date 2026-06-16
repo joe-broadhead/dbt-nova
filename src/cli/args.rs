@@ -345,6 +345,8 @@ pub enum EvalCommand {
     Run(EvalRunArgs),
     /// Run provider-backed agent evals and score observed Nova tool use.
     Agent(EvalAgentArgs),
+    /// Print filtered JSONL eval telemetry history.
+    History(EvalHistoryArgs),
     /// Validate an eval suite without loading a manifest or running a provider.
     Validate(EvalValidateArgs),
 }
@@ -369,6 +371,7 @@ pub struct EvalInitArgs {
 }
 
 #[derive(Debug, Clone, Args, Default)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct EvalRunArgs {
     #[arg(long, value_name = "PATH", help = "YAML or JSON eval suite path")]
     pub suite: String,
@@ -394,6 +397,18 @@ pub struct EvalRunArgs {
     pub storage_instance_id: Option<String>,
     #[arg(long, value_name = "DIR", help = "Directory for eval result artifacts")]
     pub output_dir: Option<String>,
+    #[arg(
+        long,
+        default_value_t = false,
+        help = "Append per-assertion JSONL telemetry for this eval run"
+    )]
+    pub telemetry: bool,
+    #[arg(
+        long = "telemetry-retention",
+        value_name = "ROWS",
+        help = "After writing telemetry, keep only the newest ROWS rows for this suite"
+    )]
+    pub telemetry_retention: Option<usize>,
     #[arg(
         long = "case-id",
         value_name = "ID",
@@ -432,6 +447,7 @@ pub enum EvalAgentCommand {
 }
 
 #[derive(Debug, Clone, Args, Default)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct EvalAgentRunArgs {
     #[arg(long, value_name = "PATH", help = "YAML or JSON eval suite path")]
     pub suite: String,
@@ -483,6 +499,18 @@ pub struct EvalAgentRunArgs {
     #[arg(long, value_name = "DIR", help = "Directory for eval result artifacts")]
     pub output_dir: Option<String>,
     #[arg(
+        long,
+        default_value_t = false,
+        help = "Append per-assertion JSONL telemetry for this eval run"
+    )]
+    pub telemetry: bool,
+    #[arg(
+        long = "telemetry-retention",
+        value_name = "ROWS",
+        help = "After writing telemetry, keep only the newest ROWS rows for this suite"
+    )]
+    pub telemetry_retention: Option<usize>,
+    #[arg(
         long = "case-id",
         value_name = "ID",
         action = ArgAction::Append,
@@ -512,6 +540,22 @@ pub struct EvalAgentRunArgs {
     pub read_only: bool,
     #[arg(long, default_value_t = false, help = "Emit a JSON CLI envelope")]
     pub json: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct EvalHistoryArgs {
+    #[arg(
+        long,
+        value_name = "NAME",
+        help = "Eval suite name to read history for"
+    )]
+    pub suite: String,
+    #[arg(
+        long,
+        value_name = "YYYY-MM-DD",
+        help = "Only print telemetry rows on or after this UTC date"
+    )]
+    pub since: String,
 }
 
 #[derive(Debug, Clone, Args, Default)]
@@ -622,6 +666,30 @@ mod tests {
     }
 
     #[test]
+    fn eval_run_parses_telemetry_flags() {
+        let cli = Cli::parse_from([
+            "dbt-nova",
+            "eval",
+            "run",
+            "--suite",
+            "suite.yml",
+            "--telemetry",
+            "--telemetry-retention",
+            "100",
+        ]);
+        match cli.command.expect("command") {
+            Command::Eval(eval) => match eval.command {
+                EvalCommand::Run(args) => {
+                    assert!(args.telemetry);
+                    assert_eq!(args.telemetry_retention, Some(100));
+                }
+                _ => panic!("expected eval run"),
+            },
+            _ => panic!("expected eval command"),
+        }
+    }
+
+    #[test]
     fn eval_agent_run_parses_repeated_case_ids() {
         let cli = Cli::parse_from([
             "dbt-nova",
@@ -643,6 +711,29 @@ mod tests {
                     }
                 },
                 _ => panic!("expected eval agent run"),
+            },
+            _ => panic!("expected eval command"),
+        }
+    }
+
+    #[test]
+    fn eval_history_parses_suite_and_since() {
+        let cli = Cli::parse_from([
+            "dbt-nova",
+            "eval",
+            "history",
+            "--suite",
+            "starter",
+            "--since",
+            "2026-06-01",
+        ]);
+        match cli.command.expect("command") {
+            Command::Eval(eval) => match eval.command {
+                EvalCommand::History(args) => {
+                    assert_eq!(args.suite, "starter");
+                    assert_eq!(args.since, "2026-06-01");
+                }
+                _ => panic!("expected eval history"),
             },
             _ => panic!("expected eval command"),
         }
