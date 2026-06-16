@@ -135,6 +135,82 @@ async fn test_search_supports_mixed_legacy_and_config_column_nova_metadata() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_engineer_persona_uses_config_meta_owner() {
+    let searcher = config_meta_searcher();
+    let result = searcher
+        .search(&SearchParams {
+            query: "revenue".to_string(),
+            resource_types: vec!["model".to_string()],
+            persona: Some("engineer".to_string()),
+            detail: Some(DetailLevel::Standard),
+            min_score: None,
+            fuzzy: false,
+            include_highlights: false,
+            include_sql: false,
+            explain: false,
+            pagination: PaginationParams {
+                limit: Some(5),
+                offset: 0,
+            },
+        })
+        .await
+        .json();
+
+    assert_eq!(result["success"].as_bool(), Some(true));
+    let row = result["data"]
+        .as_array()
+        .and_then(|rows| rows.first())
+        .expect("expected search row");
+    assert_eq!(
+        row["unique_id"].as_str(),
+        Some("model.pkg.config_meta_model")
+    );
+    assert_eq!(
+        row["persona_payload"]["selection_signals"]["has_owner"].as_bool(),
+        Some(true)
+    );
+    assert!(
+        !row["persona_payload"]["selection_rationale"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("owner metadata missing")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_governance_persona_uses_config_meta_owner() {
+    let searcher = config_meta_searcher();
+    let result = searcher
+        .search(&SearchParams {
+            query: "revenue".to_string(),
+            resource_types: vec!["model".to_string()],
+            persona: Some("governance".to_string()),
+            detail: Some(DetailLevel::Standard),
+            min_score: None,
+            fuzzy: false,
+            include_highlights: false,
+            include_sql: false,
+            explain: false,
+            pagination: PaginationParams {
+                limit: Some(5),
+                offset: 0,
+            },
+        })
+        .await
+        .json();
+
+    assert_eq!(result["success"].as_bool(), Some(true));
+    let row = result["data"]
+        .as_array()
+        .and_then(|rows| rows.first())
+        .expect("expected search row");
+    assert_eq!(
+        row["persona_payload"]["gate_signals"]["owner_present"].as_bool(),
+        Some(true)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_get_context_merges_legacy_and_config_column_meta() {
     let searcher = config_meta_searcher();
     let result = searcher

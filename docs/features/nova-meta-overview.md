@@ -10,6 +10,18 @@ Nova reads `meta.nova` at two levels:
 - **Entity-level**: models, sources, metrics (the model itself).
 - **Column-level**: inside `columns[].meta.nova`.
 
+dbt 1.11+ may place metadata under `config.meta` instead of legacy `meta`.
+Nova reads both locations at entity and column level:
+
+- If only `config.meta.nova` exists, Nova treats it like `meta.nova` for search,
+  context, column metadata, metadata scoring, and metadata audit.
+- If both legacy `meta.nova` and `config.meta.nova` exist and both are objects,
+  Nova deep-merges them with legacy `meta.nova` taking precedence on conflicts.
+- Null legacy values do not block fallback to `config.meta.nova`.
+- Non-Nova metadata fields used by Nova, such as `owner` and column
+  `primary_key`, follow the same legacy-first fallback from `meta` to
+  `config.meta`.
+
 ## Quick Examples
 
 ### Model-level (canonical dataset)
