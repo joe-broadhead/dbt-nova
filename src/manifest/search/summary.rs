@@ -482,7 +482,6 @@ impl ManifestSearch {
         {
             obj.insert("persona_payload".to_string(), payload);
         }
-
         compact_json_object(&mut obj);
         JsonValue::Object(obj)
     }

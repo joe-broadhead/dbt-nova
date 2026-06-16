@@ -12,6 +12,21 @@ expression: result
       "name": "int__campaign_features",
       "original_file_path": "models/intermediate/marketing/int__campaign_features.sql",
       "package_name": "nova_test",
+      "provenance": {
+        "freshness": {
+          "reason": "no_freshness_timestamp",
+          "status": "unknown"
+        },
+        "readiness": {
+          "doc_coverage_pct": 100.0,
+          "has_nova_meta": false,
+          "has_owner": false,
+          "metadata_grade": "F",
+          "metadata_score": 4,
+          "tests_total": 0
+        },
+        "tier": "curated"
+      },
       "resource_type": "model",
       "schema": "dbt_test",
       "score": 0.032786883413791656,

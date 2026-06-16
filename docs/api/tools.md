@@ -58,6 +58,25 @@ Common:
         },
         "selection_rationale": "Selection signals: includes metric definitions, declares semantic grain, has an explicit time field, 1 query-aligned dimension(s)."
       },
+      "provenance": {
+        "tier": "semantic_layer",
+        "owner": "analytics",
+        "readiness": {
+          "metadata_score": 91,
+          "metadata_grade": "A",
+          "doc_coverage_pct": 94.44,
+          "has_owner": true,
+          "has_nova_meta": true,
+          "tests_total": 6
+        },
+        "freshness": {
+          "status": "fresh",
+          "source": "manifest_generated_at",
+          "timestamp": "2026-06-16T08:00:00Z",
+          "age_days": 0,
+          "stale_after_days": 30
+        }
+      },
       "score": 12.5,
       "highlights": {
         "description": ["<em>customer</em> lifetime value calculation"]
@@ -79,6 +98,17 @@ Common:
 When omitted, `detail` uses the active result profile: `standard` for CLI/tool
 calls by default and `compact` for MCP by default. Explicit `detail` values
 override the profile.
+
+Search result rows include an additive `provenance` object for `compact`,
+`standard`, and `full` detail. `provenance.tier` is `semantic_layer` when
+canonical Nova measures or metrics are present, `curated` when owner/docs/tests
+or other meaningful metadata are present, and `raw` when metadata is sparse.
+`owner` is extracted from dbt metadata using legacy `meta` first and dbt 1.11+
+`config.meta` as fallback. `readiness` contains compact metadata score,
+documentation, owner, Nova metadata, and test-count signals. `freshness.status`
+is `fresh`, `stale`, or `unknown`; Nova uses source freshness timestamps when
+available, then manifest `metadata.generated_at`, and otherwise returns
+`unknown`.
 
 When `detail: "standard"` and the query matches Nova measures or metrics, search
 results include a compact `semantic_preview` with the matched measure/metric
@@ -392,6 +422,8 @@ One-shot context bundle. Returns lineage, columns, tests, docs, and summary stat
 
 Notes:
 - The `entity` object includes `nova_summary` and `grain_summary` when available.
+- The `entity` object and upstream/downstream lineage entities include the same
+  `provenance` object used by search results.
 - The `tests` object includes `columns_tested`, `columns_total`, and a limited `columns_without_tests` list.
 - The `tests.gaps` array includes `missing_pk_test` and `untested_column` entries (limited).
 - `analysis_hints` explains empty lineage or missing dependency metadata when detected.
@@ -414,6 +446,8 @@ Optional:
 
 Notes:
 - Response includes `lineage_status` and `lineage_hints` to explain empty lineage results.
+- Entity rows include the same additive `provenance` object used by search
+  results for `compact`, `standard`, and `full` detail.
 - Requested `depth` is capped by `DBT_NOVA_MAX_LINEAGE_DEPTH` (config `lineage_max_depth`).
 
 ```json

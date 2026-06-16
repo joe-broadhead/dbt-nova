@@ -108,6 +108,83 @@ fn indicator_row_position(
 
 // Search Tool Tests
 #[tokio::test(flavor = "multi_thread")]
+async fn test_search_summaries_include_provenance_tiers() {
+    let semantic_searcher = semantic_preview_env();
+    let semantic_result = semantic_searcher
+        .search(&search_params("gmv", None))
+        .await
+        .json();
+    let semantic_rows = result_rows(&semantic_result);
+    let semantic_row = row_by_unique_id(&semantic_rows, "model.pkg.fact_orders_canonical");
+    assert_eq!(
+        semantic_row
+            .pointer("/provenance/tier")
+            .and_then(JsonValue::as_str),
+        Some("semantic_layer")
+    );
+    assert_eq!(
+        semantic_row
+            .pointer("/provenance/freshness/status")
+            .and_then(JsonValue::as_str),
+        Some("unknown")
+    );
+    assert!(
+        semantic_row
+            .pointer("/provenance/readiness/metadata_grade")
+            .is_some()
+    );
+
+    let curated_searcher = get_searcher();
+    let curated_result = curated_searcher
+        .search(&search_params("traffic", None))
+        .await
+        .json();
+    let curated_rows = result_rows(&curated_result);
+    let curated_row = row_by_unique_id(&curated_rows, "model.nova_test.stg__traffic_sessions");
+    assert_eq!(
+        curated_row
+            .pointer("/provenance/tier")
+            .and_then(JsonValue::as_str),
+        Some("curated")
+    );
+
+    let raw_searcher = get_searcher_with_fixture("undocumented.json");
+    let raw_result = raw_searcher
+        .search(&search_params("docless", None))
+        .await
+        .json();
+    let raw_rows = result_rows(&raw_result);
+    let raw_row = row_by_unique_id(&raw_rows, "model.pkg.docless");
+    assert_eq!(
+        raw_row
+            .pointer("/provenance/tier")
+            .and_then(JsonValue::as_str),
+        Some("raw")
+    );
+    assert_eq!(
+        raw_row
+            .pointer("/provenance/freshness/status")
+            .and_then(JsonValue::as_str),
+        Some("unknown")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_search_full_detail_includes_provenance() {
+    let searcher = get_searcher_with_fixture("undocumented.json");
+    let mut params = search_params("docless", None);
+    params.detail = Some(DetailLevel::Full);
+
+    let result = searcher.search(&params).await.json();
+    let rows = result_rows(&result);
+    let row = row_by_unique_id(&rows, "model.pkg.docless");
+    assert_eq!(
+        row.pointer("/provenance/tier").and_then(JsonValue::as_str),
+        Some("raw")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_search_by_name() {
     let searcher = get_searcher();
     let params = SearchParams {

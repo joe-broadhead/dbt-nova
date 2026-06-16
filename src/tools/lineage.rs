@@ -67,7 +67,7 @@ impl ManifestSearch {
         if let Some(key) = cache_key.as_ref()
             && let Some(cached) = self.lineage_cache_get(key)
         {
-            return Ok(cached);
+            return self.refresh_lineage_response_provenance(cached);
         }
         let mut visited_depth: HashMap<String, usize> = HashMap::new();
         let mut result_set: HashSet<String> = HashSet::new();
@@ -143,20 +143,40 @@ impl ManifestSearch {
         for id in &result {
             match detail {
                 DetailLevel::Full => {
-                    let mut entity = self.get_entity_archived(id)?.map_or(
-                        JsonValue::Null,
-                        crate::manifest::entity::ArchivedEntity::to_json_value,
-                    );
-                    ManifestSearch::insert_unique_id(&mut entity, id);
-                    results.push(entity);
+                    if let Some(archived) = self.get_entity_archived(id)? {
+                        let mut entity = archived.to_json_value();
+                        ManifestSearch::insert_unique_id(&mut entity, id);
+                        let provenance = self.provenance_for_archived_json(id, archived, &entity);
+                        if let Some(obj) = entity.as_object_mut() {
+                            obj.insert("provenance".to_string(), provenance);
+                        }
+                        results.push(entity);
+                    } else {
+                        results.push(JsonValue::Null);
+                    }
                 }
                 DetailLevel::Compact => {
                     if let Some(entity) = self.get_entity_archived(id)? {
-                        results.push(self.summary_for_compact(id, entity));
+                        let mut summary = self.summary_for_compact(id, entity);
+                        let entity_json = entity.to_json_value();
+                        let provenance =
+                            self.provenance_for_archived_json(id, entity, &entity_json);
+                        if let Some(obj) = summary.as_object_mut() {
+                            obj.insert("provenance".to_string(), provenance);
+                        }
+                        results.push(summary);
                     }
                 }
                 DetailLevel::Standard => {
-                    if let Ok(summary) = self.entity_summary(id) {
+                    if let Ok(mut summary) = self.entity_summary(id) {
+                        if let Some(entity) = self.get_entity_archived(id)? {
+                            let entity_json = entity.to_json_value();
+                            let provenance =
+                                self.provenance_for_archived_json(id, entity, &entity_json);
+                            if let Some(obj) = summary.as_object_mut() {
+                                obj.insert("provenance".to_string(), provenance);
+                            }
+                        }
                         results.push(summary);
                     } else {
                         results.push(serde_json::json!({
@@ -208,6 +228,36 @@ impl ManifestSearch {
             self.lineage_cache_insert(key, response_value.clone());
         }
         Ok(response_value)
+    }
+
+    fn refresh_lineage_response_provenance(&self, mut response: JsonValue) -> Result<JsonValue> {
+        let Some(entities) = response
+            .get_mut("data")
+            .and_then(|data| data.get_mut("entities"))
+            .and_then(JsonValue::as_array_mut)
+        else {
+            return Ok(response);
+        };
+
+        for entity_value in entities {
+            let Some(unique_id) = entity_value
+                .get("unique_id")
+                .and_then(JsonValue::as_str)
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let Some(entity) = self.get_entity_archived(&unique_id)? else {
+                continue;
+            };
+            let entity_json = entity.to_json_value();
+            let provenance = self.provenance_for_archived_json(&unique_id, entity, &entity_json);
+            if let Some(obj) = entity_value.as_object_mut() {
+                obj.insert("provenance".to_string(), provenance);
+            }
+        }
+
+        Ok(response)
     }
 
     /// Analyze the downstream impact of changing an entity.
@@ -296,4 +346,46 @@ fn lineage_type_allowed(resource_type: Option<&str>, allowed: &[String]) -> bool
     allowed
         .iter()
         .any(|candidate| candidate.eq_ignore_ascii_case(resource_type))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::common::get_searcher;
+
+    #[test]
+    fn cached_lineage_response_refreshes_provenance() {
+        let searcher = get_searcher();
+        let response = serde_json::json!({
+            "success": true,
+            "data": {
+                "entities": [{
+                    "unique_id": "model.nova_test.dim__customers",
+                    "provenance": {
+                        "tier": "raw",
+                        "freshness": {
+                            "status": "fresh",
+                            "age_days": 999
+                        }
+                    }
+                }]
+            }
+        });
+
+        let refreshed = searcher
+            .refresh_lineage_response_provenance(response)
+            .expect("refresh provenance");
+        let entity = refreshed
+            .pointer("/data/entities/0")
+            .expect("lineage entity");
+
+        assert_ne!(
+            entity.pointer("/provenance/tier"),
+            Some(&JsonValue::String("raw".to_string()))
+        );
+        assert_ne!(
+            entity.pointer("/provenance/freshness/age_days"),
+            Some(&JsonValue::from(999))
+        );
+    }
 }

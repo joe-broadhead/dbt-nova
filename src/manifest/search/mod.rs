@@ -1,5 +1,6 @@
 mod cache;
 mod core;
+mod provenance;
 mod semantic;
 mod summary;
 
