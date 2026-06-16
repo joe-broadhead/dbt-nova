@@ -7,13 +7,13 @@ use tempfile::{NamedTempFile, TempDir};
 use super::{
     AgentCalledWith, AgentEntityRank, AgentExpected, AgentOrder, AssertionResult, EvalCaseReport,
     EvalDefaults, EvalRunArgs, EvalSuite, EvalValidateArgs, FinalAnswerExpected,
-    apply_telemetry_retention, contains_rank_assertion, context_contains_assertion,
-    context_field_equals_assertion, eval_case_telemetry_from_trace, format_utc_timestamp_millis,
-    json_has_field_path, read_tool_trace, recipe_rank_assertion, run_eval_command,
-    run_validate_command, safe_path_segment, score_agent_expectations, selected_agent_cases,
-    selected_bridge_cases, telemetry_path_for_suite, telemetry_row_matches_since,
-    tool_response_budget_assertion, tool_success_assertion, validate_since_date, validate_suite,
-    validate_telemetry_suite_name,
+    apply_telemetry_retention, build_eval_gate_report, contains_rank_assertion,
+    context_contains_assertion, context_field_equals_assertion, eval_case_telemetry_from_trace,
+    format_utc_timestamp_millis, json_has_field_path, read_tool_trace, recipe_rank_assertion,
+    run_eval_command, run_validate_command, safe_path_segment, score_agent_expectations,
+    selected_agent_cases, selected_bridge_cases, suite_file_hash, telemetry_path_for_suite,
+    telemetry_row_matches_since, tool_response_budget_assertion, tool_success_assertion,
+    validate_since_date, validate_suite, validate_telemetry_suite_name,
 };
 
 #[test]
@@ -397,6 +397,7 @@ fn telemetry_requires_named_suite() {
     let suite = EvalSuite {
         version: 1,
         name: None,
+        gate: None,
         defaults: EvalDefaults::default(),
         cases: Vec::new(),
         agent_cases: Vec::new(),
@@ -409,10 +410,368 @@ fn telemetry_requires_named_suite() {
 }
 
 #[test]
+fn eval_gate_allows_latest_run_above_threshold() {
+    let suite = gate_suite_file(Some(0.5));
+    let suite_path = suite.path().display().to_string();
+    let rows = vec![
+        telemetry_row(
+            "gated",
+            &suite_path,
+            "old",
+            1,
+            "case_old",
+            "assertion",
+            "fail",
+        ),
+        telemetry_row_with_assertion_count(
+            "gated",
+            &suite_path,
+            "new",
+            2,
+            "case_a",
+            "assertion_a",
+            "pass",
+            2,
+        ),
+        telemetry_row_with_assertion_count(
+            "gated",
+            &suite_path,
+            "new",
+            2,
+            "case_b",
+            "assertion_b",
+            "pass",
+            2,
+        ),
+    ];
+
+    let report = build_eval_gate_report("gated", &rows).expect("gate report");
+
+    assert!(report.allowed);
+    assert!(!report.blocked);
+    assert!(report.gate_configured);
+    assert_eq!(report.threshold, Some(0.5));
+    assert_eq!(report.total_evals, 2);
+    assert_eq!(report.failed_evals, 0);
+    assert!((report.pass_rate - 1.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn eval_gate_blocks_latest_run_below_threshold_with_failed_ids() {
+    let suite = gate_suite_file(Some(1.0));
+    let suite_path = suite.path().display().to_string();
+    let rows = vec![
+        telemetry_row(
+            "gated",
+            &suite_path,
+            "old",
+            1,
+            "case_old",
+            "assertion",
+            "pass",
+        ),
+        telemetry_row_with_assertion_count(
+            "gated",
+            &suite_path,
+            "new",
+            2,
+            "case_a",
+            "assertion_a",
+            "pass",
+            2,
+        ),
+        telemetry_row_with_assertion_count(
+            "gated",
+            &suite_path,
+            "new",
+            2,
+            "case_b",
+            "assertion_b",
+            "fail",
+            2,
+        ),
+    ];
+
+    let report = build_eval_gate_report("gated", &rows).expect("gate report");
+
+    assert!(!report.allowed);
+    assert!(report.blocked);
+    assert!((report.pass_rate - 0.5).abs() < f64::EPSILON);
+    assert_eq!(report.failed_evals, 1);
+    assert_eq!(report.failed_eval_ids, vec!["case_b::assertion_b"]);
+    assert_eq!(report.failed_case_ids, vec!["case_b"]);
+}
+
+#[test]
+fn eval_gate_uses_run_id_not_reused_output_dir() {
+    let suite = gate_suite_file(Some(1.0));
+    let suite_path = suite.path().display().to_string();
+    let rows = vec![
+        telemetry_row_with_run_id(
+            "gated",
+            &suite_path,
+            "stable-output",
+            1,
+            "case_old",
+            "assertion_old",
+            "pass",
+            "run-old",
+        ),
+        telemetry_row_with_run_id(
+            "gated",
+            &suite_path,
+            "stable-output",
+            2,
+            "case_new",
+            "assertion_new",
+            "fail",
+            "run-new",
+        ),
+    ];
+
+    let report = build_eval_gate_report("gated", &rows).expect("gate report");
+
+    assert!(!report.allowed);
+    assert_eq!(report.total_evals, 1);
+    assert_eq!(report.failed_eval_ids, vec!["case_new::assertion_new"]);
+}
+
+#[test]
+fn eval_gate_blocks_partial_latest_run_after_retention() {
+    let suite = gate_suite_file(Some(1.0));
+    let suite_path = suite.path().display().to_string();
+    let rows = vec![
+        telemetry_row(
+            "gated",
+            &suite_path,
+            "old",
+            1,
+            "case_old",
+            "assertion_old",
+            "fail",
+        ),
+        telemetry_row_with_assertion_count(
+            "gated",
+            &suite_path,
+            "new",
+            2,
+            "case_new",
+            "assertion_new",
+            "pass",
+            2,
+        ),
+    ];
+
+    let report = build_eval_gate_report("gated", &rows).expect("gate report");
+
+    assert!(!report.allowed);
+    assert!(report.blocked);
+    assert_eq!(report.total_evals, 1);
+    assert!(report.message.contains("found 1 of 2"));
+}
+
+#[test]
+fn eval_gate_blocks_filtered_latest_run_even_when_selected_case_passed() {
+    let suite = gate_suite_file(Some(1.0));
+    let suite_path = suite.path().display().to_string();
+    let rows = vec![telemetry_row_with_case_counts(
+        "gated",
+        &suite_path,
+        "latest",
+        1,
+        "case_a",
+        "assertion_a",
+        "pass",
+        1,
+        1,
+        2,
+    )];
+
+    let report = build_eval_gate_report("gated", &rows).expect("gate report");
+
+    assert!(!report.allowed);
+    assert!(report.blocked);
+    assert_eq!(report.total_evals, 1);
+    assert!((report.pass_rate - 1.0).abs() < f64::EPSILON);
+    assert!(report.message.contains("covers 1 of 2 suite cases"));
+}
+
+#[test]
+fn eval_gate_blocks_latest_run_from_changed_suite_file() {
+    let suite = gate_suite_file(Some(1.0));
+    let suite_path = suite.path().display().to_string();
+    let rows = vec![telemetry_row(
+        "gated",
+        &suite_path,
+        "latest",
+        1,
+        "case_a",
+        "assertion_a",
+        "pass",
+    )];
+    std::fs::write(
+        suite.path(),
+        "version: 1\nname: gated\ngate:\n  threshold: 1.0\ncases: []\nagent_cases: []\n# changed\n",
+    )
+    .expect("change suite");
+
+    let report = build_eval_gate_report("gated", &rows).expect("gate report");
+
+    assert!(!report.allowed);
+    assert!(report.blocked);
+    assert!(report.message.contains("different suite file version"));
+}
+
+#[test]
+fn eval_gate_blocks_legacy_telemetry_without_suite_hash() {
+    let suite = gate_suite_file(Some(1.0));
+    let suite_path = suite.path().display().to_string();
+    let mut row = telemetry_row(
+        "gated",
+        &suite_path,
+        "latest",
+        1,
+        "case_a",
+        "assertion_a",
+        "pass",
+    );
+    row.as_object_mut()
+        .expect("telemetry object")
+        .remove("suite_hash");
+    let rows = vec![row];
+
+    let report = build_eval_gate_report("gated", &rows).expect("gate report");
+
+    assert!(!report.allowed);
+    assert!(report.blocked);
+    assert!(report.message.contains("suite_hash"));
+}
+
+#[test]
+fn eval_gate_blocks_legacy_telemetry_without_run_assertion_count() {
+    let suite = gate_suite_file(Some(1.0));
+    let suite_path = suite.path().display().to_string();
+    let mut row = telemetry_row(
+        "gated",
+        &suite_path,
+        "latest",
+        1,
+        "case_a",
+        "assertion_a",
+        "pass",
+    );
+    row.as_object_mut()
+        .expect("telemetry object")
+        .remove("run_assertion_count");
+    let rows = vec![row];
+
+    let report = build_eval_gate_report("gated", &rows).expect("gate report");
+
+    assert!(!report.allowed);
+    assert!(report.blocked);
+    assert!(report.message.contains("run_assertion_count"));
+}
+
+#[test]
+fn eval_gate_missing_config_allows_with_explicit_signal() {
+    let suite = gate_suite_file(None);
+    let suite_path = suite.path().display().to_string();
+    let rows = vec![telemetry_row(
+        "ungated",
+        &suite_path,
+        "latest",
+        1,
+        "case_a",
+        "assertion_a",
+        "fail",
+    )];
+
+    let report = build_eval_gate_report("ungated", &rows).expect("gate report");
+
+    assert!(report.allowed);
+    assert!(!report.blocked);
+    assert!(!report.gate_configured);
+    assert_eq!(report.threshold, None);
+    assert!(report.message.contains("allowed by default"));
+}
+
+#[test]
+fn eval_gate_missing_config_allows_legacy_telemetry_without_run_assertion_count() {
+    let suite = gate_suite_file(None);
+    let suite_path = suite.path().display().to_string();
+    let mut row = telemetry_row(
+        "ungated",
+        &suite_path,
+        "latest",
+        1,
+        "case_a",
+        "assertion_a",
+        "pass",
+    );
+    row.as_object_mut()
+        .expect("telemetry object")
+        .remove("run_assertion_count");
+    let rows = vec![row];
+
+    let report = build_eval_gate_report("ungated", &rows).expect("gate report");
+
+    assert!(report.allowed);
+    assert!(!report.blocked);
+    assert!(!report.gate_configured);
+    assert!(report.message.contains("allowed by default"));
+}
+
+#[test]
+fn eval_gate_missing_suite_config_blocks_with_actionable_message() {
+    let rows = vec![telemetry_row(
+        "gated",
+        "target/does-not-exist/gated.yml",
+        "latest",
+        1,
+        "case_a",
+        "assertion_a",
+        "pass",
+    )];
+
+    let report = build_eval_gate_report("gated", &rows).expect("gate report");
+
+    assert!(!report.allowed);
+    assert!(report.blocked);
+    assert!(!report.gate_configured);
+    assert!(report.message.contains("could not be read"));
+}
+
+#[test]
+fn eval_gate_missing_telemetry_returns_actionable_message() {
+    let report = build_eval_gate_report("missing", &[]).expect("gate report");
+
+    assert!(!report.allowed);
+    assert!(report.blocked);
+    assert!(!report.gate_configured);
+    assert_eq!(report.total_evals, 0);
+    assert!(report.message.contains("--telemetry"));
+}
+
+#[test]
+fn validate_suite_rejects_invalid_gate_threshold() {
+    let suite = EvalSuite {
+        version: 1,
+        name: None,
+        gate: Some(super::EvalGateConfig { threshold: 1.1 }),
+        defaults: EvalDefaults::default(),
+        cases: Vec::new(),
+        agent_cases: Vec::new(),
+    };
+    let error = validate_suite(&suite).expect_err("invalid gate threshold should fail");
+    assert!(error.to_string().contains("gate.threshold"));
+}
+
+#[test]
 fn validate_suite_rejects_duplicate_agent_case_ids() {
     let suite = EvalSuite {
         version: 1,
         name: None,
+        gate: None,
         defaults: EvalDefaults::default(),
         cases: Vec::new(),
         agent_cases: vec![
@@ -437,6 +796,7 @@ fn validate_suite_rejects_duplicate_artifact_segments() {
     let suite = EvalSuite {
         version: 1,
         name: None,
+        gate: None,
         defaults: EvalDefaults::default(),
         cases: Vec::new(),
         agent_cases: vec![
@@ -461,6 +821,7 @@ fn validate_suite_rejects_case_insensitive_artifact_segment_collisions() {
     let suite = EvalSuite {
         version: 1,
         name: None,
+        gate: None,
         defaults: EvalDefaults::default(),
         cases: Vec::new(),
         agent_cases: vec![
@@ -485,6 +846,7 @@ fn validate_suite_rejects_vacuous_search_columns_rank_assertion() {
     let suite = EvalSuite {
         version: 1,
         name: None,
+        gate: None,
         defaults: EvalDefaults::default(),
         cases: vec![super::EvalCase {
             id: "columns".to_string(),
@@ -508,6 +870,7 @@ fn validate_suite_rejects_unmatchable_called_with_param_values() {
     let suite = EvalSuite {
         version: 1,
         name: None,
+        gate: None,
         defaults: EvalDefaults::default(),
         cases: Vec::new(),
         agent_cases: vec![super::AgentCase {
@@ -651,4 +1014,182 @@ fn fixture_manifest_path(name: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(name)
+}
+
+fn gate_suite_file(threshold: Option<f64>) -> NamedTempFile {
+    let suite = NamedTempFile::new().expect("suite file");
+    let gate = threshold.map_or_else(String::new, |threshold| {
+        format!("gate:\n  threshold: {threshold}\n")
+    });
+    std::fs::write(
+        suite.path(),
+        format!("version: 1\nname: gated\n{gate}cases: []\nagent_cases: []\n"),
+    )
+    .expect("write suite");
+    suite
+}
+
+fn telemetry_row(
+    suite_name: &str,
+    suite_path: &str,
+    output_dir: &str,
+    timestamp_ms: u64,
+    case_id: &str,
+    assertion_name: &str,
+    status: &str,
+) -> serde_json::Value {
+    let run_id = format!("run-{timestamp_ms}");
+    telemetry_row_with_run_id_and_count(
+        suite_name,
+        suite_path,
+        output_dir,
+        timestamp_ms,
+        case_id,
+        assertion_name,
+        status,
+        &run_id,
+        1,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn telemetry_row_with_run_id(
+    suite_name: &str,
+    suite_path: &str,
+    output_dir: &str,
+    timestamp_ms: u64,
+    case_id: &str,
+    assertion_name: &str,
+    status: &str,
+    run_id: &str,
+) -> serde_json::Value {
+    telemetry_row_with_run_id_and_count(
+        suite_name,
+        suite_path,
+        output_dir,
+        timestamp_ms,
+        case_id,
+        assertion_name,
+        status,
+        run_id,
+        1,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn telemetry_row_with_assertion_count(
+    suite_name: &str,
+    suite_path: &str,
+    output_dir: &str,
+    timestamp_ms: u64,
+    case_id: &str,
+    assertion_name: &str,
+    status: &str,
+    run_assertion_count: u64,
+) -> serde_json::Value {
+    let run_id = format!("run-{timestamp_ms}");
+    telemetry_row_with_run_id_and_count(
+        suite_name,
+        suite_path,
+        output_dir,
+        timestamp_ms,
+        case_id,
+        assertion_name,
+        status,
+        &run_id,
+        run_assertion_count,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn telemetry_row_with_run_id_and_count(
+    suite_name: &str,
+    suite_path: &str,
+    output_dir: &str,
+    timestamp_ms: u64,
+    case_id: &str,
+    assertion_name: &str,
+    status: &str,
+    run_id: &str,
+    run_assertion_count: u64,
+) -> serde_json::Value {
+    telemetry_row_with_run_id_and_counts(
+        suite_name,
+        suite_path,
+        output_dir,
+        timestamp_ms,
+        case_id,
+        assertion_name,
+        status,
+        run_id,
+        run_assertion_count,
+        1,
+        1,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn telemetry_row_with_case_counts(
+    suite_name: &str,
+    suite_path: &str,
+    output_dir: &str,
+    timestamp_ms: u64,
+    case_id: &str,
+    assertion_name: &str,
+    status: &str,
+    run_assertion_count: u64,
+    run_case_count: u64,
+    suite_case_count: u64,
+) -> serde_json::Value {
+    let run_id = format!("run-{timestamp_ms}");
+    telemetry_row_with_run_id_and_counts(
+        suite_name,
+        suite_path,
+        output_dir,
+        timestamp_ms,
+        case_id,
+        assertion_name,
+        status,
+        &run_id,
+        run_assertion_count,
+        run_case_count,
+        suite_case_count,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn telemetry_row_with_run_id_and_counts(
+    suite_name: &str,
+    suite_path: &str,
+    output_dir: &str,
+    timestamp_ms: u64,
+    case_id: &str,
+    assertion_name: &str,
+    status: &str,
+    run_id: &str,
+    run_assertion_count: u64,
+    run_case_count: u64,
+    suite_case_count: u64,
+) -> serde_json::Value {
+    let mut row = json!({
+        "timestamp": format_utc_timestamp_millis(timestamp_ms),
+        "timestamp_ms": timestamp_ms,
+        "run_id": run_id,
+        "run_case_count": run_case_count,
+        "suite_case_count": suite_case_count,
+        "run_assertion_count": run_assertion_count,
+        "suite_name": suite_name,
+        "suite_path": suite_path,
+        "mode": "bridge",
+        "case_id": case_id,
+        "assertion_name": assertion_name,
+        "status": status,
+        "output_dir": output_dir
+    });
+    if let Ok(hash) = suite_file_hash(suite_path)
+        && let Some(object) = row.as_object_mut()
+    {
+        object.insert("suite_hash".to_string(), json!(hash));
+    }
+    row
 }

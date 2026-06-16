@@ -54,6 +54,13 @@ rows when comparing whether metadata or prompt changes improved a suite over
 time. Add `--telemetry-retention <ROWS>` to keep only the newest rows for that
 suite after each run.
 
+When a suite declares `gate.threshold`, run the full suite with `--telemetry`
+and then run `dbt-nova eval gate <NAME> --json`. Configured gates reject latest
+telemetry from stale suite files, filtered `--case-id` runs, or row-retention
+truncation, because those runs do not prove current full-suite readiness. Gates
+are advisory in v1: use blocked results to warn before high-stakes analysis or
+launch-readiness claims, then inspect the reported failed case/assertion ids.
+
 ## Test Storage Cleanup
 
 Tests use temporary storage under `target/dbt-nova-tests` and clean up automatically.

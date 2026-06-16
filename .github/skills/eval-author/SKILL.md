@@ -51,7 +51,9 @@ Eval execution is CLI-only. MCP is for discovering ground truth and debugging ex
 6. Validate the suite shape with `dbt-nova eval validate`.
 7. Run one case with `--case-id` before running the full suite.
 8. Set a gate that matches the suite purpose.
-9. Read `results.json` for machines, `report.md` for humans, and tool traces for agent behavior.
+9. Run the full suite with `--telemetry` before checking readiness gates.
+10. Check readiness with `dbt-nova eval gate <suite_name> --json` for high-stakes, launch-readiness, or recurring production suites.
+11. Read `results.json` for machines, `report.md` for humans, and tool traces for agent behavior.
 
 ## Design rules
 
@@ -63,6 +65,7 @@ Eval execution is CLI-only. MCP is for discovering ground truth and debugging ex
 - Avoid brittle prose checks. Use `final_answer.must_contain` only for short, durable business terms.
 - Freeze relative dates in agent tasks. Do not leave "last week", "this month", or "last 52 weeks" unresolved unless the eval is explicitly testing date interpretation.
 - Keep smoke suites small and strict. Keep broader regression suites larger with realistic `--fail-under` thresholds.
+- Put advisory launch-readiness thresholds in suite YAML as `gate: { threshold: <0.0-1.0> }`, then verify the latest full-suite telemetry with `dbt-nova eval gate <suite_name> --json`. Filtered `--case-id` runs are for iteration and do not satisfy configured gates.
 - Never include secrets, credentials, raw SQL parameter maps, or private manifests in public eval artifacts.
 
 ## Output standard

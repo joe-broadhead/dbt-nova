@@ -345,6 +345,8 @@ pub enum EvalCommand {
     Run(EvalRunArgs),
     /// Run provider-backed agent evals and score observed Nova tool use.
     Agent(EvalAgentArgs),
+    /// Report readiness from the latest eval telemetry for a suite.
+    Gate(EvalGateArgs),
     /// Print filtered JSONL eval telemetry history.
     History(EvalHistoryArgs),
     /// Validate an eval suite without loading a manifest or running a provider.
@@ -559,6 +561,14 @@ pub struct EvalHistoryArgs {
 }
 
 #[derive(Debug, Clone, Args, Default)]
+pub struct EvalGateArgs {
+    #[arg(value_name = "NAME", help = "Eval suite name to check")]
+    pub suite: String,
+    #[arg(long, default_value_t = false, help = "Emit a JSON CLI envelope")]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
 pub struct EvalValidateArgs {
     #[arg(long, value_name = "PATH", help = "YAML or JSON eval suite path")]
     pub suite: String,
@@ -734,6 +744,21 @@ mod tests {
                     assert_eq!(args.since, "2026-06-01");
                 }
                 _ => panic!("expected eval history"),
+            },
+            _ => panic!("expected eval command"),
+        }
+    }
+
+    #[test]
+    fn eval_gate_parses_suite_and_json() {
+        let cli = Cli::parse_from(["dbt-nova", "eval", "gate", "starter", "--json"]);
+        match cli.command.expect("command") {
+            Command::Eval(eval) => match eval.command {
+                EvalCommand::Gate(args) => {
+                    assert_eq!(args.suite, "starter");
+                    assert!(args.json);
+                }
+                _ => panic!("expected eval gate"),
             },
             _ => panic!("expected eval command"),
         }

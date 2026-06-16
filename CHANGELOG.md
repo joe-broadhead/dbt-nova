@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--telemetry`, keep newest rows with `--telemetry-retention`, and print
   filtered run history with `dbt-nova eval history --suite <NAME> --since
   <YYYY-MM-DD>`.
+- Eval suites can now declare advisory readiness gates with `gate.threshold`;
+  `dbt-nova eval gate <NAME> --json` reads the latest full-suite telemetry and
+  reports allowed/blocked status, pass rate, and failed case/assertion ids,
+  blocking stale suite-file telemetry before allowing configured gates.
 - Fixed release OCI publishing to build images from native Linux release binaries
   instead of compiling Rust inside the ARM64 Docker/QEMU path.
 - Fixed the Monthly workflow by refreshing advisory/dependency-watchlist review
