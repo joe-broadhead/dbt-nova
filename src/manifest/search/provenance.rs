@@ -1,7 +1,7 @@
 use serde_json::Value as JsonValue;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::manifest::entity::{ArchivedEntity, entity_meta_field_json};
+use crate::manifest::entity::ArchivedEntity;
 
 use super::core::ManifestSearch;
 
@@ -126,8 +126,17 @@ impl ManifestSearch {
 }
 
 fn owner_value(entity_json: &JsonValue) -> Option<&JsonValue> {
-    entity_meta_field_json(entity_json, "owner")
+    entity_json
+        .get("meta")
+        .and_then(|meta| meta.get("owner"))
         .filter(|value| value_present(value))
+        .or_else(|| {
+            entity_json
+                .get("config")
+                .and_then(|config| config.get("meta"))
+                .and_then(|meta| meta.get("owner"))
+                .filter(|value| value_present(value))
+        })
         .or_else(|| {
             entity_json
                 .get("owner")
@@ -370,5 +379,24 @@ mod tests {
         assert!(parse_rfc3339_timestamp_secs("2025-02-29T00:00:00Z").is_none());
         assert!(parse_rfc3339_timestamp_secs("2025-01-01T24:00:00Z").is_none());
         assert!(parse_rfc3339_timestamp_secs("not-a-timestamp").is_none());
+    }
+
+    #[test]
+    fn search_provenance_owner_falls_back_when_legacy_owner_blank() {
+        let entity = serde_json::json!({
+            "meta": {
+                "owner": " "
+            },
+            "config": {
+                "meta": {
+                    "owner": "analytics"
+                }
+            }
+        });
+
+        assert_eq!(
+            owner_value(&entity).and_then(JsonValue::as_str),
+            Some("analytics")
+        );
     }
 }
