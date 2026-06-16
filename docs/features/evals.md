@@ -288,6 +288,9 @@ Use `--telemetry` when you want eval results to accumulate across runs instead
 of only writing one-off report artifacts. Bridge and agent evals append one
 JSON object per assertion to `.nova/eval-runs/telemetry/<suite>-<hash>.jsonl`:
 
+Suites must define a non-empty `name:` to write telemetry. This keeps history
+and retention scoped to one suite instead of mixing unrelated unnamed files.
+
 ```bash
 dbt-nova eval run \
   --suite evals/agent-tokenomics-bridge.yml \
