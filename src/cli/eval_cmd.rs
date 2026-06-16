@@ -2,15 +2,18 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{BufRead, BufReader, Write as IoWrite};
 use std::path::{Path, PathBuf};
+use std::process::Command as StdCommand;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 
 use crate::cli::args::{
-    EvalAgentRunArgs, EvalInitArgs, EvalRunArgs, EvalValidateArgs, ManifestLoadArgs,
+    EvalAgentRunArgs, EvalHistoryArgs, EvalInitArgs, EvalRunArgs, EvalValidateArgs,
+    ManifestLoadArgs,
 };
 use crate::cli::manifest::{build_manifest_load_config, execute_manifest_load};
 use crate::cli::output::{CliEnvelope, error_envelope};
@@ -21,6 +24,7 @@ use crate::manifest::ManifestSearch;
 const DEFAULT_TOP_K: usize = 5;
 const DEFAULT_FAIL_UNDER: f64 = 1.0;
 const MAX_SAFE_PATH_SEGMENT_CHARS: usize = 120;
+const DEFAULT_TELEMETRY_DIR: &str = ".nova/eval-runs/telemetry";
 
 mod provider;
 
@@ -247,6 +251,8 @@ struct EvalCaseReport {
     assertions: Vec<AssertionResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     artifacts: Option<AgentArtifacts>,
+    #[serde(skip)]
+    telemetry: Option<EvalCaseTelemetry>,
 }
 
 #[derive(Debug, Serialize)]
@@ -263,6 +269,22 @@ struct AgentArtifacts {
     stdout: String,
     stderr: String,
     tool_trace: String,
+}
+
+#[derive(Debug, Clone)]
+struct EvalCaseTelemetry {
+    tool_call_count: usize,
+    distinct_tool_count: usize,
+    total_response_bytes: Option<u64>,
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    total_tokens: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AgentTelemetryContext<'a> {
+    provider: &'a str,
+    provider_command_preset: &'a str,
 }
 
 /// Writes a starter eval suite.
@@ -342,6 +364,40 @@ pub fn run_validate_command(args: &EvalValidateArgs) -> DispatchResult {
     Ok(())
 }
 
+/// Prints filtered JSONL eval telemetry history.
+///
+/// # Errors
+/// Returns an error when `--since` is invalid or existing telemetry cannot be read.
+pub fn run_history_command(args: &EvalHistoryArgs) -> DispatchResult {
+    let since_boundary = validate_since_date(&args.since)?;
+    let path = telemetry_path_for_suite(&args.suite);
+    if !path.exists() {
+        return Ok(());
+    }
+    let file = fs::File::open(&path).map_err(|error| server_error(error.to_string()))?;
+    let reader = BufReader::new(file);
+    for (index, line) in reader.lines().enumerate() {
+        let line = line.map_err(|error| server_error(error.to_string()))?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let row = serde_json::from_str::<JsonValue>(trimmed).map_err(|error| {
+            DbtNovaError::InvalidParams(format!(
+                "failed to parse telemetry line {} in '{}': {error}",
+                index + 1,
+                path.display()
+            ))
+        })?;
+        if telemetry_row_matches_since(&row, &since_boundary) {
+            let out =
+                serde_json::to_string(&row).map_err(|error| server_error(error.to_string()))?;
+            println!("{out}");
+        }
+    }
+    Ok(())
+}
+
 /// Runs deterministic Nova bridge assertions against a manifest.
 ///
 /// # Errors
@@ -350,6 +406,7 @@ pub async fn run_eval_command(args: &EvalRunArgs) -> DispatchResult {
     let started = Instant::now();
     let suite = load_suite(&args.suite)?;
     validate_fail_under(args.fail_under)?;
+    validate_telemetry_retention(args.telemetry_retention)?;
     if suite.cases.is_empty() {
         return Err(
             DbtNovaError::InvalidParams("eval suite contains no bridge cases".to_string()).into(),
@@ -381,12 +438,19 @@ pub async fn run_eval_command(args: &EvalRunArgs) -> DispatchResult {
         cases,
     );
     write_report_artifacts(&output_dir, &report, &args.suite)?;
-    finish_report(
-        "eval run",
-        &report,
-        args.json,
-        started.elapsed().as_millis(),
-    )
+    let elapsed = started.elapsed();
+    let elapsed_ms = elapsed.as_millis();
+    if args.telemetry {
+        write_eval_telemetry(
+            &report,
+            &args.suite,
+            Some(&load_result.search.manifest_hash),
+            elapsed_ms_to_u64(elapsed),
+            args.telemetry_retention,
+            None,
+        )?;
+    }
+    finish_report("eval run", &report, args.json, elapsed_ms)
 }
 
 /// Runs agent-provider evals and scores the tool-use trace.
@@ -397,6 +461,7 @@ pub async fn run_agent_eval_command(args: &EvalAgentRunArgs) -> DispatchResult {
     let started = Instant::now();
     let suite = load_suite(&args.suite)?;
     validate_fail_under(args.fail_under)?;
+    validate_telemetry_retention(args.telemetry_retention)?;
     if suite.agent_cases.is_empty() {
         return Err(
             DbtNovaError::InvalidParams("eval suite contains no agent_cases".to_string()).into(),
@@ -419,12 +484,22 @@ pub async fn run_agent_eval_command(args: &EvalAgentRunArgs) -> DispatchResult {
         cases,
     );
     write_report_artifacts(&output_dir, &report, &args.suite)?;
-    finish_report(
-        "eval agent run",
-        &report,
-        args.json,
-        started.elapsed().as_millis(),
-    )
+    let elapsed = started.elapsed();
+    let elapsed_ms = elapsed.as_millis();
+    if args.telemetry {
+        write_eval_telemetry(
+            &report,
+            &args.suite,
+            None,
+            elapsed_ms_to_u64(elapsed),
+            args.telemetry_retention,
+            Some(AgentTelemetryContext {
+                provider: &args.provider,
+                provider_command_preset: agent_provider_command_preset(args),
+            }),
+        )?;
+    }
+    finish_report("eval agent run", &report, args.json, elapsed_ms)
 }
 
 async fn evaluate_bridge_case(
@@ -786,6 +861,7 @@ async fn run_agent_case(
         &trace.rows,
         &final_answer_text,
     ));
+    let telemetry = eval_case_telemetry_from_trace(&trace.rows);
     EvalCaseReport::new(
         case.id.clone(),
         Some(case.task.clone()),
@@ -796,6 +872,7 @@ async fn run_agent_case(
             tool_trace: trace_path.display().to_string(),
         }),
     )
+    .with_telemetry(telemetry)
 }
 
 fn score_agent_expectations(
@@ -1900,6 +1977,326 @@ fn write_report_artifacts(
     Ok(())
 }
 
+fn write_eval_telemetry(
+    report: &EvalReport,
+    suite_path: &str,
+    manifest_hash: Option<&str>,
+    duration_ms: u64,
+    retention: Option<usize>,
+    agent: Option<AgentTelemetryContext<'_>>,
+) -> DispatchResult {
+    let telemetry_path = telemetry_path_for_suite(&report.suite_name);
+    if let Some(parent) = telemetry_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| server_error(error.to_string()))?;
+    }
+    let timestamp_ms = timestamp_millis();
+    let timestamp = format_utc_timestamp_millis(timestamp_ms);
+    let git_sha = current_git_sha();
+    let manifest_hash = manifest_hash
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&telemetry_path)
+        .map_err(|error| server_error(error.to_string()))?;
+    for case in &report.cases {
+        for assertion in &case.assertions {
+            let mut row = serde_json::Map::new();
+            row.insert("timestamp".to_string(), json!(&timestamp));
+            row.insert("timestamp_ms".to_string(), json!(timestamp_ms));
+            row.insert("suite_name".to_string(), json!(&report.suite_name));
+            row.insert("suite_path".to_string(), json!(suite_path));
+            row.insert("mode".to_string(), json!(report.mode));
+            row.insert("case_id".to_string(), json!(&case.id));
+            row.insert("assertion_name".to_string(), json!(&assertion.name));
+            row.insert(
+                "assertion_type".to_string(),
+                json!(assertion_type(&assertion.name)),
+            );
+            row.insert("status".to_string(), json!(assertion.status));
+            row.insert(
+                "grade_mode".to_string(),
+                json!(telemetry_grade_mode(report.mode)),
+            );
+            row.insert("duration_ms".to_string(), json!(duration_ms));
+            row.insert("output_dir".to_string(), json!(&report.output_dir));
+            if let Some(manifest_hash) = manifest_hash.as_ref() {
+                row.insert("manifest_hash".to_string(), json!(manifest_hash));
+            }
+            if let Some(git_sha) = git_sha.as_ref() {
+                row.insert("git_sha".to_string(), json!(git_sha));
+            }
+            if let Some(agent) = agent {
+                row.insert("provider".to_string(), json!(agent.provider));
+                row.insert(
+                    "provider_command_preset".to_string(),
+                    json!(agent.provider_command_preset),
+                );
+                if let Some(telemetry) = case.telemetry.as_ref() {
+                    row.insert(
+                        "tool_call_count".to_string(),
+                        json!(telemetry.tool_call_count),
+                    );
+                    row.insert(
+                        "distinct_tool_count".to_string(),
+                        json!(telemetry.distinct_tool_count),
+                    );
+                    if let Some(value) = telemetry.total_response_bytes {
+                        row.insert("total_response_bytes".to_string(), json!(value));
+                    }
+                    if let Some(value) = telemetry.input_tokens {
+                        row.insert("input_tokens".to_string(), json!(value));
+                    }
+                    if let Some(value) = telemetry.output_tokens {
+                        row.insert("output_tokens".to_string(), json!(value));
+                    }
+                    if let Some(value) = telemetry.total_tokens {
+                        row.insert("total_tokens".to_string(), json!(value));
+                    }
+                }
+            }
+            let line = serde_json::to_string(&JsonValue::Object(row))
+                .map_err(|error| server_error(error.to_string()))?;
+            file.write_all(line.as_bytes())
+                .map_err(|error| server_error(error.to_string()))?;
+            file.write_all(b"\n")
+                .map_err(|error| server_error(error.to_string()))?;
+        }
+    }
+    drop(file);
+
+    if let Some(max_rows) = retention {
+        apply_telemetry_retention(&telemetry_path, max_rows)?;
+    }
+    Ok(())
+}
+
+fn apply_telemetry_retention(path: &Path, max_rows: usize) -> DispatchResult {
+    let raw = fs::read_to_string(path).map_err(|error| server_error(error.to_string()))?;
+    let rows: Vec<&str> = raw.lines().filter(|line| !line.trim().is_empty()).collect();
+    if rows.len() <= max_rows {
+        return Ok(());
+    }
+    let keep_from = rows.len().saturating_sub(max_rows);
+    let mut out = rows[keep_from..].join("\n");
+    out.push('\n');
+    fs::write(path, out).map_err(|error| server_error(error.to_string()))?;
+    Ok(())
+}
+
+fn telemetry_path_for_suite(suite_name: &str) -> PathBuf {
+    PathBuf::from(DEFAULT_TELEMETRY_DIR).join(format!(
+        "{}-{:016x}.jsonl",
+        safe_path_segment(suite_name),
+        stable_telemetry_hash(suite_name)
+    ))
+}
+
+fn stable_telemetry_hash(value: &str) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0001_0000_01b3);
+    }
+    hash
+}
+
+fn telemetry_row_matches_since(row: &JsonValue, since_boundary: &str) -> bool {
+    row.get("timestamp")
+        .and_then(JsonValue::as_str)
+        .is_some_and(|timestamp| timestamp >= since_boundary)
+}
+
+fn validate_since_date(value: &str) -> crate::error::Result<String> {
+    let valid_shape = value.len() == 10
+        && value.as_bytes()[4] == b'-'
+        && value.as_bytes()[7] == b'-'
+        && value
+            .chars()
+            .enumerate()
+            .all(|(index, ch)| matches!(index, 4 | 7) || ch.is_ascii_digit());
+    if !valid_shape {
+        return Err(DbtNovaError::InvalidParams(
+            "--since must use YYYY-MM-DD".to_string(),
+        ));
+    }
+    let year = value[0..4]
+        .parse::<i32>()
+        .map_err(|_| DbtNovaError::InvalidParams("--since must use YYYY-MM-DD".to_string()))?;
+    let month = value[5..7]
+        .parse::<u32>()
+        .map_err(|_| DbtNovaError::InvalidParams("--since must use YYYY-MM-DD".to_string()))?;
+    let day = value[8..10]
+        .parse::<u32>()
+        .map_err(|_| DbtNovaError::InvalidParams("--since must use YYYY-MM-DD".to_string()))?;
+    if !(1..=12).contains(&month) || day == 0 || day > days_in_month(year, month) {
+        return Err(DbtNovaError::InvalidParams(
+            "--since must use a valid YYYY-MM-DD date".to_string(),
+        ));
+    }
+    Ok(format!("{value}T00:00:00.000Z"))
+}
+
+fn validate_telemetry_retention(value: Option<usize>) -> crate::error::Result<()> {
+    if value == Some(0) {
+        return Err(DbtNovaError::InvalidParams(
+            "--telemetry-retention must be greater than zero".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn telemetry_grade_mode(mode: &str) -> &'static str {
+    match mode {
+        "agent" => "provider_trace",
+        _ => "deterministic",
+    }
+}
+
+fn assertion_type(name: &str) -> &str {
+    name.split_once(':').map_or(name, |(prefix, _)| prefix)
+}
+
+fn agent_provider_command_preset(args: &EvalAgentRunArgs) -> &str {
+    if args.provider_command.is_some() || args.provider_args_json.is_some() {
+        "custom"
+    } else {
+        args.provider.as_str()
+    }
+}
+
+fn eval_case_telemetry_from_trace(trace: &[JsonValue]) -> EvalCaseTelemetry {
+    let mut distinct_tools = BTreeSet::new();
+    let mut response_bytes_seen = false;
+    let mut total_response_bytes = 0_u64;
+    for row in trace {
+        if let Some(tool) = row.get("tool").and_then(JsonValue::as_str) {
+            distinct_tools.insert(tool.to_string());
+        }
+        if let Some(bytes) = row.get("response_bytes").and_then(JsonValue::as_u64) {
+            response_bytes_seen = true;
+            total_response_bytes = total_response_bytes.saturating_add(bytes);
+        }
+    }
+    EvalCaseTelemetry {
+        tool_call_count: trace.len(),
+        distinct_tool_count: distinct_tools.len(),
+        total_response_bytes: response_bytes_seen.then_some(total_response_bytes),
+        input_tokens: sum_first_available_u64(
+            trace,
+            &[
+                &["input_tokens"],
+                &["usage", "input_tokens"],
+                &["usage", "prompt_tokens"],
+            ],
+        ),
+        output_tokens: sum_first_available_u64(
+            trace,
+            &[
+                &["output_tokens"],
+                &["usage", "output_tokens"],
+                &["usage", "completion_tokens"],
+            ],
+        ),
+        total_tokens: sum_first_available_u64(
+            trace,
+            &[&["total_tokens"], &["usage", "total_tokens"]],
+        ),
+    }
+}
+
+fn sum_first_available_u64(trace: &[JsonValue], paths: &[&[&str]]) -> Option<u64> {
+    let mut seen = false;
+    let mut total = 0_u64;
+    for row in trace {
+        for path in paths {
+            if let Some(value) = json_path_u64(row, path) {
+                seen = true;
+                total = total.saturating_add(value);
+                break;
+            }
+        }
+    }
+    seen.then_some(total)
+}
+
+fn json_path_u64(value: &JsonValue, path: &[&str]) -> Option<u64> {
+    let mut cursor = value;
+    for part in path {
+        cursor = cursor.get(*part)?;
+    }
+    cursor.as_u64()
+}
+
+fn current_git_sha() -> Option<String> {
+    let output = StdCommand::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!sha.is_empty()).then_some(sha)
+}
+
+fn timestamp_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| {
+            u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
+fn format_utc_timestamp_millis(timestamp_ms: u64) -> String {
+    let secs = timestamp_ms / 1000;
+    let millis = timestamp_ms % 1000;
+    let days = i64::try_from(secs / 86_400).unwrap_or(i64::MAX);
+    let seconds_of_day = secs % 86_400;
+    let (year, month, day) = civil_from_days(days);
+    let hour = seconds_of_day / 3_600;
+    let minute = (seconds_of_day % 3_600) / 60;
+    let second = seconds_of_day % 60;
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millis:03}Z")
+}
+
+fn civil_from_days(days_since_epoch: i64) -> (i32, u32, u32) {
+    let z = days_since_epoch.saturating_add(719_468);
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let mut year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    if month <= 2 {
+        year += 1;
+    }
+    (
+        i32::try_from(year).unwrap_or(i32::MAX),
+        u32::try_from(month).unwrap_or(12),
+        u32::try_from(day).unwrap_or(31),
+    )
+}
+
+fn days_in_month(year: i32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if is_leap_year(year) => 29,
+        2 => 28,
+        _ => 0,
+    }
+}
+
+fn is_leap_year(year: i32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
 fn render_tsv(report: &EvalReport) -> String {
     let mut out = String::from("case_id\tassertion\tstatus\tmessage\n");
     for case in &report.cases {
@@ -2016,7 +2413,13 @@ impl EvalCaseReport {
             error_count,
             assertions,
             artifacts,
+            telemetry: None,
         }
+    }
+
+    fn with_telemetry(mut self, telemetry: EvalCaseTelemetry) -> Self {
+        self.telemetry = Some(telemetry);
+        self
     }
 }
 

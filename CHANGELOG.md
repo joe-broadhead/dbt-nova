@@ -37,6 +37,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   response budgets, KPI discovery, and MCP trace behavior for agent workflows.
 - Eval traces now include a monotonic `tool_call_index`, and provider fallback
   scoring captures response byte evidence for budget assertions.
+- Eval runs can now append per-assertion JSONL telemetry with
+  `--telemetry`, keep newest rows with `--telemetry-retention`, and print
+  filtered run history with `dbt-nova eval history --suite <NAME> --since
+  <YYYY-MM-DD>`.
 - Fixed release OCI publishing to build images from native Linux release binaries
   instead of compiling Rust inside the ARM64 Docker/QEMU path.
 - Fixed the Monthly workflow by refreshing advisory/dependency-watchlist review
