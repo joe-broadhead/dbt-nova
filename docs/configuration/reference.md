@@ -377,11 +377,11 @@ Supported providers:
   - OAuth token env: `DBT_NOVA_BIGQUERY_ACCESS_TOKEN`, `DBT_NOVA_GCP_ACCESS_TOKEN`, `GCP_ACCESS_TOKEN`, `GOOGLE_OAUTH_ACCESS_TOKEN`
   - Service-account key path: `GOOGLE_APPLICATION_CREDENTIALS`
   - gcloud ADC (`gcloud auth application-default login`)
-- `snowflake`: requires `DBT_NOVA_SNOWFLAKE_ACCOUNT` or `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL`, `DBT_NOVA_SNOWFLAKE_WAREHOUSE`, and one of:
-  - Key-pair JWT auth: `DBT_NOVA_SNOWFLAKE_USER` plus `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PATH` or `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PEM`. If only `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` is set, also set `DBT_NOVA_SNOWFLAKE_JWT_ACCOUNT`. Legacy locator-style region suffixes are excluded from JWT claims while organization/account identifiers are preserved.
-  - OAuth token auth: `DBT_NOVA_SNOWFLAKE_AUTH=oauth` plus `DBT_NOVA_SNOWFLAKE_OAUTH_TOKEN`
-  - Programmatic access token auth: `DBT_NOVA_SNOWFLAKE_AUTH=pat` plus `DBT_NOVA_SNOWFLAKE_PAT`
-  - External browser SSO auth: `DBT_NOVA_SNOWFLAKE_AUTH=externalbrowser` plus `DBT_NOVA_SNOWFLAKE_USER`; requires `DBT_NOVA_SNOWFLAKE_ACCOUNT` because browser SSO login needs the account name.
+- `snowflake`: requires `DBT_NOVA_SNOWFLAKE_ACCOUNT` or `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL`, `DBT_NOVA_SNOWFLAKE_WAREHOUSE`, and one supported auth mode:
+  - Key-pair JWT auth: `DBT_NOVA_SNOWFLAKE_USER` plus `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PATH` or `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PEM`. This is the default when no token env vars are present. If only `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` is set, also set `DBT_NOVA_SNOWFLAKE_JWT_ACCOUNT`. Legacy locator-style region suffixes are excluded from JWT claims while organization/account identifiers are preserved.
+  - OAuth token auth: `DBT_NOVA_SNOWFLAKE_AUTH=oauth` plus `DBT_NOVA_SNOWFLAKE_OAUTH_TOKEN`. Nova uses the supplied bearer token and does not mint or refresh OAuth tokens.
+  - Programmatic access token auth: `DBT_NOVA_SNOWFLAKE_AUTH=pat` plus `DBT_NOVA_SNOWFLAKE_PAT`. PAT is inferred when `DBT_NOVA_SNOWFLAKE_AUTH` is omitted and `DBT_NOVA_SNOWFLAKE_PAT` is set.
+  - External browser SSO auth: `DBT_NOVA_SNOWFLAKE_AUTH=externalbrowser` plus `DBT_NOVA_SNOWFLAKE_USER`; requires `DBT_NOVA_SNOWFLAKE_ACCOUNT` because browser SSO login needs the account name. This is local interactive auth only.
 - `duckdb`: requires `DBT_NOVA_DUCKDB_PATH` and executes queries against that file in read-only mode. Optional `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH` configures DuckDB `file_search_path` for external file-backed objects.
 
 Databricks runtime tuning env vars:
@@ -401,6 +401,8 @@ Snowflake notes:
   cancel endpoint before returning a timeout error.
 - Key-pair auth supports unencrypted RSA PEM keys. Encrypted private keys are not
   supported yet; use OAuth or PAT auth if a passphrase-protected key is required.
+- Snowflake SQL API workload identity federation is not implemented yet. Use
+  key-pair JWT, OAuth, or PAT auth for hosted automation.
 - External browser auth is a local interactive mode. It binds a loopback callback
   listener, opens the system browser to Snowflake SSO, keeps the returned session
   token only in process memory, rejects CI or non-loopback streamable HTTP
