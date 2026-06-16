@@ -78,10 +78,10 @@ cases:
         id_or_name: model.starter_eval.raw_events_sparse
         field: data.entity.name
         expected: raw_events_sparse
-      - type: metadata_score_min
+      - type: metadata_score_max
         id_or_name: model.starter_eval.raw_events_sparse
         persona: analyst
-        threshold: 0
+        threshold: 20
 
 agent_cases:
   - id: analyst_revenue_lookup_flow

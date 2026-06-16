@@ -117,6 +117,7 @@ Bridge assertions currently support:
 - `context_field_equals`
 - `context_contains`
 - `metadata_score_min`
+- `metadata_score_max`
 - `recipe_rank`
 - `recipe_has_queries`
 - `lineage_contains`
