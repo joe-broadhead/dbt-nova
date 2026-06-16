@@ -400,6 +400,7 @@ pub async fn run_eval_command(args: &EvalRunArgs) -> DispatchResult {
     let suite = load_suite(&args.suite)?;
     validate_fail_under(args.fail_under)?;
     validate_telemetry_retention(args.telemetry_retention)?;
+    validate_telemetry_suite_name(&suite, args.telemetry)?;
     if suite.cases.is_empty() {
         return Err(
             DbtNovaError::InvalidParams("eval suite contains no bridge cases".to_string()).into(),
@@ -455,6 +456,7 @@ pub async fn run_agent_eval_command(args: &EvalAgentRunArgs) -> DispatchResult {
     let suite = load_suite(&args.suite)?;
     validate_fail_under(args.fail_under)?;
     validate_telemetry_retention(args.telemetry_retention)?;
+    validate_telemetry_suite_name(&suite, args.telemetry)?;
     if suite.agent_cases.is_empty() {
         return Err(
             DbtNovaError::InvalidParams("eval suite contains no agent_cases".to_string()).into(),
@@ -2096,6 +2098,23 @@ fn validate_telemetry_retention(value: Option<usize>) -> crate::error::Result<()
     if value == Some(0) {
         return Err(DbtNovaError::InvalidParams(
             "--telemetry-retention must be greater than zero".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_telemetry_suite_name(
+    suite: &EvalSuite,
+    telemetry_enabled: bool,
+) -> crate::error::Result<()> {
+    if telemetry_enabled
+        && suite
+            .name
+            .as_deref()
+            .is_none_or(|name| name.trim().is_empty())
+    {
+        return Err(DbtNovaError::InvalidParams(
+            "--telemetry requires the eval suite to define a non-empty name".to_string(),
         ));
     }
     Ok(())

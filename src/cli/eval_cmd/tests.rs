@@ -13,6 +13,7 @@ use super::{
     run_validate_command, safe_path_segment, score_agent_expectations, selected_agent_cases,
     selected_bridge_cases, telemetry_path_for_suite, telemetry_row_matches_since,
     tool_response_budget_assertion, tool_success_assertion, validate_since_date, validate_suite,
+    validate_telemetry_suite_name,
 };
 
 #[test]
@@ -389,6 +390,22 @@ fn telemetry_paths_include_hash_to_avoid_sanitized_name_collisions() {
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
     );
+}
+
+#[test]
+fn telemetry_requires_named_suite() {
+    let suite = EvalSuite {
+        version: 1,
+        name: None,
+        defaults: EvalDefaults::default(),
+        cases: Vec::new(),
+        agent_cases: Vec::new(),
+    };
+
+    assert!(validate_telemetry_suite_name(&suite, false).is_ok());
+    let error = validate_telemetry_suite_name(&suite, true)
+        .expect_err("telemetry should require suite name");
+    assert!(error.to_string().contains("non-empty name"));
 }
 
 #[test]
