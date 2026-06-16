@@ -43,7 +43,7 @@ const MAX_SAFE_JSON_INTEGER: i64 = 9_007_199_254_740_991;
 const MIN_SAFE_JSON_INTEGER: i64 = -MAX_SAFE_JSON_INTEGER;
 const PREFLIGHT_SHOW_LIMIT: u16 = 1;
 const SESSION_EXPIRY_SAFETY_WINDOW_SECONDS: u64 = 60;
-const MAX_BROWSER_CALLBACK_REQUEST_BYTES: usize = 8192;
+const MAX_BROWSER_CALLBACK_REQUEST_BYTES: usize = 1024 * 1024;
 const STATEMENT_STILL_EXECUTING_CODE: &str = "333333";
 const STATEMENT_ASYNC_EXECUTION_CODE: &str = "333334";
 const SUPPORTED_SNOWFLAKE_AUTH_MODES: &str = "keypair, oauth, pat, or externalbrowser";
@@ -1171,6 +1171,7 @@ fn token_and_proof_key_from_post_body(
         let proof_key = parsed
             .get("proofKey")
             .or_else(|| parsed.get("proof_key"))
+            .or_else(|| parsed.get("PROOF_KEY"))
             .and_then(Value::as_str)
             .map(str::to_string);
         return Ok((token, proof_key));
@@ -1193,7 +1194,7 @@ where
     for (key, value) in pairs {
         match key.as_str() {
             "token" => token = Some(value),
-            "proofKey" | "proof_key" => proof_key = Some(value),
+            "proofKey" | "proof_key" | "PROOF_KEY" => proof_key = Some(value),
             _ => {}
         }
     }
@@ -3247,6 +3248,19 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
             parse_browser_callback_request(request, "other-proof").expect_err("proof mismatch");
         assert!(err.to_string().contains("proof key"));
 
+        let uppercase_request =
+            "GET /?token=callback%2Ftoken&PROOF_KEY=proof-key HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+        let callback = parse_browser_callback_request(uppercase_request, "proof-key")
+            .expect("uppercase proof key browser callback");
+        assert_eq!(
+            callback,
+            BrowserCallbackRequest::Callback(BrowserCallback {
+                token: "callback/token".to_string(),
+                proof_key: Some("proof-key".to_string()),
+                origin: None,
+            })
+        );
+
         let token_only_request = "GET /?token=callback%2Ftoken HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
         let callback = parse_browser_callback_request(token_only_request, "proof-key")
             .expect("token-only browser callback");
@@ -3281,6 +3295,18 @@ GcZ0izY/30012ajdHY+/QK5lsMoxTnn0skdS+spLxaS5ZEO4qvPVb8RAoCkWMMal
             callback,
             BrowserCallbackRequest::Callback(BrowserCallback {
                 token: "callback/token".to_string(),
+                proof_key: Some("proof-key".to_string()),
+                origin: None,
+            })
+        );
+
+        let uppercase_json_request = "POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: 48\r\n\r\n{\"token\":\"callback-token\",\"PROOF_KEY\":\"proof-key\"}";
+        let callback = parse_browser_callback_request(uppercase_json_request, "proof-key")
+            .expect("uppercase json callback");
+        assert_eq!(
+            callback,
+            BrowserCallbackRequest::Callback(BrowserCallback {
+                token: "callback-token".to_string(),
                 proof_key: Some("proof-key".to_string()),
                 origin: None,
             })
