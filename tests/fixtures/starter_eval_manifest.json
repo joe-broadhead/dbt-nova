@@ -1,0 +1,782 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
+    "dbt_version": "1.10.2",
+    "project_name": "starter_eval",
+    "generated_at": "2026-06-01T00:00:00Z"
+  },
+  "selectors": {},
+  "nodes": {
+    "model.starter_eval.stg_orders": {
+      "unique_id": "model.starter_eval.stg_orders",
+      "name": "stg_orders",
+      "resource_type": "model",
+      "package_name": "starter_eval",
+      "description": "Cleaned order events from the synthetic raw orders source.",
+      "database": "analytics",
+      "schema": "starter",
+      "path": "models/staging/stg_orders.sql",
+      "original_file_path": "models/staging/stg_orders.sql",
+      "alias": "stg_orders",
+      "relation_name": "analytics.starter.stg_orders",
+      "config": {
+        "enabled": true,
+        "materialized": "view"
+      },
+      "tags": ["commerce", "staging"],
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "description": "Order identifier from the source system.",
+          "data_type": "string",
+          "meta": {
+            "primary_key": true,
+            "nova": {
+              "role": "identifier",
+              "semantic_type": "order_id",
+              "synonyms": ["order key"]
+            }
+          }
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "description": "Customer identifier associated with the order.",
+          "data_type": "string",
+          "meta": {
+            "nova": {
+              "role": "identifier",
+              "semantic_type": "customer_id"
+            }
+          }
+        },
+        "order_date": {
+          "name": "order_date",
+          "description": "Date on which the order was placed.",
+          "data_type": "date",
+          "meta": {
+            "nova": {
+              "role": "time",
+              "semantic_type": "date",
+              "synonyms": ["order day"]
+            }
+          }
+        },
+        "gross_amount": {
+          "name": "gross_amount",
+          "description": "Gross order amount before refunds.",
+          "data_type": "numeric",
+          "meta": {
+            "nova": {
+              "role": "measure",
+              "semantic_type": "money"
+            }
+          }
+        },
+        "status": {
+          "name": "status",
+          "description": "Order status such as completed or refunded.",
+          "data_type": "string",
+          "meta": {
+            "nova": {
+              "role": "dimension",
+              "semantic_type": "status"
+            }
+          }
+        }
+      },
+      "meta": {
+        "owner": "analytics-platform",
+        "nova": {
+          "domains": ["commerce"],
+          "use_cases": ["order_normalization"],
+          "synonyms": ["orders staging", "order events"],
+          "tier": "silver",
+          "governance": {
+            "sensitivity": "internal",
+            "pii": "none",
+            "compliance": ["synthetic"]
+          }
+        }
+      },
+      "depends_on": {
+        "nodes": ["source.starter_eval.raw.orders"],
+        "macros": []
+      },
+      "raw_code": "select order_id, customer_id, order_date, gross_amount, status from {{ source('raw', 'orders') }}",
+      "compiled_code": "select order_id, customer_id, order_date, gross_amount, status from raw.orders"
+    },
+    "model.starter_eval.stg_customers": {
+      "unique_id": "model.starter_eval.stg_customers",
+      "name": "stg_customers",
+      "resource_type": "model",
+      "package_name": "starter_eval",
+      "description": "Cleaned customer records from the synthetic raw customers source.",
+      "database": "analytics",
+      "schema": "starter",
+      "path": "models/staging/stg_customers.sql",
+      "original_file_path": "models/staging/stg_customers.sql",
+      "alias": "stg_customers",
+      "relation_name": "analytics.starter.stg_customers",
+      "config": {
+        "enabled": true,
+        "materialized": "view"
+      },
+      "tags": ["commerce", "staging"],
+      "columns": {
+        "customer_id": {
+          "name": "customer_id",
+          "description": "Customer identifier from the source system.",
+          "data_type": "string",
+          "meta": {
+            "primary_key": true
+          }
+        },
+        "signup_date": {
+          "name": "signup_date",
+          "description": "Date the customer first signed up.",
+          "data_type": "date"
+        },
+        "customer_segment": {
+          "name": "customer_segment",
+          "description": "Synthetic lifecycle segment assigned to the customer.",
+          "data_type": "string"
+        },
+        "country_code": {
+          "name": "country_code",
+          "description": "Two-letter country code for the customer.",
+          "data_type": "string"
+        }
+      },
+      "meta": {
+        "owner": "analytics-platform",
+        "nova": {
+          "domains": ["commerce"],
+          "use_cases": ["customer_dimension"],
+          "synonyms": ["customer staging"],
+          "tier": "silver",
+          "governance": {
+            "sensitivity": "internal",
+            "pii": "indirect",
+            "compliance": ["synthetic"]
+          }
+        }
+      },
+      "depends_on": {
+        "nodes": ["source.starter_eval.raw.customers"],
+        "macros": []
+      },
+      "raw_code": "select customer_id, signup_date, customer_segment, country_code from {{ source('raw', 'customers') }}",
+      "compiled_code": "select customer_id, signup_date, customer_segment, country_code from raw.customers"
+    },
+    "model.starter_eval.dim_customers": {
+      "unique_id": "model.starter_eval.dim_customers",
+      "name": "dim_customers",
+      "resource_type": "model",
+      "package_name": "starter_eval",
+      "description": "Curated customer dimension used for commerce reporting.",
+      "database": "analytics",
+      "schema": "starter",
+      "path": "models/marts/dim_customers.sql",
+      "original_file_path": "models/marts/dim_customers.sql",
+      "alias": "dim_customers",
+      "relation_name": "analytics.starter.dim_customers",
+      "config": {
+        "enabled": true,
+        "materialized": "table"
+      },
+      "tags": ["commerce", "dimension"],
+      "columns": {
+        "customer_id": {
+          "name": "customer_id",
+          "description": "Primary customer identifier.",
+          "data_type": "string",
+          "meta": {
+            "primary_key": true,
+            "nova": {
+              "role": "identifier",
+              "semantic_type": "customer_id"
+            }
+          }
+        },
+        "signup_date": {
+          "name": "signup_date",
+          "description": "Date the customer joined.",
+          "data_type": "date",
+          "meta": {
+            "nova": {
+              "role": "time",
+              "semantic_type": "date"
+            }
+          }
+        },
+        "customer_segment": {
+          "name": "customer_segment",
+          "description": "Customer lifecycle segment for reporting.",
+          "data_type": "string",
+          "meta": {
+            "nova": {
+              "role": "dimension",
+              "semantic_type": "customer_segment",
+              "synonyms": ["segment"]
+            }
+          }
+        },
+        "country_code": {
+          "name": "country_code",
+          "description": "Customer country code.",
+          "data_type": "string",
+          "meta": {
+            "nova": {
+              "role": "dimension",
+              "semantic_type": "country_code",
+              "synonyms": ["market"]
+            }
+          }
+        }
+      },
+      "meta": {
+        "owner": "analytics-platform",
+        "nova": {
+          "role": "dimension",
+          "domains": ["commerce"],
+          "use_cases": ["customer_reporting"],
+          "synonyms": ["customer dimension", "buyer dimension"],
+          "tier": "gold",
+          "grain": {
+            "primary_key": ["customer_id"],
+            "dimensions": ["country_code", "customer_segment"]
+          },
+          "governance": {
+            "sensitivity": "internal",
+            "pii": "indirect",
+            "compliance": ["synthetic"]
+          }
+        }
+      },
+      "depends_on": {
+        "nodes": ["model.starter_eval.stg_customers"],
+        "macros": []
+      },
+      "raw_code": "select customer_id, signup_date, customer_segment, country_code from {{ ref('stg_customers') }}",
+      "compiled_code": "select customer_id, signup_date, customer_segment, country_code from analytics.starter.stg_customers"
+    },
+    "model.starter_eval.fct_orders": {
+      "unique_id": "model.starter_eval.fct_orders",
+      "name": "fct_orders",
+      "resource_type": "model",
+      "package_name": "starter_eval",
+      "description": "Canonical orders fact table for gross revenue and order reporting.",
+      "database": "analytics",
+      "schema": "starter",
+      "path": "models/marts/fct_orders.sql",
+      "original_file_path": "models/marts/fct_orders.sql",
+      "alias": "fct_orders",
+      "relation_name": "analytics.starter.fct_orders",
+      "config": {
+        "enabled": true,
+        "materialized": "table"
+      },
+      "tags": ["commerce", "fact", "canonical"],
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "description": "Primary order identifier at the canonical order fact grain for revenue analysis.",
+          "data_type": "string",
+          "constraints": [
+            {"type": "not_null"},
+            {"type": "unique"}
+          ],
+          "meta": {
+            "primary_key": true,
+            "nova": {
+              "role": "identifier",
+              "semantic_type": "order_id",
+              "synonyms": ["order key"]
+            }
+          }
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "description": "Customer identifier used to join each order to the curated customer dimension.",
+          "data_type": "string",
+          "constraints": [
+            {"type": "not_null"},
+            {"type": "foreign_key"}
+          ],
+          "meta": {
+            "nova": {
+              "role": "identifier",
+              "semantic_type": "customer_id"
+            }
+          }
+        },
+        "order_date": {
+          "name": "order_date",
+          "description": "Order date used as the default reporting time field for weekly revenue cuts.",
+          "data_type": "date",
+          "constraints": [
+            {"type": "not_null"}
+          ],
+          "meta": {
+            "nova": {
+              "role": "time",
+              "semantic_type": "date",
+              "synonyms": ["order day", "reporting date"]
+            }
+          }
+        },
+        "gross_amount": {
+          "name": "gross_amount",
+          "description": "Gross revenue amount before refunds and cancellations, stored in reporting currency.",
+          "data_type": "numeric",
+          "constraints": [
+            {"type": "not_null"}
+          ],
+          "meta": {
+            "nova": {
+              "role": "measure",
+              "semantic_type": "money",
+              "synonyms": ["gross revenue", "gross sales"]
+            }
+          }
+        },
+        "status": {
+          "name": "status",
+          "description": "Final order status such as completed or refunded for filtering revenue metrics.",
+          "data_type": "string",
+          "meta": {
+            "nova": {
+              "role": "dimension",
+              "semantic_type": "status"
+            }
+          }
+        },
+        "country_code": {
+          "name": "country_code",
+          "description": "Customer country code carried onto the order fact for market-level reporting.",
+          "data_type": "string",
+          "meta": {
+            "nova": {
+              "role": "dimension",
+              "semantic_type": "country_code",
+              "synonyms": ["market"]
+            }
+          }
+        }
+      },
+      "meta": {
+        "owner": "analytics-platform",
+        "nova": {
+          "role": "fact",
+          "canonical": true,
+          "domains": ["commerce"],
+          "use_cases": ["gross_revenue_reporting", "order_reporting"],
+          "synonyms": ["orders fact", "gross revenue orders", "sales fact"],
+          "tier": "gold",
+          "grain": {
+            "primary_key": ["order_id"],
+            "time_field": "order_date",
+            "dimensions": ["country_code", "status"]
+          },
+          "measures": [
+            {
+              "name": "gross_revenue",
+              "canonical": true,
+              "description": "Gross revenue before refunds and cancellations.",
+              "expression": "sum(gross_amount)",
+              "type": "sum",
+              "field": "gross_amount",
+              "synonyms": ["gross sales", "gross merchandise revenue"]
+            },
+            {
+              "name": "order_count",
+              "description": "Count of distinct orders.",
+              "expression": "count(distinct order_id)",
+              "type": "count_distinct",
+              "field": "order_id",
+              "synonyms": ["orders"]
+            }
+          ],
+          "metrics": [
+            {
+              "name": "average_order_value",
+              "description": "Average gross revenue per order.",
+              "expression": "sum(gross_amount) / nullif(count(distinct order_id), 0)",
+              "canonical": true,
+              "synonyms": ["aov"],
+              "grain": {
+                "primary_key": ["order_id"],
+                "time_field": "order_date",
+                "dimensions": ["country_code", "status"]
+              }
+            }
+          ],
+          "governance": {
+            "sensitivity": "internal",
+            "pii": "none",
+            "compliance": ["synthetic", "contract-reviewed", "owner-approved"]
+          },
+          "search": {
+            "candidates": {
+              "analyst": true,
+              "engineer": true,
+              "governance": true
+            }
+          }
+        }
+      },
+      "depends_on": {
+        "nodes": [
+          "model.starter_eval.stg_orders",
+          "model.starter_eval.dim_customers"
+        ],
+        "macros": []
+      },
+      "raw_code": "select o.order_id, o.customer_id, o.order_date, o.gross_amount, o.status, c.country_code from {{ ref('stg_orders') }} o left join {{ ref('dim_customers') }} c using (customer_id)",
+      "compiled_code": "select o.order_id, o.customer_id, o.order_date, o.gross_amount, o.status, c.country_code from analytics.starter.stg_orders o left join analytics.starter.dim_customers c using (customer_id)"
+    },
+    "model.starter_eval.raw_events_sparse": {
+      "unique_id": "model.starter_eval.raw_events_sparse",
+      "name": "raw_events_sparse",
+      "resource_type": "model",
+      "package_name": "starter_eval",
+      "database": "analytics",
+      "schema": "starter",
+      "path": "models/raw/raw_events_sparse.sql",
+      "original_file_path": "models/raw/raw_events_sparse.sql",
+      "alias": "raw_events_sparse",
+      "relation_name": "analytics.starter.raw_events_sparse",
+      "config": {
+        "enabled": true,
+        "materialized": "view"
+      },
+      "tags": ["raw"],
+      "columns": {
+        "event_id": {
+          "name": "event_id",
+          "data_type": "string",
+          "description": ""
+        },
+        "payload": {
+          "name": "payload",
+          "data_type": "variant",
+          "description": ""
+        }
+      },
+      "depends_on": {
+        "nodes": [],
+        "macros": []
+      },
+      "raw_code": "select event_id, payload from raw.events",
+      "compiled_code": "select event_id, payload from raw.events"
+    },
+    "analysis.starter_eval.analysis__orders_summary__01": {
+      "unique_id": "analysis.starter_eval.analysis__orders_summary__01",
+      "name": "analysis__orders_summary__01",
+      "resource_type": "analysis",
+      "package_name": "starter_eval",
+      "description": "First step of the weekly revenue recipe.",
+      "original_file_path": "analyses/recipes/commerce/weekly_revenue/analysis__orders_summary__01.sql",
+      "path": "analyses/recipes/commerce/weekly_revenue/analysis__orders_summary__01.sql",
+      "meta": {
+        "nova": {
+          "recipe": {
+            "parameters": {
+              "START_DATE": {
+                "type": "date",
+                "required": false,
+                "default": "2026-06-01",
+                "description": "Inclusive start date"
+              },
+              "END_DATE": {
+                "type": "date",
+                "required": false,
+                "default": "2026-06-07",
+                "description": "Inclusive end date"
+              }
+            }
+          }
+        }
+      },
+      "depends_on": {
+        "nodes": ["model.starter_eval.fct_orders"],
+        "macros": []
+      },
+      "raw_code": "select order_date, sum(gross_amount) as gross_revenue from {{ ref('fct_orders') }} where order_date between '__START_DATE__' and '__END_DATE__' group by 1",
+      "compiled_code": "select order_date, sum(gross_amount) as gross_revenue from analytics.starter.fct_orders where order_date between '__START_DATE__' and '__END_DATE__' group by 1"
+    },
+    "analysis.starter_eval.analysis__orders_summary__02": {
+      "unique_id": "analysis.starter_eval.analysis__orders_summary__02",
+      "name": "analysis__orders_summary__02",
+      "resource_type": "analysis",
+      "package_name": "starter_eval",
+      "description": "Second step of the weekly revenue recipe.",
+      "original_file_path": "analyses/recipes/commerce/weekly_revenue/analysis__orders_summary__02.sql",
+      "path": "analyses/recipes/commerce/weekly_revenue/analysis__orders_summary__02.sql",
+      "depends_on": {
+        "nodes": ["model.starter_eval.fct_orders"],
+        "macros": []
+      },
+      "raw_code": "select country_code, sum(gross_amount) as gross_revenue from {{ ref('fct_orders') }} group by 1 order by 2 desc",
+      "compiled_code": "select country_code, sum(gross_amount) as gross_revenue from analytics.starter.fct_orders group by 1 order by 2 desc"
+    },
+    "test.starter_eval.not_null_fct_orders_order_id": {
+      "unique_id": "test.starter_eval.not_null_fct_orders_order_id",
+      "name": "not_null_fct_orders_order_id",
+      "resource_type": "test",
+      "package_name": "starter_eval",
+      "path": "tests/fct_orders.yml",
+      "original_file_path": "models/marts/fct_orders.yml",
+      "attached_node": "model.starter_eval.fct_orders",
+      "column_name": "order_id",
+      "test_metadata": {
+        "name": "not_null"
+      },
+      "depends_on": {
+        "nodes": ["model.starter_eval.fct_orders"],
+        "macros": []
+      }
+    },
+    "test.starter_eval.unique_fct_orders_order_id": {
+      "unique_id": "test.starter_eval.unique_fct_orders_order_id",
+      "name": "unique_fct_orders_order_id",
+      "resource_type": "test",
+      "package_name": "starter_eval",
+      "path": "tests/fct_orders.yml",
+      "original_file_path": "models/marts/fct_orders.yml",
+      "attached_node": "model.starter_eval.fct_orders",
+      "column_name": "order_id",
+      "test_metadata": {
+        "name": "unique"
+      },
+      "depends_on": {
+        "nodes": ["model.starter_eval.fct_orders"],
+        "macros": []
+      }
+    },
+    "test.starter_eval.not_null_fct_orders_gross_amount": {
+      "unique_id": "test.starter_eval.not_null_fct_orders_gross_amount",
+      "name": "not_null_fct_orders_gross_amount",
+      "resource_type": "test",
+      "package_name": "starter_eval",
+      "path": "tests/fct_orders.yml",
+      "original_file_path": "models/marts/fct_orders.yml",
+      "attached_node": "model.starter_eval.fct_orders",
+      "column_name": "gross_amount",
+      "test_metadata": {
+        "name": "not_null"
+      },
+      "depends_on": {
+        "nodes": ["model.starter_eval.fct_orders"],
+        "macros": []
+      }
+    },
+    "test.starter_eval.not_null_fct_orders_customer_id": {
+      "unique_id": "test.starter_eval.not_null_fct_orders_customer_id",
+      "name": "not_null_fct_orders_customer_id",
+      "resource_type": "test",
+      "package_name": "starter_eval",
+      "path": "tests/fct_orders.yml",
+      "original_file_path": "models/marts/fct_orders.yml",
+      "attached_node": "model.starter_eval.fct_orders",
+      "column_name": "customer_id",
+      "test_metadata": {
+        "name": "not_null"
+      },
+      "depends_on": {
+        "nodes": ["model.starter_eval.fct_orders"],
+        "macros": []
+      }
+    },
+    "test.starter_eval.not_null_fct_orders_order_date": {
+      "unique_id": "test.starter_eval.not_null_fct_orders_order_date",
+      "name": "not_null_fct_orders_order_date",
+      "resource_type": "test",
+      "package_name": "starter_eval",
+      "path": "tests/fct_orders.yml",
+      "original_file_path": "models/marts/fct_orders.yml",
+      "attached_node": "model.starter_eval.fct_orders",
+      "column_name": "order_date",
+      "test_metadata": {
+        "name": "not_null"
+      },
+      "depends_on": {
+        "nodes": ["model.starter_eval.fct_orders"],
+        "macros": []
+      }
+    },
+    "test.starter_eval.accepted_values_fct_orders_status": {
+      "unique_id": "test.starter_eval.accepted_values_fct_orders_status",
+      "name": "accepted_values_fct_orders_status",
+      "resource_type": "test",
+      "package_name": "starter_eval",
+      "path": "tests/fct_orders.yml",
+      "original_file_path": "models/marts/fct_orders.yml",
+      "attached_node": "model.starter_eval.fct_orders",
+      "column_name": "status",
+      "test_metadata": {
+        "name": "accepted_values"
+      },
+      "depends_on": {
+        "nodes": ["model.starter_eval.fct_orders"],
+        "macros": []
+      }
+    },
+    "test.starter_eval.not_null_fct_orders_country_code": {
+      "unique_id": "test.starter_eval.not_null_fct_orders_country_code",
+      "name": "not_null_fct_orders_country_code",
+      "resource_type": "test",
+      "package_name": "starter_eval",
+      "path": "tests/fct_orders.yml",
+      "original_file_path": "models/marts/fct_orders.yml",
+      "attached_node": "model.starter_eval.fct_orders",
+      "column_name": "country_code",
+      "test_metadata": {
+        "name": "not_null"
+      },
+      "depends_on": {
+        "nodes": ["model.starter_eval.fct_orders"],
+        "macros": []
+      }
+    },
+    "test.starter_eval.expression_is_true_fct_orders_gross_amount": {
+      "unique_id": "test.starter_eval.expression_is_true_fct_orders_gross_amount",
+      "name": "expression_is_true_fct_orders_gross_amount",
+      "resource_type": "test",
+      "package_name": "starter_eval",
+      "path": "tests/fct_orders.yml",
+      "original_file_path": "models/marts/fct_orders.yml",
+      "attached_node": "model.starter_eval.fct_orders",
+      "test_metadata": {
+        "name": "expression_is_true"
+      },
+      "depends_on": {
+        "nodes": ["model.starter_eval.fct_orders"],
+        "macros": []
+      }
+    }
+  },
+  "sources": {
+    "source.starter_eval.raw.orders": {
+      "unique_id": "source.starter_eval.raw.orders",
+      "name": "orders",
+      "source_name": "raw",
+      "resource_type": "source",
+      "package_name": "starter_eval",
+      "description": "Synthetic raw orders source.",
+      "source_description": "Synthetic raw commerce source.",
+      "database": "raw",
+      "schema": "starter",
+      "identifier": "orders",
+      "relation_name": "raw.starter.orders",
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "description": "Raw order identifier.",
+          "data_type": "string"
+        }
+      },
+      "meta": {
+        "owner": "data-ingest",
+        "nova": {
+          "domains": ["commerce"],
+          "governance": {
+            "sensitivity": "internal",
+            "pii": "none",
+            "compliance": ["synthetic"]
+          }
+        }
+      }
+    },
+    "source.starter_eval.raw.customers": {
+      "unique_id": "source.starter_eval.raw.customers",
+      "name": "customers",
+      "source_name": "raw",
+      "resource_type": "source",
+      "package_name": "starter_eval",
+      "description": "Synthetic raw customers source.",
+      "source_description": "Synthetic raw commerce source.",
+      "database": "raw",
+      "schema": "starter",
+      "identifier": "customers",
+      "relation_name": "raw.starter.customers",
+      "columns": {
+        "customer_id": {
+          "name": "customer_id",
+          "description": "Raw customer identifier.",
+          "data_type": "string"
+        }
+      },
+      "meta": {
+        "owner": "data-ingest",
+        "nova": {
+          "domains": ["commerce"],
+          "governance": {
+            "sensitivity": "internal",
+            "pii": "indirect",
+            "compliance": ["synthetic"]
+          }
+        }
+      }
+    }
+  },
+  "macros": {},
+  "docs": {},
+  "groups": {},
+  "exposures": {},
+  "metrics": {},
+  "saved_queries": {},
+  "semantic_models": {},
+  "parent_map": {
+    "model.starter_eval.stg_orders": ["source.starter_eval.raw.orders"],
+    "model.starter_eval.stg_customers": ["source.starter_eval.raw.customers"],
+    "model.starter_eval.dim_customers": ["model.starter_eval.stg_customers"],
+    "model.starter_eval.fct_orders": [
+      "model.starter_eval.stg_orders",
+      "model.starter_eval.dim_customers"
+    ],
+    "model.starter_eval.raw_events_sparse": [],
+    "analysis.starter_eval.analysis__orders_summary__01": ["model.starter_eval.fct_orders"],
+    "analysis.starter_eval.analysis__orders_summary__02": ["model.starter_eval.fct_orders"],
+    "test.starter_eval.not_null_fct_orders_order_id": ["model.starter_eval.fct_orders"],
+    "test.starter_eval.unique_fct_orders_order_id": ["model.starter_eval.fct_orders"],
+    "test.starter_eval.not_null_fct_orders_gross_amount": ["model.starter_eval.fct_orders"],
+    "test.starter_eval.not_null_fct_orders_customer_id": ["model.starter_eval.fct_orders"],
+    "test.starter_eval.not_null_fct_orders_order_date": ["model.starter_eval.fct_orders"],
+    "test.starter_eval.accepted_values_fct_orders_status": ["model.starter_eval.fct_orders"],
+    "test.starter_eval.not_null_fct_orders_country_code": ["model.starter_eval.fct_orders"],
+    "test.starter_eval.expression_is_true_fct_orders_gross_amount": ["model.starter_eval.fct_orders"],
+    "source.starter_eval.raw.orders": [],
+    "source.starter_eval.raw.customers": []
+  },
+  "child_map": {
+    "source.starter_eval.raw.orders": ["model.starter_eval.stg_orders"],
+    "source.starter_eval.raw.customers": ["model.starter_eval.stg_customers"],
+    "model.starter_eval.stg_orders": ["model.starter_eval.fct_orders"],
+    "model.starter_eval.stg_customers": ["model.starter_eval.dim_customers"],
+    "model.starter_eval.dim_customers": ["model.starter_eval.fct_orders"],
+    "model.starter_eval.fct_orders": [
+      "analysis.starter_eval.analysis__orders_summary__01",
+      "analysis.starter_eval.analysis__orders_summary__02",
+      "test.starter_eval.not_null_fct_orders_order_id",
+      "test.starter_eval.unique_fct_orders_order_id",
+      "test.starter_eval.not_null_fct_orders_gross_amount",
+      "test.starter_eval.not_null_fct_orders_customer_id",
+      "test.starter_eval.not_null_fct_orders_order_date",
+      "test.starter_eval.accepted_values_fct_orders_status",
+      "test.starter_eval.not_null_fct_orders_country_code",
+      "test.starter_eval.expression_is_true_fct_orders_gross_amount"
+    ],
+    "model.starter_eval.raw_events_sparse": [],
+    "analysis.starter_eval.analysis__orders_summary__01": [],
+    "analysis.starter_eval.analysis__orders_summary__02": [],
+    "test.starter_eval.not_null_fct_orders_order_id": [],
+    "test.starter_eval.unique_fct_orders_order_id": [],
+    "test.starter_eval.not_null_fct_orders_gross_amount": [],
+    "test.starter_eval.not_null_fct_orders_customer_id": [],
+    "test.starter_eval.not_null_fct_orders_order_date": [],
+    "test.starter_eval.accepted_values_fct_orders_status": [],
+    "test.starter_eval.not_null_fct_orders_country_code": [],
+    "test.starter_eval.expression_is_true_fct_orders_gross_amount": []
+  }
+}
