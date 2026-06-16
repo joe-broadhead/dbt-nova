@@ -306,6 +306,10 @@ currently no environment overrides for these weights.
 - `DBT_NOVA_GOV_GATE_REQUIRE_COMPLIANCE_FOR_PII` – require compliance tags when PII is declared (`true`|`false`)
 - `DBT_NOVA_GOV_GATE_BLOCK_ON_FAILURE` – return blocking `fail` status on gate failure (`true`), or advisory-only status (`false`)
 
+## Provenance
+
+- `DBT_NOVA_PROVENANCE_STALE_AFTER_DAYS` – days after which source freshness or manifest-generated timestamps are marked `stale` in search, context, and lineage `provenance` blocks (default: `30`)
+
 ## Circuit Breakers
 
 - `DBT_NOVA_SEARCH_CIRCUIT_FAILURE_THRESHOLD` – failures before opening (default: `3`)

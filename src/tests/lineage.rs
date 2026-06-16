@@ -29,6 +29,14 @@ async fn test_get_lineage_upstream() {
         .and_then(|d| d.get("entities"))
         .and_then(|d| d.as_array());
     assert!(data.is_some(), "Should return lineage data");
+    let entities = data.unwrap();
+    assert!(
+        entities
+            .first()
+            .and_then(|entity| entity.pointer("/provenance/tier"))
+            .is_some(),
+        "Should return provenance on standard lineage entities"
+    );
 }
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_lineage_downstream() {
@@ -101,6 +109,42 @@ async fn test_get_lineage_filter_by_type() {
         }
     }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_get_lineage_full_detail_includes_provenance() {
+    let searcher = get_searcher();
+    let params = GetLineageParams {
+        id_or_name: "model.nova_test.int__campaign_features".to_string(),
+        direction: "upstream".to_string(),
+        depth: Some(1),
+        resource_types: vec![],
+        detail: Some(DetailLevel::Full),
+    };
+    let result = searcher.get_lineage(&params).await.json();
+    let success = result
+        .get("success")
+        .expect("response missing 'success' field")
+        .as_bool()
+        .expect("'success' field should be boolean");
+    assert!(
+        success,
+        "Expected success=true but got error: {:?}",
+        result.get("error")
+    );
+    let entities = result
+        .get("data")
+        .and_then(|data| data.get("entities"))
+        .and_then(JsonValue::as_array)
+        .expect("response missing lineage entities");
+    assert_eq!(
+        entities
+            .first()
+            .and_then(|entity| entity.pointer("/provenance/tier"))
+            .and_then(JsonValue::as_str),
+        Some("curated")
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_get_lineage_invalid_direction() {
     let searcher = get_searcher();

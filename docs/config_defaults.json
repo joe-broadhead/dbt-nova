@@ -364,5 +364,6 @@
     "require_required_fields": true,
     "require_compliance_for_pii": true,
     "block_on_failure": true
-  }
+  },
+  "provenance_stale_after_days": 30
 }

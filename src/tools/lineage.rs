@@ -143,12 +143,17 @@ impl ManifestSearch {
         for id in &result {
             match detail {
                 DetailLevel::Full => {
-                    let mut entity = self.get_entity_archived(id)?.map_or(
-                        JsonValue::Null,
-                        crate::manifest::entity::ArchivedEntity::to_json_value,
-                    );
-                    ManifestSearch::insert_unique_id(&mut entity, id);
-                    results.push(entity);
+                    if let Some(archived) = self.get_entity_archived(id)? {
+                        let mut entity = archived.to_json_value();
+                        ManifestSearch::insert_unique_id(&mut entity, id);
+                        let provenance = self.provenance_for_archived_json(id, archived, &entity);
+                        if let Some(obj) = entity.as_object_mut() {
+                            obj.insert("provenance".to_string(), provenance);
+                        }
+                        results.push(entity);
+                    } else {
+                        results.push(JsonValue::Null);
+                    }
                 }
                 DetailLevel::Compact => {
                     if let Some(entity) = self.get_entity_archived(id)? {

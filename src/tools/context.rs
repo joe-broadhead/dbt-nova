@@ -61,6 +61,7 @@ pub struct EntityContext {
     pub nova_summary: Option<JsonValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub columns: Option<Vec<ColumnContext>>,
+    pub provenance: JsonValue,
 }
 
 #[derive(Debug, Serialize)]
@@ -94,6 +95,7 @@ pub struct LineageEntity {
     pub resource_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    pub provenance: JsonValue,
 }
 
 #[derive(Debug, Serialize)]
@@ -248,6 +250,18 @@ impl ManifestSearch {
         };
 
         let entity_json = entity.to_json_value();
+        let provenance = self.get_entity_archived(entity_id)?.map_or_else(
+            || {
+                serde_json::json!({
+                    "tier": "raw",
+                    "freshness": {
+                        "status": "unknown",
+                        "reason": "entity_not_archived"
+                    }
+                })
+            },
+            |archived| self.provenance_for_archived_json(entity_id, archived, &entity_json),
+        );
         let primary_key_columns = {
             let keys = primary_key_columns_from_entity(&entity_json);
             if keys.is_empty() { None } else { Some(keys) }
@@ -296,6 +310,7 @@ impl ManifestSearch {
             grain_summary,
             nova_summary,
             columns,
+            provenance,
         })
     }
 
@@ -436,6 +451,7 @@ impl ManifestSearch {
                     name: entity.name_str().unwrap_or("").to_string(),
                     resource_type: rt.to_string(),
                     description,
+                    provenance: self.provenance_for_archived(id, entity),
                 });
             }
         }

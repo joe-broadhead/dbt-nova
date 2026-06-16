@@ -482,6 +482,11 @@ impl ManifestSearch {
         {
             obj.insert("persona_payload".to_string(), payload);
         }
+        let entity_json = entity_json_cache.get_or_insert_with(|| entity.to_json_value());
+        obj.insert(
+            "provenance".to_string(),
+            self.provenance_for_archived_json(unique_id, entity, entity_json),
+        );
 
         compact_json_object(&mut obj);
         JsonValue::Object(obj)

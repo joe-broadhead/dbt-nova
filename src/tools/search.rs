@@ -310,8 +310,14 @@ impl ManifestSearch {
                         strip_sql_fields(&mut entity_json);
                     }
                     ManifestSearch::insert_unique_id(&mut entity_json, &candidate.unique_id);
+                    let provenance = self.provenance_for_archived_json(
+                        &candidate.unique_id,
+                        entity,
+                        &entity_json,
+                    );
                     if let Some(obj) = entity_json.as_object_mut() {
                         obj.insert("score".to_string(), JsonValue::from(candidate.score));
+                        obj.insert("provenance".to_string(), provenance);
                         if let Some(highlights) = highlight_value {
                             obj.insert("highlights".to_string(), highlights);
                         }

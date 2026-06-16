@@ -307,6 +307,8 @@ pub struct DbtNovaConfig {
     pub governance_required_fields: HashMap<String, Vec<String>>,
     /// Governance gate threshold policy for persona payloads
     pub governance_gate: GovernanceGateConfig,
+    /// Days after which provenance timestamps are marked stale.
+    pub provenance_stale_after_days: u64,
     /// Runtime bootstrap resolution status (not user-configurable).
     #[serde(skip)]
     pub bootstrap_status: Option<JsonValue>,
@@ -385,6 +387,7 @@ impl Default for DbtNovaConfig {
             layer_rules: Vec::new(),
             governance_required_fields: default_governance_required_fields(),
             governance_gate: GovernanceGateConfig::default(),
+            provenance_stale_after_days: 30,
             bootstrap_status: None,
             env_errors: Vec::new(),
         }
@@ -1244,6 +1247,10 @@ impl DbtNovaConfig {
         if let Some(value) = parse_bool("DBT_NOVA_GOV_GATE_BLOCK_ON_FAILURE") {
             self.governance_gate.block_on_failure = value;
         }
+
+        if let Some(value) = parse_u64("DBT_NOVA_PROVENANCE_STALE_AFTER_DAYS") {
+            self.provenance_stale_after_days = value;
+        }
     }
 }
 
@@ -1393,6 +1400,30 @@ mod tests {
         assert_eq!(config.mcp_result_profile, ResultProfile::Compact);
         assert_eq!(config.mcp_default_limit, 10);
         assert_eq!(config.mcp_max_page_size, 100);
+    }
+
+    #[test]
+    fn from_env_reads_provenance_stale_after_days() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let key = "DBT_NOVA_PROVENANCE_STALE_AFTER_DAYS";
+        let previous = std::env::var(key).ok();
+        // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+        unsafe { std::env::set_var(key, "7") };
+
+        let config = DbtNovaConfig::from_env();
+
+        match previous {
+            Some(value) => {
+                // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                unsafe { std::env::set_var(key, value) };
+            }
+            None => {
+                // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                unsafe { std::env::remove_var(key) };
+            }
+        }
+
+        assert_eq!(config.provenance_stale_after_days, 7);
     }
 
     #[test]

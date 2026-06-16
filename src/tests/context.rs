@@ -72,7 +72,11 @@ async fn test_get_context_basic() {
         result.get("error")
     );
     let data = result.get("data").expect("response missing 'data'");
-    assert!(data.get("entity").is_some(), "Missing entity in context");
+    let entity = data.get("entity").expect("Missing entity in context");
+    assert!(
+        entity.pointer("/provenance/tier").is_some(),
+        "Missing entity provenance in context"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -95,9 +99,22 @@ async fn test_get_context_with_lineage() {
         },
     };
     let result = searcher.get_context(&params).await.json();
-    let has_entity = result.get("data").and_then(|d| d.get("entity")).is_some();
-    let has_error = result.get("error").is_some();
-    assert!(has_entity || has_error, "Should have entity or error");
+    let data = result.get("data").expect("response missing 'data'");
+    assert!(
+        data.pointer("/entity/provenance/tier").is_some(),
+        "Missing entity provenance in context"
+    );
+    let upstream_entities = data
+        .pointer("/upstream/entities")
+        .and_then(JsonValue::as_array)
+        .expect("response missing upstream entities");
+    assert!(
+        upstream_entities
+            .first()
+            .and_then(|entity| entity.pointer("/provenance/tier"))
+            .is_some(),
+        "Missing lineage entity provenance in context"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
