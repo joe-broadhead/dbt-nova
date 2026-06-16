@@ -351,7 +351,9 @@ async fn build_metadata_audit_report(
     if selected_entity_ids.is_empty() {
         if args.fail_on_no_targets {
             required_fail_count = 1;
-        } else if changed_files_include_dbt_model_or_schema_paths(&inputs.changed_files) {
+        } else if inputs.selection_mode == MetadataAuditSelectionModeArg::Changed
+            && changed_files_include_dbt_model_or_schema_paths(&inputs.changed_files)
+        {
             advisory_fail_count = 1;
         }
     }
@@ -1043,6 +1045,39 @@ mod tests {
         assert_eq!(report.gate_status, "fail");
         assert_eq!(report.summary.required_fail_count, 1);
         assert_eq!(report.summary.advisory_fail_count, 0);
+    }
+
+    #[tokio::test]
+    async fn project_selection_no_target_ignores_changed_file_advisory() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let args = MetadataAuditArgs {
+            selection_mode: MetadataAuditSelectionModeArg::Project,
+            changed_files_json: Some("[\"models/marts/missing_model.sql\"]".to_string()),
+            resource_types_json: Some("[\"model\"]".to_string()),
+            manifest_path: Some(fixture_manifest_path_string()),
+            storage_instance_id: Some("audit-project-no-target-changed-files-test".to_string()),
+            cleanup_storage_on_start: true,
+            ..MetadataAuditArgs::default()
+        };
+        let mut inputs = super::parse_audit_inputs(&args).expect("audit inputs");
+        inputs.resource_types.clear();
+        let load_args = crate::cli::args::ManifestLoadArgs {
+            manifest_path: args.manifest_path.clone(),
+            storage_instance_id: args.storage_instance_id.clone(),
+            cleanup_storage_on_start: args.cleanup_storage_on_start,
+            ..crate::cli::args::ManifestLoadArgs::default()
+        };
+        let mut config = build_manifest_load_config(&load_args).expect("config");
+        config.storage_dir = temp_dir.path().to_string_lossy().to_string();
+        let loaded = execute_manifest_load(config).await.expect("load");
+        let report = super::build_metadata_audit_report(&loaded.search, &inputs, &args)
+            .await
+            .expect("report");
+        assert_eq!(report.target_count, 0);
+        assert_eq!(report.gate_status, "pass");
+        assert_eq!(report.summary.required_fail_count, 0);
+        assert_eq!(report.summary.advisory_fail_count, 0);
+        assert_eq!(report.summary.no_target_reason, None);
     }
 
     #[test]
