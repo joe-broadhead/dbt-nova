@@ -232,6 +232,145 @@ Optional:
 - `DBT_NOVA_SQL_MAX_QUEUE` (default: `20`)
 - `DBT_NOVA_SQL_QUEUE_TIMEOUT_MS` (default: `30000`)
 
+## Snowflake SQL Variables
+
+Required:
+- `DBT_NOVA_SQL_PROVIDER=snowflake`
+- One of:
+  - `DBT_NOVA_SNOWFLAKE_ACCOUNT`
+  - `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL`
+- `DBT_NOVA_SNOWFLAKE_WAREHOUSE`
+- One auth mode:
+
+| Mode | Best for | Required variables | Notes |
+| --- | --- | --- | --- |
+| `keypair` | CI, services, and long-running MCP servers | `DBT_NOVA_SNOWFLAKE_USER` plus `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PATH` or `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PEM` | Default when no token env vars are present. Keys must be unencrypted RSA PEM today. |
+| `oauth` | Existing Snowflake OAuth or External OAuth token flows | `DBT_NOVA_SNOWFLAKE_AUTH=oauth` plus `DBT_NOVA_SNOWFLAKE_OAUTH_TOKEN` | Nova uses a supplied bearer token; it does not mint or refresh OAuth tokens. |
+| `pat` | Simple service or personal token setup | `DBT_NOVA_SNOWFLAKE_AUTH=pat` plus `DBT_NOVA_SNOWFLAKE_PAT` | Nova sends the token as a Snowflake endpoint token. Keep it in a secret manager and rotate it. |
+| `externalbrowser` | Local desktop SSO and Okta/SAML testing | `DBT_NOVA_SNOWFLAKE_AUTH=externalbrowser`, `DBT_NOVA_SNOWFLAKE_USER`, and `DBT_NOVA_SNOWFLAKE_ACCOUNT` | Local interactive only. Not allowed in CI or non-loopback hosted HTTP mode. |
+
+Optional:
+- `DBT_NOVA_SNOWFLAKE_DATABASE`
+- `DBT_NOVA_SNOWFLAKE_SCHEMA`
+- `DBT_NOVA_SNOWFLAKE_ROLE`
+- `DBT_NOVA_SNOWFLAKE_JWT_ACCOUNT` (JWT account identifier override; required for key-pair auth when using `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` without `DBT_NOVA_SNOWFLAKE_ACCOUNT`)
+- `DBT_NOVA_SNOWFLAKE_TIMEOUT_MS` (default: `30000`)
+- `DBT_NOVA_SNOWFLAKE_STATEMENT_TIMEOUT_S` (default: `60`; `0` requests Snowflake SQL API's maximum timeout window)
+- `DBT_NOVA_SNOWFLAKE_POLL_INTERVAL_MS` (default: `1000`)
+- `DBT_NOVA_SNOWFLAKE_MAX_POLL_SECONDS` (default: `600`)
+- `DBT_NOVA_SNOWFLAKE_MAX_CHUNKS` (default: `50`)
+- `DBT_NOVA_SNOWFLAKE_EXTERNAL_BROWSER_TIMEOUT_S` (default: `120`)
+- `DBT_NOVA_SNOWFLAKE_EXTERNAL_BROWSER_OPEN` (`true`|`false`, default: `true`)
+- `DBT_NOVA_SNOWFLAKE_EXTERNAL_BROWSER_CALLBACK_PORT` (optional fixed loopback callback port)
+- `DBT_NOVA_SQL_MAX_ROW_LIMIT` (default: `10000`)
+- `DBT_NOVA_SQL_MAX_BYTE_LIMIT` (default: `100000000`)
+- `DBT_NOVA_SQL_MAX_CHUNKS` (default: `100`)
+- `DBT_NOVA_SQL_MAX_POLL_SECONDS` (default: `900`)
+- `DBT_NOVA_SQL_MIN_POLL_INTERVAL_MS` (default: `200`)
+- `DBT_NOVA_SQL_MAX_CONCURRENT` (default: `10`)
+- `DBT_NOVA_SQL_MAX_QUEUE` (default: `20`)
+- `DBT_NOVA_SQL_QUEUE_TIMEOUT_MS` (default: `30000`)
+
+Snowflake behavior notes:
+- Named `:parameter` placeholders are rewritten to Snowflake SQL API `?` binds.
+- Null SQL parameters require explicit `parameter_types`.
+- `warehouse_id` overrides `DBT_NOVA_SNOWFLAKE_WAREHOUSE` for a single call.
+- `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` must be an account root URL such as `https://<host>`, not an `/api` endpoint.
+- If `DBT_NOVA_SNOWFLAKE_AUTH` is omitted, Nova infers `pat` when
+  `DBT_NOVA_SNOWFLAKE_PAT` is set, infers `oauth` when
+  `DBT_NOVA_SNOWFLAKE_OAUTH_TOKEN` is set, and otherwise uses key-pair JWT auth.
+- Key-pair JWT claims normalize account identifiers for Snowflake: account/user values are uppercased, periods are replaced with hyphens, legacy locator-style account region suffixes are excluded, and fully qualified organization/account names are preserved.
+- For key-pair auth with a private-link or custom account URL, set both `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` and `DBT_NOVA_SNOWFLAKE_JWT_ACCOUNT`.
+- Key-pair auth supports unencrypted RSA PEM keys; encrypted private keys are not supported yet.
+- Snowflake SQL API workload identity federation is not implemented yet. Use
+  key-pair JWT, OAuth, or PAT auth for hosted automation.
+- External browser auth is for local interactive use. Nova binds a `127.0.0.1`
+  callback listener, opens the system browser for Snowflake SSO, keeps the
+  returned Snowflake session token only in memory, and supports Okta SAML
+  callbacks that omit `proofKey`. Use key-pair JWT, OAuth, or PAT auth for CI
+  and hosted/non-loopback streamable HTTP deployments.
+
+### Snowflake PAT Example (Codex CLI)
+
+```toml
+[mcp_servers.dbt-nova]
+command = "/path/to/dbt-nova"
+startup_timeout_sec = 60
+
+[mcp_servers.dbt-nova.env]
+DBT_MANIFEST_PATH = "/path/to/manifest.json"
+DBT_NOVA_SQL_PROVIDER = "snowflake"
+DBT_NOVA_SNOWFLAKE_ACCOUNT = "myorg-myaccount"
+DBT_NOVA_SNOWFLAKE_WAREHOUSE = "ANALYST_WH"
+DBT_NOVA_SNOWFLAKE_DATABASE = "ANALYTICS"
+DBT_NOVA_SNOWFLAKE_SCHEMA = "REPORTING"
+DBT_NOVA_SNOWFLAKE_ROLE = "REPORTER"
+DBT_NOVA_SNOWFLAKE_AUTH = "pat"
+DBT_NOVA_SNOWFLAKE_PAT = "<token>"
+DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/.fastembed_cache"
+```
+
+Key-pair JWT example:
+
+```toml
+[mcp_servers.dbt-nova]
+command = "/path/to/dbt-nova"
+startup_timeout_sec = 60
+
+[mcp_servers.dbt-nova.env]
+DBT_MANIFEST_PATH = "/path/to/manifest.json"
+DBT_NOVA_SQL_PROVIDER = "snowflake"
+DBT_NOVA_SNOWFLAKE_ACCOUNT = "myorg-myaccount"
+DBT_NOVA_SNOWFLAKE_USER = "svc_dbt_nova"
+DBT_NOVA_SNOWFLAKE_WAREHOUSE = "ANALYST_WH"
+DBT_NOVA_SNOWFLAKE_DATABASE = "ANALYTICS"
+DBT_NOVA_SNOWFLAKE_SCHEMA = "REPORTING"
+DBT_NOVA_SNOWFLAKE_ROLE = "REPORTER"
+DBT_NOVA_SNOWFLAKE_AUTH = "keypair"
+DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PATH = "/secure/path/rsa_key.p8"
+DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/.fastembed_cache"
+```
+
+OAuth bearer token example:
+
+```toml
+[mcp_servers.dbt-nova]
+command = "/path/to/dbt-nova"
+startup_timeout_sec = 60
+
+[mcp_servers.dbt-nova.env]
+DBT_MANIFEST_PATH = "/path/to/manifest.json"
+DBT_NOVA_SQL_PROVIDER = "snowflake"
+DBT_NOVA_SNOWFLAKE_ACCOUNT = "myorg-myaccount"
+DBT_NOVA_SNOWFLAKE_WAREHOUSE = "ANALYST_WH"
+DBT_NOVA_SNOWFLAKE_DATABASE = "ANALYTICS"
+DBT_NOVA_SNOWFLAKE_SCHEMA = "REPORTING"
+DBT_NOVA_SNOWFLAKE_ROLE = "REPORTER"
+DBT_NOVA_SNOWFLAKE_AUTH = "oauth"
+DBT_NOVA_SNOWFLAKE_OAUTH_TOKEN = "<access-token>"
+DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/.fastembed_cache"
+```
+
+External browser SSO example:
+
+```toml
+[mcp_servers.dbt-nova]
+command = "/path/to/dbt-nova"
+startup_timeout_sec = 60
+
+[mcp_servers.dbt-nova.env]
+DBT_MANIFEST_PATH = "/path/to/manifest.json"
+DBT_NOVA_SQL_PROVIDER = "snowflake"
+DBT_NOVA_SNOWFLAKE_ACCOUNT = "myorg-myaccount"
+DBT_NOVA_SNOWFLAKE_USER = "you@example.com"
+DBT_NOVA_SNOWFLAKE_WAREHOUSE = "ANALYST_WH"
+DBT_NOVA_SNOWFLAKE_DATABASE = "ANALYTICS"
+DBT_NOVA_SNOWFLAKE_SCHEMA = "REPORTING"
+DBT_NOVA_SNOWFLAKE_ROLE = "REPORTER"
+DBT_NOVA_SNOWFLAKE_AUTH = "externalbrowser"
+DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/.fastembed_cache"
+```
+
 ## DuckDB SQL Variables
 
 Required:

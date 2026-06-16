@@ -13,7 +13,6 @@ pub const IN_USE_LOCK_FILENAME: &str = ".in_use.lock";
 pub fn dir_in_use(path: &Path) -> bool {
     let lock_path = path.join(IN_USE_LOCK_FILENAME);
     let Ok(lock_file) = std::fs::OpenOptions::new()
-        .create(true)
         .read(true)
         .write(true)
         .truncate(false)
@@ -127,13 +126,20 @@ mod tests {
     use std::fs::{self, File, OpenOptions};
     use std::io::Write;
     use std::path::Path;
-    use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime};
 
     use fs4::FileExt;
     use tempfile::TempDir;
 
-    use super::{IN_USE_LOCK_FILENAME, prune_dirs};
+    use super::{IN_USE_LOCK_FILENAME, dir_in_use, prune_dirs};
+
+    fn set_dir_modified(path: &Path, age: Duration) {
+        let modified = SystemTime::now()
+            .checked_sub(age)
+            .expect("test timestamp should be representable");
+        filetime::set_file_mtime(path, filetime::FileTime::from_system_time(modified))
+            .expect("set directory mtime");
+    }
 
     fn create_dir_with_file(root: &Path, name: &str, bytes: usize) -> std::path::PathBuf {
         let dir = root.join(name);
@@ -144,6 +150,19 @@ mod tests {
     }
 
     #[test]
+    fn dir_in_use_missing_lock_is_read_only() {
+        let temp = TempDir::new().expect("temp dir");
+        let storage_dir = create_dir_with_file(temp.path(), "storage", 8);
+        let lock_path = storage_dir.join(IN_USE_LOCK_FILENAME);
+
+        assert!(!dir_in_use(&storage_dir));
+        assert!(
+            !lock_path.exists(),
+            "checking an unlocked directory should not create a lock file"
+        );
+    }
+
+    #[test]
     fn prune_dirs_respects_excludes_and_keeps_newest_entries() {
         let temp = TempDir::new().expect("temp dir");
         let root = temp.path();
@@ -151,10 +170,11 @@ mod tests {
         // Some CI filesystems report equal mtimes for quickly created dirs.
         // Keep names aligned with the deterministic tie-breaker.
         let old = create_dir_with_file(root, "a_old", 8);
-        thread::sleep(Duration::from_millis(20));
         let keep = create_dir_with_file(root, "keep", 8);
-        thread::sleep(Duration::from_millis(20));
         let newest = create_dir_with_file(root, "z_newest", 8);
+        set_dir_modified(&old, Duration::from_secs(30));
+        set_dir_modified(&keep, Duration::from_secs(20));
+        set_dir_modified(&newest, Duration::from_secs(10));
 
         prune_dirs(root, 1, 0, 0, &["keep"]).expect("prune dirs");
 

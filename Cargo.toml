@@ -38,9 +38,12 @@ moka = { version = "0.12", features = ["sync"] }
 memmap2 = "0.9"
 blake3 = "1.5"
 fs4 = "0.8"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking", "gzip"] }
 jsonwebtoken = "9"
 base64 = "0.22"
+sha2 = "0.10"
+pem = "3.0"
+simple_asn1 = "0.6"
 zstd = "0.13"
 duckdb = { version = "1", features = ["bundled"] }
 flate2 = "1.0"
@@ -61,6 +64,7 @@ gcs = ["google-cloud-storage"]
 [dev-dependencies]
 proptest = "1"
 tempfile = "3"
+filetime = "0.2"
 wiremock = "0.6"
 criterion = "0.5"
 insta = { version = "1.39", features = ["json"] }

@@ -102,7 +102,7 @@ scoring, and governance. Start here:
 - **100% Field Access**: full JSON preserved on disk
 - **Background Indexing** with readiness via `health`
 - **Column & Entity Lineage**, test coverage, documentation gaps
-- **Warehouse SQL Execution** for Databricks, BigQuery, and DuckDB
+- **Warehouse SQL Execution** for Databricks, BigQuery, Snowflake, and DuckDB
 
 ## Who It’s For
 
@@ -257,7 +257,7 @@ for trusted advanced cases (for example internal CI fixtures). Keep
 `dbt_command_args_json` are mutually exclusive.
 
 Use `dbt_env_json` and `dbt_secret_env_map_json` to pass profile-specific
-env/secret variables generically (Databricks, BigQuery, DuckDB, etc.). For
+env/secret variables generically (Databricks, BigQuery, Snowflake, DuckDB, etc.). For
 cross-owner reusable workflow calls, pass one declared secret
 `DBT_NOVA_SECRET_BUNDLE_JSON` (JSON object of key->value) and reference those keys
 in `dbt_secret_env_map_json`.

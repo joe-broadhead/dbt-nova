@@ -708,7 +708,7 @@ Optional:
 - `wait_timeout_s` - Timeout for query completion
 - `poll_interval_ms` - Polling interval for async queries
 - `max_poll_seconds` - Max total polling duration for async queries
-- `warehouse_id` - Override the default Databricks warehouse
+- `warehouse_id` - Override the default Databricks or Snowflake warehouse
 - `parameters` - Named SQL parameters (e.g., `{"date": "2024-01-01"}`)
 - `parameter_types` - SQL type hints for parameters (e.g., `{"date": "DATE"}`)
 - `fetch_all_chunks` - Fetch all result pages (default: true)
@@ -723,10 +723,12 @@ Notes:
 - `poll_interval_ms` is raised to a configured minimum when too low.
 - Databricks supports named parameters and preflight checks.
 - BigQuery provider is available via `DBT_NOVA_SQL_PROVIDER=bigquery` and supports named scalar parameters with optional `parameter_types`.
+- Snowflake provider is available via `DBT_NOVA_SQL_PROVIDER=snowflake`; named parameters are rewritten to SQL API positional binds and null values require explicit `parameter_types`.
 - DuckDB provider is available via `DBT_NOVA_SQL_PROVIDER=duckdb`; named parameters are supported, but `parameter_types` is not.
 - DuckDB reuses pooled read-only connections per `(duckdb_path,file_search_path)` key (`DBT_NOVA_DUCKDB_POOL_MAX_SIZE`).
 - Object-level preflight checks (`preflight_catalog`, `preflight_schema`, `preflight_relation`) require a non-empty probe result across providers; missing/inaccessible targets return `ok=false`.
 - BigQuery credentials can come from OAuth token env vars, `GOOGLE_APPLICATION_CREDENTIALS`, or gcloud ADC (same auth family used by GCS SDK mode).
+- Snowflake credentials can use key-pair JWT, a supplied OAuth bearer token, a Snowflake programmatic access token, or local interactive external browser SSO (`DBT_NOVA_SNOWFLAKE_AUTH=externalbrowser`). Snowflake SQL API workload identity federation is not implemented yet.
 
 ```json
 {"name":"execute_sql","arguments":{"statement":"select * from orders where order_date > :date","parameters":{"date":"2024-01-01"},"row_limit":100}}

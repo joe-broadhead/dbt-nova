@@ -130,4 +130,4 @@ Secret resolution order for `dbt_secret_env_map_json` values:
 
 Use `DBT_NOVA_SECRET_BUNDLE_JSON` as the default integration pattern for
 cross-owner reusable workflow calls or when you want one portable secret schema
-across Databricks, BigQuery, DuckDB, and mixed-profile repos.
+across Databricks, BigQuery, Snowflake, DuckDB, and mixed-profile repos.

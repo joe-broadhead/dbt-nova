@@ -11,9 +11,18 @@ pub mod bigquery;
 pub mod databricks;
 pub mod duckdb;
 pub(crate) mod preflight;
+pub mod snowflake;
 
 pub trait SqlProvider: Send + Sync {
     fn name(&self) -> &'static str;
+    /// Validate runtime conditions that are not part of provider selection.
+    ///
+    /// # Errors
+    /// Returns an error when the provider configuration is unsafe or unsupported
+    /// for the resolved server runtime.
+    fn validate_runtime(&self, _config: &DbtNovaConfig) -> Result<()> {
+        Ok(())
+    }
     fn execute<'a>(
         &'a self,
         params: &'a ExecuteSqlParams,
@@ -42,6 +51,7 @@ impl SqlProviderRegistry {
                 &databricks::DATABRICKS_PROVIDER,
                 &bigquery::BIGQUERY_PROVIDER,
                 &duckdb::DUCKDB_PROVIDER,
+                &snowflake::SNOWFLAKE_PROVIDER,
             ],
         }
     }
@@ -129,6 +139,19 @@ mod tests {
             Err(err) => panic!("provider resolved: {err}"),
         };
         assert_eq!(provider.name(), "duckdb");
+    }
+
+    #[test]
+    fn snowflake_sql_provider_resolves() {
+        let cfg = DbtNovaConfig {
+            sql_provider: "snowflake".to_string(),
+            ..Default::default()
+        };
+        let provider = match resolve_sql_provider(&cfg) {
+            Ok(provider) => provider,
+            Err(err) => panic!("provider resolved: {err}"),
+        };
+        assert_eq!(provider.name(), "snowflake");
     }
 
     #[test]
