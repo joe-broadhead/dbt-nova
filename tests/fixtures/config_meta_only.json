@@ -80,6 +80,7 @@
             "meta": {
               "primary_key": true,
               "nova": {
+                "role": "measure",
                 "semantic_type": "order_id",
                 "synonyms": ["purchase_id"]
               }

@@ -2,12 +2,14 @@ use std::collections::HashSet;
 
 use serde_json::Value as JsonValue;
 
-use crate::manifest::entity::{ArchivedEntity, ArchivedNovaGrain, ArchivedNovaMeta};
+use crate::manifest::entity::{
+    ArchivedEntity, ArchivedNovaGrain, ArchivedNovaMeta, entity_meta_field_json,
+};
 use crate::manifest::lineage_sql::{extract_ref_calls, sql_for_matching};
 use crate::utils::{SearchPersona, tokenize_alnum_lowercase};
 
 use super::{
-    ManifestSearch, compact_json_object, has_apparent_malformed_ref, path_present, truncate_str,
+    ManifestSearch, compact_json_object, has_apparent_malformed_ref, truncate_str, value_present,
 };
 
 #[derive(Clone, Copy)]
@@ -197,7 +199,7 @@ impl ManifestSearch {
             .and_then(JsonValue::as_f64)
             .unwrap_or(0.0);
         let entity_json = entity.to_json_value();
-        let has_owner = path_present(&entity_json, "meta.owner");
+        let has_owner = entity_owner_present(&entity_json);
         let has_primary_key = !Self::primary_key_columns(entity).is_empty();
         let missing_required_fields = self
             .nova_required_missing_from_json(entity.resource_type_str().unwrap_or(""), &entity_json)
@@ -351,7 +353,7 @@ impl ManifestSearch {
                 .and_then(JsonValue::as_u64)
                 .unwrap_or(0);
         let gate_policy = &self.config.governance_gate;
-        let owner_present = path_present(&entity_json, "meta.owner");
+        let owner_present = entity_owner_present(&entity_json);
         let required_fields_present = missing.is_empty();
         let tests_present = tests_total > 0;
         let compliance_tags_present = !has_pii || compliance_len > 0;
@@ -895,4 +897,10 @@ impl ManifestSearch {
         }
         tools
     }
+}
+
+fn entity_owner_present(entity_json: &JsonValue) -> bool {
+    entity_meta_field_json(entity_json, "owner")
+        .or_else(|| entity_json.get("owner"))
+        .is_some_and(value_present)
 }

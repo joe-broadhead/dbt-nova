@@ -885,7 +885,15 @@ mod tests {
     use crate::tests::common::fixture_manifest_path_string;
     use serde_json::Value as JsonValue;
     use serde_json::json;
+    use std::path::Path;
     use tempfile::TempDir;
+
+    fn fixture_path_string(fixture_name: &str) -> String {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("tests/fixtures/{fixture_name}"))
+            .to_string_lossy()
+            .to_string()
+    }
 
     #[test]
     fn normalize_path_strips_dot_prefix_and_backslashes() {
@@ -975,6 +983,61 @@ mod tests {
                 .expect("archive");
         let changed = std::collections::BTreeSet::from(["models/marts/orders.yml".to_string()]);
         assert!(entity_matches_changed_files(archived, &changed));
+    }
+
+    #[tokio::test]
+    async fn entity_selection_scores_config_meta_only_model() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let args = MetadataAuditArgs {
+            selection_mode: MetadataAuditSelectionModeArg::Entities,
+            entity_ids_json: Some("[\"model.pkg.config_meta_model\"]".to_string()),
+            manifest_path: Some(fixture_path_string("config_meta_only.json")),
+            storage_instance_id: Some("audit-config-meta-only-test".to_string()),
+            cleanup_storage_on_start: true,
+            personas_json: Some("[\"engineer\"]".to_string()),
+            thresholds_json: Some(
+                r#"{"entity":{"engineer":{"min_score":1,"severity":"required"}}}"#.to_string(),
+            ),
+            include_recommendations: Some(false),
+            ..MetadataAuditArgs::default()
+        };
+        let inputs = super::parse_audit_inputs(&args).expect("audit inputs");
+        let load_args = crate::cli::args::ManifestLoadArgs {
+            manifest_path: args.manifest_path.clone(),
+            storage_instance_id: args.storage_instance_id.clone(),
+            cleanup_storage_on_start: args.cleanup_storage_on_start,
+            ..crate::cli::args::ManifestLoadArgs::default()
+        };
+        let mut config = build_manifest_load_config(&load_args).expect("config");
+        config.storage_dir = temp_dir.path().to_string_lossy().to_string();
+        let loaded = execute_manifest_load(config).await.expect("load");
+        let report = super::build_metadata_audit_report(&loaded.search, &inputs, &args)
+            .await
+            .expect("report");
+
+        assert_eq!(report.target_count, 1);
+        assert_eq!(report.scored_count, 1);
+        assert_eq!(report.gate_status, "pass");
+        assert_eq!(report.entities[0].unique_id, "model.pkg.config_meta_model");
+        let engineer = report.entities[0]
+            .personas
+            .get("engineer")
+            .expect("engineer score");
+        assert!(engineer.overall_score > 0);
+        assert!(
+            engineer.categories["semantic"]["score"]
+                .as_u64()
+                .is_some_and(|score| score > 0)
+        );
+        assert!(
+            engineer.categories["governance"]["score"]
+                .as_u64()
+                .is_some_and(|score| score > 0)
+        );
+        assert_eq!(
+            engineer.breakdown["quality"]["primary_key"]["present"].as_bool(),
+            Some(true)
+        );
     }
 
     #[tokio::test]
