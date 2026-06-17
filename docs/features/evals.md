@@ -282,6 +282,44 @@ Available placeholders in `--provider-args-json`:
 - `{trace_path}`
 - `{manifest_path}`
 
+## Telemetry History
+
+Use `--telemetry` when you want eval results to accumulate across runs instead
+of only writing one-off report artifacts. Bridge and agent evals append one
+JSON object per assertion to `.nova/eval-runs/telemetry/<suite>-<hash>.jsonl`:
+
+Suites must define a non-empty `name:` to write telemetry. This keeps history
+and retention scoped to one suite instead of mixing unrelated unnamed files.
+
+```bash
+dbt-nova eval run \
+  --suite evals/agent-tokenomics-bridge.yml \
+  --manifest-path tests/fixtures/tokenomics_manifest.json \
+  --telemetry
+
+dbt-nova eval agent run \
+  --suite evals/agent-tokenomics-opencode.yml \
+  --provider opencode \
+  --manifest-path tests/fixtures/tokenomics_manifest.json \
+  --telemetry
+```
+
+Rows include the suite name/path, mode, case id, assertion name/type, status,
+run duration, output directory, git SHA when available, and manifest hash for
+bridge runs. Agent rows also include provider metadata and sanitized trace
+counters such as tool-call count, distinct tool count, response bytes, and token
+counts when a provider trace exposes them. Telemetry does not store raw SQL
+parameter maps, provider stdout/stderr, or credentials.
+
+Use `eval history` for a thin date filter over the JSONL file:
+
+```bash
+dbt-nova eval history --suite agent-tokenomics-bridge --since 2026-06-01
+```
+
+Use `--telemetry-retention <ROWS>` with `eval run` or `eval agent run` to keep
+only the newest rows for that suite after appending the current run.
+
 ## Tool Trace
 
 When `DBT_NOVA_TRACE_TOOL_CALLS_PATH` is set, dbt-nova appends sanitized JSONL
