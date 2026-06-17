@@ -528,7 +528,7 @@ jobs:
       DBT_NOVA_COLUMN_LINEAGE_PRECOMPUTE: "false"
     steps:
       - name: Checkout caller repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           fetch-depth: 0
 
@@ -594,7 +594,7 @@ jobs:
 
       - name: Checkout installer source
         if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           repository: ${{ needs.prepare.outputs.installer_repository }}
           ref: ${{ needs.prepare.outputs.installer_ref }}
@@ -607,7 +607,7 @@ jobs:
 
       - name: Rust cache (installer source)
         if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
         with:
           workspaces: ".nova-installer-source -> target"
 
@@ -845,7 +845,7 @@ jobs:
 
       - name: Upload JSON report artifact
         if: ${{ always() && hashFiles('out/metadata-audit-report.json') != '' }}
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ needs.prepare.outputs.artifact_name_report_json }}
           path: out/metadata-audit-report.json
@@ -853,7 +853,7 @@ jobs:
 
       - name: Upload Markdown report artifact
         if: ${{ always() && hashFiles('out/metadata-audit-report.md') != '' }}
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ needs.prepare.outputs.artifact_name_report_md }}
           path: out/metadata-audit-report.md
@@ -861,7 +861,7 @@ jobs:
 
       - name: Upload CLI output artifact
         if: ${{ always() && hashFiles('out/metadata-audit-cli.json') != '' }}
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ needs.prepare.outputs.artifact_name_report_json }}-cli
           path: out/metadata-audit-cli.json

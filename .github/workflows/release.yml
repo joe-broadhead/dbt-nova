@@ -42,7 +42,7 @@ jobs:
           echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           fetch-depth: 0
 
@@ -127,7 +127,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           ref: ${{ needs.validate.outputs.release_tag }}
 
@@ -206,7 +206,7 @@ jobs:
             dbt-nova-${{ matrix.asset }}.sbom.spdx.json
 
       - name: Publish release assets
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
         with:
           tag_name: ${{ needs.validate.outputs.release_tag }}
           body_path: RELEASE_NOTES.md
@@ -234,7 +234,7 @@ jobs:
       packages: write
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           fetch-depth: 0
 
@@ -248,10 +248,12 @@ jobs:
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
           git fetch --force origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
           commit_sha="$(git rev-list -n1 "${RELEASE_TAG}")"
-          echo "image=${image}" >> "$GITHUB_OUTPUT"
-          echo "commit_sha=${commit_sha}" >> "$GITHUB_OUTPUT"
-          echo "amd64_tag=${image}:sha-${commit_sha}-amd64" >> "$GITHUB_OUTPUT"
-          echo "arm64_tag=${image}:sha-${commit_sha}-arm64" >> "$GITHUB_OUTPUT"
+          {
+            echo "image=${image}"
+            echo "commit_sha=${commit_sha}"
+            echo "amd64_tag=${image}:sha-${commit_sha}-amd64"
+            echo "arm64_tag=${image}:sha-${commit_sha}-arm64"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2
@@ -391,7 +393,7 @@ jobs:
           timeout: 10m
 
       - name: Publish OCI scan report
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
         with:
           tag_name: ${{ needs.validate.outputs.release_tag }}
           overwrite_files: true

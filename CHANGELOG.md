@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Hardened CI workflows by caching reusable semantic model snapshots during
+  model artifact builds and upgrading maintained GitHub Actions to Node
+  24-compatible pinned releases.
 - Added Snowflake SQL provider support (`DBT_NOVA_SQL_PROVIDER=snowflake`) via
   the Snowflake SQL API, including key-pair JWT, OAuth, and programmatic access
   token auth, named parameter binding, partitioned result fetching, cancellation
