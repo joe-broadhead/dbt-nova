@@ -1,0 +1,119 @@
+version: 1
+name: starter
+defaults:
+  persona: analyst
+  top_k: 5
+
+cases:
+  - id: canonical_revenue_discovery
+    question: Find the canonical model and measure for gross revenue.
+    assertions:
+      - type: search_rank
+        query: gross revenue orders canonical commerce
+        expected_unique_id: model.starter_eval.fct_orders
+        max_rank: 3
+        resource_types: [model]
+      - type: search_indicator_rank
+        query: gross revenue
+        expected: gross_revenue
+        max_rank: 3
+        resource_types: [model]
+        indicator_types: [measure]
+      - type: context_has
+        id_or_name: model.starter_eval.fct_orders
+        fields:
+          - data.unique_id
+          - data.entity.name
+          - data.entity.nova_summary.measures
+          - data.entity.grain_summary.primary_key
+      - type: metadata_score_min
+        id_or_name: model.starter_eval.fct_orders
+        persona: analyst
+        threshold: 90
+
+  - id: column_context_and_lineage
+    question: Verify the canonical orders model exposes date context and upstream lineage.
+    assertions:
+      - type: search_columns_rank
+        query: order date
+        expected_column: order_date
+        expected_parent_unique_id: model.starter_eval.fct_orders
+        max_rank: 5
+      - type: lineage_contains
+        id_or_name: model.starter_eval.fct_orders
+        direction: upstream
+        expected_unique_id: model.starter_eval.stg_orders
+        depth: 1
+      - type: lineage_contains
+        id_or_name: model.starter_eval.fct_orders
+        direction: upstream
+        expected_unique_id: model.starter_eval.dim_customers
+        depth: 1
+      - type: lineage_contains
+        id_or_name: model.starter_eval.fct_orders
+        direction: upstream
+        expected_unique_id: model.starter_eval.stg_customers
+        depth: 2
+
+  - id: recipe_discovery
+    question: Find the starter weekly revenue recipe and verify it has ordered SQL steps.
+    assertions:
+      - type: recipe_rank
+        query: weekly revenue commerce
+        expected_recipe_id: commerce/weekly_revenue
+        max_rank: 3
+      - type: recipe_has_queries
+        recipe_id: commerce/weekly_revenue
+        min_queries: 2
+
+  - id: sparse_metadata_floor
+    question: Sparse raw examples should remain discoverable and score as low-quality metadata.
+    assertions:
+      - type: search_rank
+        query: raw events sparse
+        expected_unique_id: model.starter_eval.raw_events_sparse
+        max_rank: 3
+        resource_types: [model]
+      - type: context_field_equals
+        id_or_name: model.starter_eval.raw_events_sparse
+        field: data.entity.name
+        expected: raw_events_sparse
+      - type: metadata_score_max
+        id_or_name: model.starter_eval.raw_events_sparse
+        persona: analyst
+        threshold: 20
+
+agent_cases:
+  - id: analyst_revenue_lookup_flow
+    task: Which canonical model and measure should an analyst use for gross revenue? Do not execute SQL.
+    expected:
+      must_call:
+        - search_indicator
+        - get_context
+      must_not_call:
+        - execute_sql
+        - get_lineage
+      ordered:
+        - before: get_context
+          must_have_called:
+            - search_indicator
+      selected_entities:
+        - model.starter_eval.fct_orders
+      selected_entity_ranks:
+        - unique_id: model.starter_eval.fct_orders
+          tool: search_indicator
+          max_rank: 3
+      called_with:
+        - tool: search_indicator
+          contains:
+            query: gross revenue
+      max_tool_calls: 4
+      max_distinct_tools: 3
+      max_total_response_bytes: 65536
+      max_response_bytes_by_tool:
+        search_indicator: 12000
+        get_context: 24000
+      final_answer:
+        must_contain:
+          - fct_orders
+          - gross_revenue

@@ -54,6 +54,40 @@ Validate suite shape before running against a manifest or provider:
 dbt-nova eval validate --suite evals/analyst-smoke.yml
 ```
 
+## Run The Packaged Starter Suite
+
+dbt-nova ships `evals/starter.yml` plus a synthetic manifest fixture at
+`tests/fixtures/starter_eval_manifest.json`. The suite is intentionally small
+and strict: it checks canonical model search, indicator discovery, context,
+lineage, recipe discovery, metadata scoring, and one provider-backed agent
+tool-use flow.
+
+Validate the starter suite:
+
+```bash
+dbt-nova eval validate --suite evals/starter.yml
+```
+
+Run the bridge evals against the packaged synthetic manifest:
+
+```bash
+dbt-nova eval run \
+  --suite evals/starter.yml \
+  --manifest-path tests/fixtures/starter_eval_manifest.json \
+  --fail-under 1.0
+```
+
+Run the starter agent case with a configured provider:
+
+```bash
+dbt-nova eval agent run \
+  --suite evals/starter.yml \
+  --provider opencode \
+  --manifest-path tests/fixtures/starter_eval_manifest.json \
+  --case-id analyst_revenue_lookup_flow \
+  --fail-under 1.0
+```
+
 ## Run Bridge Evals
 
 ```bash
@@ -83,6 +117,7 @@ Bridge assertions currently support:
 - `context_field_equals`
 - `context_contains`
 - `metadata_score_min`
+- `metadata_score_max`
 - `recipe_rank`
 - `recipe_has_queries`
 - `lineage_contains`

@@ -8,9 +8,10 @@ use super::{
     AgentCalledWith, AgentEntityRank, AgentExpected, AgentOrder, AssertionResult, EvalCaseReport,
     EvalDefaults, EvalRunArgs, EvalSuite, EvalValidateArgs, FinalAnswerExpected,
     contains_rank_assertion, context_contains_assertion, context_field_equals_assertion,
-    json_has_field_path, read_tool_trace, recipe_rank_assertion, run_eval_command,
-    run_validate_command, safe_path_segment, score_agent_expectations, selected_agent_cases,
-    selected_bridge_cases, tool_response_budget_assertion, tool_success_assertion, validate_suite,
+    json_has_field_path, metadata_score_max_assertion, metadata_score_min_assertion,
+    read_tool_trace, recipe_rank_assertion, run_eval_command, run_validate_command,
+    safe_path_segment, score_agent_expectations, selected_agent_cases, selected_bridge_cases,
+    tool_response_budget_assertion, tool_success_assertion, validate_suite,
 };
 
 #[test]
@@ -213,6 +214,20 @@ fn context_value_assertions_check_equals_and_contains() {
         context_field_equals_assertion(&response, "data.entity.name", &json!("customers")).status,
         "fail"
     );
+}
+
+#[test]
+fn metadata_score_bounds_check_min_and_max() {
+    let response = json!({
+        "data": {
+            "overall_score": 12.0
+        }
+    });
+
+    assert_eq!(metadata_score_min_assertion(&response, 10.0).status, "pass");
+    assert_eq!(metadata_score_min_assertion(&response, 20.0).status, "fail");
+    assert_eq!(metadata_score_max_assertion(&response, 20.0).status, "pass");
+    assert_eq!(metadata_score_max_assertion(&response, 10.0).status, "fail");
 }
 
 #[test]

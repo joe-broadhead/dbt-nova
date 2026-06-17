@@ -111,6 +111,13 @@ enum EvalAssertion {
         #[serde(default)]
         persona: Option<String>,
     },
+    MetadataScoreMax {
+        #[serde(default)]
+        id_or_name: Option<String>,
+        threshold: f64,
+        #[serde(default)]
+        persona: Option<String>,
+    },
     RecipeRank {
         query: String,
         expected_recipe_id: String,
@@ -538,6 +545,11 @@ async fn evaluate_bridge_assertion(
             id_or_name,
             threshold,
             persona,
+        }
+        | EvalAssertion::MetadataScoreMax {
+            id_or_name,
+            threshold,
+            persona,
         } => {
             let params = json!({
                 "id_or_name": id_or_name,
@@ -545,8 +557,23 @@ async fn evaluate_bridge_assertion(
                 "limit": 20,
             });
             match call_tool(search, "get_metadata_score", params).await {
-                Ok(response) => metadata_score_assertion(&response, *threshold),
-                Err(error) => AssertionResult::error("metadata_score_min", error.to_string()),
+                Ok(response) => match assertion {
+                    EvalAssertion::MetadataScoreMin { .. } => {
+                        metadata_score_min_assertion(&response, *threshold)
+                    }
+                    EvalAssertion::MetadataScoreMax { .. } => {
+                        metadata_score_max_assertion(&response, *threshold)
+                    }
+                    _ => unreachable!("matched metadata score assertion"),
+                },
+                Err(error) => AssertionResult::error(
+                    match assertion {
+                        EvalAssertion::MetadataScoreMin { .. } => "metadata_score_min",
+                        EvalAssertion::MetadataScoreMax { .. } => "metadata_score_max",
+                        _ => unreachable!("matched metadata score assertion"),
+                    },
+                    error.to_string(),
+                ),
             }
         }
         EvalAssertion::RecipeRank {
@@ -1516,7 +1543,7 @@ fn context_contains_assertion(
     }
 }
 
-fn metadata_score_assertion(response: &JsonValue, threshold: f64) -> AssertionResult {
+fn metadata_score_min_assertion(response: &JsonValue, threshold: f64) -> AssertionResult {
     let score = find_score(response);
     match score {
         Some(score) if score >= threshold => AssertionResult::pass(
@@ -1531,6 +1558,27 @@ fn metadata_score_assertion(response: &JsonValue, threshold: f64) -> AssertionRe
         ),
         None => AssertionResult::fail(
             "metadata_score_min",
+            "metadata score response did not contain a numeric score",
+            JsonValue::Null,
+        ),
+    }
+}
+
+fn metadata_score_max_assertion(response: &JsonValue, threshold: f64) -> AssertionResult {
+    let score = find_score(response);
+    match score {
+        Some(score) if score <= threshold => AssertionResult::pass(
+            "metadata_score_max",
+            format!("metadata score {score:.3} did not exceed threshold {threshold:.3}"),
+            json!({"score": score, "threshold": threshold}),
+        ),
+        Some(score) => AssertionResult::fail(
+            "metadata_score_max",
+            format!("metadata score {score:.3} exceeded threshold {threshold:.3}"),
+            json!({"score": score, "threshold": threshold}),
+        ),
+        None => AssertionResult::fail(
+            "metadata_score_max",
             "metadata score response did not contain a numeric score",
             JsonValue::Null,
         ),
