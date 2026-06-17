@@ -70,6 +70,7 @@ Rules:
 - Do not assume friendly labels map directly to raw warehouse values without validation.
 - Keep validation probes close to the target slice. Do not scan a year-plus range just to confirm one filter member.
 - Do not front-load every trust tool by default. Escalate only when the answer is high-stakes or the entity choice is ambiguous.
+- For high-stakes, launch-readiness, or recurring production workflows, check the relevant eval suite gate with `dbt-nova eval gate <suite_name> --json` when CLI access and suite ownership are known. Treat blocked gates as advisory warnings to surface before final analysis, not as permission to hide the answer.
 
 ## Analysis discipline
 

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 
 use crate::cli::args::{
-    EvalAgentRunArgs, EvalHistoryArgs, EvalInitArgs, EvalRunArgs, EvalValidateArgs,
+    EvalAgentRunArgs, EvalGateArgs, EvalHistoryArgs, EvalInitArgs, EvalRunArgs, EvalValidateArgs,
     ManifestLoadArgs,
 };
 use crate::cli::manifest::{build_manifest_load_config, execute_manifest_load};
@@ -34,11 +34,18 @@ struct EvalSuite {
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
+    gate: Option<EvalGateConfig>,
+    #[serde(default)]
     defaults: EvalDefaults,
     #[serde(default)]
     cases: Vec<EvalCase>,
     #[serde(default)]
     agent_cases: Vec<AgentCase>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+struct EvalGateConfig {
+    threshold: f64,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -287,6 +294,48 @@ struct AgentTelemetryContext<'a> {
     provider_command_preset: &'a str,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct EvalTelemetryRunContext<'a> {
+    suite_path: &'a str,
+    suite_hash: &'a str,
+    suite_case_count: usize,
+    manifest_hash: Option<&'a str>,
+    duration_ms: u64,
+    retention: Option<usize>,
+    agent: Option<AgentTelemetryContext<'a>>,
+}
+
+#[derive(Debug, Serialize)]
+struct EvalGateReport {
+    suite_name: String,
+    allowed: bool,
+    blocked: bool,
+    gate_configured: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    threshold: Option<f64>,
+    pass_rate: f64,
+    total_evals: usize,
+    failed_evals: usize,
+    failed_eval_ids: Vec<String>,
+    failed_case_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    telemetry_timestamp: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    suite_path: Option<String>,
+    message: String,
+}
+
+enum GateConfigStatus {
+    Configured {
+        gate: EvalGateConfig,
+        suite_hash: String,
+    },
+    Unconfigured,
+    Unavailable(String),
+}
+
 /// Writes a starter eval suite.
 ///
 /// # Errors
@@ -364,31 +413,33 @@ pub fn run_validate_command(args: &EvalValidateArgs) -> DispatchResult {
     Ok(())
 }
 
+/// Reports readiness from the latest eval telemetry for a suite.
+///
+/// # Errors
+/// Returns an error when existing telemetry or suite configuration cannot be parsed.
+pub fn run_gate_command(args: &EvalGateArgs) -> DispatchResult {
+    let started = Instant::now();
+    let rows = read_telemetry_rows_for_suite(&args.suite)?;
+    let report = build_eval_gate_report(&args.suite, &rows)?;
+    if args.json {
+        let envelope = CliEnvelope::success("eval gate", &report, started.elapsed().as_millis());
+        let out = serde_json::to_string_pretty(&envelope)
+            .map_err(|error| server_error(error.to_string()))?;
+        println!("{out}");
+    } else {
+        print_gate_report(&report);
+    }
+    Ok(())
+}
+
 /// Prints filtered JSONL eval telemetry history.
 ///
 /// # Errors
 /// Returns an error when `--since` is invalid or existing telemetry cannot be read.
 pub fn run_history_command(args: &EvalHistoryArgs) -> DispatchResult {
     let since_boundary = validate_since_date(&args.since)?;
-    let path = telemetry_path_for_suite(&args.suite);
-    if !path.exists() {
-        return Ok(());
-    }
-    let file = fs::File::open(&path).map_err(|error| server_error(error.to_string()))?;
-    let reader = BufReader::new(file);
-    for (index, line) in reader.lines().enumerate() {
-        let line = line.map_err(|error| server_error(error.to_string()))?;
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let row = serde_json::from_str::<JsonValue>(trimmed).map_err(|error| {
-            DbtNovaError::InvalidParams(format!(
-                "failed to parse telemetry line {} in '{}': {error}",
-                index + 1,
-                path.display()
-            ))
-        })?;
+    let rows = read_telemetry_rows_for_suite(&args.suite)?;
+    for row in rows {
         if telemetry_row_matches_since(&row, &since_boundary) {
             let out =
                 serde_json::to_string(&row).map_err(|error| server_error(error.to_string()))?;
@@ -404,7 +455,7 @@ pub fn run_history_command(args: &EvalHistoryArgs) -> DispatchResult {
 /// Returns an error when the suite is invalid, manifest loading fails, assertions error, or the score gate fails.
 pub async fn run_eval_command(args: &EvalRunArgs) -> DispatchResult {
     let started = Instant::now();
-    let suite = load_suite(&args.suite)?;
+    let (suite, suite_hash) = load_suite_with_hash(&args.suite)?;
     validate_fail_under(args.fail_under)?;
     validate_telemetry_retention(args.telemetry_retention)?;
     validate_telemetry_suite_name(&suite, args.telemetry)?;
@@ -444,11 +495,15 @@ pub async fn run_eval_command(args: &EvalRunArgs) -> DispatchResult {
     if args.telemetry {
         write_eval_telemetry(
             &report,
-            &args.suite,
-            Some(&load_result.search.manifest_hash),
-            elapsed_ms_to_u64(elapsed),
-            args.telemetry_retention,
-            None,
+            EvalTelemetryRunContext {
+                suite_path: &args.suite,
+                suite_hash: &suite_hash,
+                suite_case_count: suite.cases.len(),
+                manifest_hash: Some(&load_result.search.manifest_hash),
+                duration_ms: elapsed_ms_to_u64(elapsed),
+                retention: args.telemetry_retention,
+                agent: None,
+            },
         )?;
     }
     finish_report("eval run", &report, args.json, elapsed_ms)
@@ -460,7 +515,7 @@ pub async fn run_eval_command(args: &EvalRunArgs) -> DispatchResult {
 /// Returns an error when the suite is invalid, a provider command cannot be run, or the score gate fails.
 pub async fn run_agent_eval_command(args: &EvalAgentRunArgs) -> DispatchResult {
     let started = Instant::now();
-    let suite = load_suite(&args.suite)?;
+    let (suite, suite_hash) = load_suite_with_hash(&args.suite)?;
     validate_fail_under(args.fail_under)?;
     validate_telemetry_retention(args.telemetry_retention)?;
     validate_telemetry_suite_name(&suite, args.telemetry)?;
@@ -491,14 +546,18 @@ pub async fn run_agent_eval_command(args: &EvalAgentRunArgs) -> DispatchResult {
     if args.telemetry {
         write_eval_telemetry(
             &report,
-            &args.suite,
-            None,
-            elapsed_ms_to_u64(elapsed),
-            args.telemetry_retention,
-            Some(AgentTelemetryContext {
-                provider: &args.provider,
-                provider_command_preset: agent_provider_command_preset(args),
-            }),
+            EvalTelemetryRunContext {
+                suite_path: &args.suite,
+                suite_hash: &suite_hash,
+                suite_case_count: suite.agent_cases.len(),
+                manifest_hash: None,
+                duration_ms: elapsed_ms_to_u64(elapsed),
+                retention: args.telemetry_retention,
+                agent: Some(AgentTelemetryContext {
+                    provider: &args.provider,
+                    provider_command_preset: agent_provider_command_preset(args),
+                }),
+            },
         )?;
     }
     finish_report("eval agent run", &report, args.json, elapsed_ms)
@@ -1979,13 +2038,340 @@ fn write_report_artifacts(
     Ok(())
 }
 
+fn read_telemetry_rows_for_suite(suite_name: &str) -> crate::error::Result<Vec<JsonValue>> {
+    let path = telemetry_path_for_suite(suite_name);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let file = fs::File::open(&path).map_err(|error| server_error(error.to_string()))?;
+    let reader = BufReader::new(file);
+    let mut rows = Vec::new();
+    for (index, line) in reader.lines().enumerate() {
+        let line = line.map_err(|error| server_error(error.to_string()))?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let row = serde_json::from_str::<JsonValue>(trimmed).map_err(|error| {
+            DbtNovaError::InvalidParams(format!(
+                "failed to parse telemetry line {} in '{}': {error}",
+                index + 1,
+                path.display()
+            ))
+        })?;
+        if row
+            .get("suite_name")
+            .and_then(JsonValue::as_str)
+            .is_some_and(|value| value == suite_name)
+        {
+            rows.push(row);
+        }
+    }
+    Ok(rows)
+}
+
+fn build_eval_gate_report(
+    suite_name: &str,
+    rows: &[JsonValue],
+) -> crate::error::Result<EvalGateReport> {
+    let latest_rows = latest_telemetry_rows(rows);
+    if latest_rows.is_empty() {
+        return Ok(EvalGateReport {
+            suite_name: suite_name.to_string(),
+            allowed: false,
+            blocked: true,
+            gate_configured: false,
+            threshold: None,
+            pass_rate: 0.0,
+            total_evals: 0,
+            failed_evals: 0,
+            failed_eval_ids: Vec::new(),
+            failed_case_ids: Vec::new(),
+            telemetry_timestamp: None,
+            output_dir: None,
+            suite_path: None,
+            message: format!(
+                "no eval telemetry found for suite '{suite_name}'; run the suite with --telemetry first"
+            ),
+        });
+    }
+
+    let total_evals = latest_rows.len();
+    let pass_count = latest_rows
+        .iter()
+        .filter(|row| row.get("status").and_then(JsonValue::as_str) == Some("pass"))
+        .count();
+    let failed_rows: Vec<&JsonValue> = latest_rows
+        .iter()
+        .copied()
+        .filter(|row| row.get("status").and_then(JsonValue::as_str) != Some("pass"))
+        .collect();
+    let failed_eval_ids: Vec<String> = failed_rows
+        .iter()
+        .map(|row| telemetry_eval_id(row))
+        .collect();
+    let failed_case_ids: Vec<String> = failed_rows
+        .iter()
+        .filter_map(|row| row.get("case_id").and_then(JsonValue::as_str))
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let pass_rate = ratio(pass_count, total_evals);
+    let first = latest_rows[0];
+    let suite_path = first
+        .get("suite_path")
+        .and_then(JsonValue::as_str)
+        .map(str::to_string);
+    let gate = gate_config_status_from_suite_path(suite_path.as_deref())?;
+    let telemetry_timestamp = first
+        .get("timestamp")
+        .and_then(JsonValue::as_str)
+        .map(str::to_string);
+    let output_dir = first
+        .get("output_dir")
+        .and_then(JsonValue::as_str)
+        .map(str::to_string);
+
+    let (gate_configured, threshold, current_suite_hash, unavailable_message) = match gate {
+        GateConfigStatus::Configured { gate, suite_hash } => {
+            (true, Some(gate.threshold), Some(suite_hash), None)
+        }
+        GateConfigStatus::Unconfigured => (false, None, None, None),
+        GateConfigStatus::Unavailable(message) => (false, None, None, Some(message)),
+    };
+    let incomplete_message = threshold
+        .is_some()
+        .then(|| {
+            latest_run_incomplete_message(
+                &latest_rows,
+                current_suite_hash.as_deref().unwrap_or_default(),
+            )
+        })
+        .flatten();
+    if let Some(message) = unavailable_message.or(incomplete_message) {
+        return Ok(EvalGateReport {
+            suite_name: suite_name.to_string(),
+            allowed: false,
+            blocked: true,
+            gate_configured,
+            threshold,
+            pass_rate,
+            total_evals,
+            failed_evals: failed_eval_ids.len(),
+            failed_eval_ids,
+            failed_case_ids,
+            telemetry_timestamp,
+            output_dir,
+            suite_path,
+            message,
+        });
+    }
+
+    let (allowed, message) = if let Some(threshold) = threshold {
+        let allowed = pass_rate >= threshold;
+        let message = if allowed {
+            format!("latest eval telemetry passed gate threshold {threshold:.3}")
+        } else {
+            format!(
+                "latest eval telemetry below gate threshold {threshold:.3}; inspect failed_eval_ids before relying on this suite"
+            )
+        };
+        (allowed, message)
+    } else {
+        (
+            true,
+            "no gate threshold configured; advisory gate allowed by default".to_string(),
+        )
+    };
+
+    Ok(EvalGateReport {
+        suite_name: suite_name.to_string(),
+        allowed,
+        blocked: !allowed,
+        gate_configured,
+        threshold,
+        pass_rate,
+        total_evals,
+        failed_evals: failed_eval_ids.len(),
+        failed_eval_ids,
+        failed_case_ids,
+        telemetry_timestamp,
+        output_dir,
+        suite_path,
+        message,
+    })
+}
+
+fn latest_telemetry_rows(rows: &[JsonValue]) -> Vec<&JsonValue> {
+    let Some(latest) = rows.iter().max_by_key(|row| {
+        row.get("timestamp_ms")
+            .and_then(JsonValue::as_u64)
+            .unwrap_or(0)
+    }) else {
+        return Vec::new();
+    };
+    if let Some(run_id) = latest
+        .get("run_id")
+        .and_then(JsonValue::as_str)
+        .filter(|value| !value.trim().is_empty())
+    {
+        return rows
+            .iter()
+            .filter(|row| row.get("run_id").and_then(JsonValue::as_str) == Some(run_id))
+            .collect();
+    }
+    let latest_timestamp = latest
+        .get("timestamp_ms")
+        .and_then(JsonValue::as_u64)
+        .unwrap_or(0);
+    if let Some(output_dir) = latest
+        .get("output_dir")
+        .and_then(JsonValue::as_str)
+        .filter(|value| !value.trim().is_empty())
+    {
+        rows.iter()
+            .filter(|row| {
+                row.get("timestamp_ms").and_then(JsonValue::as_u64) == Some(latest_timestamp)
+                    && row.get("output_dir").and_then(JsonValue::as_str) == Some(output_dir)
+            })
+            .collect()
+    } else {
+        rows.iter()
+            .filter(|row| {
+                row.get("timestamp_ms").and_then(JsonValue::as_u64) == Some(latest_timestamp)
+            })
+            .collect()
+    }
+}
+
+fn latest_run_incomplete_message(rows: &[&JsonValue], current_suite_hash: &str) -> Option<String> {
+    let Some(recorded_suite_hash) = rows
+        .first()
+        .and_then(|row| row.get("suite_hash"))
+        .and_then(JsonValue::as_str)
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Some(
+            "latest eval telemetry does not include suite_hash; rerun the full suite with --telemetry before checking the gate"
+                .to_string(),
+        );
+    };
+    if recorded_suite_hash != current_suite_hash {
+        return Some(
+            "latest eval telemetry was produced from a different suite file version; rerun the full suite with --telemetry before checking the gate"
+                .to_string(),
+        );
+    }
+    let Some(run_case_count) = rows
+        .first()
+        .and_then(|row| row.get("run_case_count"))
+        .and_then(JsonValue::as_u64)
+    else {
+        return Some(
+            "latest eval telemetry does not include run_case_count; rerun the full suite with --telemetry before checking the gate"
+                .to_string(),
+        );
+    };
+    let Some(suite_case_count) = rows
+        .first()
+        .and_then(|row| row.get("suite_case_count"))
+        .and_then(JsonValue::as_u64)
+    else {
+        return Some(
+            "latest eval telemetry does not include suite_case_count; rerun the full suite with --telemetry before checking the gate"
+                .to_string(),
+        );
+    };
+    if run_case_count != suite_case_count {
+        return Some(format!(
+            "latest eval telemetry covers {run_case_count} of {suite_case_count} suite cases; rerun the full suite with --telemetry before checking the gate"
+        ));
+    }
+    let Some(expected) = rows
+        .first()
+        .and_then(|row| row.get("run_assertion_count"))
+        .and_then(JsonValue::as_u64)
+    else {
+        return Some(
+            "latest eval telemetry does not include run_assertion_count; rerun the suite with --telemetry before checking the gate"
+                .to_string(),
+        );
+    };
+    let observed = u64::try_from(rows.len()).unwrap_or(u64::MAX);
+    if expected == observed {
+        return None;
+    }
+    Some(format!(
+        "latest eval telemetry is incomplete: found {observed} of {expected} assertion rows; rerun the suite with --telemetry or increase --telemetry-retention"
+    ))
+}
+
+fn gate_config_status_from_suite_path(
+    path: Option<&str>,
+) -> crate::error::Result<GateConfigStatus> {
+    let Some(path) = path.filter(|value| !value.trim().is_empty()) else {
+        return Ok(GateConfigStatus::Unavailable(
+            "latest telemetry did not include suite_path; rerun the suite with --telemetry"
+                .to_string(),
+        ));
+    };
+    if !Path::new(path).exists() {
+        return Ok(GateConfigStatus::Unavailable(format!(
+            "suite config '{path}' could not be read; rerun the suite with --telemetry from the current checkout"
+        )));
+    }
+    let (suite, suite_hash) = load_suite_with_hash(path)?;
+    Ok(match suite.gate {
+        Some(gate) => GateConfigStatus::Configured { gate, suite_hash },
+        None => GateConfigStatus::Unconfigured,
+    })
+}
+
+#[cfg(test)]
+fn suite_file_hash(path: &str) -> crate::error::Result<String> {
+    let raw = fs::read(path).map_err(|error| {
+        DbtNovaError::InvalidParams(format!(
+            "failed to read eval suite '{path}' for hash: {error}"
+        ))
+    })?;
+    Ok(blake3::hash(&raw).to_hex().to_string())
+}
+
+fn telemetry_eval_id(row: &JsonValue) -> String {
+    let case_id = row
+        .get("case_id")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("unknown_case");
+    let assertion_name = row
+        .get("assertion_name")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("unknown_assertion");
+    format!("{case_id}::{assertion_name}")
+}
+
+fn print_gate_report(report: &EvalGateReport) {
+    let status = if report.allowed { "allowed" } else { "blocked" };
+    println!("Nova eval gate {}: {status}", report.suite_name);
+    println!("  gate_configured: {}", report.gate_configured);
+    if let Some(threshold) = report.threshold {
+        println!("  threshold: {threshold:.3}");
+    }
+    println!("  pass_rate: {:.3}", report.pass_rate);
+    println!("  total_evals: {}", report.total_evals);
+    println!("  failed_evals: {}", report.failed_evals);
+    if let Some(timestamp) = report.telemetry_timestamp.as_ref() {
+        println!("  telemetry_timestamp: {timestamp}");
+    }
+    println!("  message: {}", report.message);
+    if !report.failed_eval_ids.is_empty() {
+        println!("  failed_eval_ids: {}", report.failed_eval_ids.join(", "));
+    }
+}
+
 fn write_eval_telemetry(
     report: &EvalReport,
-    suite_path: &str,
-    manifest_hash: Option<&str>,
-    duration_ms: u64,
-    retention: Option<usize>,
-    agent: Option<AgentTelemetryContext<'_>>,
+    context: EvalTelemetryRunContext<'_>,
 ) -> DispatchResult {
     let telemetry_path = telemetry_path_for_suite(&report.suite_name);
     if let Some(parent) = telemetry_path.parent() {
@@ -1993,8 +2379,14 @@ fn write_eval_telemetry(
     }
     let timestamp_ms = timestamp_millis();
     let timestamp = format_utc_timestamp_millis(timestamp_ms);
+    let run_id = format!(
+        "{}-{}-{timestamp_ms}",
+        report.mode,
+        safe_path_segment(&report.suite_name)
+    );
     let git_sha = current_git_sha();
-    let manifest_hash = manifest_hash
+    let manifest_hash = context
+        .manifest_hash
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
@@ -2009,8 +2401,19 @@ fn write_eval_telemetry(
             let mut row = serde_json::Map::new();
             row.insert("timestamp".to_string(), json!(&timestamp));
             row.insert("timestamp_ms".to_string(), json!(timestamp_ms));
+            row.insert("run_id".to_string(), json!(&run_id));
+            row.insert("run_case_count".to_string(), json!(report.cases.len()));
+            row.insert(
+                "suite_case_count".to_string(),
+                json!(context.suite_case_count),
+            );
+            row.insert(
+                "run_assertion_count".to_string(),
+                json!(report.assertion_count),
+            );
             row.insert("suite_name".to_string(), json!(&report.suite_name));
-            row.insert("suite_path".to_string(), json!(suite_path));
+            row.insert("suite_path".to_string(), json!(context.suite_path));
+            row.insert("suite_hash".to_string(), json!(context.suite_hash));
             row.insert("mode".to_string(), json!(report.mode));
             row.insert("case_id".to_string(), json!(&case.id));
             row.insert("assertion_name".to_string(), json!(&assertion.name));
@@ -2023,7 +2426,7 @@ fn write_eval_telemetry(
                 "grade_mode".to_string(),
                 json!(telemetry_grade_mode(report.mode)),
             );
-            row.insert("duration_ms".to_string(), json!(duration_ms));
+            row.insert("duration_ms".to_string(), json!(context.duration_ms));
             row.insert("output_dir".to_string(), json!(&report.output_dir));
             if let Some(manifest_hash) = manifest_hash.as_ref() {
                 row.insert("manifest_hash".to_string(), json!(manifest_hash));
@@ -2031,7 +2434,7 @@ fn write_eval_telemetry(
             if let Some(git_sha) = git_sha.as_ref() {
                 row.insert("git_sha".to_string(), json!(git_sha));
             }
-            if let Some(agent) = agent {
+            if let Some(agent) = context.agent {
                 row.insert("provider".to_string(), json!(agent.provider));
                 row.insert(
                     "provider_command_preset".to_string(),
@@ -2070,7 +2473,7 @@ fn write_eval_telemetry(
     }
     drop(file);
 
-    if let Some(max_rows) = retention {
+    if let Some(max_rows) = context.retention {
         apply_telemetry_retention(&telemetry_path, max_rows)?;
     }
     Ok(())
@@ -2487,29 +2890,46 @@ impl AgentExpected {
 }
 
 fn load_suite(path: &str) -> crate::error::Result<EvalSuite> {
-    let raw = fs::read_to_string(path).map_err(|error| {
+    load_suite_with_hash(path).map(|(suite, _hash)| suite)
+}
+
+fn load_suite_with_hash(path: &str) -> crate::error::Result<(EvalSuite, String)> {
+    let raw = fs::read(path).map_err(|error| {
         DbtNovaError::InvalidParams(format!("failed to read eval suite '{path}': {error}"))
+    })?;
+    let suite_hash = blake3::hash(&raw).to_hex().to_string();
+    let raw = std::str::from_utf8(&raw).map_err(|error| {
+        DbtNovaError::InvalidParams(format!(
+            "failed to read eval suite '{path}' as UTF-8: {error}"
+        ))
     })?;
     let suite: EvalSuite = if Path::new(path)
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
     {
-        serde_json::from_str(&raw).map_err(|error| {
+        serde_json::from_str(raw).map_err(|error| {
             DbtNovaError::InvalidParams(format!("failed to parse eval suite JSON: {error}"))
         })?
     } else {
-        serde_yaml::from_str(&raw).map_err(|error| {
+        serde_yaml::from_str(raw).map_err(|error| {
             DbtNovaError::InvalidParams(format!("failed to parse eval suite YAML: {error}"))
         })?
     };
     validate_suite(&suite)?;
-    Ok(suite)
+    Ok((suite, suite_hash))
 }
 
 fn validate_suite(suite: &EvalSuite) -> crate::error::Result<()> {
     if suite.version == 0 {
         return Err(DbtNovaError::InvalidParams(
             "eval suite version must be greater than zero".to_string(),
+        ));
+    }
+    if let Some(gate) = suite.gate
+        && !(0.0..=1.0).contains(&gate.threshold)
+    {
+        return Err(DbtNovaError::InvalidParams(
+            "eval suite gate.threshold must be between 0.0 and 1.0".to_string(),
         ));
     }
     validate_case_ids(suite.cases.iter().map(|case| case.id.as_str()), "cases")?;

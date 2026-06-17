@@ -304,12 +304,13 @@ dbt-nova eval agent run \
   --telemetry
 ```
 
-Rows include the suite name/path, mode, case id, assertion name/type, status,
-run duration, output directory, git SHA when available, and manifest hash for
-bridge runs. Agent rows also include provider metadata and sanitized trace
-counters such as tool-call count, distinct tool count, response bytes, and token
-counts when a provider trace exposes them. Telemetry does not store raw SQL
-parameter maps, provider stdout/stderr, or credentials.
+Rows include a run id, run/suite case counts, run assertion count, suite
+name/path/hash, mode, case id, assertion name/type, status, run duration, output
+directory, git SHA when available, and manifest hash for bridge runs. Agent rows
+also include provider metadata and sanitized trace counters such as tool-call
+count, distinct tool count, response bytes, and token counts when a provider
+trace exposes them. Telemetry does not store raw SQL parameter maps, provider
+stdout/stderr, or credentials.
 
 Use `eval history` for a thin date filter over the JSONL file:
 
@@ -319,6 +320,40 @@ dbt-nova eval history --suite agent-tokenomics-bridge --since 2026-06-01
 
 Use `--telemetry-retention <ROWS>` with `eval run` or `eval agent run` to keep
 only the newest rows for that suite after appending the current run.
+
+## Readiness Gates
+
+Suites can declare an advisory readiness threshold:
+
+```yaml
+version: 1
+name: analyst-smoke
+gate:
+  threshold: 0.9
+```
+
+After running the full suite with `--telemetry`, check the latest run:
+
+```bash
+dbt-nova eval gate analyst-smoke --json
+```
+
+The gate scans the suite telemetry JSONL, selects the latest run, computes its
+pass rate, and reports `allowed`, `blocked`, `gate_configured`, `pass_rate`,
+`total_evals`, `failed_evals`, `failed_eval_ids`, `failed_case_ids`, and the
+telemetry timestamp. Configured gates require the latest telemetry to match the
+current suite file hash, cover the full suite, and include every assertion row
+for that run, so stale suite files, filtered `--case-id` runs, and row-trimmed
+telemetry are blocked with rerun guidance. If the suite has no
+`gate.threshold`, the command returns `allowed=true` with
+`gate_configured=false`. If telemetry is missing, the command returns an
+actionable message to run the suite with `--telemetry` first. If the latest
+telemetry points at a suite file that cannot be read, the gate is blocked
+because the threshold cannot be verified.
+
+Gate results are advisory in this release. Use them to warn before
+launch-readiness checks or high-stakes analysis; they do not hard-block MCP
+tooling or hosted server startup.
 
 ## Tool Trace
 

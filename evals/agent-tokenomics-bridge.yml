@@ -1,5 +1,7 @@
 version: 1
 name: agent-tokenomics-bridge
+gate:
+  threshold: 1.0
 defaults:
   persona: analyst
   top_k: 5
