@@ -1,6 +1,6 @@
 ---
 source: tests/snapshots.rs
-assertion_line: 39
+assertion_line: 94
 expression: result
 ---
 {
@@ -40,6 +40,78 @@ expression: result
         "weighted": 0.0
       }
     },
+    "diagnostics": [
+      {
+        "category": "documentation",
+        "code": "description_tier_progress",
+        "field": "description",
+        "full_credit_chars": 100,
+        "good_enough_chars": 50,
+        "label": "entity description",
+        "max": 30,
+        "message": "entity description has 18 character(s); 50-99 chars receive 80% description-tier credit and 100+ chars receive full credit",
+        "next_threshold_chars": 20,
+        "observed_chars": 18,
+        "score": 6
+      },
+      {
+        "category": "documentation",
+        "code": "description_tier_progress",
+        "field": "columns.order_id.description",
+        "full_credit_chars": 100,
+        "good_enough_chars": 50,
+        "label": "column description",
+        "max": 100,
+        "message": "column description has 2 character(s); 50-99 chars receive 80% description-tier credit and 100+ chars receive full credit",
+        "next_threshold_chars": 20,
+        "observed_chars": 2,
+        "score": 20
+      },
+      {
+        "category": "semantic",
+        "code": "array_tier_progress",
+        "count": 0,
+        "field": "meta.nova.synonyms",
+        "full_credit_count": 3,
+        "max": 12,
+        "message": "synonyms improve retrieval recall and receive full array-tier credit at three or more items",
+        "next_useful_count": 1,
+        "score": 0
+      },
+      {
+        "category": "semantic",
+        "code": "array_tier_progress",
+        "count": 0,
+        "field": "meta.nova.domains",
+        "full_credit_count": 3,
+        "max": 12,
+        "message": "domains improve routing and receive full array-tier credit at three or more items",
+        "next_useful_count": 1,
+        "score": 0
+      },
+      {
+        "category": "semantic",
+        "code": "array_tier_progress",
+        "count": 0,
+        "field": "meta.nova.use_cases",
+        "full_credit_count": 3,
+        "max": 12,
+        "message": "use cases help agents choose the right asset and receive full array-tier credit at three or more items",
+        "next_useful_count": 1,
+        "score": 0
+      },
+      {
+        "category": "governance",
+        "code": "array_tier_progress",
+        "count": 0,
+        "field": "meta.nova.governance.compliance",
+        "full_credit_count": 3,
+        "max": 20,
+        "message": "compliance tags receive partial credit for one or two items and full array-tier credit at three or more items",
+        "next_useful_count": 1,
+        "score": 0
+      }
+    ],
     "grade": "F",
     "name": "fct__orders",
     "overall_score": 2,
@@ -47,6 +119,98 @@ expression: result
     "recommendations": [],
     "resource_type": "model",
     "scope": "entity",
+    "scoring_contract": {
+      "array_count_tiers": [
+        {
+          "count": 0,
+          "credit_percent": 0
+        },
+        {
+          "count": 1,
+          "credit_percent": 40
+        },
+        {
+          "count": 2,
+          "credit_percent": 70
+        },
+        {
+          "applies_to": "3+",
+          "count": 3,
+          "credit_percent": 100
+        }
+      ],
+      "description_tiers": [
+        {
+          "credit_percent": 0,
+          "max_chars": 0,
+          "min_chars": 0
+        },
+        {
+          "credit_percent": 20,
+          "max_chars": 19,
+          "min_chars": 1
+        },
+        {
+          "credit_percent": 50,
+          "max_chars": 49,
+          "min_chars": 20
+        },
+        {
+          "credit_percent": 80,
+          "max_chars": 99,
+          "min_chars": 50
+        },
+        {
+          "credit_percent": 100,
+          "max_chars": null,
+          "min_chars": 100
+        }
+      ],
+      "grade_bands": [
+        {
+          "grade": "A",
+          "max_score": 100,
+          "min_score": 90
+        },
+        {
+          "grade": "B",
+          "max_score": 89,
+          "min_score": 80
+        },
+        {
+          "grade": "C",
+          "max_score": 79,
+          "min_score": 70
+        },
+        {
+          "grade": "D",
+          "max_score": 69,
+          "min_score": 60
+        },
+        {
+          "grade": "F",
+          "max_score": 59,
+          "min_score": 0
+        }
+      ],
+      "grain_shape": {
+        "canonical_fields": {
+          "dimensions": "optional array of dimension column names",
+          "primary_key": "array of primary-key column names",
+          "time_field": "time column name"
+        },
+        "required_type": "object"
+      },
+      "primary_key_integrity": {
+        "evidence_source": "dbt manifest test metadata only",
+        "required_manifest_tests": [
+          "unique",
+          "not_null"
+        ],
+        "warehouse_introspection": false
+      },
+      "schema_version": "metadata_score_contract.v1"
+    },
     "unique_id": "model.nova_test.fct__orders"
   },
   "success": true

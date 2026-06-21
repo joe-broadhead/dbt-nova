@@ -55,6 +55,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agent-readiness reports now include advisory `suggested_meta_patches` for
   reviewable `meta.nova` remediation and draft `golden_question_seeds` for
   turning readiness gaps into eval backlog candidates.
+- Metadata scoring now returns a shared `metadata_score_contract.v1` scoring
+  contract plus machine-readable diagnostics for description tiers, array-count
+  tier progress, invalid Nova grain shapes, and primary-key integrity test gaps.
+- Metadata score, metadata audit, agent-readiness, and modelling consistency
+  outputs now include compact agent triage summaries with score/grade buckets,
+  weak spots, repeated recommendation fields, bounded examples, and drill-down
+  hints for fetching detailed rows intentionally.
 - Added the `get_agent_readiness` MCP tool and CLI `tool call` bridge support
   for the same `agent_readiness.v1` report without CLI report-file writes.
 - Added the `get_metadata_audit` MCP tool and CLI `tool call` bridge support

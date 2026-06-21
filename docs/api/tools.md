@@ -344,6 +344,11 @@ Common:
 {"name":"modelling_consistency_report","arguments":{"resource_types":["model"],"limit":20}}
 ```
 
+Responses include a compact `summary` with section counts, top duplicate
+indicator groups, top canonical conflicts, overlap evidence category counts,
+bounded overlap examples, multi-grain entity highlights, and drill-down hints.
+The existing detail arrays remain paged by `limit` and `offset`.
+
 ### `get_entity`
 Fetch a single entity by `unique_id` or name.
 
@@ -660,8 +665,14 @@ Optional:
 - `limit` (project scope)
 - `offset` (project scope pagination)
 
-Project scope responses include `quality_summary.test_coverage`, aggregated
-across the returned entities and use deterministic ordering for pagination.
+Responses include `scoring_contract` metadata describing grade bands,
+description tiers, array-count tiers, canonical grain shape, and primary-key
+integrity evidence rules. Entity and column scope responses include
+`diagnostics` rows for partial or missing credit. Project scope responses include
+`quality_summary.test_coverage`, aggregated across the returned entities, plus
+`summary` scope/paging metadata, buckets, weak spots, repeated recommendation
+fields, and drill-down hints. Project rows use deterministic ordering for
+pagination.
 
 ```json
 {"name":"get_metadata_score","arguments":{"id_or_name":"model.jaffle_shop.orders","persona":"analyst","scope":"entity"}}
@@ -690,6 +701,9 @@ Optional:
 
 Required threshold failures are returned in `data.gate_status` and
 `data.summary`; they do not become MCP transport errors.
+`data.summary` also includes score/grade buckets, worst entities by persona,
+category weak spots, repeated recommendation fields with estimated impact, and
+drill-down hints.
 
 ```json
 {"name":"get_metadata_audit","arguments":{"selection_mode":"changed","changed_files_json":"[\"models/marts/orders.sql\"]"}}
@@ -711,7 +725,9 @@ The tool returns the same `agent_readiness.v1` report contract as
 CLI exit semantics. Reports include advisory `suggested_meta_patches` for
 reviewable dbt metadata remediation and draft `golden_question_seeds` for eval
 authoring. Suggested patches never edit files, and generated seeds should be
-reviewed before becoming CI gates.
+reviewed before becoming CI gates. Reports also include the shared metadata
+`scoring_contract` and compact `summary` triage fields for score buckets, weak
+spots, repeated fields, and drill-down hints.
 
 Large reports use the standard MCP response-budget behavior; check
 `_nova_result_meta.truncated` when response budgeting is enabled.

@@ -5,6 +5,9 @@ use crate::manifest::search::ManifestSearch;
 
 use super::super::CategoryScore;
 use crate::tools::metadata_score::helpers::{clamp_to_u8, grade_from_score};
+use crate::tools::metadata_score::{
+    build_column_score_diagnostics, metadata_score_scoring_contract,
+};
 
 impl ManifestSearch {
     pub(crate) fn score_column(
@@ -92,6 +95,14 @@ impl ManifestSearch {
                 "governance": { "score": governance.score, "weight": governance.weight, "weighted": governance.weighted() },
                 "quality": { "score": quality.score, "weight": quality.weight, "weighted": quality.weighted() }
             }),
+        );
+        obj.insert(
+            "diagnostics".to_string(),
+            build_column_score_diagnostics(column_name, column_info),
+        );
+        obj.insert(
+            "scoring_contract".to_string(),
+            metadata_score_scoring_contract(),
         );
 
         if include_breakdown {

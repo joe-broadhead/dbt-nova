@@ -4,6 +4,7 @@ use crate::config::MetadataCategoryWeights;
 use crate::manifest::search::ManifestSearch;
 
 use super::super::{CategoryScore, ScoredMetadata};
+use crate::tools::metadata_score::build_entity_score_diagnostics;
 use crate::tools::metadata_score::helpers::{clamp_to_u8, grade_from_score};
 
 impl ManifestSearch {
@@ -118,6 +119,7 @@ impl ManifestSearch {
             grade: grade_from_score(overall).to_string(),
             categories,
             breakdown,
+            diagnostics: build_entity_score_diagnostics(self, unique_id, entity_json),
             recommendations: if include_recommendations {
                 recommendations
             } else {
