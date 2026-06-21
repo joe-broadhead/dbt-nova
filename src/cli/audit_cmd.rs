@@ -13,7 +13,10 @@ use crate::cli::output::CliEnvelope;
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::entity::ArchivedEntity;
 use crate::manifest::search::ManifestSearch;
-use crate::params::GetMetadataScoreParams;
+use crate::params::{
+    GetMetadataAuditParams, GetMetadataScoreParams, MetadataAuditSelectionModeParam,
+};
+use crate::responses::SuccessResponse;
 use crate::utils::SearchPersona;
 
 use super::{DispatchError, DispatchResult};
@@ -219,6 +222,49 @@ pub async fn run_metadata_score_command(args: &MetadataAuditArgs) -> DispatchRes
     }
 
     Ok(())
+}
+
+/// Builds the MCP/CLI-tool response for the metadata audit report.
+///
+/// Required threshold failures remain report data; this helper does not apply
+/// CLI exit semantics.
+///
+/// # Errors
+/// Returns an error when parameter JSON is invalid or report generation fails.
+pub(crate) async fn build_metadata_audit_tool_response(
+    search: &ManifestSearch,
+    params: &GetMetadataAuditParams,
+) -> Result<JsonValue> {
+    let args = metadata_audit_args_from_tool_params(params);
+    let audit_inputs = parse_audit_inputs(&args)?;
+    let report = build_metadata_audit_report(search, &audit_inputs, &args).await?;
+    serde_json::to_value(SuccessResponse::new(report, 1))
+        .map_err(|error| DbtNovaError::ServerError(error.to_string()))
+}
+
+fn metadata_audit_args_from_tool_params(params: &GetMetadataAuditParams) -> MetadataAuditArgs {
+    MetadataAuditArgs {
+        selection_mode: metadata_audit_selection_mode_from_param(params.selection_mode),
+        changed_files_json: params.changed_files_json.clone(),
+        entity_ids_json: params.entity_ids_json.clone(),
+        resource_types_json: params.resource_types_json.clone(),
+        personas_json: params.personas_json.clone(),
+        thresholds_json: params.thresholds_json.clone(),
+        include_breakdown: params.include_breakdown,
+        include_recommendations: params.include_recommendations,
+        fail_on_no_targets: params.fail_on_no_targets,
+        ..MetadataAuditArgs::default()
+    }
+}
+
+fn metadata_audit_selection_mode_from_param(
+    mode: MetadataAuditSelectionModeParam,
+) -> MetadataAuditSelectionModeArg {
+    match mode {
+        MetadataAuditSelectionModeParam::Project => MetadataAuditSelectionModeArg::Project,
+        MetadataAuditSelectionModeParam::Changed => MetadataAuditSelectionModeArg::Changed,
+        MetadataAuditSelectionModeParam::Entities => MetadataAuditSelectionModeArg::Entities,
+    }
 }
 
 fn parse_audit_inputs(args: &MetadataAuditArgs) -> Result<AuditInputs> {
@@ -882,6 +928,7 @@ mod tests {
     };
     use crate::cli::args::{MetadataAuditArgs, MetadataAuditSelectionModeArg};
     use crate::cli::manifest::{build_manifest_load_config, execute_manifest_load};
+    use crate::params::{GetMetadataAuditParams, MetadataAuditSelectionModeParam};
     use crate::tests::common::fixture_manifest_path_string;
     use serde_json::Value as JsonValue;
     use serde_json::json;
@@ -1037,6 +1084,94 @@ mod tests {
         assert_eq!(
             engineer.breakdown["quality"]["primary_key"]["present"].as_bool(),
             Some(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn metadata_audit_tool_response_keeps_required_failures_as_data() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let args = MetadataAuditArgs {
+            manifest_path: Some(fixture_manifest_path_string()),
+            storage_instance_id: Some("metadata-audit-tool-response-test".to_string()),
+            cleanup_storage_on_start: true,
+            ..MetadataAuditArgs::default()
+        };
+        let load_args = crate::cli::args::ManifestLoadArgs {
+            manifest_path: args.manifest_path.clone(),
+            storage_instance_id: args.storage_instance_id.clone(),
+            cleanup_storage_on_start: args.cleanup_storage_on_start,
+            ..crate::cli::args::ManifestLoadArgs::default()
+        };
+        let mut config = build_manifest_load_config(&load_args).expect("config");
+        config.storage_dir = temp_dir.path().to_string_lossy().to_string();
+        let loaded = execute_manifest_load(config).await.expect("load");
+
+        let response = super::build_metadata_audit_tool_response(
+            &loaded.search,
+            &GetMetadataAuditParams {
+                selection_mode: MetadataAuditSelectionModeParam::Project,
+                resource_types_json: Some(r#"["model"]"#.to_string()),
+                personas_json: Some(r#"["engineer"]"#.to_string()),
+                thresholds_json: Some(
+                    r#"{"project":{"engineer":{"min_score":101,"severity":"required"}}}"#
+                        .to_string(),
+                ),
+                include_recommendations: Some(false),
+                ..GetMetadataAuditParams::default()
+            },
+        )
+        .await
+        .expect("tool response");
+
+        assert_eq!(response["success"], json!(true));
+        assert_eq!(response["count"], json!(1));
+        assert_eq!(response["data"]["selection_mode"], json!("project"));
+        assert_eq!(response["data"]["gate_status"], json!("fail"));
+        assert_eq!(response["data"]["summary"]["required_fail_count"], json!(1));
+        assert!(response["data"]["project_summary"]["engineer"].is_object());
+    }
+
+    #[tokio::test]
+    async fn metadata_audit_tool_response_uses_changed_selection() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let args = MetadataAuditArgs {
+            manifest_path: Some(fixture_manifest_path_string()),
+            storage_instance_id: Some("metadata-audit-tool-changed-test".to_string()),
+            cleanup_storage_on_start: true,
+            ..MetadataAuditArgs::default()
+        };
+        let load_args = crate::cli::args::ManifestLoadArgs {
+            manifest_path: args.manifest_path.clone(),
+            storage_instance_id: args.storage_instance_id.clone(),
+            cleanup_storage_on_start: args.cleanup_storage_on_start,
+            ..crate::cli::args::ManifestLoadArgs::default()
+        };
+        let mut config = build_manifest_load_config(&load_args).expect("config");
+        config.storage_dir = temp_dir.path().to_string_lossy().to_string();
+        let loaded = execute_manifest_load(config).await.expect("load");
+
+        let response = super::build_metadata_audit_tool_response(
+            &loaded.search,
+            &GetMetadataAuditParams {
+                selection_mode: MetadataAuditSelectionModeParam::Changed,
+                changed_files_json: Some(
+                    r#"["models/staging/traffic/stg__traffic_sessions.sql"]"#.to_string(),
+                ),
+                resource_types_json: Some(r#"["model"]"#.to_string()),
+                personas_json: Some(r#"["engineer"]"#.to_string()),
+                include_recommendations: Some(false),
+                ..GetMetadataAuditParams::default()
+            },
+        )
+        .await
+        .expect("tool response");
+
+        assert_eq!(response["success"], json!(true));
+        assert_eq!(response["data"]["selection_mode"], json!("changed"));
+        assert_eq!(response["data"]["target_count"], json!(1));
+        assert_eq!(
+            response["data"]["selected_entity_ids"],
+            json!(["model.nova_test.stg__traffic_sessions"])
         );
     }
 

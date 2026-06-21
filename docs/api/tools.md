@@ -1,6 +1,6 @@
 # Tools Reference
 
-This reference lists all 34 MCP tools exposed by dbt‑nova, grouped by category.
+This reference lists all 35 MCP tools exposed by dbt‑nova, grouped by category.
 All tools return the standard envelope described in [Response Format](response-format.md).
 For CLI equivalents and known parity gaps, see
 [MCP/CLI Parity](mcp-cli-parity.md).
@@ -668,6 +668,34 @@ across the returned entities and use deterministic ordering for pagination.
 ```
 
 See `docs/features/metadata-scoring.md` for scoring rules, personas, and examples.
+
+### `get_metadata_audit`
+Higher-level metadata audit report and gate status for project, changed-file, or
+explicit-entity selections.
+
+Use `get_metadata_score` for a single score lookup or raw project scoring data.
+Use `get_metadata_audit` when you need the CLI audit workflow: selection modes,
+thresholds, required/advisory gate status, project summary, entity rows, and
+report-ready JSON.
+
+Optional:
+- `selection_mode` (`project`, `changed`, `entities`; default `project`)
+- `changed_files_json`: JSON array of changed file paths for `changed`
+- `entity_ids_json`: JSON array of ids or names for `entities`
+- `resource_types_json`: JSON array, defaulting to `["model"]`
+- `personas_json`: JSON array, defaulting to `["engineer"]`
+- `thresholds_json`: JSON required/advisory threshold configuration
+- `include_breakdown`, `include_recommendations`
+- `fail_on_no_targets`
+
+Required threshold failures are returned in `data.gate_status` and
+`data.summary`; they do not become MCP transport errors.
+
+```json
+{"name":"get_metadata_audit","arguments":{"selection_mode":"changed","changed_files_json":"[\"models/marts/orders.sql\"]"}}
+```
+
+See `docs/features/metadata-audit.md` for report fields and threshold examples.
 
 ### `get_agent_readiness`
 Manifest-level readiness report for agent workflows.

@@ -15,6 +15,7 @@ use rmcp::{
 use tracing::instrument;
 
 use crate::cli::agent_readiness_cmd::build_agent_readiness_tool_response;
+use crate::cli::audit_cmd::build_metadata_audit_tool_response;
 use crate::config::DbtNovaConfig;
 use crate::error::DbtNovaError;
 use crate::manifest::search::{ManifestSearch, ManifestSearchHandle};
@@ -22,11 +23,11 @@ use crate::params::{
     BatchGetParams, ColumnInventoryParams, CompareGrainsParams, DiffEntitiesParams,
     ExecuteSqlParams, FindByPathParams, FindEntityOverlapParams, GetAgentReadinessParams,
     GetColumnLineageParams, GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams,
-    GetLineageParams, GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
-    GetUndocumentedParams, IndicatorInventoryParams, ListEntitiesParams,
-    ModellingConsistencyReportParams, PaginationParams, ParentGroupMode, ReloadManifestParams,
-    RunRecipeParams, SearchColumnsParams, SearchIndicatorParams, SearchParams, SearchRecipesParams,
-    ValidateDagParams,
+    GetLineageParams, GetMetadataAuditParams, GetMetadataScoreParams, GetRecipeParams,
+    GetSqlParams, GetTestCoverageParams, GetUndocumentedParams, IndicatorInventoryParams,
+    ListEntitiesParams, ModellingConsistencyReportParams, PaginationParams, ParentGroupMode,
+    ReloadManifestParams, RunRecipeParams, SearchColumnsParams, SearchIndicatorParams,
+    SearchParams, SearchRecipesParams, ValidateDagParams,
 };
 use crate::responses::SuccessResponse;
 use crate::server::health::build_manifest_health_payload;
@@ -1847,6 +1848,19 @@ impl DbtNovaServer {
         .await
     }
 
+    /// Get the higher-level metadata audit report and gate status.
+    #[tool(
+        name = "get_metadata_audit",
+        description = "Metadata audit report. Runs the same report/gate logic as audit metadata-score without writing files or turning required failures into transport errors."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn get_metadata_audit(&self, params: Parameters<GetMetadataAuditParams>) -> String {
+        self.handle_async("get_metadata_audit", None, |searcher| async move {
+            build_metadata_audit_tool_response(&searcher, &params.0).await
+        })
+        .await
+    }
+
     /// Get the manifest-level agent-readiness report.
     #[tool(
         name = "get_agent_readiness",
@@ -2804,6 +2818,47 @@ mod tests {
             serde_json::json!("allowed")
         );
         assert!(response["data"]["persona_scores"]["engineer"].is_object());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn metadata_audit_returns_gate_data() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path());
+        config.mcp_max_response_bytes = 0;
+        let handle = ManifestSearchHandle::spawn(config);
+        handle
+            .wait_ready()
+            .await
+            .expect("fixture manifest should load");
+        let server = DbtNovaServer::new(handle);
+
+        let response: serde_json::Value = serde_json::from_str(
+            &server
+                .get_metadata_audit(Parameters(GetMetadataAuditParams {
+                    resource_types_json: Some(r#"["model"]"#.to_string()),
+                    personas_json: Some(r#"["engineer"]"#.to_string()),
+                    thresholds_json: Some(
+                        r#"{"project":{"engineer":{"min_score":101,"severity":"required"}}}"#
+                            .to_string(),
+                    ),
+                    include_recommendations: Some(false),
+                    ..GetMetadataAuditParams::default()
+                }))
+                .await,
+        )
+        .expect("metadata audit response JSON");
+
+        assert_eq!(response["success"], serde_json::json!(true));
+        assert_eq!(response["count"], serde_json::json!(1));
+        assert_eq!(
+            response["data"]["selection_mode"],
+            serde_json::json!("project")
+        );
+        assert_eq!(response["data"]["gate_status"], serde_json::json!("fail"));
+        assert_eq!(
+            response["data"]["summary"]["required_fail_count"],
+            serde_json::json!(1)
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

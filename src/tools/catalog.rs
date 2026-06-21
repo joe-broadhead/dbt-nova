@@ -1,5 +1,5 @@
 /// Canonical MCP tool names exposed by dbt-nova.
-pub const MCP_TOOL_NAMES: [&str; 34] = [
+pub const MCP_TOOL_NAMES: [&str; 35] = [
     "search",
     "search_indicator",
     "indicator_inventory",
@@ -25,6 +25,7 @@ pub const MCP_TOOL_NAMES: [&str; 34] = [
     "get_column_lineage",
     "get_test_coverage",
     "get_metadata_score",
+    "get_metadata_audit",
     "get_agent_readiness",
     "batch_get_entities",
     "find_by_path",
@@ -115,10 +116,10 @@ pub const CLI_MCP_PARITY_MATRIX: [CliMcpParityEntry; 20] = [
     },
     CliMcpParityEntry {
         cli_command: "audit metadata-score",
-        mcp_tool: Some("get_metadata_score"),
-        status: CliMcpParityStatus::Gap,
-        issue: Some("JOE-218"),
-        notes: "MCP has the primitive score tool but not the audit/report/gate wrapper",
+        mcp_tool: Some("get_metadata_audit"),
+        status: CliMcpParityStatus::Equivalent,
+        issue: None,
+        notes: "MCP returns the same metadata audit report without CLI file writes or exit semantics",
     },
     CliMcpParityEntry {
         cli_command: "audit nova-meta",

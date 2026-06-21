@@ -8,6 +8,7 @@ use serde_json::Value as JsonValue;
 
 use crate::cli::agent_readiness_cmd::build_agent_readiness_tool_response;
 use crate::cli::args::{ManifestLoadArgs, ManifestReloadArgs, ToolCallArgs};
+use crate::cli::audit_cmd::build_metadata_audit_tool_response;
 use crate::cli::health_cmd::build_cli_health_payload;
 use crate::cli::manifest::{
     build_manifest_load_config, build_manifest_reload_config, execute_manifest_load,
@@ -19,10 +20,11 @@ use crate::params::{
     BatchGetParams, ColumnInventoryParams, CompareGrainsParams, DiffEntitiesParams,
     ExecuteSqlParams, FindByPathParams, FindEntityOverlapParams, GetAgentReadinessParams,
     GetColumnLineageParams, GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams,
-    GetLineageParams, GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
-    GetUndocumentedParams, IndicatorInventoryParams, ListEntitiesParams,
-    ModellingConsistencyReportParams, ReloadManifestParams, RunRecipeParams, SearchColumnsParams,
-    SearchIndicatorParams, SearchParams, SearchRecipesParams, ValidateDagParams,
+    GetLineageParams, GetMetadataAuditParams, GetMetadataScoreParams, GetRecipeParams,
+    GetSqlParams, GetTestCoverageParams, GetUndocumentedParams, IndicatorInventoryParams,
+    ListEntitiesParams, ModellingConsistencyReportParams, ReloadManifestParams, RunRecipeParams,
+    SearchColumnsParams, SearchIndicatorParams, SearchParams, SearchRecipesParams,
+    ValidateDagParams,
 };
 use crate::responses::SuccessResponse;
 
@@ -37,7 +39,7 @@ struct ToolRegistryEntry {
     dispatch: ToolDispatchFn,
 }
 
-const TOOL_REGISTRY: [ToolRegistryEntry; 34] = [
+const TOOL_REGISTRY: [ToolRegistryEntry; 35] = [
     ToolRegistryEntry {
         name: "search",
         dispatch: dispatch_search,
@@ -137,6 +139,10 @@ const TOOL_REGISTRY: [ToolRegistryEntry; 34] = [
     ToolRegistryEntry {
         name: "get_metadata_score",
         dispatch: dispatch_get_metadata_score,
+    },
+    ToolRegistryEntry {
+        name: "get_metadata_audit",
+        dispatch: dispatch_get_metadata_audit,
     },
     ToolRegistryEntry {
         name: "get_agent_readiness",
@@ -674,6 +680,13 @@ typed_dispatch!(
     get_metadata_score
 );
 
+fn dispatch_get_metadata_audit(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: GetMetadataAuditParams = decode_tool_params("get_metadata_audit", params)?;
+        build_metadata_audit_tool_response(searcher, &decoded).await
+    })
+}
+
 fn dispatch_get_agent_readiness(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
     Box::pin(async move {
         let decoded: GetAgentReadinessParams = decode_tool_params("get_agent_readiness", params)?;
@@ -889,6 +902,31 @@ mod tests {
             result["data"]["eval_status"]["status"],
             serde_json::json!("allowed")
         );
+    }
+
+    #[tokio::test]
+    async fn dispatch_get_metadata_audit_returns_gate_data() {
+        let searcher = fixture_searcher().await;
+        let result = dispatch_tool(
+            &searcher,
+            "get_metadata_audit",
+            serde_json::json!({
+                "selection_mode": "project",
+                "resource_types_json": "[\"model\"]",
+                "personas_json": "[\"engineer\"]",
+                "thresholds_json": "{\"project\":{\"engineer\":{\"min_score\":101,\"severity\":\"required\"}}}",
+                "include_recommendations": false
+            }),
+        )
+        .await
+        .expect("metadata audit");
+        assert_eq!(result["success"], serde_json::json!(true));
+        assert_eq!(result["count"], serde_json::json!(1));
+        assert_eq!(
+            result["data"]["selection_mode"],
+            serde_json::json!("project")
+        );
+        assert_eq!(result["data"]["gate_status"], serde_json::json!("fail"));
     }
 
     #[tokio::test]

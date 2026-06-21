@@ -659,6 +659,51 @@ pub struct GetAgentReadinessParams {
     pub eval_gate_json: Option<String>,
 }
 
+/// Selection mode for the get_metadata_audit tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MetadataAuditSelectionModeParam {
+    /// Score all selected resource types.
+    #[default]
+    Project,
+    /// Score manifest entities whose original_file_path or patch_path matches changed files.
+    Changed,
+    /// Score explicit entity ids or unique names.
+    Entities,
+}
+
+/// Parameters for the get_metadata_audit tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct GetMetadataAuditParams {
+    /// Audit selection mode. Defaults to project.
+    #[serde(default)]
+    pub selection_mode: MetadataAuditSelectionModeParam,
+    /// JSON array of changed file paths for changed selection mode.
+    #[serde(default)]
+    pub changed_files_json: Option<String>,
+    /// JSON array of entity ids or names for entities selection mode.
+    #[serde(default)]
+    pub entity_ids_json: Option<String>,
+    /// JSON array of resource types. Defaults to `["model"]`.
+    #[serde(default)]
+    pub resource_types_json: Option<String>,
+    /// JSON array of personas. Defaults to `["engineer"]`.
+    #[serde(default)]
+    pub personas_json: Option<String>,
+    /// JSON threshold configuration for required/advisory gates.
+    #[serde(default)]
+    pub thresholds_json: Option<String>,
+    /// Include per-check metadata score breakdowns. Defaults to true.
+    #[serde(default)]
+    pub include_breakdown: Option<bool>,
+    /// Include metadata score recommendations. Defaults to true.
+    #[serde(default)]
+    pub include_recommendations: Option<bool>,
+    /// Mark no-target selections as required failures.
+    #[serde(default)]
+    pub fail_on_no_targets: bool,
+}
+
 /// Parameters for the reload_manifest tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ReloadManifestParams {
