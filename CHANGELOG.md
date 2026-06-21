@@ -48,6 +48,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dbt-nova eval gate <NAME> --json` reads the latest full-suite telemetry and
   reports allowed/blocked status, pass rate, and failed case/assertion ids,
   blocking stale suite-file telemetry before allowing configured gates.
+- Added `dbt-nova audit agent-readiness` for metadata-only agent readiness
+  reports that combine project metadata scores, entity signal gaps, Nova
+  indicator checks, optional eval gate evidence, JSON/Markdown artifacts, and
+  opt-in blocker exit behavior.
+- Added the `get_agent_readiness` MCP tool and CLI `tool call` bridge support
+  for the same `agent_readiness.v1` report without CLI report-file writes.
+- Added the `get_metadata_audit` MCP tool and CLI `tool call` bridge support
+  for metadata audit reports and required/advisory gate status.
+- Added the `validate_nova_meta` MCP tool and CLI `tool call` bridge support
+  for nova-meta schema/semantic validation with scoped local path access.
+- Added MCP and CLI `tool call` parity for eval workflows:
+  `validate_eval_suite`, `get_eval_gate`, `get_eval_history`, `run_eval`,
+  `init_eval_suite`, and `run_agent_eval`, with explicit opt-in environment
+  gates for local writes, bridge eval execution, provider-backed agent evals,
+  and custom provider commands.
+- Added safety-gated `warm_manifest` MCP and CLI `tool call` parity for
+  semantic cache warmup, using the current manifest source and requiring
+  `DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1`.
+- Added config and storage admin MCP parity with `show_config`,
+  `validate_config`, `inspect_storage`, and safety-gated `prune_storage` /
+  `cleanup_storage` behind `DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1`.
 - Fixed release OCI publishing to build images from native Linux release binaries
   instead of compiling Rust inside the ARM64 Docker/QEMU path.
 - Fixed the Monthly workflow by refreshing advisory/dependency-watchlist review

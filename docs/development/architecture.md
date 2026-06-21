@@ -27,7 +27,7 @@ flowchart TD
 
 ## Architecture Overview (Detailed)
 
-### Tool Map (26 MCP tools)
+### Tool Map (48 MCP tools)
 
 <div class="diagram-large diagram-vertical" markdown>
 
@@ -37,6 +37,10 @@ flowchart LR
 
   subgraph Discovery["Discovery + Ops"]
     TR --> T_search["search"]
+    TR --> T_search_indicator["search_indicator"]
+    TR --> T_indicator_inventory["indicator_inventory"]
+    TR --> T_search_columns["search_columns"]
+    TR --> T_column_inventory["column_inventory"]
     TR --> T_list_entities["list_entities"]
     TR --> T_find_by_path["find_by_path"]
     TR --> T_search_recipes["search_recipes"]
@@ -48,6 +52,12 @@ flowchart LR
     TR --> T_list_databases["list_databases"]
     TR --> T_health["health"]
     TR --> T_reload["reload_manifest"]
+    TR --> T_warm["warm_manifest"]
+    TR --> T_show_config["show_config"]
+    TR --> T_validate_config["validate_config"]
+    TR --> T_inspect_storage["inspect_storage"]
+    TR --> T_prune_storage["prune_storage"]
+    TR --> T_cleanup_storage["cleanup_storage"]
   end
 
   subgraph Entity["Entity Access"]
@@ -73,7 +83,22 @@ flowchart LR
     TR --> T_get_test_coverage["get_test_coverage"]
     TR --> T_get_undocumented["get_undocumented"]
     TR --> T_validate_dag["validate_dag"]
+    TR --> T_validate_nova_meta["validate_nova_meta"]
+    TR --> T_validate_eval_suite["validate_eval_suite"]
+    TR --> T_get_eval_gate["get_eval_gate"]
+    TR --> T_get_eval_history["get_eval_history"]
+    TR --> T_run_eval["run_eval"]
+    TR --> T_init_eval_suite["init_eval_suite"]
+    TR --> T_run_agent_eval["run_agent_eval"]
     TR --> T_metadata_score["get_metadata_score"]
+    TR --> T_metadata_audit["get_metadata_audit"]
+    TR --> T_agent_readiness["get_agent_readiness"]
+  end
+
+  subgraph Modeling["Modeling Consistency"]
+    TR --> T_compare_grains["compare_grains"]
+    TR --> T_find_entity_overlap["find_entity_overlap"]
+    TR --> T_modeling_report["modelling_consistency_report"]
   end
 ```
 
@@ -127,6 +152,10 @@ Implementation note:
 | Tool | Primary components |
 | --- | --- |
 | `search` | Tantivy + Vector Search |
+| `search_indicator` | Nova semantic metadata + ranking indexes |
+| `indicator_inventory` | Nova semantic metadata + indexes |
+| `search_columns` | Column metadata indexes |
+| `column_inventory` | Column metadata indexes |
 | `list_entities` | Indexes |
 | `find_by_path` | Indexes |
 | `search_recipes` | ManifestSearch + manifest `analysis` |
@@ -138,6 +167,12 @@ Implementation note:
 | `list_databases` | Indexes |
 | `health` | ManifestSearch |
 | `reload_manifest` | ManifestLoader |
+| `warm_manifest` | ManifestLoader + semantic cache warmup |
+| `show_config` | DbtNovaConfig |
+| `validate_config` | DbtNovaConfig + runtime validation |
+| `inspect_storage` | Storage metadata |
+| `prune_storage` | Storage retention policy + safety gate |
+| `cleanup_storage` | Storage cleanup + safety gate |
 | `get_entity` | EntityStore |
 | `batch_get_entities` | EntityStore |
 | `get_context` | EntityStore + Indexes |
@@ -151,7 +186,19 @@ Implementation note:
 | `get_test_coverage` | Indexes |
 | `get_undocumented` | Indexes |
 | `validate_dag` | Indexes |
+| `validate_nova_meta` | Nova metadata YAML validator |
+| `validate_eval_suite` | Eval suite validator + local path policy |
+| `get_eval_gate` | Eval telemetry + gate logic |
+| `get_eval_history` | Eval telemetry |
+| `run_eval` | Eval harness + loaded ManifestSearch |
+| `init_eval_suite` | Eval suite starter writer |
+| `run_agent_eval` | Eval harness + provider process |
 | `get_metadata_score` | EntityStore + Indexes |
+| `get_metadata_audit` | Metadata Score + Selection/Gate Logic |
+| `get_agent_readiness` | Metadata Score + Nova metadata |
+| `compare_grains` | Nova metadata + EntityStore |
+| `find_entity_overlap` | Nova metadata + Indexes |
+| `modelling_consistency_report` | Nova metadata + Indexes |
 
 ### Legend
 

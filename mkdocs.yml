@@ -118,6 +118,7 @@ nav:
   - API:
     - Quick Reference: api/quick-reference.md
     - Tools Reference: api/tools.md
+    - MCP/CLI Parity: api/mcp-cli-parity.md
     - Response Format: api/response-format.md
     - Error Codes: api/error-codes.md
     - Metrics Reference: api/metrics-reference.md
@@ -125,6 +126,7 @@ nav:
     - Nova Evals: features/evals.md
     - Analysis Recipes: features/recipes.md
     - Column Lineage: features/column-lineage.md
+    - Agent Readiness Audit: features/agent-readiness.md
     - Metadata Audit: features/metadata-audit.md
     - Metadata Scoring: features/metadata-scoring.md
     - Search Ranking: features/search-ranking.md

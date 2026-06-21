@@ -645,6 +645,221 @@ impl Default for GetMetadataScoreParams {
     }
 }
 
+/// Parameters for the get_agent_readiness tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct GetAgentReadinessParams {
+    /// JSON array of personas to score. Defaults to `["engineer","analyst","governance"]`.
+    #[serde(default)]
+    pub personas_json: Option<String>,
+    /// JSON threshold configuration. Defaults to advisory readiness thresholds.
+    #[serde(default)]
+    pub thresholds_json: Option<String>,
+    /// Inline JSON from `dbt-nova eval gate <SUITE> --json` or the raw gate report.
+    #[serde(default)]
+    pub eval_gate_json: Option<String>,
+}
+
+/// Selection mode for the get_metadata_audit tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MetadataAuditSelectionModeParam {
+    /// Score all selected resource types.
+    #[default]
+    Project,
+    /// Score manifest entities whose original_file_path or patch_path matches changed files.
+    Changed,
+    /// Score explicit entity ids or unique names.
+    Entities,
+}
+
+/// Parameters for the get_metadata_audit tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct GetMetadataAuditParams {
+    /// Audit selection mode. Defaults to project.
+    #[serde(default)]
+    pub selection_mode: MetadataAuditSelectionModeParam,
+    /// JSON array of changed file paths for changed selection mode.
+    #[serde(default)]
+    pub changed_files_json: Option<String>,
+    /// JSON array of entity ids or names for entities selection mode.
+    #[serde(default)]
+    pub entity_ids_json: Option<String>,
+    /// JSON array of resource types. Defaults to `["model"]`.
+    #[serde(default)]
+    pub resource_types_json: Option<String>,
+    /// JSON array of personas. Defaults to `["engineer"]`.
+    #[serde(default)]
+    pub personas_json: Option<String>,
+    /// JSON threshold configuration for required/advisory gates.
+    #[serde(default)]
+    pub thresholds_json: Option<String>,
+    /// Include per-check metadata score breakdowns. Defaults to true.
+    #[serde(default)]
+    pub include_breakdown: Option<bool>,
+    /// Include metadata score recommendations. Defaults to true.
+    #[serde(default)]
+    pub include_recommendations: Option<bool>,
+    /// Mark no-target selections as required failures.
+    #[serde(default)]
+    pub fail_on_no_targets: bool,
+}
+
+/// Resource kind selector for the validate_nova_meta tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NovaMetaResourceKindParam {
+    /// dbt model resource.
+    Model,
+    /// dbt source resource.
+    Source,
+    /// dbt source table resource.
+    Table,
+    /// dbt metric resource.
+    Metric,
+}
+
+/// Parameters for the validate_nova_meta tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct ValidateNovaMetaParams {
+    /// dbt project directory to scan. Relative paths are resolved under the server working directory.
+    #[serde(default)]
+    pub project_dir: Option<String>,
+    /// Relative YAML file or directory paths under project_dir. Omit for project-wide validation.
+    #[serde(default, alias = "path")]
+    pub paths: Vec<String>,
+    /// Optional resource kind selector.
+    #[serde(default)]
+    pub resource_kind: Option<NovaMetaResourceKindParam>,
+    /// Optional resource name selector.
+    #[serde(default)]
+    pub resource_name: Option<String>,
+    /// Optional column selector. Requires resource_name.
+    #[serde(default)]
+    pub column: Option<String>,
+}
+
+/// Parameters for the validate_eval_suite tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct ValidateEvalSuiteParams {
+    /// YAML or JSON eval suite path under the server working directory.
+    pub suite: String,
+}
+
+/// Parameters for the get_eval_gate tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct GetEvalGateParams {
+    /// Eval suite name to check in telemetry.
+    pub suite: String,
+}
+
+/// Parameters for the get_eval_history tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct GetEvalHistoryParams {
+    /// Eval suite name to read history for.
+    pub suite: String,
+    /// Only return telemetry rows on or after this UTC date (YYYY-MM-DD).
+    pub since: String,
+}
+
+/// Parameters for the run_eval tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct RunEvalParams {
+    /// YAML or JSON eval suite path under the server working directory.
+    pub suite: String,
+    /// Directory for eval result artifacts. Defaults to `.nova/eval-runs/...`.
+    #[serde(default)]
+    pub output_dir: Option<String>,
+    /// Append per-assertion JSONL telemetry for this eval run.
+    #[serde(default)]
+    pub telemetry: bool,
+    /// After writing telemetry, keep only the newest ROWS rows for this suite.
+    #[serde(default)]
+    pub telemetry_retention: Option<usize>,
+    /// Only run the named bridge cases.
+    #[serde(default)]
+    pub case_ids: Vec<String>,
+    /// Required pass rate between 0.0 and 1.0.
+    #[serde(default)]
+    pub fail_under: Option<f64>,
+}
+
+/// Parameters for the init_eval_suite tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct InitEvalSuiteParams {
+    /// Persona to use in the generated starter suite. Defaults to analyst.
+    #[serde(default)]
+    pub persona: Option<String>,
+    /// Path to write the suite YAML under the server working directory.
+    pub out: String,
+    /// Overwrite an existing suite file.
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// Parameters for the run_agent_eval tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct RunAgentEvalParams {
+    /// YAML or JSON eval suite path under the server working directory.
+    pub suite: String,
+    /// Provider preset: opencode, codex, claude, goose, or custom.
+    #[serde(default)]
+    pub provider: Option<String>,
+    /// Model id to pass to provider presets that support --model.
+    #[serde(default)]
+    pub provider_model: Option<String>,
+    /// Custom provider command to execute. Requires explicit custom-provider opt-in.
+    #[serde(default)]
+    pub provider_command: Option<String>,
+    /// Custom provider arguments as a JSON string array with placeholders. Requires explicit custom-provider opt-in.
+    #[serde(default)]
+    pub provider_args_json: Option<String>,
+    /// Local dbt manifest.json path under the server working directory.
+    #[serde(default)]
+    pub manifest_path: Option<String>,
+    /// Remote manifest or prebuilt artifact URI.
+    #[serde(default)]
+    pub manifest_uri: Option<String>,
+    /// Storage instance id for cached Nova assets.
+    #[serde(default)]
+    pub storage_instance_id: Option<String>,
+    /// Directory for eval result artifacts. Defaults to `.nova/eval-runs/...`.
+    #[serde(default)]
+    pub output_dir: Option<String>,
+    /// Append per-assertion JSONL telemetry for this eval run.
+    #[serde(default)]
+    pub telemetry: bool,
+    /// After writing telemetry, keep only the newest ROWS rows for this suite.
+    #[serde(default)]
+    pub telemetry_retention: Option<usize>,
+    /// Only run the named agent cases.
+    #[serde(default)]
+    pub case_ids: Vec<String>,
+    /// Provider command timeout in seconds. Defaults to 600.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+    /// Required pass rate between 0.0 and 1.0.
+    #[serde(default)]
+    pub fail_under: Option<f64>,
+    /// Clear the selected storage instance before running the provider.
+    #[serde(default)]
+    pub cleanup_storage_on_start: bool,
+    /// Open storage in read-only mode.
+    #[serde(default)]
+    pub read_only: bool,
+}
+
+/// Parameters for the show_config tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct ConfigShowParams {
+    /// Return default configuration instead of the active runtime configuration.
+    #[serde(default)]
+    pub defaults: bool,
+}
+
+/// Parameters for the validate_config tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct ConfigValidateParams {}
+
 /// Parameters for the reload_manifest tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ReloadManifestParams {
@@ -655,6 +870,54 @@ pub struct ReloadManifestParams {
     /// Optional refresh interval override (seconds)
     pub refresh_secs: Option<u64>,
     /// Optional explicit storage instance id for index storage
+    pub storage_instance_id: Option<String>,
+}
+
+/// Parameters for the warm_manifest tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct WarmManifestParams {
+    /// Warm vector embedding query/model caches.
+    #[serde(default)]
+    pub vector: bool,
+    /// Warm sparse embedding query/model caches.
+    #[serde(default)]
+    pub sparse: bool,
+    /// Warm reranker query/model caches.
+    #[serde(default)]
+    pub reranker: bool,
+    /// Require freshly rebuilt manifest-scoped cache files.
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// Parameters for the inspect_storage tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct StorageInspectParams {
+    /// Optional storage instance id to inspect as the configured instance.
+    #[serde(default)]
+    pub storage_instance_id: Option<String>,
+}
+
+/// Parameters for the prune_storage tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct StoragePruneParams {
+    /// Number of stale storage instances to retain. Defaults to storage policy.
+    #[serde(default)]
+    pub max_keep: Option<usize>,
+    /// Maximum total storage bytes to retain. Defaults to storage policy.
+    #[serde(default)]
+    pub max_bytes: Option<u64>,
+    /// Optional storage instance id to protect from pruning.
+    #[serde(default)]
+    pub storage_instance_id: Option<String>,
+}
+
+/// Parameters for the cleanup_storage tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct StorageCleanupParams {
+    /// Optional storage instance id to clean up.
+    #[serde(default)]
     pub storage_instance_id: Option<String>,
 }
 

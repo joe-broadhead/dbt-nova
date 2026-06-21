@@ -1,11 +1,12 @@
 # Metadata Audit
 
-Nova includes a CLI-first metadata audit flow for CI gates and recurring
-quality reports.
+Nova includes a metadata audit flow for CI gates, MCP-connected agents, and
+recurring quality reports.
 
 Use:
 
 - `dbt-nova audit metadata-score`
+- `get_metadata_audit` MCP tool
 
 This command loads a dbt manifest, scores selected entities with the existing
 metadata scoring rubric, and produces:
@@ -13,6 +14,11 @@ metadata scoring rubric, and produces:
 - JSON report
 - Markdown report
 - required/advisory pass-fail gate result
+
+Use `get_metadata_score` when you need a raw entity, column, or project metadata
+score. Use `get_metadata_audit` when you need the higher-level audit contract:
+selection modes, thresholds, required/advisory gate status, project summary,
+entity rows, and report-ready JSON.
 
 ## Selection Modes
 
@@ -35,6 +41,17 @@ dbt-nova audit metadata-score \
   --report-md-path out/metadata-audit.md \
   --json
 ```
+
+## MCP Tool
+
+```json
+{"name":"get_metadata_audit","arguments":{"selection_mode":"changed","changed_files_json":"[\"models/marts/orders.sql\"]","resource_types_json":"[\"model\"]"}}
+```
+
+The MCP tool returns the same JSON report contract as the CLI audit command,
+but does not write JSON/Markdown files and does not convert required threshold
+failures into transport errors. Check `data.gate_status` and `data.summary` for
+gate results.
 
 ## Threshold Contract
 

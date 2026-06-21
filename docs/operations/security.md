@@ -31,6 +31,37 @@ See [Configuration](../configuration/reference.md) for full limits.
 warehouse-backed `execute_sql` capability. dbt-nova does **not** provide built-in
 authentication or authorization for this transport.
 
+Some tools read from the server filesystem. `validate_nova_meta` validates dbt
+YAML under the server working directory and rejects absolute or traversal paths
+outside the selected project, but callers still control which in-scope project
+files are scanned.
+
+Eval MCP tools also use the server filesystem. `validate_eval_suite`,
+`get_eval_gate`, and `get_eval_history` are read/reporting tools. `run_eval`,
+`init_eval_suite`, and `run_agent_eval` are disabled by default and return
+structured invalid-parameter errors until the operator opts in:
+
+- `DBT_NOVA_MCP_ENABLE_EVAL_RUN=1` for bridge eval execution.
+- `DBT_NOVA_MCP_ENABLE_EVAL_WRITES=1` for starter suite file writes.
+- `DBT_NOVA_MCP_ENABLE_AGENT_EVAL=1` for provider-backed agent eval execution.
+- `DBT_NOVA_MCP_ENABLE_CUSTOM_AGENT_PROVIDER=1` for custom agent provider
+  commands or argument JSON.
+
+Keep these flags disabled for hosted MCP unless the process runs in an isolated
+trusted environment with appropriate filesystem and provider-command controls.
+
+`warm_manifest` writes semantic cache artifacts and is also disabled by default.
+Set `DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1` only for trusted local or isolated
+operator sessions; the tool rejects read-only storage and always uses the
+server/tool-call manifest source rather than accepting an arbitrary source.
+
+`show_config`, `validate_config`, and `inspect_storage` are operator/admin
+inspection tools. `prune_storage` and `cleanup_storage` are destructive storage
+admin tools and reject by default until `DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1` is
+set. Keep that flag disabled for hosted MCP unless the process is isolated and
+access controlled; use `DBT_NOVA_TOOL_DENYLIST` to hide admin tools from normal
+agent clients.
+
 Operator policy:
 
 - Bind to loopback (`127.0.0.1` or `::1`) for local-only use.

@@ -4,7 +4,10 @@ Use `dbt-nova` in two modes:
 
 - No subcommand: start MCP server (backward compatible behavior)
 - Subcommand: run one-shot CLI commands and exit
-- CLI surface: `18` CLI-only leaf commands, plus `tool call` access to all `33` MCP tools
+- CLI surface: 20 CLI leaf commands, including `tool call` access to all 48 MCP tools
+
+For the command-by-command MCP equivalent map, see
+[MCP/CLI Parity](../api/mcp-cli-parity.md).
 
 ## Command Tree
 
@@ -15,6 +18,7 @@ dbt-nova
 ├── manifest reload [--manifest-path|--manifest-uri] [--refresh-secs] [--storage-instance-id] [--cleanup-storage-on-start] [--read-only] [--json]
 ├── manifest warm [--manifest-path|--manifest-uri] [--storage-instance-id] [--vector] [--sparse] [--reranker] [--force] [--json]
 ├── tool call <tool_name> [--params-json|--params-file|--params-stdin] [--manifest-path|--manifest-uri] [--storage-instance-id] [--cleanup-storage-on-start] [--read-only] [--json]
+├── audit agent-readiness [--manifest-path|--manifest-uri] [--storage-instance-id] [--cleanup-storage-on-start] [--read-only] [--personas-json] [--thresholds-json|--thresholds-file] [--eval-gate-json|--eval-gate-file] [--report-json-path] [--report-md-path] [--fail-on-blockers] [--json]
 ├── audit metadata-score [--selection-mode] [--changed-files-json|--changed-files-file] [--entity-ids-json|--entity-ids-file] [--resource-types-json] [--personas-json] [--thresholds-json|--thresholds-file] [--manifest-path|--manifest-uri] [--storage-instance-id] [--report-json-path] [--report-md-path] [--fail-on-no-targets] [--json]
 ├── audit nova-meta [--project-dir] [--path <PATH>...] [--resource-kind] [--resource-name] [--column] [--json]
 ├── config show [--defaults] [--json]
@@ -254,6 +258,56 @@ metadata (`manifest_hash`, `manifest_version`, `entity_count`).
 
 If both `manifest_uri` and `manifest_path` are provided in params, `manifest_path`
 takes precedence.
+
+MCP `reload_manifest` differs because it mutates a running server: it accepts
+the request, starts a background rebuild, and keeps serving the previous
+manifest until the new one is ready. CLI `manifest reload` and CLI `tool call
+reload_manifest` load once and return after the target manifest is available.
+
+## `warm_manifest` via `tool call`
+
+`warm_manifest` is available through `tool call` for parity with
+`manifest warm`, but it is disabled by default because it writes semantic cache
+artifacts:
+
+```bash
+DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1 \
+dbt-nova tool call warm_manifest \
+  --manifest-path /path/to/target/manifest.json \
+  --params-json '{"vector":true,"sparse":true}' \
+  --json
+```
+
+The tool-call form uses the manifest source loaded for the tool call. The MCP
+server form uses the currently configured live-server manifest source.
+
+## Operator admin tools via `tool call`
+
+The config and storage admin MCP tools are also available through `tool call`:
+
+```bash
+dbt-nova tool call show_config \
+  --manifest-path /path/to/target/manifest.json \
+  --params-json '{"defaults":true}' \
+  --json
+
+dbt-nova tool call inspect_storage \
+  --manifest-path /path/to/target/manifest.json \
+  --params-json '{}' \
+  --json
+```
+
+`prune_storage` and `cleanup_storage` are disabled by default because they
+delete storage directories. Set `DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1` only for
+trusted local or isolated operator sessions:
+
+```bash
+DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1 \
+dbt-nova tool call prune_storage \
+  --manifest-path /path/to/target/manifest.json \
+  --params-json '{"max_keep":1}' \
+  --json
+```
 
 ## JSON Envelope and Exit Codes
 

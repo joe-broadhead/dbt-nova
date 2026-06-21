@@ -9,6 +9,23 @@ Hosted `streamable_http` mode has no built-in authentication or authorization.
 If you expose it beyond loopback, you must place it behind an authenticating
 reverse proxy or platform auth layer first.
 
+## Admin Tool Exposure
+
+MCP/CLI parity includes operator/admin tools such as `show_config`,
+`validate_config`, `inspect_storage`, `prune_storage`, `cleanup_storage`, and
+`warm_manifest`. Keep admin tools away from normal hosted agent clients unless
+the service is isolated and access controlled.
+
+Recommended hosted posture:
+
+- Use `DBT_NOVA_TOOL_DENYLIST=show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest` for general-purpose agent endpoints.
+- Leave `DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN` unset unless a trusted operator is
+  intentionally pruning or cleaning storage.
+- Leave `DBT_NOVA_MCP_ENABLE_MANIFEST_WARM` unset unless a trusted operator is
+  intentionally warming semantic caches.
+- Set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when the reverse proxy or
+  platform auth layer is actually enforcing authentication.
+
 ## Hosted Profile
 
 Recommended runtime env:

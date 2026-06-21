@@ -14,18 +14,37 @@ use rmcp::{
 };
 use tracing::instrument;
 
+use crate::cli::agent_readiness_cmd::build_agent_readiness_tool_response;
+use crate::cli::audit_cmd::build_metadata_audit_tool_response;
+use crate::cli::config_cmd::{
+    build_config_show_tool_response, build_config_validate_tool_response,
+};
+use crate::cli::eval_cmd::{
+    build_agent_eval_tool_response, build_eval_gate_tool_response,
+    build_eval_history_tool_response, build_eval_init_tool_response, build_eval_run_tool_response,
+    build_eval_validate_tool_response,
+};
+use crate::cli::manifest::build_manifest_warm_tool_response;
+use crate::cli::nova_meta_cmd::build_nova_meta_tool_response;
+use crate::cli::storage_cmd::{
+    build_storage_cleanup_tool_response, build_storage_inspect_tool_response,
+    build_storage_prune_tool_response,
+};
 use crate::config::DbtNovaConfig;
 use crate::error::DbtNovaError;
 use crate::manifest::search::{ManifestSearch, ManifestSearchHandle};
 use crate::params::{
-    BatchGetParams, ColumnInventoryParams, CompareGrainsParams, DiffEntitiesParams,
-    ExecuteSqlParams, FindByPathParams, FindEntityOverlapParams, GetColumnLineageParams,
-    GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams, GetLineageParams,
-    GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
-    GetUndocumentedParams, IndicatorInventoryParams, ListEntitiesParams,
-    ModellingConsistencyReportParams, PaginationParams, ParentGroupMode, ReloadManifestParams,
-    RunRecipeParams, SearchColumnsParams, SearchIndicatorParams, SearchParams, SearchRecipesParams,
-    ValidateDagParams,
+    BatchGetParams, ColumnInventoryParams, CompareGrainsParams, ConfigShowParams,
+    ConfigValidateParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams,
+    FindEntityOverlapParams, GetAgentReadinessParams, GetColumnLineageParams, GetColumnsParams,
+    GetContextParams, GetEntityParams, GetEvalGateParams, GetEvalHistoryParams, GetImpactParams,
+    GetLineageParams, GetMetadataAuditParams, GetMetadataScoreParams, GetRecipeParams,
+    GetSqlParams, GetTestCoverageParams, GetUndocumentedParams, IndicatorInventoryParams,
+    InitEvalSuiteParams, ListEntitiesParams, ModellingConsistencyReportParams, PaginationParams,
+    ParentGroupMode, ReloadManifestParams, RunAgentEvalParams, RunEvalParams, RunRecipeParams,
+    SearchColumnsParams, SearchIndicatorParams, SearchParams, SearchRecipesParams,
+    StorageCleanupParams, StorageInspectParams, StoragePruneParams, ValidateDagParams,
+    ValidateEvalSuiteParams, ValidateNovaMetaParams, WarmManifestParams,
 };
 use crate::responses::SuccessResponse;
 use crate::server::health::build_manifest_health_payload;
@@ -1641,6 +1660,97 @@ impl DbtNovaServer {
         .await
     }
 
+    /// Validate project YAML meta.nova blocks.
+    #[tool(
+        name = "validate_nova_meta",
+        description = "Validate meta.nova blocks in dbt project YAML using the same schema and semantic checks as audit nova-meta. Uses local server filesystem paths scoped under the server working directory."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn validate_nova_meta(&self, params: Parameters<ValidateNovaMetaParams>) -> String {
+        self.handle_async("validate_nova_meta", None, |_searcher| async move {
+            build_nova_meta_tool_response(&params.0)
+        })
+        .await
+    }
+
+    /// Validate an eval suite file without running it.
+    #[tool(
+        name = "validate_eval_suite",
+        description = "Validate a local YAML/JSON eval suite file using the same schema checks as eval validate. Suite paths are scoped under the server working directory."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn validate_eval_suite(&self, params: Parameters<ValidateEvalSuiteParams>) -> String {
+        self.handle_async("validate_eval_suite", None, |_searcher| async move {
+            build_eval_validate_tool_response(&params.0)
+        })
+        .await
+    }
+
+    /// Get eval gate status from latest telemetry.
+    #[tool(
+        name = "get_eval_gate",
+        description = "Read eval telemetry and return the same gate report data as eval gate --json for a suite name."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn get_eval_gate(&self, params: Parameters<GetEvalGateParams>) -> String {
+        self.handle_async("get_eval_gate", None, |_searcher| async move {
+            build_eval_gate_tool_response(&params.0)
+        })
+        .await
+    }
+
+    /// Get filtered eval telemetry history.
+    #[tool(
+        name = "get_eval_history",
+        description = "Read eval telemetry rows for a suite on or after a YYYY-MM-DD UTC date, matching eval history data without line-oriented CLI output."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn get_eval_history(&self, params: Parameters<GetEvalHistoryParams>) -> String {
+        self.handle_async("get_eval_history", None, |_searcher| async move {
+            build_eval_history_tool_response(&params.0)
+        })
+        .await
+    }
+
+    /// Run deterministic bridge evals against the loaded MCP manifest.
+    #[tool(
+        name = "run_eval",
+        description = "Run deterministic bridge eval assertions against the currently loaded MCP manifest. Disabled unless DBT_NOVA_MCP_ENABLE_EVAL_RUN=1 is set."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn run_eval(&self, params: Parameters<RunEvalParams>) -> String {
+        self.handle_async("run_eval", None, |searcher| async move {
+            build_eval_run_tool_response(&searcher, &params.0).await
+        })
+        .await
+    }
+
+    /// Write a starter eval suite file.
+    #[tool(
+        name = "init_eval_suite",
+        description = "Write a starter eval suite under the server working directory. Disabled unless DBT_NOVA_MCP_ENABLE_EVAL_WRITES=1 is set."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn init_eval_suite(&self, params: Parameters<InitEvalSuiteParams>) -> String {
+        self.handle_async("init_eval_suite", None, |_searcher| async move {
+            build_eval_init_tool_response(&params.0)
+        })
+        .await
+    }
+
+    /// Run provider-backed agent evals.
+    #[tool(
+        name = "run_agent_eval",
+        description = "Run provider-backed agent evals and score tool-use traces. Disabled unless DBT_NOVA_MCP_ENABLE_AGENT_EVAL=1 is set; custom provider commands also require DBT_NOVA_MCP_ENABLE_CUSTOM_AGENT_PROVIDER=1."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn run_agent_eval(&self, params: Parameters<RunAgentEvalParams>) -> String {
+        self.handle_async("run_agent_eval", None, |_searcher| async move {
+            build_agent_eval_tool_response(&params.0).await
+        })
+        .await
+    }
+
     /// Show manifest metadata and statistics.
     #[tool(
         name = "show_metadata",
@@ -1762,6 +1872,84 @@ impl DbtNovaServer {
         out
     }
 
+    /// Warm semantic caches for the current manifest source.
+    #[tool(
+        name = "warm_manifest",
+        description = "Warm vector/sparse/reranker semantic caches for the current manifest source. Disabled unless DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1 is set; read-only storage is rejected."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn warm_manifest(&self, params: Parameters<WarmManifestParams>) -> String {
+        self.handle_async("warm_manifest", None, |searcher| async move {
+            build_manifest_warm_tool_response(&searcher, &params.0).await
+        })
+        .await
+    }
+
+    /// Show active or default runtime configuration.
+    #[tool(
+        name = "show_config",
+        description = "Operator config inspection. Returns the active runtime configuration, or defaults when defaults=true. Secret credential values are not part of the persisted Nova config."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn show_config(&self, params: Parameters<ConfigShowParams>) -> String {
+        self.handle_async("show_config", None, |searcher| async move {
+            build_config_show_tool_response(searcher.config(), &params.0)
+        })
+        .await
+    }
+
+    /// Validate active runtime configuration.
+    #[tool(
+        name = "validate_config",
+        description = "Operator config validation. Validates the active runtime configuration and returns the same JSON payload as config validate."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn validate_config(&self, params: Parameters<ConfigValidateParams>) -> String {
+        self.handle_async("validate_config", None, |searcher| async move {
+            build_config_validate_tool_response(searcher.config(), &params.0)
+        })
+        .await
+    }
+
+    /// Inspect Nova storage instances.
+    #[tool(
+        name = "inspect_storage",
+        description = "Operator storage inspection. Lists storage instances and metadata without mutating storage."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn inspect_storage(&self, params: Parameters<StorageInspectParams>) -> String {
+        self.handle_async("inspect_storage", None, |searcher| async move {
+            build_storage_inspect_tool_response(searcher.config(), &params.0)
+        })
+        .await
+    }
+
+    /// Prune stale Nova storage instances.
+    #[tool(
+        name = "prune_storage",
+        description = "Operator storage pruning. Destructive; disabled unless DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1 is set."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn prune_storage(&self, params: Parameters<StoragePruneParams>) -> String {
+        self.handle_async("prune_storage", None, |searcher| async move {
+            build_storage_prune_tool_response(searcher.config(), &params.0)
+        })
+        .await
+    }
+
+    /// Clean up the configured Nova storage instance.
+    #[tool(
+        name = "cleanup_storage",
+        description = "Operator storage cleanup. Destructive; disabled unless DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1 is set."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn cleanup_storage(&self, params: Parameters<StorageCleanupParams>) -> String {
+        self.handle_async("cleanup_storage", None, |searcher| async move {
+            build_storage_cleanup_tool_response(searcher.config(), &params.0)
+        })
+        .await
+    }
+
     /// List all tags with counts.
     #[tool(
         name = "list_tags",
@@ -1842,6 +2030,32 @@ impl DbtNovaServer {
                 .get_metadata_score(&params)
                 .await
                 .map(|value| (value, pagination))
+        })
+        .await
+    }
+
+    /// Get the higher-level metadata audit report and gate status.
+    #[tool(
+        name = "get_metadata_audit",
+        description = "Metadata audit report. Runs the same report/gate logic as audit metadata-score without writing files or turning required failures into transport errors."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn get_metadata_audit(&self, params: Parameters<GetMetadataAuditParams>) -> String {
+        self.handle_async("get_metadata_audit", None, |searcher| async move {
+            build_metadata_audit_tool_response(&searcher, &params.0).await
+        })
+        .await
+    }
+
+    /// Get the manifest-level agent-readiness report.
+    #[tool(
+        name = "get_agent_readiness",
+        description = "Agent readiness audit. Returns the same agent_readiness.v1 JSON report as the CLI audit command without writing files or applying CLI exit semantics."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn get_agent_readiness(&self, params: Parameters<GetAgentReadinessParams>) -> String {
+        self.handle_async("get_agent_readiness", None, |searcher| async move {
+            build_agent_readiness_tool_response(&searcher, &params.0).await
         })
         .await
     }
@@ -2747,6 +2961,288 @@ mod tests {
         assert_eq!(
             response["_nova_result_meta"]["next_offset"],
             serde_json::json!(2)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn agent_readiness_returns_report_contract() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path());
+        config.mcp_max_response_bytes = 0;
+        let handle = ManifestSearchHandle::spawn(config);
+        handle
+            .wait_ready()
+            .await
+            .expect("fixture manifest should load");
+        let server = DbtNovaServer::new(handle);
+
+        let response: serde_json::Value = serde_json::from_str(
+            &server
+                .get_agent_readiness(Parameters(GetAgentReadinessParams {
+                    personas_json: Some(r#"["engineer"]"#.to_string()),
+                    eval_gate_json: Some(
+                        r#"{"allowed":true,"blocked":false,"message":"gate passed"}"#.to_string(),
+                    ),
+                    ..GetAgentReadinessParams::default()
+                }))
+                .await,
+        )
+        .expect("agent readiness response JSON");
+
+        assert_eq!(response["success"], serde_json::json!(true));
+        assert_eq!(response["count"], serde_json::json!(1));
+        assert_eq!(
+            response["data"]["schema_version"],
+            serde_json::json!("agent_readiness.v1")
+        );
+        assert_eq!(
+            response["data"]["config"]["personas"],
+            serde_json::json!(["engineer"])
+        );
+        assert_eq!(
+            response["data"]["eval_status"]["status"],
+            serde_json::json!("allowed")
+        );
+        assert!(response["data"]["persona_scores"]["engineer"].is_object());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn metadata_audit_returns_gate_data() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path());
+        config.mcp_max_response_bytes = 0;
+        let handle = ManifestSearchHandle::spawn(config);
+        handle
+            .wait_ready()
+            .await
+            .expect("fixture manifest should load");
+        let server = DbtNovaServer::new(handle);
+
+        let response: serde_json::Value = serde_json::from_str(
+            &server
+                .get_metadata_audit(Parameters(GetMetadataAuditParams {
+                    resource_types_json: Some(r#"["model"]"#.to_string()),
+                    personas_json: Some(r#"["engineer"]"#.to_string()),
+                    thresholds_json: Some(
+                        r#"{"project":{"engineer":{"min_score":101,"severity":"required"}}}"#
+                            .to_string(),
+                    ),
+                    include_recommendations: Some(false),
+                    ..GetMetadataAuditParams::default()
+                }))
+                .await,
+        )
+        .expect("metadata audit response JSON");
+
+        assert_eq!(response["success"], serde_json::json!(true));
+        assert_eq!(response["count"], serde_json::json!(1));
+        assert_eq!(
+            response["data"]["selection_mode"],
+            serde_json::json!("project")
+        );
+        assert_eq!(response["data"]["gate_status"], serde_json::json!("fail"));
+        assert_eq!(
+            response["data"]["summary"]["required_fail_count"],
+            serde_json::json!(1)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn validate_nova_meta_returns_report_contract() {
+        let root = std::env::current_dir()
+            .expect("cwd")
+            .canonicalize()
+            .expect("canonical cwd");
+        let project_dir = TempDir::new_in(&root).expect("temp project");
+        let project_relative = project_dir
+            .path()
+            .strip_prefix(&root)
+            .expect("relative temp project")
+            .display()
+            .to_string();
+        let models_dir = project_dir.path().join("models");
+        std::fs::create_dir_all(&models_dir).expect("models dir");
+        std::fs::write(
+            models_dir.join("orders.yml"),
+            r"
+version: 2
+models:
+  - name: fct_orders
+    meta:
+      nova:
+        canonical: true
+    columns:
+      - name: order_id
+        meta:
+          nova:
+            role: identifier
+",
+        )
+        .expect("fixture");
+
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path());
+        config.mcp_max_response_bytes = 0;
+        let handle = ManifestSearchHandle::spawn(config);
+        handle
+            .wait_ready()
+            .await
+            .expect("fixture manifest should load");
+        let server = DbtNovaServer::new(handle);
+
+        let response: serde_json::Value = serde_json::from_str(
+            &server
+                .validate_nova_meta(Parameters(ValidateNovaMetaParams {
+                    project_dir: Some(project_relative),
+                    paths: vec!["models/orders.yml".to_string()],
+                    resource_kind: Some(crate::params::NovaMetaResourceKindParam::Model),
+                    resource_name: Some("fct_orders".to_string()),
+                    column: None,
+                }))
+                .await,
+        )
+        .expect("nova-meta response JSON");
+
+        assert_eq!(response["success"], serde_json::json!(true));
+        assert_eq!(response["count"], serde_json::json!(1));
+        assert_eq!(response["data"]["target_count"], serde_json::json!(2));
+        assert_eq!(response["data"]["error_count"], serde_json::json!(0));
+        assert_eq!(
+            response["data"]["selector"]["resource_kind"],
+            serde_json::json!("model")
+        );
+        assert_eq!(
+            response["data"]["selector"]["paths"],
+            serde_json::json!(["models/orders.yml"])
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn validate_eval_suite_returns_report_contract() {
+        let root = std::env::current_dir()
+            .expect("cwd")
+            .canonicalize()
+            .expect("canonical cwd");
+        let suite_dir = TempDir::new_in(&root).expect("temp suite dir");
+        let suite_path = suite_dir.path().join("suite.yml");
+        std::fs::write(
+            &suite_path,
+            r"
+version: 1
+name: mcp-eval-smoke
+cases:
+  - id: one
+    assertions:
+      - type: tool_success
+        tool: search
+        params: {}
+",
+        )
+        .expect("suite fixture");
+
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path());
+        config.mcp_max_response_bytes = 0;
+        let handle = ManifestSearchHandle::spawn(config);
+        handle
+            .wait_ready()
+            .await
+            .expect("fixture manifest should load");
+        let server = DbtNovaServer::new(handle);
+
+        let response: serde_json::Value = serde_json::from_str(
+            &server
+                .validate_eval_suite(Parameters(ValidateEvalSuiteParams {
+                    suite: suite_path.display().to_string(),
+                }))
+                .await,
+        )
+        .expect("eval validation response JSON");
+
+        assert_eq!(response["success"], serde_json::json!(true));
+        assert_eq!(response["count"], serde_json::json!(1));
+        assert_eq!(response["data"]["valid"], serde_json::json!(true));
+        assert_eq!(
+            response["data"]["suite_name"],
+            serde_json::json!("mcp-eval-smoke")
+        );
+        assert!(response["data"]["safety_policy"].is_object());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn warm_manifest_rejects_without_mcp_opt_in() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path());
+        config.mcp_max_response_bytes = 0;
+        let handle = ManifestSearchHandle::spawn(config);
+        handle
+            .wait_ready()
+            .await
+            .expect("fixture manifest should load");
+        let server = DbtNovaServer::new(handle);
+
+        let response: serde_json::Value = serde_json::from_str(
+            &server
+                .warm_manifest(Parameters(WarmManifestParams {
+                    vector: true,
+                    ..WarmManifestParams::default()
+                }))
+                .await,
+        )
+        .expect("warm response JSON");
+
+        assert_eq!(response["success"], serde_json::json!(false));
+        assert_eq!(response["error_code"], serde_json::json!("INVALID_PARAMS"));
+        assert!(
+            response["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn validate_nova_meta_rejects_unsafe_paths() {
+        let root = std::env::current_dir()
+            .expect("cwd")
+            .canonicalize()
+            .expect("canonical cwd");
+        let project_dir = TempDir::new_in(&root).expect("temp project");
+        let project_relative = project_dir
+            .path()
+            .strip_prefix(&root)
+            .expect("relative temp project")
+            .display()
+            .to_string();
+
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path());
+        config.mcp_max_response_bytes = 0;
+        let handle = ManifestSearchHandle::spawn(config);
+        handle
+            .wait_ready()
+            .await
+            .expect("fixture manifest should load");
+        let server = DbtNovaServer::new(handle);
+
+        let response: serde_json::Value = serde_json::from_str(
+            &server
+                .validate_nova_meta(Parameters(ValidateNovaMetaParams {
+                    project_dir: Some(project_relative),
+                    paths: vec!["../Cargo.toml".to_string()],
+                    ..ValidateNovaMetaParams::default()
+                }))
+                .await,
+        )
+        .expect("nova-meta error response JSON");
+
+        assert_eq!(response["success"], serde_json::json!(false));
+        assert_eq!(response["error_code"], serde_json::json!("INVALID_PARAMS"));
+        assert!(
+            response["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("must stay inside project_dir")
         );
     }
 

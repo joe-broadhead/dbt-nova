@@ -6,22 +6,42 @@ use std::time::{Duration, Instant};
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
 
+use crate::cli::agent_readiness_cmd::build_agent_readiness_tool_response;
 use crate::cli::args::{ManifestLoadArgs, ManifestReloadArgs, ToolCallArgs};
+use crate::cli::audit_cmd::build_metadata_audit_tool_response;
+use crate::cli::config_cmd::{
+    build_config_show_tool_response, build_config_validate_tool_response,
+};
+use crate::cli::eval_cmd::{
+    build_agent_eval_tool_response, build_eval_gate_tool_response,
+    build_eval_history_tool_response, build_eval_init_tool_response, build_eval_run_tool_response,
+    build_eval_validate_tool_response,
+};
 use crate::cli::health_cmd::build_cli_health_payload;
 use crate::cli::manifest::{
-    build_manifest_load_config, build_manifest_reload_config, execute_manifest_load,
+    build_manifest_load_config, build_manifest_reload_config, build_manifest_warm_tool_response,
+    execute_manifest_load,
 };
+use crate::cli::nova_meta_cmd::build_nova_meta_tool_response;
 use crate::cli::output::{CliEnvelope, error_envelope};
+use crate::cli::storage_cmd::{
+    build_storage_cleanup_tool_response, build_storage_inspect_tool_response,
+    build_storage_prune_tool_response,
+};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::search::ManifestSearch;
 use crate::params::{
-    BatchGetParams, ColumnInventoryParams, CompareGrainsParams, DiffEntitiesParams,
-    ExecuteSqlParams, FindByPathParams, FindEntityOverlapParams, GetColumnLineageParams,
-    GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams, GetLineageParams,
-    GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
-    GetUndocumentedParams, IndicatorInventoryParams, ListEntitiesParams,
-    ModellingConsistencyReportParams, ReloadManifestParams, RunRecipeParams, SearchColumnsParams,
-    SearchIndicatorParams, SearchParams, SearchRecipesParams, ValidateDagParams,
+    BatchGetParams, ColumnInventoryParams, CompareGrainsParams, ConfigShowParams,
+    ConfigValidateParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams,
+    FindEntityOverlapParams, GetAgentReadinessParams, GetColumnLineageParams, GetColumnsParams,
+    GetContextParams, GetEntityParams, GetEvalGateParams, GetEvalHistoryParams, GetImpactParams,
+    GetLineageParams, GetMetadataAuditParams, GetMetadataScoreParams, GetRecipeParams,
+    GetSqlParams, GetTestCoverageParams, GetUndocumentedParams, IndicatorInventoryParams,
+    InitEvalSuiteParams, ListEntitiesParams, ModellingConsistencyReportParams,
+    ReloadManifestParams, RunAgentEvalParams, RunEvalParams, RunRecipeParams, SearchColumnsParams,
+    SearchIndicatorParams, SearchParams, SearchRecipesParams, StorageCleanupParams,
+    StorageInspectParams, StoragePruneParams, ValidateDagParams, ValidateEvalSuiteParams,
+    ValidateNovaMetaParams, WarmManifestParams,
 };
 use crate::responses::SuccessResponse;
 
@@ -36,7 +56,7 @@ struct ToolRegistryEntry {
     dispatch: ToolDispatchFn,
 }
 
-const TOOL_REGISTRY: [ToolRegistryEntry; 33] = [
+const TOOL_REGISTRY: [ToolRegistryEntry; 48] = [
     ToolRegistryEntry {
         name: "search",
         dispatch: dispatch_search,
@@ -102,6 +122,34 @@ const TOOL_REGISTRY: [ToolRegistryEntry; 33] = [
         dispatch: dispatch_validate_dag,
     },
     ToolRegistryEntry {
+        name: "validate_nova_meta",
+        dispatch: dispatch_validate_nova_meta,
+    },
+    ToolRegistryEntry {
+        name: "validate_eval_suite",
+        dispatch: dispatch_validate_eval_suite,
+    },
+    ToolRegistryEntry {
+        name: "get_eval_gate",
+        dispatch: dispatch_get_eval_gate,
+    },
+    ToolRegistryEntry {
+        name: "get_eval_history",
+        dispatch: dispatch_get_eval_history,
+    },
+    ToolRegistryEntry {
+        name: "run_eval",
+        dispatch: dispatch_run_eval,
+    },
+    ToolRegistryEntry {
+        name: "init_eval_suite",
+        dispatch: dispatch_init_eval_suite,
+    },
+    ToolRegistryEntry {
+        name: "run_agent_eval",
+        dispatch: dispatch_run_agent_eval,
+    },
+    ToolRegistryEntry {
         name: "show_metadata",
         dispatch: dispatch_show_metadata,
     },
@@ -112,6 +160,30 @@ const TOOL_REGISTRY: [ToolRegistryEntry; 33] = [
     ToolRegistryEntry {
         name: "reload_manifest",
         dispatch: dispatch_reload_manifest,
+    },
+    ToolRegistryEntry {
+        name: "warm_manifest",
+        dispatch: dispatch_warm_manifest,
+    },
+    ToolRegistryEntry {
+        name: "show_config",
+        dispatch: dispatch_show_config,
+    },
+    ToolRegistryEntry {
+        name: "validate_config",
+        dispatch: dispatch_validate_config,
+    },
+    ToolRegistryEntry {
+        name: "inspect_storage",
+        dispatch: dispatch_inspect_storage,
+    },
+    ToolRegistryEntry {
+        name: "prune_storage",
+        dispatch: dispatch_prune_storage,
+    },
+    ToolRegistryEntry {
+        name: "cleanup_storage",
+        dispatch: dispatch_cleanup_storage,
     },
     ToolRegistryEntry {
         name: "list_tags",
@@ -136,6 +208,14 @@ const TOOL_REGISTRY: [ToolRegistryEntry; 33] = [
     ToolRegistryEntry {
         name: "get_metadata_score",
         dispatch: dispatch_get_metadata_score,
+    },
+    ToolRegistryEntry {
+        name: "get_metadata_audit",
+        dispatch: dispatch_get_metadata_audit,
+    },
+    ToolRegistryEntry {
+        name: "get_agent_readiness",
+        dispatch: dispatch_get_agent_readiness,
     },
     ToolRegistryEntry {
         name: "batch_get_entities",
@@ -646,6 +726,56 @@ typed_dispatch!(
     ValidateDagParams,
     validate_dag
 );
+
+fn dispatch_validate_nova_meta(_searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: ValidateNovaMetaParams = decode_tool_params("validate_nova_meta", params)?;
+        build_nova_meta_tool_response(&decoded)
+    })
+}
+
+fn dispatch_validate_eval_suite(_searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: ValidateEvalSuiteParams = decode_tool_params("validate_eval_suite", params)?;
+        build_eval_validate_tool_response(&decoded)
+    })
+}
+
+fn dispatch_get_eval_gate(_searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: GetEvalGateParams = decode_tool_params("get_eval_gate", params)?;
+        build_eval_gate_tool_response(&decoded)
+    })
+}
+
+fn dispatch_get_eval_history(_searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: GetEvalHistoryParams = decode_tool_params("get_eval_history", params)?;
+        build_eval_history_tool_response(&decoded)
+    })
+}
+
+fn dispatch_run_eval(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: RunEvalParams = decode_tool_params("run_eval", params)?;
+        build_eval_run_tool_response(searcher, &decoded).await
+    })
+}
+
+fn dispatch_init_eval_suite(_searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: InitEvalSuiteParams = decode_tool_params("init_eval_suite", params)?;
+        build_eval_init_tool_response(&decoded)
+    })
+}
+
+fn dispatch_run_agent_eval(_searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: RunAgentEvalParams = decode_tool_params("run_agent_eval", params)?;
+        build_agent_eval_tool_response(&decoded).await
+    })
+}
+
 empty_dispatch!(dispatch_show_metadata, "show_metadata", show_metadata);
 empty_dispatch!(dispatch_list_tags, "list_tags", list_tags);
 empty_dispatch!(dispatch_list_packages, "list_packages", list_packages);
@@ -668,6 +798,21 @@ typed_dispatch!(
     GetMetadataScoreParams,
     get_metadata_score
 );
+
+fn dispatch_get_metadata_audit(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: GetMetadataAuditParams = decode_tool_params("get_metadata_audit", params)?;
+        build_metadata_audit_tool_response(searcher, &decoded).await
+    })
+}
+
+fn dispatch_get_agent_readiness(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: GetAgentReadinessParams = decode_tool_params("get_agent_readiness", params)?;
+        build_agent_readiness_tool_response(searcher, &decoded).await
+    })
+}
+
 typed_dispatch!(
     dispatch_batch_get_entities,
     "batch_get_entities",
@@ -734,6 +879,48 @@ fn dispatch_reload_manifest(_searcher: &ManifestSearch, _params: JsonValue) -> T
     })
 }
 
+fn dispatch_warm_manifest(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: WarmManifestParams = decode_tool_params("warm_manifest", params)?;
+        build_manifest_warm_tool_response(searcher, &decoded).await
+    })
+}
+
+fn dispatch_show_config(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: ConfigShowParams = decode_tool_params("show_config", params)?;
+        build_config_show_tool_response(searcher.config(), &decoded)
+    })
+}
+
+fn dispatch_validate_config(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: ConfigValidateParams = decode_tool_params("validate_config", params)?;
+        build_config_validate_tool_response(searcher.config(), &decoded)
+    })
+}
+
+fn dispatch_inspect_storage(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: StorageInspectParams = decode_tool_params("inspect_storage", params)?;
+        build_storage_inspect_tool_response(searcher.config(), &decoded)
+    })
+}
+
+fn dispatch_prune_storage(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: StoragePruneParams = decode_tool_params("prune_storage", params)?;
+        build_storage_prune_tool_response(searcher.config(), &decoded)
+    })
+}
+
+fn dispatch_cleanup_storage(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: StorageCleanupParams = decode_tool_params("cleanup_storage", params)?;
+        build_storage_cleanup_tool_response(searcher.config(), &decoded)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -748,6 +935,7 @@ mod tests {
     use crate::cli::manifest::{build_manifest_load_config, execute_manifest_load};
     use crate::params::ReloadManifestParams;
     use crate::tests::common::fixture_manifest_path_string;
+    use crate::tools::catalog::MCP_TOOL_NAMES;
 
     async fn fixture_searcher() -> crate::manifest::search::ManifestSearch {
         let args = ManifestLoadArgs {
@@ -850,6 +1038,171 @@ mod tests {
         assert!(result["data"]["tool_metrics"].is_object());
         assert!(result["data"]["search_concurrency"].is_object());
         assert!(result["data"]["sql_concurrency"].is_object());
+    }
+
+    #[tokio::test]
+    async fn dispatch_get_agent_readiness_returns_standard_response_shape() {
+        let searcher = fixture_searcher().await;
+        let result = dispatch_tool(
+            &searcher,
+            "get_agent_readiness",
+            serde_json::json!({
+                "personas_json": "[\"engineer\"]",
+                "eval_gate_json": "{\"allowed\":true,\"blocked\":false,\"message\":\"gate passed\"}"
+            }),
+        )
+        .await
+        .expect("agent readiness");
+        assert_eq!(result["success"], serde_json::json!(true));
+        assert_eq!(result["count"], serde_json::json!(1));
+        assert_eq!(
+            result["data"]["schema_version"],
+            serde_json::json!("agent_readiness.v1")
+        );
+        assert_eq!(
+            result["data"]["eval_status"]["status"],
+            serde_json::json!("allowed")
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_get_metadata_audit_returns_gate_data() {
+        let searcher = fixture_searcher().await;
+        let result = dispatch_tool(
+            &searcher,
+            "get_metadata_audit",
+            serde_json::json!({
+                "selection_mode": "project",
+                "resource_types_json": "[\"model\"]",
+                "personas_json": "[\"engineer\"]",
+                "thresholds_json": "{\"project\":{\"engineer\":{\"min_score\":101,\"severity\":\"required\"}}}",
+                "include_recommendations": false
+            }),
+        )
+        .await
+        .expect("metadata audit");
+        assert_eq!(result["success"], serde_json::json!(true));
+        assert_eq!(result["count"], serde_json::json!(1));
+        assert_eq!(
+            result["data"]["selection_mode"],
+            serde_json::json!("project")
+        );
+        assert_eq!(result["data"]["gate_status"], serde_json::json!("fail"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_validate_nova_meta_returns_validation_report() {
+        let root = std::env::current_dir()
+            .expect("cwd")
+            .canonicalize()
+            .expect("canonical cwd");
+        let temp_dir = tempfile::TempDir::new_in(&root).expect("temp project");
+        let project_relative = temp_dir
+            .path()
+            .strip_prefix(&root)
+            .expect("relative temp project")
+            .display()
+            .to_string();
+        let models_dir = temp_dir.path().join("models");
+        std::fs::create_dir_all(&models_dir).expect("models dir");
+        std::fs::write(
+            models_dir.join("orders.yml"),
+            r"
+version: 2
+models:
+  - name: fct_orders
+    meta:
+      nova:
+        canonical: true
+",
+        )
+        .expect("fixture");
+
+        let searcher = fixture_searcher().await;
+        let result = dispatch_tool(
+            &searcher,
+            "validate_nova_meta",
+            serde_json::json!({
+                "project_dir": project_relative,
+                "paths": ["models/orders.yml"],
+                "resource_kind": "model",
+                "resource_name": "fct_orders"
+            }),
+        )
+        .await
+        .expect("nova-meta validation");
+
+        assert_eq!(result["success"], serde_json::json!(true));
+        assert_eq!(result["count"], serde_json::json!(1));
+        assert_eq!(result["data"]["target_count"], serde_json::json!(1));
+        assert_eq!(result["data"]["error_count"], serde_json::json!(0));
+        assert_eq!(
+            result["data"]["selector"]["paths"],
+            serde_json::json!(["models/orders.yml"])
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_validate_eval_suite_returns_validation_report() {
+        let root = std::env::current_dir()
+            .expect("cwd")
+            .canonicalize()
+            .expect("canonical cwd");
+        let temp_dir = tempfile::TempDir::new_in(&root).expect("temp suite dir");
+        let suite_path = temp_dir.path().join("suite.yml");
+        std::fs::write(
+            &suite_path,
+            r"
+version: 1
+name: dispatch-eval-smoke
+cases:
+  - id: one
+    assertions:
+      - type: tool_success
+        tool: search
+        params: {}
+",
+        )
+        .expect("suite fixture");
+
+        let searcher = fixture_searcher().await;
+        let result = dispatch_tool(
+            &searcher,
+            "validate_eval_suite",
+            serde_json::json!({
+                "suite": suite_path.display().to_string()
+            }),
+        )
+        .await
+        .expect("eval validation");
+
+        assert_eq!(result["success"], serde_json::json!(true));
+        assert_eq!(result["count"], serde_json::json!(1));
+        assert_eq!(result["data"]["valid"], serde_json::json!(true));
+        assert_eq!(
+            result["data"]["suite_name"],
+            serde_json::json!("dispatch-eval-smoke")
+        );
+        assert!(result["data"]["safety_policy"].is_object());
+    }
+
+    #[tokio::test]
+    async fn dispatch_warm_manifest_rejects_without_mcp_opt_in() {
+        let searcher = fixture_searcher().await;
+        let err = dispatch_tool(
+            &searcher,
+            "warm_manifest",
+            serde_json::json!({
+                "vector": true
+            }),
+        )
+        .await
+        .expect_err("warm should require opt-in");
+
+        assert!(
+            err.to_string()
+                .contains("DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1")
+        );
     }
 
     #[tokio::test]
@@ -967,41 +1320,7 @@ mod tests {
 
     #[test]
     fn tool_registry_has_full_mcp_name_parity() {
-        let expected = vec![
-            "search",
-            "search_indicator",
-            "indicator_inventory",
-            "search_columns",
-            "column_inventory",
-            "compare_grains",
-            "find_entity_overlap",
-            "modelling_consistency_report",
-            "get_entity",
-            "list_entities",
-            "get_lineage",
-            "get_sql",
-            "get_columns",
-            "diff_entities",
-            "get_impact",
-            "validate_dag",
-            "show_metadata",
-            "health",
-            "reload_manifest",
-            "list_tags",
-            "list_packages",
-            "list_databases",
-            "get_column_lineage",
-            "get_test_coverage",
-            "get_metadata_score",
-            "batch_get_entities",
-            "find_by_path",
-            "search_recipes",
-            "get_recipe",
-            "run_recipe",
-            "get_undocumented",
-            "get_context",
-            "execute_sql",
-        ];
+        let expected = MCP_TOOL_NAMES.to_vec();
         assert_eq!(tool_registry_names(), expected);
     }
 }

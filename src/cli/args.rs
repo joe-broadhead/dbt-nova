@@ -162,6 +162,7 @@ pub struct AuditArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum AuditCommand {
+    AgentReadiness(Box<AgentReadinessArgs>),
     MetadataScore(Box<MetadataAuditArgs>),
     NovaMeta(NovaMetaAuditArgs),
 }
@@ -239,6 +240,39 @@ pub struct MetadataAuditArgs {
     pub report_md_path: Option<String>,
     #[arg(long, default_value_t = false)]
     pub fail_on_no_targets: bool,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, Args, Default)]
+pub struct AgentReadinessArgs {
+    #[arg(long, value_name = "PATH", conflicts_with = "manifest_uri")]
+    pub manifest_path: Option<String>,
+    #[arg(long, value_name = "URI", conflicts_with = "manifest_path")]
+    pub manifest_uri: Option<String>,
+    #[arg(long, value_name = "INSTANCE_ID")]
+    pub storage_instance_id: Option<String>,
+    #[arg(long, default_value_t = false)]
+    pub cleanup_storage_on_start: bool,
+    #[arg(long, default_value_t = false)]
+    pub read_only: bool,
+    #[arg(long, value_name = "JSON")]
+    pub personas_json: Option<String>,
+    #[arg(long, value_name = "JSON", conflicts_with = "thresholds_file")]
+    pub thresholds_json: Option<String>,
+    #[arg(long, value_name = "PATH", conflicts_with = "thresholds_json")]
+    pub thresholds_file: Option<String>,
+    #[arg(long, value_name = "JSON", conflicts_with = "eval_gate_file")]
+    pub eval_gate_json: Option<String>,
+    #[arg(long, value_name = "PATH", conflicts_with = "eval_gate_json")]
+    pub eval_gate_file: Option<String>,
+    #[arg(long, value_name = "PATH")]
+    pub report_json_path: Option<String>,
+    #[arg(long, value_name = "PATH")]
+    pub report_md_path: Option<String>,
+    #[arg(long, default_value_t = false)]
+    pub fail_on_blockers: bool,
     #[arg(long, default_value_t = false)]
     pub json: bool,
 }
@@ -625,9 +659,10 @@ mod tests {
 
     #[test]
     fn cli_parses_all_top_level_groups() {
-        let groups: [&[&str]; 8] = [
+        let groups: [&[&str]; 9] = [
             &["dbt-nova", "manifest", "load"],
             &["dbt-nova", "tool", "call", "search"],
+            &["dbt-nova", "audit", "agent-readiness"],
             &["dbt-nova", "audit", "metadata-score"],
             &["dbt-nova", "audit", "nova-meta"],
             &["dbt-nova", "config", "show"],
@@ -957,6 +992,69 @@ mod tests {
             }
             _ => panic!("expected audit command"),
         }
+    }
+
+    #[test]
+    fn audit_agent_readiness_parses_flags() {
+        let cli = Cli::parse_from([
+            "dbt-nova",
+            "audit",
+            "agent-readiness",
+            "--manifest-path",
+            "target/manifest.json",
+            "--storage-instance-id",
+            "readiness-ci",
+            "--cleanup-storage-on-start",
+            "--read-only",
+            "--personas-json",
+            "[\"engineer\",\"analyst\"]",
+            "--thresholds-json",
+            "{\"overall\":{\"min_score\":70,\"severity\":\"advisory\"}}",
+            "--eval-gate-json",
+            "{\"allowed\":true}",
+            "--report-json-path",
+            "out/readiness.json",
+            "--report-md-path",
+            "out/readiness.md",
+            "--fail-on-blockers",
+            "--json",
+        ]);
+        let command = cli.command.expect("command");
+        match command {
+            Command::Audit(audit) => {
+                let AuditCommand::AgentReadiness(args) = audit.command else {
+                    panic!("expected agent-readiness command");
+                };
+                assert_eq!(args.manifest_path.as_deref(), Some("target/manifest.json"));
+                assert_eq!(args.storage_instance_id.as_deref(), Some("readiness-ci"));
+                assert!(args.cleanup_storage_on_start);
+                assert!(args.read_only);
+                assert_eq!(
+                    args.personas_json.as_deref(),
+                    Some("[\"engineer\",\"analyst\"]")
+                );
+                assert_eq!(args.eval_gate_json.as_deref(), Some("{\"allowed\":true}"));
+                assert_eq!(args.report_json_path.as_deref(), Some("out/readiness.json"));
+                assert_eq!(args.report_md_path.as_deref(), Some("out/readiness.md"));
+                assert!(args.fail_on_blockers);
+                assert!(args.json);
+            }
+            _ => panic!("expected audit command"),
+        }
+    }
+
+    #[test]
+    fn audit_agent_readiness_rejects_conflicting_eval_gate_sources() {
+        let parsed = Cli::try_parse_from([
+            "dbt-nova",
+            "audit",
+            "agent-readiness",
+            "--eval-gate-json",
+            "{}",
+            "--eval-gate-file",
+            "gate.json",
+        ]);
+        assert!(parsed.is_err());
     }
 
     #[test]

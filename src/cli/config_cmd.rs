@@ -1,12 +1,15 @@
 use std::time::Instant;
 
 use serde::Serialize;
+use serde_json::Value as JsonValue;
 
 use crate::cli::args::{ConfigShowArgs, ConfigValidateArgs};
 use crate::cli::output::{CliEnvelope, error_envelope};
 use crate::config::DbtNovaConfig;
-use crate::error::DbtNovaError;
+use crate::error::{DbtNovaError, Result};
 use crate::manifest::bootstrap::prepare_runtime_config;
+use crate::params::{ConfigShowParams, ConfigValidateParams};
+use crate::responses::SuccessResponse;
 
 use super::{DispatchError, DispatchResult};
 
@@ -15,6 +18,41 @@ pub struct ConfigValidateData {
     pub valid: bool,
     pub storage_instance_id: String,
     pub embedding_cache_dir: String,
+}
+
+/// Builds the shared MCP/CLI-tool response for config inspection.
+///
+/// # Errors
+/// Returns an error when response serialization fails.
+pub fn build_config_show_tool_response(
+    active_config: &DbtNovaConfig,
+    params: &ConfigShowParams,
+) -> Result<JsonValue> {
+    let config = if params.defaults {
+        DbtNovaConfig::default()
+    } else {
+        active_config.clone()
+    };
+    serde_json::to_value(SuccessResponse::new(config, 1))
+        .map_err(|error| DbtNovaError::ServerError(error.to_string()))
+}
+
+/// Builds the shared MCP/CLI-tool response for runtime config validation.
+///
+/// # Errors
+/// Returns an error when configuration validation or response serialization fails.
+pub fn build_config_validate_tool_response(
+    active_config: &DbtNovaConfig,
+    _params: &ConfigValidateParams,
+) -> Result<JsonValue> {
+    let config = validate_runtime_config(active_config.clone())?;
+    let payload = ConfigValidateData {
+        valid: true,
+        storage_instance_id: config.storage_instance_id.clone(),
+        embedding_cache_dir: config.search.embedding_cache_dir.clone(),
+    };
+    serde_json::to_value(SuccessResponse::new(payload, 1))
+        .map_err(|error| DbtNovaError::ServerError(error.to_string()))
 }
 
 /// Runs the `config show` CLI command.
@@ -118,9 +156,13 @@ fn validate_runtime_config(mut config: DbtNovaConfig) -> crate::error::Result<Db
 mod tests {
     use std::fs;
 
-    use super::{config_for_show, validate_runtime_config};
+    use super::{
+        build_config_show_tool_response, build_config_validate_tool_response, config_for_show,
+        validate_runtime_config,
+    };
     use crate::cli::args::ConfigShowArgs;
     use crate::config::DbtNovaConfig;
+    use crate::params::{ConfigShowParams, ConfigValidateParams};
     use tempfile::TempDir;
 
     #[test]
@@ -143,6 +185,37 @@ mod tests {
             validate_runtime_config(DbtNovaConfig::default()).expect("validation should pass");
         assert!(!config.storage_instance_id.is_empty());
         assert!(!config.search.embedding_cache_dir.is_empty());
+    }
+
+    #[test]
+    fn config_show_tool_response_defaults_match_cli_defaults() {
+        let active_config = DbtNovaConfig {
+            manifest_path: "custom-manifest.json".to_string(),
+            ..DbtNovaConfig::default()
+        };
+        let response =
+            build_config_show_tool_response(&active_config, &ConfigShowParams { defaults: true })
+                .expect("config show response");
+
+        assert_eq!(response["success"], serde_json::json!(true));
+        assert_eq!(
+            response["data"]["manifest_path"],
+            serde_json::json!(DbtNovaConfig::default().manifest_path)
+        );
+    }
+
+    #[test]
+    fn config_validate_tool_response_matches_cli_payload() {
+        let response = build_config_validate_tool_response(
+            &DbtNovaConfig::default(),
+            &ConfigValidateParams::default(),
+        )
+        .expect("config validate response");
+
+        assert_eq!(response["success"], serde_json::json!(true));
+        assert_eq!(response["data"]["valid"], serde_json::json!(true));
+        assert!(response["data"]["storage_instance_id"].is_string());
+        assert!(response["data"]["embedding_cache_dir"].is_string());
     }
 
     #[test]
