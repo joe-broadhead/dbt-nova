@@ -52,6 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reports that combine project metadata scores, entity signal gaps, Nova
   indicator checks, optional eval gate evidence, JSON/Markdown artifacts, and
   opt-in blocker exit behavior.
+- Agent-readiness reports now include advisory `suggested_meta_patches` for
+  reviewable `meta.nova` remediation and draft `golden_question_seeds` for
+  turning readiness gaps into eval backlog candidates.
 - Added the `get_agent_readiness` MCP tool and CLI `tool call` bridge support
   for the same `agent_readiness.v1` report without CLI report-file writes.
 - Added the `get_metadata_audit` MCP tool and CLI `tool call` bridge support
