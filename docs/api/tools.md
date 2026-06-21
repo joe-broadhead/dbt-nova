@@ -708,7 +708,10 @@ Optional:
 
 The tool returns the same `agent_readiness.v1` report contract as
 `dbt-nova audit agent-readiness --json`, without writing report files or applying
-CLI exit semantics.
+CLI exit semantics. Reports include advisory `suggested_meta_patches` for
+reviewable dbt metadata remediation and draft `golden_question_seeds` for eval
+authoring. Suggested patches never edit files, and generated seeds should be
+reviewed before becoming CI gates.
 
 Large reports use the standard MCP response-budget behavior; check
 `_nova_result_meta.truncated` when response budgeting is enabled.

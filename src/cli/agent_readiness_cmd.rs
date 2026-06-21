@@ -5,13 +5,15 @@ use std::path::Path;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
+use serde_json::{Value as JsonValue, json};
 
 use crate::cli::args::{AgentReadinessArgs, ManifestLoadArgs};
 use crate::cli::manifest::{build_manifest_load_config, execute_manifest_load};
 use crate::cli::output::{CliEnvelope, error_envelope};
 use crate::error::{DbtNovaError, Result};
-use crate::manifest::entity::{ArchivedEntity, column_primary_key_bool, entity_nova_meta_json};
+use crate::manifest::entity::{
+    ArchivedEntity, column_nova_meta_json, column_primary_key_bool, entity_nova_meta_json,
+};
 use crate::manifest::search::ManifestSearch;
 use crate::params::{GetAgentReadinessParams, GetMetadataScoreParams};
 use crate::responses::SuccessResponse;
@@ -33,6 +35,10 @@ const DEFAULT_RESOURCE_TYPE_PRIORITY: [&str; 3] = ["model", "source", "metric"];
 const MAX_ENTITY_FINDINGS: usize = 20;
 const MAX_ENTITY_RECOMMENDATIONS: usize = 5;
 const MAX_INDICATOR_FINDINGS: usize = 25;
+const MAX_SUGGESTED_META_PATCHES: usize = 40;
+const MAX_GOLDEN_QUESTION_SEEDS: usize = 16;
+const MAX_MARKDOWN_META_PATCHES: usize = 10;
+const MAX_MARKDOWN_GOLDEN_SEEDS: usize = 8;
 
 #[derive(Debug, Clone, Serialize)]
 struct AgentReadinessReport {
@@ -50,6 +56,8 @@ struct AgentReadinessReport {
     improvement_findings: Vec<ReadinessFinding>,
     entity_findings: Vec<EntityReadinessFinding>,
     indicator_findings: Vec<IndicatorReadinessFinding>,
+    suggested_meta_patches: Vec<SuggestedMetaPatch>,
+    golden_question_seeds: Vec<GoldenQuestionSeed>,
     eval_status: EvalReadinessStatus,
     next_actions: Vec<ReadinessNextAction>,
 }
@@ -90,6 +98,8 @@ struct ReadinessSummary {
     improvement_count: usize,
     indicator_count: usize,
     ambiguous_indicator_count: usize,
+    suggested_meta_patch_count: usize,
+    golden_question_seed_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -158,6 +168,41 @@ struct IndicatorReadinessFinding {
     indicator_name: Option<String>,
     indicator_type: String,
     issue: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SuggestedMetaPatch {
+    id: String,
+    target_type: &'static str,
+    unique_id: String,
+    entity_name: Option<String>,
+    resource_type: Option<String>,
+    original_file_path: Option<String>,
+    column_name: Option<String>,
+    indicator_name: Option<String>,
+    indicator_type: Option<String>,
+    field_path: String,
+    suggested_value: JsonValue,
+    placeholder: bool,
+    rationale: String,
+    severity: &'static str,
+    confidence: f32,
+    evidence: JsonValue,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct GoldenQuestionSeed {
+    id: String,
+    seed_type: &'static str,
+    priority: u8,
+    persona: &'static str,
+    question: String,
+    expected_entities: Vec<String>,
+    expected_indicators: Vec<String>,
+    recommended_assertions: Vec<JsonValue>,
+    rationale: String,
+    review_required: bool,
+    date_policy: &'static str,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -502,6 +547,10 @@ async fn build_agent_readiness_report(
         ambiguous_indicator_count,
         &mut improvement_findings,
     );
+    let suggested_meta_patches =
+        build_suggested_meta_patches(search, &entity_findings, &indicator_findings)?;
+    let golden_question_seeds =
+        build_golden_question_seeds(search, &target_ids, &entity_findings, &indicator_findings)?;
 
     let readiness_band = readiness_band(overall_score, !blocking_findings.is_empty());
     let gate_status = gate_status(
@@ -514,6 +563,8 @@ async fn build_agent_readiness_report(
         &blocking_findings,
         &improvement_findings,
         ambiguous_indicator_count,
+        suggested_meta_patches.len(),
+        golden_question_seeds.len(),
     );
 
     Ok(AgentReadinessReport {
@@ -525,19 +576,23 @@ async fn build_agent_readiness_report(
         grade: grade.to_string(),
         readiness_band,
         gate_status,
-        summary: build_readiness_summary(
+        summary: ReadinessSummary {
             target_count,
-            entity_scores.len(),
-            blocking_findings.len(),
-            improvement_findings.len(),
+            scored_count: entity_scores.len(),
+            blocker_count: blocking_findings.len(),
+            improvement_count: improvement_findings.len(),
             indicator_count,
             ambiguous_indicator_count,
-        ),
+            suggested_meta_patch_count: suggested_meta_patches.len(),
+            golden_question_seed_count: golden_question_seeds.len(),
+        },
         persona_scores,
         blocking_findings,
         improvement_findings,
         entity_findings,
         indicator_findings,
+        suggested_meta_patches,
+        golden_question_seeds,
         eval_status: inputs.eval_status.clone(),
         next_actions,
     })
@@ -630,24 +685,6 @@ fn build_config_summary(
         read_only: search.config().storage_read_only,
         storage_instance_id: search.config().storage_instance_id.clone(),
         thresholds: inputs.thresholds.clone(),
-    }
-}
-
-fn build_readiness_summary(
-    target_count: usize,
-    scored_count: usize,
-    blocker_count: usize,
-    improvement_count: usize,
-    indicator_count: usize,
-    ambiguous_indicator_count: usize,
-) -> ReadinessSummary {
-    ReadinessSummary {
-        target_count,
-        scored_count,
-        blocker_count,
-        improvement_count,
-        indicator_count,
-        ambiguous_indicator_count,
     }
 }
 
@@ -1090,6 +1127,1129 @@ fn indicator_finding(
     }
 }
 
+fn build_suggested_meta_patches(
+    search: &ManifestSearch,
+    entity_findings: &[EntityReadinessFinding],
+    indicator_findings: &[IndicatorReadinessFinding],
+) -> Result<Vec<SuggestedMetaPatch>> {
+    let mut patches = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for finding in entity_findings {
+        let Some(entity) = search.get_entity_archived(&finding.unique_id)? else {
+            continue;
+        };
+        append_entity_meta_patches(entity, finding, &mut patches, &mut seen);
+        if patches.len() >= MAX_SUGGESTED_META_PATCHES {
+            return Ok(patches);
+        }
+    }
+
+    for finding in indicator_findings {
+        let Some(entity) = search.get_entity_archived(&finding.unique_id)? else {
+            continue;
+        };
+        append_indicator_meta_patches(entity, finding, &mut patches, &mut seen);
+        if patches.len() >= MAX_SUGGESTED_META_PATCHES {
+            break;
+        }
+    }
+
+    Ok(patches)
+}
+
+fn append_entity_meta_patches(
+    entity: &ArchivedEntity,
+    finding: &EntityReadinessFinding,
+    patches: &mut Vec<SuggestedMetaPatch>,
+    seen: &mut BTreeSet<String>,
+) {
+    let entity_json = entity.to_json_value();
+    let nova = entity_nova_meta_json(&entity_json);
+    let nova = nova.as_deref();
+
+    if !finding.signals.has_owner {
+        push_meta_patch(
+            patches,
+            seen,
+            entity_patch(
+                entity,
+                MetaPatchTarget::Entity,
+                MetaPatchContent {
+                    field_path: "meta.owner",
+                    suggested_value: json!("__OWNER_OR_TEAM__"),
+                    placeholder: true,
+                    rationale: "Add the owning team or person so agents can route stewardship and review questions.",
+                    confidence: 0.95,
+                    evidence: json!({"signal": "missing_owner"}),
+                },
+            ),
+        );
+    }
+
+    if !json_array_field_non_empty(nova, "domains") {
+        push_meta_patch(
+            patches,
+            seen,
+            entity_patch(
+                entity,
+                MetaPatchTarget::Entity,
+                MetaPatchContent {
+                    field_path: "meta.nova.domains",
+                    suggested_value: json!(["__DOMAIN__"]),
+                    placeholder: true,
+                    rationale: "Add one or more business domains to improve routing and retrieval.",
+                    confidence: 0.86,
+                    evidence: json!({"signal": "missing_nova_domains"}),
+                },
+            ),
+        );
+    }
+
+    if !json_array_field_non_empty(nova, "use_cases") {
+        push_meta_patch(
+            patches,
+            seen,
+            entity_patch(
+                entity,
+                MetaPatchTarget::Entity,
+                MetaPatchContent {
+                    field_path: "meta.nova.use_cases",
+                    suggested_value: json!(["__USE_CASE__"]),
+                    placeholder: true,
+                    rationale: "Add common analyst tasks or reporting use cases that this dataset supports.",
+                    confidence: 0.84,
+                    evidence: json!({"signal": "missing_nova_use_cases"}),
+                },
+            ),
+        );
+    }
+
+    if !json_bool_field_present(nova, "canonical") {
+        push_meta_patch(
+            patches,
+            seen,
+            entity_patch(
+                entity,
+                MetaPatchTarget::Entity,
+                MetaPatchContent {
+                    field_path: "meta.nova.canonical",
+                    suggested_value: json!("__TRUE_IF_CANONICAL_DATASET__"),
+                    placeholder: true,
+                    rationale: "Clarify whether this is the preferred dataset for its concept before agents promote it.",
+                    confidence: 0.62,
+                    evidence: json!({"signal": "missing_canonical_flag"}),
+                },
+            ),
+        );
+    }
+
+    append_grain_meta_patches(entity, &entity_json, nova, finding, patches, seen);
+    append_governance_meta_patches(entity, nova, patches, seen);
+    append_column_semantic_patches(entity, &entity_json, patches, seen);
+    append_indicator_seed_patch(entity, nova, patches, seen);
+}
+
+fn append_grain_meta_patches(
+    entity: &ArchivedEntity,
+    entity_json: &JsonValue,
+    nova: Option<&JsonValue>,
+    finding: &EntityReadinessFinding,
+    patches: &mut Vec<SuggestedMetaPatch>,
+    seen: &mut BTreeSet<String>,
+) {
+    let primary_keys = nova
+        .and_then(|nova| nova.get("grain"))
+        .and_then(|grain| grain.get("primary_key"))
+        .and_then(JsonValue::as_array)
+        .is_some_and(|keys| !keys.is_empty());
+    if !primary_keys && !finding.signals.has_primary_key && finding.signals.column_count > 0 {
+        let candidate = infer_primary_key_column(entity_json);
+        let suggested_value = candidate.as_ref().map_or_else(
+            || json!(["__PRIMARY_KEY_COLUMN__"]),
+            |column| json!([column]),
+        );
+        push_meta_patch(
+            patches,
+            seen,
+            entity_patch(
+                entity,
+                MetaPatchTarget::Entity,
+                MetaPatchContent {
+                    field_path: "meta.nova.grain.primary_key",
+                    suggested_value,
+                    placeholder: candidate.is_none(),
+                    rationale: "Add the row-level identifier columns used to establish dataset grain.",
+                    confidence: if candidate.is_some() { 0.72 } else { 0.58 },
+                    evidence: json!({"signal": "missing_grain_primary_key", "inferred_from_column_name": candidate.is_some()}),
+                },
+            ),
+        );
+        if let Some(column) = candidate {
+            push_meta_patch(
+                patches,
+                seen,
+                entity_patch(
+                    entity,
+                    MetaPatchTarget::Column(column.as_str()),
+                    MetaPatchContent {
+                        field_path: &format!("columns.{column}.meta.primary_key"),
+                        suggested_value: json!(true),
+                        placeholder: false,
+                        rationale: "Mark the likely identifier column as a primary key after review.",
+                        confidence: 0.68,
+                        evidence: json!({"signal": "missing_column_primary_key", "inferred_from_column_name": true}),
+                    },
+                ),
+            );
+        }
+    }
+
+    let time_field = nova
+        .and_then(|nova| nova.get("grain"))
+        .and_then(|grain| grain.get("time_field"))
+        .and_then(JsonValue::as_str)
+        .is_some_and(|field| !field.trim().is_empty());
+    if !time_field {
+        let candidate = infer_time_column(entity_json);
+        let suggested_value = candidate
+            .as_ref()
+            .map_or_else(|| json!("__TIME_FIELD__"), |column| json!(column));
+        push_meta_patch(
+            patches,
+            seen,
+            entity_patch(
+                entity,
+                MetaPatchTarget::Entity,
+                MetaPatchContent {
+                    field_path: "meta.nova.grain.time_field",
+                    suggested_value,
+                    placeholder: candidate.is_none(),
+                    rationale: "Add the default time field used for date-bounded questions, or leave absent if not applicable.",
+                    confidence: if candidate.is_some() { 0.70 } else { 0.52 },
+                    evidence: json!({"signal": "missing_grain_time_field", "inferred_from_column_name": candidate.is_some()}),
+                },
+            ),
+        );
+    }
+}
+
+fn append_governance_meta_patches(
+    entity: &ArchivedEntity,
+    nova: Option<&JsonValue>,
+    patches: &mut Vec<SuggestedMetaPatch>,
+    seen: &mut BTreeSet<String>,
+) {
+    let governance = nova.and_then(|nova| nova.get("governance"));
+    if governance
+        .and_then(|governance| governance.get("sensitivity"))
+        .and_then(JsonValue::as_str)
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        push_meta_patch(
+            patches,
+            seen,
+            entity_patch(
+                entity,
+                MetaPatchTarget::Entity,
+                MetaPatchContent {
+                    field_path: "meta.nova.governance.sensitivity",
+                    suggested_value: json!("__SENSITIVITY__"),
+                    placeholder: true,
+                    rationale: "Classify sensitivity so governance agents know how cautiously to handle this dataset.",
+                    confidence: 0.82,
+                    evidence: json!({"signal": "missing_governance_sensitivity"}),
+                },
+            ),
+        );
+    }
+    if governance
+        .and_then(|governance| governance.get("pii"))
+        .and_then(JsonValue::as_str)
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        push_meta_patch(
+            patches,
+            seen,
+            entity_patch(
+                entity,
+                MetaPatchTarget::Entity,
+                MetaPatchContent {
+                    field_path: "meta.nova.governance.pii",
+                    suggested_value: json!("__PII_CLASSIFICATION__"),
+                    placeholder: true,
+                    rationale: "Record whether the dataset contains PII so agents can avoid unsafe disclosure.",
+                    confidence: 0.82,
+                    evidence: json!({"signal": "missing_governance_pii"}),
+                },
+            ),
+        );
+    }
+    if governance
+        .and_then(|governance| governance.get("compliance"))
+        .and_then(JsonValue::as_array)
+        .is_none_or(Vec::is_empty)
+    {
+        push_meta_patch(
+            patches,
+            seen,
+            entity_patch(
+                entity,
+                MetaPatchTarget::Entity,
+                MetaPatchContent {
+                    field_path: "meta.nova.governance.compliance",
+                    suggested_value: json!(["__COMPLIANCE_FRAMEWORK__"]),
+                    placeholder: true,
+                    rationale: "List applicable compliance frameworks, or replace with an explicit none/empty policy after review.",
+                    confidence: 0.72,
+                    evidence: json!({"signal": "missing_governance_compliance"}),
+                },
+            ),
+        );
+    }
+}
+
+fn append_column_semantic_patches(
+    entity: &ArchivedEntity,
+    entity_json: &JsonValue,
+    patches: &mut Vec<SuggestedMetaPatch>,
+    seen: &mut BTreeSet<String>,
+) {
+    let Some(columns) = entity_json.get("columns").and_then(JsonValue::as_object) else {
+        return;
+    };
+    for (column_name, column) in columns.iter().take(3) {
+        let nova = column_nova_meta_json(column);
+        let nova = nova.as_deref();
+        let has_role = nova
+            .and_then(|nova| nova.get("role"))
+            .and_then(JsonValue::as_str)
+            .is_some_and(|value| !value.trim().is_empty());
+        let has_semantic_type = nova
+            .and_then(|nova| nova.get("semantic_type"))
+            .and_then(JsonValue::as_str)
+            .is_some_and(|value| !value.trim().is_empty());
+        if has_role && has_semantic_type {
+            continue;
+        }
+        let lowered = column_name.to_ascii_lowercase();
+        if !has_role && (lowered == "id" || lowered.ends_with("_id")) {
+            push_meta_patch(
+                patches,
+                seen,
+                entity_patch(
+                    entity,
+                    MetaPatchTarget::Column(column_name.as_str()),
+                    MetaPatchContent {
+                        field_path: &format!("columns.{column_name}.meta.nova.role"),
+                        suggested_value: json!("identifier"),
+                        placeholder: false,
+                        rationale: "Column name suggests an identifier; confirm before applying.",
+                        confidence: 0.70,
+                        evidence: json!({"signal": "missing_column_role", "inferred_from_column_name": true}),
+                    },
+                ),
+            );
+        } else if !has_role && looks_like_time_column(&lowered) {
+            push_meta_patch(
+                patches,
+                seen,
+                entity_patch(
+                    entity,
+                    MetaPatchTarget::Column(column_name.as_str()),
+                    MetaPatchContent {
+                        field_path: &format!("columns.{column_name}.meta.nova.role"),
+                        suggested_value: json!("time"),
+                        placeholder: false,
+                        rationale: "Column name suggests a time dimension; confirm before applying.",
+                        confidence: 0.70,
+                        evidence: json!({"signal": "missing_column_role", "inferred_from_column_name": true}),
+                    },
+                ),
+            );
+        } else if !has_semantic_type {
+            push_meta_patch(
+                patches,
+                seen,
+                entity_patch(
+                    entity,
+                    MetaPatchTarget::Column(column_name.as_str()),
+                    MetaPatchContent {
+                        field_path: &format!("columns.{column_name}.meta.nova.semantic_type"),
+                        suggested_value: json!("__SEMANTIC_TYPE__"),
+                        placeholder: true,
+                        rationale: "Add a stable semantic label when this column is used for search, filtering, or governance.",
+                        confidence: 0.54,
+                        evidence: json!({"signal": "missing_column_semantic_type"}),
+                    },
+                ),
+            );
+        }
+    }
+}
+
+fn append_indicator_seed_patch(
+    entity: &ArchivedEntity,
+    nova: Option<&JsonValue>,
+    patches: &mut Vec<SuggestedMetaPatch>,
+    seen: &mut BTreeSet<String>,
+) {
+    if nova.is_none() || indicator_count_in_nova(nova) > 0 {
+        return;
+    }
+    push_meta_patch(
+        patches,
+        seen,
+        entity_patch(
+            entity,
+            MetaPatchTarget::Indicator {
+                name: None,
+                kind: "measure",
+            },
+            MetaPatchContent {
+                field_path: "meta.nova.measures",
+                suggested_value: json!([{
+                    "name": "__MEASURE_NAME__",
+                    "description": "__MEASURE_DESCRIPTION__",
+                    "expression": "__AGGREGATION_EXPRESSION__",
+                    "field": "__SOURCE_COLUMN__",
+                    "canonical": false
+                }]),
+                placeholder: true,
+                rationale: "Add measure definitions when this model owns reusable business quantities.",
+                confidence: 0.50,
+                evidence: json!({"signal": "missing_nova_indicators"}),
+            },
+        ),
+    );
+}
+
+fn append_indicator_meta_patches(
+    entity: &ArchivedEntity,
+    finding: &IndicatorReadinessFinding,
+    patches: &mut Vec<SuggestedMetaPatch>,
+    seen: &mut BTreeSet<String>,
+) {
+    let base_path = indicator_meta_base_path(finding);
+    if finding.issue.contains("expression or field") {
+        append_indicator_execution_patches(entity, finding, &base_path, patches, seen);
+    } else if finding.issue.contains("grain.time_field") {
+        append_indicator_time_patch(entity, finding, &base_path, patches, seen);
+    } else if finding.issue.contains("missing a description") {
+        append_indicator_description_patch(entity, finding, &base_path, patches, seen);
+    } else if finding.issue.contains("not an object") {
+        append_malformed_indicator_patch(entity, finding, &base_path, patches, seen);
+    }
+}
+
+fn indicator_patch_target(finding: &IndicatorReadinessFinding) -> MetaPatchTarget<'_> {
+    MetaPatchTarget::Indicator {
+        name: finding.indicator_name.as_deref(),
+        kind: finding.indicator_type.as_str(),
+    }
+}
+
+fn append_indicator_execution_patches(
+    entity: &ArchivedEntity,
+    finding: &IndicatorReadinessFinding,
+    base_path: &str,
+    patches: &mut Vec<SuggestedMetaPatch>,
+    seen: &mut BTreeSet<String>,
+) {
+    push_meta_patch(
+        patches,
+        seen,
+        entity_patch(
+            entity,
+            indicator_patch_target(finding),
+            MetaPatchContent {
+                field_path: &format!("{base_path}.expression"),
+                suggested_value: json!("__EXPRESSION_OR_FIELD__"),
+                placeholder: true,
+                rationale: "Add an explicit expression or field before using this indicator as eval ground truth.",
+                confidence: 0.90,
+                evidence: json!({"indicator_issue": finding.issue}),
+            },
+        ),
+    );
+    push_meta_patch(
+        patches,
+        seen,
+        entity_patch(
+            entity,
+            indicator_patch_target(finding),
+            MetaPatchContent {
+                field_path: &format!("{base_path}.canonical"),
+                suggested_value: json!("__TRUE_IF_CANONICAL_INDICATOR__"),
+                placeholder: true,
+                rationale: "Clarify canonical indicator ownership instead of letting agents guess between similarly named metrics.",
+                confidence: 0.78,
+                evidence: json!({"indicator_issue": finding.issue}),
+            },
+        ),
+    );
+}
+
+fn append_indicator_time_patch(
+    entity: &ArchivedEntity,
+    finding: &IndicatorReadinessFinding,
+    base_path: &str,
+    patches: &mut Vec<SuggestedMetaPatch>,
+    seen: &mut BTreeSet<String>,
+) {
+    push_meta_patch(
+        patches,
+        seen,
+        entity_patch(
+            entity,
+            indicator_patch_target(finding),
+            MetaPatchContent {
+                field_path: &format!("{base_path}.grain.time_field"),
+                suggested_value: json!("__TIME_FIELD__"),
+                placeholder: true,
+                rationale: "Add the indicator time grain so date-bounded evals and questions can be anchored safely.",
+                confidence: 0.84,
+                evidence: json!({"indicator_issue": finding.issue}),
+            },
+        ),
+    );
+}
+
+fn append_indicator_description_patch(
+    entity: &ArchivedEntity,
+    finding: &IndicatorReadinessFinding,
+    base_path: &str,
+    patches: &mut Vec<SuggestedMetaPatch>,
+    seen: &mut BTreeSet<String>,
+) {
+    let field_path = if base_path == "description" {
+        base_path.to_string()
+    } else {
+        format!("{base_path}.description")
+    };
+    push_meta_patch(
+        patches,
+        seen,
+        entity_patch(
+            entity,
+            indicator_patch_target(finding),
+            MetaPatchContent {
+                field_path: &field_path,
+                suggested_value: json!("__INDICATOR_DESCRIPTION__"),
+                placeholder: true,
+                rationale: "Describe the indicator before asking reviewers or agents to rely on it.",
+                confidence: 0.76,
+                evidence: json!({"indicator_issue": finding.issue}),
+            },
+        ),
+    );
+}
+
+fn append_malformed_indicator_patch(
+    entity: &ArchivedEntity,
+    finding: &IndicatorReadinessFinding,
+    base_path: &str,
+    patches: &mut Vec<SuggestedMetaPatch>,
+    seen: &mut BTreeSet<String>,
+) {
+    push_meta_patch(
+        patches,
+        seen,
+        entity_patch(
+            entity,
+            indicator_patch_target(finding),
+            MetaPatchContent {
+                field_path: base_path,
+                suggested_value: json!({
+                    "name": "__INDICATOR_NAME__",
+                    "description": "__INDICATOR_DESCRIPTION__",
+                    "expression": "__EXPRESSION_OR_FIELD__"
+                }),
+                placeholder: true,
+                rationale: "Replace the malformed indicator with a structured object before generating eval seeds.",
+                confidence: 0.88,
+                evidence: json!({"indicator_issue": finding.issue}),
+            },
+        ),
+    );
+}
+
+fn build_golden_question_seeds(
+    search: &ManifestSearch,
+    target_ids: &[String],
+    entity_findings: &[EntityReadinessFinding],
+    indicator_findings: &[IndicatorReadinessFinding],
+) -> Result<Vec<GoldenQuestionSeed>> {
+    let mut seeds = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for unique_id in target_ids {
+        let Some(entity) = search.get_entity_archived(unique_id)? else {
+            continue;
+        };
+        append_canonical_indicator_seeds(entity, unique_id, &mut seeds, &mut seen);
+        if seeds.len() >= MAX_GOLDEN_QUESTION_SEEDS {
+            return Ok(seeds);
+        }
+    }
+
+    for finding in indicator_findings {
+        append_indicator_review_seed(finding, &mut seeds, &mut seen);
+        if seeds.len() >= MAX_GOLDEN_QUESTION_SEEDS {
+            return Ok(seeds);
+        }
+    }
+
+    for finding in entity_findings {
+        append_entity_review_seeds(finding, &mut seeds, &mut seen);
+        if seeds.len() >= MAX_GOLDEN_QUESTION_SEEDS {
+            break;
+        }
+    }
+
+    seeds.sort_by(|left, right| {
+        left.priority
+            .cmp(&right.priority)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    Ok(seeds)
+}
+
+fn append_canonical_indicator_seeds(
+    entity: &ArchivedEntity,
+    unique_id: &str,
+    seeds: &mut Vec<GoldenQuestionSeed>,
+    seen: &mut BTreeSet<String>,
+) {
+    let entity_json = entity.to_json_value();
+    let nova = entity_nova_meta_json(&entity_json);
+    let Some(nova) = nova.as_deref() else {
+        return;
+    };
+    let entity_canonical = nova
+        .get("canonical")
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(false);
+    append_metric_seed_from_object(
+        entity,
+        unique_id,
+        nova.get("metric"),
+        entity_canonical,
+        seeds,
+        seen,
+    );
+    if let Some(metrics) = nova.get("metrics").and_then(JsonValue::as_array) {
+        for metric in metrics {
+            append_metric_seed_from_object(
+                entity,
+                unique_id,
+                Some(metric),
+                entity_canonical,
+                seeds,
+                seen,
+            );
+        }
+    }
+    if let Some(measures) = nova.get("measures").and_then(JsonValue::as_array) {
+        for measure in measures {
+            append_measure_seed_from_object(
+                entity,
+                unique_id,
+                measure,
+                entity_canonical,
+                seeds,
+                seen,
+            );
+        }
+    }
+}
+
+fn append_metric_seed_from_object(
+    entity: &ArchivedEntity,
+    unique_id: &str,
+    metric: Option<&JsonValue>,
+    entity_canonical: bool,
+    seeds: &mut Vec<GoldenQuestionSeed>,
+    seen: &mut BTreeSet<String>,
+) {
+    let Some(metric) = metric.and_then(JsonValue::as_object) else {
+        return;
+    };
+    let Some(name) = metric.get("name").and_then(JsonValue::as_str) else {
+        return;
+    };
+    if !string_value_present(metric.get("expression")) {
+        return;
+    }
+    let canonical = metric
+        .get("canonical")
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(entity_canonical);
+    if !canonical {
+        return;
+    }
+    let query = indicator_seed_query(entity, Some(metric), name);
+    let resource_type = entity.resource_type_str().unwrap_or("model");
+    push_seed(
+        seeds,
+        seen,
+        GoldenQuestionSeed {
+            id: stable_seed_id("bridge", unique_id, Some("metric"), Some(name)),
+            seed_type: "bridge",
+            priority: 1,
+            persona: "analyst",
+            question: format!("Find the canonical {name} metric for this project."),
+            expected_entities: vec![unique_id.to_string()],
+            expected_indicators: vec![name.to_string()],
+            recommended_assertions: vec![json!({
+                "type": "search_indicator_rank",
+                "query": query,
+                "expected": name,
+                "max_rank": 3,
+                "resource_types": [resource_type],
+                "indicator_types": ["metric"],
+                "persona": "analyst"
+            })],
+            rationale: "Canonical metric has an explicit expression, so it can seed a deterministic bridge eval.".to_string(),
+            review_required: true,
+            date_policy: "not_date_sensitive",
+        },
+    );
+}
+
+fn append_measure_seed_from_object(
+    entity: &ArchivedEntity,
+    unique_id: &str,
+    measure: &JsonValue,
+    entity_canonical: bool,
+    seeds: &mut Vec<GoldenQuestionSeed>,
+    seen: &mut BTreeSet<String>,
+) {
+    let Some(measure) = measure.as_object() else {
+        return;
+    };
+    let Some(name) = measure.get("name").and_then(JsonValue::as_str) else {
+        return;
+    };
+    if !string_value_present(measure.get("expression"))
+        && !string_value_present(measure.get("field"))
+    {
+        return;
+    }
+    let canonical = measure
+        .get("canonical")
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(entity_canonical);
+    if !canonical {
+        return;
+    }
+    let query = indicator_seed_query(entity, Some(measure), name);
+    let resource_type = entity.resource_type_str().unwrap_or("model");
+    push_seed(
+        seeds,
+        seen,
+        GoldenQuestionSeed {
+            id: stable_seed_id("bridge", unique_id, Some("measure"), Some(name)),
+            seed_type: "bridge",
+            priority: 2,
+            persona: "analyst",
+            question: format!("Find the canonical {name} measure for this project."),
+            expected_entities: vec![unique_id.to_string()],
+            expected_indicators: vec![name.to_string()],
+            recommended_assertions: vec![json!({
+                "type": "search_indicator_rank",
+                "query": query,
+                "expected": name,
+                "max_rank": 3,
+                "resource_types": [resource_type],
+                "indicator_types": ["measure"],
+                "persona": "analyst"
+            })],
+            rationale: "Canonical measure has execution metadata, so it can seed a deterministic bridge eval.".to_string(),
+            review_required: true,
+            date_policy: "not_date_sensitive",
+        },
+    );
+}
+
+fn append_indicator_review_seed(
+    finding: &IndicatorReadinessFinding,
+    seeds: &mut Vec<GoldenQuestionSeed>,
+    seen: &mut BTreeSet<String>,
+) {
+    let indicator_label = finding
+        .indicator_name
+        .as_deref()
+        .unwrap_or("unnamed indicator");
+    push_seed(
+        seeds,
+        seen,
+        GoldenQuestionSeed {
+            id: stable_seed_id(
+                "manual_review",
+                &finding.unique_id,
+                Some(finding.indicator_type.as_str()),
+                finding.indicator_name.as_deref().or(Some(finding.issue.as_str())),
+            ),
+            seed_type: "manual_review",
+            priority: 2,
+            persona: "analyst",
+            question: format!(
+                "Review {indicator_label} on {} before turning it into a gated eval.",
+                finding.unique_id
+            ),
+            expected_entities: vec![finding.unique_id.clone()],
+            expected_indicators: finding.indicator_name.iter().cloned().collect(),
+            recommended_assertions: vec![json!({
+                "type": "manual_review",
+                "instruction": format!("Resolve indicator readiness issue: {}", finding.issue)
+            })],
+            rationale: "Indicator metadata is ambiguous, so the first seed should request review rather than assert false ground truth.".to_string(),
+            review_required: true,
+            date_policy: "not_date_sensitive",
+        },
+    );
+}
+
+fn append_entity_review_seeds(
+    finding: &EntityReadinessFinding,
+    seeds: &mut Vec<GoldenQuestionSeed>,
+    seen: &mut BTreeSet<String>,
+) {
+    if !finding.signals.has_nova_meta || !finding.signals.has_description {
+        push_seed(
+            seeds,
+            seen,
+            GoldenQuestionSeed {
+                id: stable_seed_id("manual_review", &finding.unique_id, Some("context"), None),
+                seed_type: "manual_review",
+                priority: 3,
+                persona: "analyst",
+                question: format!(
+                    "Review whether {} has enough business context for analyst questions.",
+                    finding.unique_id
+                ),
+                expected_entities: vec![finding.unique_id.clone()],
+                expected_indicators: Vec::new(),
+                recommended_assertions: vec![json!({
+                    "type": "metadata_score_min",
+                    "id_or_name": finding.unique_id,
+                    "threshold": 0.70,
+                    "persona": "analyst"
+                })],
+                rationale: "Entity context is incomplete; make the first eval a review or metadata score gate before answer-correctness checks.".to_string(),
+                review_required: true,
+                date_policy: "not_date_sensitive",
+            },
+        );
+    }
+    if !finding.signals.has_nova_meta {
+        push_seed(
+            seeds,
+            seen,
+            GoldenQuestionSeed {
+                id: stable_seed_id("manual_review", &finding.unique_id, Some("governance"), None),
+                seed_type: "manual_review",
+                priority: 3,
+                persona: "governance",
+                question: format!(
+                    "Review governance classification for {} before production agent use.",
+                    finding.unique_id
+                ),
+                expected_entities: vec![finding.unique_id.clone()],
+                expected_indicators: Vec::new(),
+                recommended_assertions: vec![json!({
+                    "type": "metadata_score_min",
+                    "id_or_name": finding.unique_id,
+                    "threshold": 0.65,
+                    "persona": "governance"
+                })],
+                rationale: "Governance coverage is missing or weak; keep this seed advisory until sensitivity and PII fields are reviewed.".to_string(),
+                review_required: true,
+                date_policy: "not_date_sensitive",
+            },
+        );
+    }
+}
+
+#[derive(Clone, Copy)]
+enum MetaPatchTarget<'a> {
+    Entity,
+    Column(&'a str),
+    Indicator {
+        name: Option<&'a str>,
+        kind: &'a str,
+    },
+}
+
+struct MetaPatchContent<'a> {
+    field_path: &'a str,
+    suggested_value: JsonValue,
+    placeholder: bool,
+    rationale: &'a str,
+    confidence: f32,
+    evidence: JsonValue,
+}
+
+fn entity_patch(
+    entity: &ArchivedEntity,
+    target: MetaPatchTarget<'_>,
+    content: MetaPatchContent<'_>,
+) -> SuggestedMetaPatch {
+    let (target_type, column_name, indicator_name, indicator_type) = match target {
+        MetaPatchTarget::Entity => ("entity", None, None, None),
+        MetaPatchTarget::Column(name) => ("column", Some(name), None, None),
+        MetaPatchTarget::Indicator { name, kind } => ("indicator", None, name, Some(kind)),
+    };
+    let unique_id = entity.unique_id.as_str().to_string();
+    SuggestedMetaPatch {
+        id: stable_meta_patch_id(
+            &unique_id,
+            column_name,
+            indicator_type,
+            indicator_name,
+            content.field_path,
+        ),
+        target_type,
+        unique_id,
+        entity_name: entity.name_str().map(ToString::to_string),
+        resource_type: entity.resource_type_str().map(ToString::to_string),
+        original_file_path: entity.original_file_path_str().map(ToString::to_string),
+        column_name: column_name.map(ToString::to_string),
+        indicator_name: indicator_name.map(ToString::to_string),
+        indicator_type: indicator_type.map(ToString::to_string),
+        field_path: content.field_path.to_string(),
+        suggested_value: content.suggested_value,
+        placeholder: content.placeholder,
+        rationale: content.rationale.to_string(),
+        severity: "improvement",
+        confidence: content.confidence,
+        evidence: content.evidence,
+    }
+}
+
+fn push_meta_patch(
+    patches: &mut Vec<SuggestedMetaPatch>,
+    seen: &mut BTreeSet<String>,
+    patch: SuggestedMetaPatch,
+) {
+    if patches.len() >= MAX_SUGGESTED_META_PATCHES || !seen.insert(patch.id.clone()) {
+        return;
+    }
+    patches.push(patch);
+}
+
+fn push_seed(
+    seeds: &mut Vec<GoldenQuestionSeed>,
+    seen: &mut BTreeSet<String>,
+    question_seed: GoldenQuestionSeed,
+) {
+    if seeds.len() >= MAX_GOLDEN_QUESTION_SEEDS || !seen.insert(question_seed.id.clone()) {
+        return;
+    }
+    seeds.push(question_seed);
+}
+
+fn json_array_field_non_empty(nova: Option<&JsonValue>, field: &str) -> bool {
+    nova.and_then(|nova| nova.get(field))
+        .and_then(JsonValue::as_array)
+        .is_some_and(|values| !values.is_empty())
+}
+
+fn json_bool_field_present(nova: Option<&JsonValue>, field: &str) -> bool {
+    nova.and_then(|nova| nova.get(field))
+        .and_then(JsonValue::as_bool)
+        .is_some()
+}
+
+fn infer_primary_key_column(entity_json: &JsonValue) -> Option<String> {
+    let columns = entity_json.get("columns")?.as_object()?;
+    let entity_name = entity_json
+        .get("name")
+        .and_then(JsonValue::as_str)
+        .unwrap_or_default()
+        .trim_start_matches("dim__")
+        .trim_start_matches("fct__")
+        .trim_start_matches("stg__")
+        .trim_end_matches('s')
+        .to_ascii_lowercase();
+    let mut candidates = columns
+        .keys()
+        .filter(|column| {
+            let lowered = column.to_ascii_lowercase();
+            lowered == "id" || lowered == format!("{entity_name}_id") || lowered.ends_with("_id")
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    candidates.sort();
+    candidates.first().cloned()
+}
+
+fn infer_time_column(entity_json: &JsonValue) -> Option<String> {
+    let columns = entity_json.get("columns")?.as_object()?;
+    let mut candidates = columns
+        .keys()
+        .filter(|column| looks_like_time_column(&column.to_ascii_lowercase()))
+        .cloned()
+        .collect::<Vec<_>>();
+    candidates.sort();
+    candidates.first().cloned()
+}
+
+fn looks_like_time_column(lowered: &str) -> bool {
+    lowered == "date"
+        || lowered.ends_with("_date")
+        || lowered.ends_with("_at")
+        || lowered.ends_with("_timestamp")
+        || lowered.ends_with("_time")
+}
+
+fn indicator_count_in_nova(nova: Option<&JsonValue>) -> usize {
+    let Some(nova) = nova else {
+        return 0;
+    };
+    let measures = nova
+        .get("measures")
+        .and_then(JsonValue::as_array)
+        .map_or(0, Vec::len);
+    let metrics = nova
+        .get("metrics")
+        .and_then(JsonValue::as_array)
+        .map_or(0, Vec::len);
+    let metric = usize::from(nova.get("metric").is_some_and(|value| !value.is_null()));
+    measures + metrics + metric
+}
+
+fn indicator_meta_base_path(finding: &IndicatorReadinessFinding) -> String {
+    match (
+        finding.indicator_type.as_str(),
+        finding.indicator_name.as_deref(),
+    ) {
+        ("measure", Some(name)) => format!("meta.nova.measures[name={name}]"),
+        ("measure", None) => "meta.nova.measures[]".to_string(),
+        ("metric", Some(name)) => format!("meta.nova.metrics[name={name}]"),
+        ("metric", None) if finding.resource_type.as_deref() == Some("metric") => {
+            "description".to_string()
+        }
+        ("metric", None) => "meta.nova.metrics[]".to_string(),
+        (_, Some(name)) => format!("meta.nova.indicators[name={name}]"),
+        _ => "meta.nova.indicators[]".to_string(),
+    }
+}
+
+fn string_value_present(value: Option<&JsonValue>) -> bool {
+    value
+        .and_then(JsonValue::as_str)
+        .is_some_and(|value| !value.trim().is_empty())
+}
+
+fn indicator_seed_query(
+    entity: &ArchivedEntity,
+    indicator: Option<&serde_json::Map<String, JsonValue>>,
+    name: &str,
+) -> String {
+    let mut tokens = BTreeSet::new();
+    insert_query_tokens(&mut tokens, name);
+    if let Some(indicator) = indicator {
+        insert_query_tokens_from_value(&mut tokens, indicator.get("description"));
+        insert_query_tokens_from_array(&mut tokens, indicator.get("synonyms"));
+    }
+    let entity_json = entity.to_json_value();
+    let nova = entity_nova_meta_json(&entity_json);
+    let nova = nova.as_deref();
+    if let Some(nova) = nova {
+        insert_query_tokens_from_array(&mut tokens, nova.get("domains"));
+        insert_query_tokens_from_array(&mut tokens, nova.get("use_cases"));
+        insert_query_tokens_from_array(&mut tokens, nova.get("synonyms"));
+    }
+    tokens.into_iter().take(14).collect::<Vec<_>>().join(" ")
+}
+
+fn insert_query_tokens(tokens: &mut BTreeSet<String>, value: &str) {
+    for token in value
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .map(str::trim)
+        .filter(|token| token.len() > 2)
+    {
+        tokens.insert(token.to_ascii_lowercase());
+    }
+}
+
+fn insert_query_tokens_from_value(tokens: &mut BTreeSet<String>, value: Option<&JsonValue>) {
+    if let Some(value) = value.and_then(JsonValue::as_str) {
+        insert_query_tokens(tokens, value);
+    }
+}
+
+fn insert_query_tokens_from_array(tokens: &mut BTreeSet<String>, value: Option<&JsonValue>) {
+    let Some(values) = value.and_then(JsonValue::as_array) else {
+        return;
+    };
+    for value in values.iter().filter_map(JsonValue::as_str) {
+        insert_query_tokens(tokens, value);
+    }
+}
+
+fn stable_meta_patch_id(
+    unique_id: &str,
+    column_name: Option<&str>,
+    indicator_type: Option<&str>,
+    indicator_name: Option<&str>,
+    field_path: &str,
+) -> String {
+    [
+        "meta_patch",
+        unique_id,
+        column_name.unwrap_or("-"),
+        indicator_type.unwrap_or("-"),
+        indicator_name.unwrap_or("-"),
+        field_path,
+    ]
+    .into_iter()
+    .map(stable_id_fragment)
+    .collect::<Vec<_>>()
+    .join("::")
+}
+
+fn stable_seed_id(
+    seed_type: &str,
+    unique_id: &str,
+    indicator_type: Option<&str>,
+    indicator_name: Option<&str>,
+) -> String {
+    [
+        "golden_seed",
+        seed_type,
+        unique_id,
+        indicator_type.unwrap_or("-"),
+        indicator_name.unwrap_or("-"),
+    ]
+    .into_iter()
+    .map(stable_id_fragment)
+    .collect::<Vec<_>>()
+    .join("::")
+}
+
+fn stable_id_fragment(value: &str) -> String {
+    let mut out = String::new();
+    let mut previous_underscore = false;
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            previous_underscore = false;
+        } else if !previous_underscore {
+            out.push('_');
+            previous_underscore = true;
+        }
+    }
+    let trimmed = out.trim_matches('_');
+    if trimmed.is_empty() {
+        "none".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 fn default_resource_types(search: &ManifestSearch) -> Vec<String> {
     let mut resource_types = DEFAULT_RESOURCE_TYPE_PRIORITY
         .iter()
@@ -1339,6 +2499,8 @@ fn build_next_actions(
     blocking_findings: &[ReadinessFinding],
     improvement_findings: &[ReadinessFinding],
     ambiguous_indicator_count: usize,
+    suggested_meta_patch_count: usize,
+    golden_question_seed_count: usize,
 ) -> Vec<ReadinessNextAction> {
     let mut actions = Vec::new();
     if !blocking_findings.is_empty() {
@@ -1382,6 +2544,24 @@ fn build_next_actions(
                 "Add explicit expression, field, and grain metadata to ambiguous Nova indicators"
                     .to_string(),
             evidence: format!("{ambiguous_indicator_count} ambiguous indicator definition(s)"),
+        });
+    }
+    if suggested_meta_patch_count > 0 {
+        actions.push(ReadinessNextAction {
+            priority: 2,
+            category: "remediation",
+            action: "Review suggested_meta_patches and promote safe changes into dbt YAML"
+                .to_string(),
+            evidence: format!("{suggested_meta_patch_count} advisory patch suggestion(s)"),
+        });
+    }
+    if golden_question_seed_count > 0 {
+        actions.push(ReadinessNextAction {
+            priority: 3,
+            category: "eval_seed",
+            action: "Review golden_question_seeds and copy approved cases into an eval suite"
+                .to_string(),
+            evidence: format!("{golden_question_seed_count} draft eval seed(s)"),
         });
     }
     if overall_score < 85 || !improvement_findings.is_empty() {
@@ -1435,18 +2615,36 @@ fn gate_status(has_blockers: bool, has_improvements: bool) -> &'static str {
 fn render_markdown_report(report: &AgentReadinessReport) -> String {
     let mut out = String::new();
     out.push_str("# Nova Agent Readiness\n\n");
+    append_markdown_summary(&mut out, report);
+    append_persona_score_table(&mut out, report);
+    append_findings_table(&mut out, "Blockers", &report.blocking_findings);
+    append_findings_table(&mut out, "Improvements", &report.improvement_findings);
+    append_eval_status(&mut out, report);
+    append_entity_findings_table(&mut out, &report.entity_findings);
+    append_indicator_findings_table(&mut out, &report.indicator_findings);
+    append_suggested_meta_patches_table(&mut out, &report.suggested_meta_patches);
+    append_golden_question_seeds_table(&mut out, &report.golden_question_seeds);
+    append_next_actions(&mut out, &report.next_actions);
+    out
+}
+
+fn append_markdown_summary(out: &mut String, report: &AgentReadinessReport) {
     let _ = write!(
         out,
-        "- gate_status: `{}`\n- readiness_band: `{}`\n- overall_score: `{}` ({})\n- target_count: `{}`\n- blockers: `{}`\n- improvements: `{}`\n\n",
+        "- gate_status: `{}`\n- readiness_band: `{}`\n- overall_score: `{}` ({})\n- target_count: `{}`\n- blockers: `{}`\n- improvements: `{}`\n- suggested_meta_patches: `{}`\n- golden_question_seeds: `{}`\n\n",
         report.gate_status,
         report.readiness_band,
         report.overall_score,
         report.grade,
         report.summary.target_count,
         report.summary.blocker_count,
-        report.summary.improvement_count
+        report.summary.improvement_count,
+        report.summary.suggested_meta_patch_count,
+        report.summary.golden_question_seed_count
     );
+}
 
+fn append_persona_score_table(out: &mut String, report: &AgentReadinessReport) {
     out.push_str("## Persona Scores\n\n");
     out.push_str("| Persona | Score | Grade | Gate | Scored |\n");
     out.push_str("|---|---:|---|---|---:|\n");
@@ -1465,22 +2663,23 @@ fn render_markdown_report(report: &AgentReadinessReport) -> String {
         }
     }
     out.push('\n');
+}
 
-    append_findings_table(&mut out, "Blockers", &report.blocking_findings);
-    append_findings_table(&mut out, "Improvements", &report.improvement_findings);
-
+fn append_eval_status(out: &mut String, report: &AgentReadinessReport) {
     out.push_str("## Eval Status\n\n");
     let _ = writeln!(
         out,
         "- status: `{}`\n- supplied: `{}`\n- message: {}\n",
         report.eval_status.status, report.eval_status.supplied, report.eval_status.message
     );
+}
 
-    if !report.entity_findings.is_empty() {
+fn append_entity_findings_table(out: &mut String, entity_findings: &[EntityReadinessFinding]) {
+    if !entity_findings.is_empty() {
         out.push_str("## Entity Findings\n\n");
         out.push_str("| Entity | Type | Score | Signal gaps | Top recommendation |\n");
         out.push_str("|---|---|---:|---:|---|\n");
-        for entity in &report.entity_findings {
+        for entity in entity_findings {
             let recommendation = entity
                 .recommendations
                 .first()
@@ -1498,12 +2697,17 @@ fn render_markdown_report(report: &AgentReadinessReport) -> String {
         }
         out.push('\n');
     }
+}
 
-    if !report.indicator_findings.is_empty() {
+fn append_indicator_findings_table(
+    out: &mut String,
+    indicator_findings: &[IndicatorReadinessFinding],
+) {
+    if !indicator_findings.is_empty() {
         out.push_str("## Indicator Findings\n\n");
         out.push_str("| Entity | Indicator | Type | Issue |\n");
         out.push_str("|---|---|---|---|\n");
-        for finding in &report.indicator_findings {
+        for finding in indicator_findings {
             let _ = writeln!(
                 out,
                 "| `{}` | `{}` | `{}` | {} |",
@@ -1515,9 +2719,72 @@ fn render_markdown_report(report: &AgentReadinessReport) -> String {
         }
         out.push('\n');
     }
+}
 
+fn append_suggested_meta_patches_table(out: &mut String, patches: &[SuggestedMetaPatch]) {
+    if !patches.is_empty() {
+        out.push_str("## Suggested Meta Patches\n\n");
+        out.push_str("| Target | Field | Suggested value | Rationale |\n");
+        out.push_str("|---|---|---|---|\n");
+        for patch in patches.iter().take(MAX_MARKDOWN_META_PATCHES) {
+            let target = patch
+                .column_name
+                .as_deref()
+                .or(patch.indicator_name.as_deref())
+                .map_or_else(|| patch.unique_id.as_str(), |name| name);
+            let _ = writeln!(
+                out,
+                "| `{}` | `{}` | `{}` | {} |",
+                target,
+                patch.field_path,
+                escape_markdown_table_cell(&json_inline(&patch.suggested_value)),
+                escape_markdown_table_cell(&patch.rationale)
+            );
+        }
+        if patches.len() > MAX_MARKDOWN_META_PATCHES {
+            let _ = writeln!(
+                out,
+                "| `_truncated` | `-` | `-` | {} additional suggestion(s) omitted from Markdown; see JSON report. |",
+                patches.len() - MAX_MARKDOWN_META_PATCHES
+            );
+        }
+        out.push('\n');
+    }
+}
+
+fn append_golden_question_seeds_table(out: &mut String, seeds: &[GoldenQuestionSeed]) {
+    if !seeds.is_empty() {
+        out.push_str("## Golden Question Seeds\n\n");
+        out.push_str("| Type | Persona | Question | Suggested assertion |\n");
+        out.push_str("|---|---|---|---|\n");
+        for seed in seeds.iter().take(MAX_MARKDOWN_GOLDEN_SEEDS) {
+            let assertion = seed
+                .recommended_assertions
+                .first()
+                .map_or_else(|| "-".to_string(), json_inline);
+            let _ = writeln!(
+                out,
+                "| `{}` | `{}` | {} | `{}` |",
+                seed.seed_type,
+                seed.persona,
+                escape_markdown_table_cell(&seed.question),
+                escape_markdown_table_cell(&assertion)
+            );
+        }
+        if seeds.len() > MAX_MARKDOWN_GOLDEN_SEEDS {
+            let _ = writeln!(
+                out,
+                "| `_truncated` | `-` | {} additional seed(s) omitted from Markdown; see JSON report. | `-` |",
+                seeds.len() - MAX_MARKDOWN_GOLDEN_SEEDS
+            );
+        }
+        out.push('\n');
+    }
+}
+
+fn append_next_actions(out: &mut String, next_actions: &[ReadinessNextAction]) {
     out.push_str("## Next Actions\n\n");
-    for (index, action) in report.next_actions.iter().enumerate() {
+    for (index, action) in next_actions.iter().enumerate() {
         let _ = writeln!(
             out,
             "{}. **{}**: {} ({})",
@@ -1527,8 +2794,6 @@ fn render_markdown_report(report: &AgentReadinessReport) -> String {
             action.evidence
         );
     }
-
-    out
 }
 
 fn append_findings_table(out: &mut String, title: &str, findings: &[ReadinessFinding]) {
@@ -1703,17 +2968,22 @@ fn escape_markdown_table_cell(value: &str) -> String {
     value.replace('|', "\\|").replace('\n', " ")
 }
 
+fn json_inline(value: &JsonValue) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "null".to_string())
+}
+
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::path::Path;
 
     use serde_json::json;
     use tempfile::TempDir;
 
     use super::{
-        EvalReadinessStatus, ReadinessFinding, ReadinessThresholdConfig, ThresholdRule,
-        ThresholdSeverity, build_agent_readiness_load_config, build_agent_readiness_report,
+        EvalReadinessStatus, IndicatorReadinessFinding, ReadinessFinding, ReadinessThresholdConfig,
+        ThresholdRule, ThresholdSeverity, append_indicator_meta_patches,
+        build_agent_readiness_load_config, build_agent_readiness_report,
         build_agent_readiness_tool_response, evaluate_threshold, parse_eval_status,
         parse_json_input, render_markdown_report, write_report,
     };
@@ -1727,6 +2997,26 @@ mod tests {
             .join(format!("tests/fixtures/{fixture_name}"))
             .to_string_lossy()
             .to_string()
+    }
+
+    async fn readiness_report_for_fixture(
+        fixture_name: &str,
+        storage_instance_id: &str,
+    ) -> super::AgentReadinessReport {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let args = AgentReadinessArgs {
+            manifest_path: Some(fixture_path_string(fixture_name)),
+            storage_instance_id: Some(storage_instance_id.to_string()),
+            cleanup_storage_on_start: true,
+            ..AgentReadinessArgs::default()
+        };
+        let inputs = super::parse_readiness_inputs(&args).expect("inputs");
+        let mut config = build_agent_readiness_load_config(&args).expect("config");
+        config.storage_dir = temp_dir.path().to_string_lossy().to_string();
+        let loaded = execute_manifest_load(config).await.expect("load");
+        build_agent_readiness_report(&loaded.search, &inputs)
+            .await
+            .expect("report")
     }
 
     #[test]
@@ -1846,6 +3136,8 @@ mod tests {
         assert!(report.persona_scores.contains_key("engineer"));
         assert!(report.config.resource_types.contains(&"model".to_string()));
         assert!(!report.manifest.source.contains("token="));
+        assert!(report.suggested_meta_patches.len() <= super::MAX_SUGGESTED_META_PATCHES);
+        assert!(report.golden_question_seeds.len() <= super::MAX_GOLDEN_QUESTION_SEEDS);
         let markdown = render_markdown_report(&report);
         assert!(markdown.contains("# Nova Agent Readiness"));
         assert!(markdown.contains("## Persona Scores"));
@@ -1888,6 +3180,8 @@ mod tests {
         assert_eq!(response["data"]["eval_status"]["status"], json!("allowed"));
         assert!(response["data"]["entity_findings"].is_array());
         assert!(response["data"]["next_actions"].is_array());
+        assert!(response["data"]["suggested_meta_patches"].is_array());
+        assert!(response["data"]["golden_question_seeds"].is_array());
     }
 
     #[tokio::test]
@@ -1933,31 +3227,12 @@ mod tests {
         assert_eq!(std::fs::read_to_string(path).expect("read report"), "{}");
     }
 
-    #[test]
-    fn markdown_includes_blockers_and_eval_status() {
-        let report = super::AgentReadinessReport {
+    fn markdown_fixture_report() -> super::AgentReadinessReport {
+        super::AgentReadinessReport {
             schema_version: "agent_readiness.v1",
             generated_at_ms: 1,
-            manifest: super::ReadinessManifestSummary {
-                source: "target/manifest.json".to_string(),
-                hash: "abc".to_string(),
-                version: "abc".to_string(),
-                entity_count: 1,
-                resource_counts: BTreeMap::new(),
-                search_ready: super::ReadinessSearchReady {
-                    vector: false,
-                    sparse: false,
-                    reranker: false,
-                },
-            },
-            config: super::ReadinessConfigSummary {
-                personas: vec!["engineer".to_string()],
-                resource_types: vec!["model".to_string()],
-                metadata_only: true,
-                read_only: false,
-                storage_instance_id: "test".to_string(),
-                thresholds: ReadinessThresholdConfig::default(),
-            },
+            manifest: markdown_fixture_manifest(),
+            config: markdown_fixture_config(),
             overall_score: 60,
             grade: "D".to_string(),
             readiness_band: "blocked",
@@ -1969,19 +3244,10 @@ mod tests {
                 improvement_count: 0,
                 indicator_count: 0,
                 ambiguous_indicator_count: 0,
+                suggested_meta_patch_count: 1,
+                golden_question_seed_count: 1,
             },
-            persona_scores: BTreeMap::from([(
-                "engineer".to_string(),
-                super::PersonaReadinessScore {
-                    overall_score: 60,
-                    grade: "D".to_string(),
-                    gate_status: "fail",
-                    threshold: None,
-                    scored_count: 1,
-                    total_available: 1,
-                    quality_summary: json!({}),
-                },
-            )]),
+            persona_scores: markdown_fixture_persona_scores(),
             blocking_findings: vec![ReadinessFinding {
                 severity: "blocker",
                 category: "eval_gate",
@@ -1992,32 +3258,267 @@ mod tests {
             improvement_findings: Vec::new(),
             entity_findings: Vec::new(),
             indicator_findings: Vec::new(),
-            eval_status: EvalReadinessStatus {
-                status: "blocked",
-                supplied: true,
-                allowed: Some(false),
-                blocked: Some(true),
-                gate_configured: Some(true),
-                threshold: Some(0.9),
-                pass_rate: Some(0.5),
-                total_evals: Some(2),
-                failed_evals: Some(1),
-                failed_eval_ids: vec!["case::assertion".to_string()],
-                failed_case_ids: vec!["case".to_string()],
-                telemetry_timestamp: None,
-                suite_name: Some("suite".to_string()),
-                message: "blocked".to_string(),
-            },
+            suggested_meta_patches: vec![markdown_fixture_meta_patch()],
+            golden_question_seeds: vec![markdown_fixture_golden_seed()],
+            eval_status: markdown_fixture_eval_status(),
             next_actions: vec![super::ReadinessNextAction {
                 priority: 1,
                 category: "eval_gate",
                 action: "Fix eval gate".to_string(),
                 evidence: "blocked".to_string(),
             }],
-        };
+        }
+    }
+
+    fn markdown_fixture_manifest() -> super::ReadinessManifestSummary {
+        super::ReadinessManifestSummary {
+            source: "target/manifest.json".to_string(),
+            hash: "abc".to_string(),
+            version: "abc".to_string(),
+            entity_count: 1,
+            resource_counts: BTreeMap::new(),
+            search_ready: super::ReadinessSearchReady {
+                vector: false,
+                sparse: false,
+                reranker: false,
+            },
+        }
+    }
+
+    fn markdown_fixture_config() -> super::ReadinessConfigSummary {
+        super::ReadinessConfigSummary {
+            personas: vec!["engineer".to_string()],
+            resource_types: vec!["model".to_string()],
+            metadata_only: true,
+            read_only: false,
+            storage_instance_id: "test".to_string(),
+            thresholds: ReadinessThresholdConfig::default(),
+        }
+    }
+
+    fn markdown_fixture_persona_scores() -> BTreeMap<String, super::PersonaReadinessScore> {
+        BTreeMap::from([(
+            "engineer".to_string(),
+            super::PersonaReadinessScore {
+                overall_score: 60,
+                grade: "D".to_string(),
+                gate_status: "fail",
+                threshold: None,
+                scored_count: 1,
+                total_available: 1,
+                quality_summary: json!({}),
+            },
+        )])
+    }
+
+    fn markdown_fixture_meta_patch() -> super::SuggestedMetaPatch {
+        super::SuggestedMetaPatch {
+            id: "meta_patch::model_pkg_orders::meta_owner".to_string(),
+            target_type: "entity",
+            unique_id: "model.pkg.orders".to_string(),
+            entity_name: Some("orders".to_string()),
+            resource_type: Some("model".to_string()),
+            original_file_path: Some("models/orders.yml".to_string()),
+            column_name: None,
+            indicator_name: None,
+            indicator_type: None,
+            field_path: "meta.owner".to_string(),
+            suggested_value: json!("__OWNER_OR_TEAM__"),
+            placeholder: true,
+            rationale: "Add an owner.".to_string(),
+            severity: "improvement",
+            confidence: 0.95,
+            evidence: json!({"signal": "missing_owner"}),
+        }
+    }
+
+    fn markdown_fixture_golden_seed() -> super::GoldenQuestionSeed {
+        super::GoldenQuestionSeed {
+            id: "golden_seed::manual_review::model_pkg_orders".to_string(),
+            seed_type: "manual_review",
+            priority: 1,
+            persona: "governance",
+            question: "Review governance classification for model.pkg.orders.".to_string(),
+            expected_entities: vec!["model.pkg.orders".to_string()],
+            expected_indicators: Vec::new(),
+            recommended_assertions: vec![json!({"type": "metadata_score_min"})],
+            rationale: "Governance coverage is missing.".to_string(),
+            review_required: true,
+            date_policy: "not_date_sensitive",
+        }
+    }
+
+    fn markdown_fixture_eval_status() -> EvalReadinessStatus {
+        EvalReadinessStatus {
+            status: "blocked",
+            supplied: true,
+            allowed: Some(false),
+            blocked: Some(true),
+            gate_configured: Some(true),
+            threshold: Some(0.9),
+            pass_rate: Some(0.5),
+            total_evals: Some(2),
+            failed_evals: Some(1),
+            failed_eval_ids: vec!["case::assertion".to_string()],
+            failed_case_ids: vec!["case".to_string()],
+            telemetry_timestamp: None,
+            suite_name: Some("suite".to_string()),
+            message: "blocked".to_string(),
+        }
+    }
+
+    #[test]
+    fn markdown_includes_blockers_and_eval_status() {
+        let report = markdown_fixture_report();
         let markdown = render_markdown_report(&report);
         assert!(markdown.contains("## Blockers"));
         assert!(markdown.contains("status: `blocked`"));
+        assert!(markdown.contains("## Suggested Meta Patches"));
+        assert!(markdown.contains("## Golden Question Seeds"));
         assert!(markdown.contains("Fix eval gate"));
+    }
+
+    #[tokio::test]
+    async fn readiness_suggests_entity_column_and_governance_patches() {
+        let report =
+            readiness_report_for_fixture("minimal.json", "agent-readiness-suggestions-minimal")
+                .await;
+
+        assert!(report.suggested_meta_patches.iter().any(|patch| {
+            patch.target_type == "entity"
+                && patch.field_path == "meta.owner"
+                && patch.suggested_value == json!("__OWNER_OR_TEAM__")
+                && patch.placeholder
+        }));
+        assert!(report.suggested_meta_patches.iter().any(|patch| {
+            patch.target_type == "entity"
+                && patch.field_path == "meta.nova.governance.sensitivity"
+                && patch.suggested_value == json!("__SENSITIVITY__")
+                && patch.placeholder
+        }));
+        assert!(report.suggested_meta_patches.iter().any(|patch| {
+            patch.target_type == "column"
+                && patch.column_name.as_deref() == Some("col")
+                && patch.field_path == "columns.col.meta.nova.semantic_type"
+                && patch.placeholder
+        }));
+
+        let markdown = render_markdown_report(&report);
+        assert!(markdown.contains("## Suggested Meta Patches"));
+        assert!(markdown.contains("meta.nova.governance.sensitivity"));
+    }
+
+    #[tokio::test]
+    async fn readiness_suggests_metric_patches_without_guessing_ground_truth() {
+        let report =
+            readiness_report_for_fixture("metric_test.json", "agent-readiness-suggestions-metric")
+                .await;
+
+        assert!(report.suggested_meta_patches.iter().any(|patch| {
+            patch.target_type == "indicator"
+                && patch.indicator_type.as_deref() == Some("metric")
+                && patch.indicator_name.as_deref() == Some("a_metric")
+                && patch.field_path == "meta.nova.metrics[name=a_metric].expression"
+                && patch.suggested_value == json!("__EXPRESSION_OR_FIELD__")
+                && patch.placeholder
+        }));
+        assert!(report.suggested_meta_patches.iter().any(|patch| {
+            patch.field_path == "meta.nova.metrics[name=a_metric].canonical"
+                && patch.suggested_value == json!("__TRUE_IF_CANONICAL_INDICATOR__")
+        }));
+        assert!(report.golden_question_seeds.iter().any(|seed| {
+            seed.seed_type == "manual_review"
+                && seed.expected_indicators == vec!["a_metric".to_string()]
+                && seed.review_required
+        }));
+    }
+
+    #[tokio::test]
+    async fn readiness_native_metric_description_patch_uses_top_level_path() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let args = AgentReadinessArgs {
+            manifest_path: Some(fixture_path_string("minimal.json")),
+            storage_instance_id: Some("agent-readiness-native-metric-description".to_string()),
+            cleanup_storage_on_start: true,
+            ..AgentReadinessArgs::default()
+        };
+        let mut config = build_agent_readiness_load_config(&args).expect("config");
+        config.storage_dir = temp_dir.path().to_string_lossy().to_string();
+        let loaded = execute_manifest_load(config).await.expect("load");
+        let entity = loaded
+            .search
+            .get_entity_archived("model.pkg.model_a")
+            .expect("entity lookup")
+            .expect("model entity");
+        let finding = IndicatorReadinessFinding {
+            unique_id: "model.pkg.model_a".to_string(),
+            name: Some("orders_total".to_string()),
+            resource_type: Some("metric".to_string()),
+            indicator_name: None,
+            indicator_type: "metric".to_string(),
+            issue: "metric is missing a description".to_string(),
+        };
+        let mut patches = Vec::new();
+        let mut seen = BTreeSet::new();
+
+        append_indicator_meta_patches(entity, &finding, &mut patches, &mut seen);
+
+        assert!(
+            patches
+                .iter()
+                .any(|patch| patch.field_path == "description")
+        );
+        assert!(
+            !patches
+                .iter()
+                .any(|patch| patch.field_path == "description.description")
+        );
+    }
+
+    #[tokio::test]
+    async fn readiness_generates_bridge_seeds_for_canonical_metrics() {
+        let report =
+            readiness_report_for_fixture("tokenomics_manifest.json", "agent-readiness-seeds").await;
+
+        let seed = report
+            .golden_question_seeds
+            .iter()
+            .find(|seed| seed.expected_indicators == vec!["conversion_rate".to_string()])
+            .expect("conversion_rate seed");
+        assert_eq!(seed.seed_type, "bridge");
+        assert_eq!(seed.persona, "analyst");
+        assert_eq!(
+            seed.expected_entities,
+            vec!["model.tokenomics_fixture.base__amplitude_sessions".to_string()]
+        );
+        assert_eq!(
+            seed.recommended_assertions[0]["type"],
+            json!("search_indicator_rank")
+        );
+        assert_eq!(
+            seed.recommended_assertions[0]["expected"],
+            json!("conversion_rate")
+        );
+
+        let markdown = render_markdown_report(&report);
+        assert!(markdown.contains("## Golden Question Seeds"));
+        assert!(markdown.contains("conversion_rate"));
+    }
+
+    #[tokio::test]
+    async fn golden_question_seed_builder_allows_empty_seed_sets() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let args = AgentReadinessArgs {
+            manifest_path: Some(fixture_path_string("minimal.json")),
+            storage_instance_id: Some("agent-readiness-empty-seeds".to_string()),
+            cleanup_storage_on_start: true,
+            ..AgentReadinessArgs::default()
+        };
+        let mut config = build_agent_readiness_load_config(&args).expect("config");
+        config.storage_dir = temp_dir.path().to_string_lossy().to_string();
+        let loaded = execute_manifest_load(config).await.expect("load");
+        let seeds =
+            super::build_golden_question_seeds(&loaded.search, &[], &[], &[]).expect("empty seeds");
+        assert!(seeds.is_empty());
     }
 }
