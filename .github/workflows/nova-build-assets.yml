@@ -657,37 +657,39 @@ jobs:
             artifact_name_models="${artifact_name_prefix}-models-${run_suffix}"
           fi
 
-          echo "artifact_name_storage=${artifact_name_storage}" >> "$GITHUB_OUTPUT"
-          echo "artifact_name_models=${artifact_name_models}" >> "$GITHUB_OUTPUT"
-          echo "storage_dir=${storage_dir}" >> "$GITHUB_OUTPUT"
-          echo "models_dir=${models_dir}" >> "$GITHUB_OUTPUT"
-          echo "manifest_path=${manifest_path}" >> "$GITHUB_OUTPUT"
-          echo "manifest_uri=${manifest_uri}" >> "$GITHUB_OUTPUT"
-          echo "storage_instance_id=${storage_instance_id}" >> "$GITHUB_OUTPUT"
-          echo "installer_repository=${installer_repository}" >> "$GITHUB_OUTPUT"
-          echo "installer_ref=${installer_ref}" >> "$GITHUB_OUTPUT"
-          echo "installer_install_mode=${installer_install_mode}" >> "$GITHUB_OUTPUT"
-          echo "publish_targets=${publish_targets_normalized}" >> "$GITHUB_OUTPUT"
-          echo "publish_s3_prefix=${publish_s3_prefix}" >> "$GITHUB_OUTPUT"
-          echo "publish_gcs_prefix=${publish_gcs_prefix}" >> "$GITHUB_OUTPUT"
-          echo "gcp_workload_identity_provider=${gcp_workload_identity_provider}" >> "$GITHUB_OUTPUT"
-          echo "gcp_service_account=${gcp_service_account}" >> "$GITHUB_OUTPUT"
-          echo "gcp_project_id=${gcp_project_id}" >> "$GITHUB_OUTPUT"
-          echo "publish_dbfs_prefix=${publish_dbfs_prefix}" >> "$GITHUB_OUTPUT"
-          echo "publish_dry_run=${publish_dry_run}" >> "$GITHUB_OUTPUT"
-          echo "models_distribution_mode=${models_distribution_mode}" >> "$GITHUB_OUTPUT"
-          echo "publish_models_archive=${publish_models_archive}" >> "$GITHUB_OUTPUT"
-          echo "include_models_in_bootstrap=${include_models_in_bootstrap}" >> "$GITHUB_OUTPUT"
-          echo "search_warm_strategy=${search_warm_strategy}" >> "$GITHUB_OUTPUT"
-          echo "search_onnx_threads=${search_onnx_threads}" >> "$GITHUB_OUTPUT"
-          echo "search_embedding_batch_size=${search_embedding_batch_size}" >> "$GITHUB_OUTPUT"
-          echo "search_sparse_embedding_batch_size=${search_sparse_embedding_batch_size}" >> "$GITHUB_OUTPUT"
-          echo "build_timeout_minutes=${build_timeout_minutes}" >> "$GITHUB_OUTPUT"
-          echo "dbt_env_json=${dbt_env_json}" >> "$GITHUB_OUTPUT"
-          echo "dbt_secret_env_map_json=${dbt_secret_env_map_json}" >> "$GITHUB_OUTPUT"
-          echo "dbt_invocation_mode=${dbt_invocation_mode}" >> "$GITHUB_OUTPUT"
-          echo "dbt_command_args_json=${dbt_command_args_json}" >> "$GITHUB_OUTPUT"
-          echo "dbt_executable=${dbt_executable}" >> "$GITHUB_OUTPUT"
+          {
+            echo "artifact_name_storage=${artifact_name_storage}"
+            echo "artifact_name_models=${artifact_name_models}"
+            echo "storage_dir=${storage_dir}"
+            echo "models_dir=${models_dir}"
+            echo "manifest_path=${manifest_path}"
+            echo "manifest_uri=${manifest_uri}"
+            echo "storage_instance_id=${storage_instance_id}"
+            echo "installer_repository=${installer_repository}"
+            echo "installer_ref=${installer_ref}"
+            echo "installer_install_mode=${installer_install_mode}"
+            echo "publish_targets=${publish_targets_normalized}"
+            echo "publish_s3_prefix=${publish_s3_prefix}"
+            echo "publish_gcs_prefix=${publish_gcs_prefix}"
+            echo "gcp_workload_identity_provider=${gcp_workload_identity_provider}"
+            echo "gcp_service_account=${gcp_service_account}"
+            echo "gcp_project_id=${gcp_project_id}"
+            echo "publish_dbfs_prefix=${publish_dbfs_prefix}"
+            echo "publish_dry_run=${publish_dry_run}"
+            echo "models_distribution_mode=${models_distribution_mode}"
+            echo "publish_models_archive=${publish_models_archive}"
+            echo "include_models_in_bootstrap=${include_models_in_bootstrap}"
+            echo "search_warm_strategy=${search_warm_strategy}"
+            echo "search_onnx_threads=${search_onnx_threads}"
+            echo "search_embedding_batch_size=${search_embedding_batch_size}"
+            echo "search_sparse_embedding_batch_size=${search_sparse_embedding_batch_size}"
+            echo "build_timeout_minutes=${build_timeout_minutes}"
+            echo "dbt_env_json=${dbt_env_json}"
+            echo "dbt_secret_env_map_json=${dbt_secret_env_map_json}"
+            echo "dbt_invocation_mode=${dbt_invocation_mode}"
+            echo "dbt_command_args_json=${dbt_command_args_json}"
+            echo "dbt_executable=${dbt_executable}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Summarize contract
         shell: bash
@@ -764,7 +766,7 @@ jobs:
       DBT_NOVA_SEARCH_SPARSE_EMBEDDING_BATCH_SIZE: ${{ needs.prepare.outputs.search_sparse_embedding_batch_size }}
     steps:
       - name: Checkout caller repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
       - name: Install jq
         shell: bash
@@ -845,7 +847,7 @@ jobs:
 
       - name: Checkout installer source
         if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           repository: ${{ needs.prepare.outputs.installer_repository }}
           ref: ${{ needs.prepare.outputs.installer_ref }}
@@ -870,7 +872,7 @@ jobs:
 
       - name: Rust cache (installer source)
         if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
         with:
           workspaces: ".nova-installer-source -> target"
 
@@ -883,6 +885,38 @@ jobs:
           mkdir -p "$HOME/.local/bin"
           install -m 755 .nova-installer-source/target/release/dbt-nova "$HOME/.local/bin/dbt-nova"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Cache semantic model snapshots
+        if: ${{ needs.prepare.outputs.publish_models_archive == 'true' }}
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        with:
+          path: ${{ env.DBT_NOVA_EMBEDDINGS_CACHE_DIR }}
+          key: ${{ runner.os }}-${{ runner.arch }}-dbt-nova-models-${{ needs.prepare.outputs.installer_ref }}-${{ hashFiles('Cargo.lock', 'src/config/search.rs', 'src/manifest/embeddings/mod.rs', 'src/manifest/prebuilt_assets_resolver.rs', 'scripts/warm_models.sh', '.nova-installer-source/Cargo.lock', '.nova-installer-source/src/config/search.rs', '.nova-installer-source/src/manifest/embeddings/mod.rs', '.nova-installer-source/src/manifest/prebuilt_assets_resolver.rs', '.nova-installer-source/scripts/warm_models.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-dbt-nova-models-
+
+      - name: Seed semantic model snapshots
+        if: ${{ needs.prepare.outputs.publish_models_archive == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          warm_script=""
+          if [[ -f ".nova-installer-source/scripts/warm_models.sh" ]]; then
+            warm_script=".nova-installer-source/scripts/warm_models.sh"
+          elif [[ -f "scripts/warm_models.sh" ]]; then
+            warm_script="scripts/warm_models.sh"
+          fi
+
+          if [[ -z "${warm_script}" ]]; then
+            echo "No warm_models.sh script available; manifest warm will seed models if needed."
+            exit 0
+          fi
+
+          if ! DBT_NOVA_WARMUP_FALLBACK_FROM_RELEASE=0 \
+            DBT_NOVA_WARMUP_REQUIRED_MODELS=3 \
+            bash "${warm_script}" partial; then
+            echo "::warning::semantic model pre-seed failed; manifest warm will retry direct initialization"
+          fi
 
       - name: Optionally generate manifest via dbt
         if: ${{ inputs.dbt_generate_manifest }}
@@ -1004,6 +1038,34 @@ jobs:
           set -euo pipefail
           mkdir -p out
 
+          run_json_with_retry() {
+            local label="$1"
+            local output_path="$2"
+            shift 2
+            local attempt=1
+            local max_attempts=4
+            local delay_secs=15
+            local exit_code
+
+            while true; do
+              set +e
+              "$@" | tee "${output_path}"
+              exit_code="${PIPESTATUS[0]}"
+              set -e
+              if [[ "${exit_code}" -eq 0 ]]; then
+                return 0
+              fi
+              if [[ "${attempt}" -ge "${max_attempts}" ]]; then
+                echo "${label} failed after ${attempt} attempt(s)." >&2
+                return "${exit_code}"
+              fi
+              echo "::warning::${label} failed on attempt ${attempt}/${max_attempts}; retrying in ${delay_secs}s"
+              sleep "${delay_secs}"
+              attempt=$((attempt + 1))
+              delay_secs=$((delay_secs * 2))
+            done
+          }
+
           manifest_path="${INPUT_MANIFEST_PATH}"
           manifest_uri="${INPUT_MANIFEST_URI}"
           if [[ -z "${manifest_path}" && -z "${manifest_uri}" ]]; then
@@ -1022,15 +1084,18 @@ jobs:
 
           if [[ "${INPUT_PUBLISH_MODELS_ARCHIVE}" == "true" ]]; then
             if [[ "${INPUT_SEARCH_WARM_STRATEGY}" == "staged" ]]; then
-              dbt-nova manifest warm "${manifest_args[@]}" --storage-instance-id "${DBT_NOVA_STORAGE_INSTANCE_ID}" --vector --json | tee out/manifest-warm-vector.json
+              run_json_with_retry "manifest warm vector" out/manifest-warm-vector.json \
+                dbt-nova manifest warm "${manifest_args[@]}" --storage-instance-id "${DBT_NOVA_STORAGE_INSTANCE_ID}" --vector --json
               jq -e '.status == "success"' out/manifest-warm-vector.json >/dev/null
               jq -e '.data.persisted.vector == true and .data.ready.vector == true' out/manifest-warm-vector.json >/dev/null
 
-              dbt-nova manifest warm "${manifest_args[@]}" --storage-instance-id "${DBT_NOVA_STORAGE_INSTANCE_ID}" --sparse --json | tee out/manifest-warm-sparse.json
+              run_json_with_retry "manifest warm sparse" out/manifest-warm-sparse.json \
+                dbt-nova manifest warm "${manifest_args[@]}" --storage-instance-id "${DBT_NOVA_STORAGE_INSTANCE_ID}" --sparse --json
               jq -e '.status == "success"' out/manifest-warm-sparse.json >/dev/null
               jq -e '.data.persisted.sparse == true and .data.ready.sparse == true' out/manifest-warm-sparse.json >/dev/null
 
-              dbt-nova manifest warm "${manifest_args[@]}" --storage-instance-id "${DBT_NOVA_STORAGE_INSTANCE_ID}" --reranker --json | tee out/manifest-warm-reranker.json
+              run_json_with_retry "manifest warm reranker" out/manifest-warm-reranker.json \
+                dbt-nova manifest warm "${manifest_args[@]}" --storage-instance-id "${DBT_NOVA_STORAGE_INSTANCE_ID}" --reranker --json
               jq -e '.status == "success"' out/manifest-warm-reranker.json >/dev/null
               jq -e '.data.ready.reranker == true' out/manifest-warm-reranker.json >/dev/null
 
@@ -1054,7 +1119,8 @@ jobs:
                   }
                 }' > out/manifest-warm.json
             else
-              dbt-nova manifest warm "${manifest_args[@]}" --storage-instance-id "${DBT_NOVA_STORAGE_INSTANCE_ID}" --vector --sparse --reranker --json | tee out/manifest-warm.json
+              run_json_with_retry "manifest warm full" out/manifest-warm.json \
+                dbt-nova manifest warm "${manifest_args[@]}" --storage-instance-id "${DBT_NOVA_STORAGE_INSTANCE_ID}" --vector --sparse --reranker --json
               jq -e '.status == "success"' out/manifest-warm.json >/dev/null
               jq -e '.data.persisted.vector == true and .data.persisted.sparse == true and .data.ready.vector == true and .data.ready.sparse == true and .data.ready.reranker == true' out/manifest-warm.json >/dev/null
             fi
@@ -1171,17 +1237,19 @@ jobs:
             (.artifact_name_models | type == "string")
           ' "${metadata_path}" >/dev/null
 
-          echo "manifest_hash=${manifest_hash}" >> "$GITHUB_OUTPUT"
-          echo "manifest_version=${manifest_version}" >> "$GITHUB_OUTPUT"
-          echo "entity_count=${entity_count}" >> "$GITHUB_OUTPUT"
-          echo "artifact_name_storage=${artifact_name_storage}" >> "$GITHUB_OUTPUT"
-          echo "artifact_name_models=${artifact_name_models}" >> "$GITHUB_OUTPUT"
-          echo "artifact_name_metadata=${artifact_name_metadata}" >> "$GITHUB_OUTPUT"
-          echo "artifact_name_manifest=${artifact_name_manifest}" >> "$GITHUB_OUTPUT"
-          echo "artifact_name_bootstrap=${artifact_name_bootstrap}" >> "$GITHUB_OUTPUT"
-          echo "artifact_name_publish_summary=${artifact_name_publish_summary}" >> "$GITHUB_OUTPUT"
-          echo "metadata_path=${metadata_path}" >> "$GITHUB_OUTPUT"
-          echo "manifest_export_path=${manifest_export_path}" >> "$GITHUB_OUTPUT"
+          {
+            echo "manifest_hash=${manifest_hash}"
+            echo "manifest_version=${manifest_version}"
+            echo "entity_count=${entity_count}"
+            echo "artifact_name_storage=${artifact_name_storage}"
+            echo "artifact_name_models=${artifact_name_models}"
+            echo "artifact_name_metadata=${artifact_name_metadata}"
+            echo "artifact_name_manifest=${artifact_name_manifest}"
+            echo "artifact_name_bootstrap=${artifact_name_bootstrap}"
+            echo "artifact_name_publish_summary=${artifact_name_publish_summary}"
+            echo "metadata_path=${metadata_path}"
+            echo "manifest_export_path=${manifest_export_path}"
+          } >> "$GITHUB_OUTPUT"
 
           {
             echo "### Build Metadata Contract"
@@ -1202,7 +1270,7 @@ jobs:
           tar -C "$(dirname "${DBT_NOVA_STORAGE_DIR}")" -czf "${storage_archive}" "$(basename "${DBT_NOVA_STORAGE_DIR}")"
 
       - name: Upload storage artifact
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.collect.outputs.artifact_name_storage }}
           path: ${{ steps.collect.outputs.artifact_name_storage }}.tar.gz
@@ -1210,7 +1278,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload build metadata artifact
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.collect.outputs.artifact_name_metadata }}
           path: ${{ steps.collect.outputs.metadata_path }}
@@ -1218,7 +1286,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload manifest artifact
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.collect.outputs.artifact_name_manifest }}
           path: ${{ steps.collect.outputs.manifest_export_path }}
@@ -1264,7 +1332,7 @@ jobs:
 
       - name: Upload models artifact
         if: ${{ needs.prepare.outputs.publish_models_archive == 'true' }}
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.collect.outputs.artifact_name_models }}
           path: ${{ steps.collect.outputs.artifact_name_models }}.tar.gz
@@ -1274,7 +1342,7 @@ jobs:
       - name: Authenticate to Google Cloud for GCS publish
         id: gcp_auth
         if: ${{ contains(needs.prepare.outputs.publish_targets, 'gcs') && needs.prepare.outputs.gcp_workload_identity_provider != '' && needs.prepare.outputs.gcp_service_account != '' }}
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
         with:
           workload_identity_provider: ${{ needs.prepare.outputs.gcp_workload_identity_provider }}
           service_account: ${{ needs.prepare.outputs.gcp_service_account }}
@@ -1285,7 +1353,7 @@ jobs:
 
       - name: Set up gcloud for GCS publish
         if: ${{ contains(needs.prepare.outputs.publish_targets, 'gcs') && needs.prepare.outputs.gcp_workload_identity_provider != '' && needs.prepare.outputs.gcp_service_account != '' }}
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db
         with:
           project_id: ${{ needs.prepare.outputs.gcp_project_id }}
 
@@ -2121,7 +2189,7 @@ jobs:
 
       - name: Upload bootstrap contract artifact
         if: ${{ steps.publish.outputs.published_targets != '' }}
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.collect.outputs.artifact_name_bootstrap }}
           path: out/bootstrap/*.json
@@ -2129,7 +2197,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload publish summary artifact
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ steps.collect.outputs.artifact_name_publish_summary }}
           path: ${{ steps.publish.outputs.publish_summary_path }}
