@@ -891,7 +891,7 @@ jobs:
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
         with:
           path: ${{ env.DBT_NOVA_EMBEDDINGS_CACHE_DIR }}
-          key: ${{ runner.os }}-${{ runner.arch }}-dbt-nova-models-${{ needs.prepare.outputs.installer_ref }}-${{ hashFiles('Cargo.lock', 'src/config/search.rs', 'src/manifest/embeddings/mod.rs', 'src/manifest/prebuilt_assets_resolver.rs', 'scripts/warm_models.sh') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-dbt-nova-models-${{ needs.prepare.outputs.installer_ref }}-${{ hashFiles('Cargo.lock', 'src/config/search.rs', 'src/manifest/embeddings/mod.rs', 'src/manifest/prebuilt_assets_resolver.rs', 'scripts/warm_models.sh', '.nova-installer-source/Cargo.lock', '.nova-installer-source/src/config/search.rs', '.nova-installer-source/src/manifest/embeddings/mod.rs', '.nova-installer-source/src/manifest/prebuilt_assets_resolver.rs', '.nova-installer-source/scripts/warm_models.sh') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-dbt-nova-models-
 
