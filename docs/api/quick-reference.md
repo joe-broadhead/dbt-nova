@@ -1,6 +1,6 @@
 # Tools Quick Reference
 
-One-page cheatsheet for all 35 dbt-nova MCP tools.
+One-page cheatsheet for all 36 dbt-nova MCP tools.
 
 ## Discovery
 
@@ -64,6 +64,7 @@ One-page cheatsheet for all 35 dbt-nova MCP tools.
 | Tool | Purpose | Key Parameters |
 |------|---------|----------------|
 | `validate_dag` | Check for cycles/orphans | `detail` (full \| summary) |
+| `validate_nova_meta` | Validate project YAML `meta.nova` | `project_dir`, `paths`, `resource_kind`, `resource_name`, `column` |
 
 ## Metadata Inventory
 

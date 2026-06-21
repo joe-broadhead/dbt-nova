@@ -271,9 +271,13 @@ fn collect_yaml_files_from_path(
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         let child = entry.path();
-        if child.is_dir() {
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
             collect_yaml_files_from_path(&child, files, false)?;
-        } else if is_yaml_file(&child) {
+        } else if file_type.is_file() && is_yaml_file(&child) {
             files.insert(child);
         }
     }

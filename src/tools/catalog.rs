@@ -1,5 +1,5 @@
 /// Canonical MCP tool names exposed by dbt-nova.
-pub const MCP_TOOL_NAMES: [&str; 35] = [
+pub const MCP_TOOL_NAMES: [&str; 36] = [
     "search",
     "search_indicator",
     "indicator_inventory",
@@ -16,6 +16,7 @@ pub const MCP_TOOL_NAMES: [&str; 35] = [
     "diff_entities",
     "get_impact",
     "validate_dag",
+    "validate_nova_meta",
     "show_metadata",
     "health",
     "reload_manifest",
@@ -123,10 +124,10 @@ pub const CLI_MCP_PARITY_MATRIX: [CliMcpParityEntry; 20] = [
     },
     CliMcpParityEntry {
         cli_command: "audit nova-meta",
-        mcp_tool: None,
-        status: CliMcpParityStatus::Gap,
-        issue: Some("JOE-214"),
-        notes: "project-file nova-meta validation is CLI-only today",
+        mcp_tool: Some("validate_nova_meta"),
+        status: CliMcpParityStatus::Equivalent,
+        issue: None,
+        notes: "MCP returns the same nova-meta validation report with scoped local path access",
     },
     CliMcpParityEntry {
         cli_command: "config show",

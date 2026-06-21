@@ -1,6 +1,6 @@
 # Tools Reference
 
-This reference lists all 35 MCP tools exposed by dbt‑nova, grouped by category.
+This reference lists all 36 MCP tools exposed by dbt‑nova, grouped by category.
 All tools return the standard envelope described in [Response Format](response-format.md).
 For CLI equivalents and known parity gaps, see
 [MCP/CLI Parity](mcp-cli-parity.md).
@@ -718,6 +718,39 @@ Large reports use the standard MCP response-budget behavior; check
 ```
 
 See `docs/features/agent-readiness.md` for report fields and threshold examples.
+
+### `validate_nova_meta`
+Validate project YAML `meta.nova` blocks against the public Nova schema and
+local semantic rules.
+
+Use `validate_nova_meta` when an MCP-connected agent is authoring or reviewing
+dbt YAML and needs the same data returned by `dbt-nova audit nova-meta --json`.
+Validation findings are returned in `data.findings`; validation errors do not
+become MCP transport errors.
+
+Optional:
+- `project_dir`: dbt project directory, defaulting to the MCP server working
+  directory. Relative values are resolved under the server working directory.
+- `paths`: relative YAML file or directory paths under `project_dir`. Omit for a
+  project-wide scan. The singular alias `path` is also accepted.
+- `resource_kind` (`model`, `source`, `table`, `metric`)
+- `resource_name`
+- `column` (requires `resource_name`)
+
+For path safety, `project_dir` must resolve under the server working directory,
+and each supplied path must be relative and remain under `project_dir` after
+symlink resolution. Project-wide scans skip symlinked files and directories.
+
+```json
+{"name":"validate_nova_meta","arguments":{"project_dir":".","paths":["models/marts/orders.yml"],"resource_kind":"model","resource_name":"fct_orders"}}
+```
+
+The response `data` object includes `schema_version`, `project_dir`,
+`scanned_files`, `target_count`, `error_count`, `warning_count`, `findings`,
+`selector`, and `path_policy`.
+
+See `docs/features/nova-meta-overview.md` for schema and semantic validation
+rules.
 
 ### `get_undocumented`
 Find entities missing descriptions (optionally columns).

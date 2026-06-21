@@ -56,6 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for the same `agent_readiness.v1` report without CLI report-file writes.
 - Added the `get_metadata_audit` MCP tool and CLI `tool call` bridge support
   for metadata audit reports and required/advisory gate status.
+- Added the `validate_nova_meta` MCP tool and CLI `tool call` bridge support
+  for nova-meta schema/semantic validation with scoped local path access.
 - Fixed release OCI publishing to build images from native Linux release binaries
   instead of compiling Rust inside the ARM64 Docker/QEMU path.
 - Fixed the Monthly workflow by refreshing advisory/dependency-watchlist review

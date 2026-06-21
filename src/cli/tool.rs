@@ -13,6 +13,7 @@ use crate::cli::health_cmd::build_cli_health_payload;
 use crate::cli::manifest::{
     build_manifest_load_config, build_manifest_reload_config, execute_manifest_load,
 };
+use crate::cli::nova_meta_cmd::build_nova_meta_tool_response;
 use crate::cli::output::{CliEnvelope, error_envelope};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::search::ManifestSearch;
@@ -24,7 +25,7 @@ use crate::params::{
     GetSqlParams, GetTestCoverageParams, GetUndocumentedParams, IndicatorInventoryParams,
     ListEntitiesParams, ModellingConsistencyReportParams, ReloadManifestParams, RunRecipeParams,
     SearchColumnsParams, SearchIndicatorParams, SearchParams, SearchRecipesParams,
-    ValidateDagParams,
+    ValidateDagParams, ValidateNovaMetaParams,
 };
 use crate::responses::SuccessResponse;
 
@@ -39,7 +40,7 @@ struct ToolRegistryEntry {
     dispatch: ToolDispatchFn,
 }
 
-const TOOL_REGISTRY: [ToolRegistryEntry; 35] = [
+const TOOL_REGISTRY: [ToolRegistryEntry; 36] = [
     ToolRegistryEntry {
         name: "search",
         dispatch: dispatch_search,
@@ -103,6 +104,10 @@ const TOOL_REGISTRY: [ToolRegistryEntry; 35] = [
     ToolRegistryEntry {
         name: "validate_dag",
         dispatch: dispatch_validate_dag,
+    },
+    ToolRegistryEntry {
+        name: "validate_nova_meta",
+        dispatch: dispatch_validate_nova_meta,
     },
     ToolRegistryEntry {
         name: "show_metadata",
@@ -657,6 +662,14 @@ typed_dispatch!(
     ValidateDagParams,
     validate_dag
 );
+
+fn dispatch_validate_nova_meta(_searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: ValidateNovaMetaParams = decode_tool_params("validate_nova_meta", params)?;
+        build_nova_meta_tool_response(&decoded)
+    })
+}
+
 empty_dispatch!(dispatch_show_metadata, "show_metadata", show_metadata);
 empty_dispatch!(dispatch_list_tags, "list_tags", list_tags);
 empty_dispatch!(dispatch_list_packages, "list_packages", list_packages);
@@ -927,6 +940,58 @@ mod tests {
             serde_json::json!("project")
         );
         assert_eq!(result["data"]["gate_status"], serde_json::json!("fail"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_validate_nova_meta_returns_validation_report() {
+        let root = std::env::current_dir()
+            .expect("cwd")
+            .canonicalize()
+            .expect("canonical cwd");
+        let temp_dir = tempfile::TempDir::new_in(&root).expect("temp project");
+        let project_relative = temp_dir
+            .path()
+            .strip_prefix(&root)
+            .expect("relative temp project")
+            .display()
+            .to_string();
+        let models_dir = temp_dir.path().join("models");
+        std::fs::create_dir_all(&models_dir).expect("models dir");
+        std::fs::write(
+            models_dir.join("orders.yml"),
+            r"
+version: 2
+models:
+  - name: fct_orders
+    meta:
+      nova:
+        canonical: true
+",
+        )
+        .expect("fixture");
+
+        let searcher = fixture_searcher().await;
+        let result = dispatch_tool(
+            &searcher,
+            "validate_nova_meta",
+            serde_json::json!({
+                "project_dir": project_relative,
+                "paths": ["models/orders.yml"],
+                "resource_kind": "model",
+                "resource_name": "fct_orders"
+            }),
+        )
+        .await
+        .expect("nova-meta validation");
+
+        assert_eq!(result["success"], serde_json::json!(true));
+        assert_eq!(result["count"], serde_json::json!(1));
+        assert_eq!(result["data"]["target_count"], serde_json::json!(1));
+        assert_eq!(result["data"]["error_count"], serde_json::json!(0));
+        assert_eq!(
+            result["data"]["selector"]["paths"],
+            serde_json::json!(["models/orders.yml"])
+        );
     }
 
     #[tokio::test]

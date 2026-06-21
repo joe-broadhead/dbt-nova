@@ -16,6 +16,7 @@ use tracing::instrument;
 
 use crate::cli::agent_readiness_cmd::build_agent_readiness_tool_response;
 use crate::cli::audit_cmd::build_metadata_audit_tool_response;
+use crate::cli::nova_meta_cmd::build_nova_meta_tool_response;
 use crate::config::DbtNovaConfig;
 use crate::error::DbtNovaError;
 use crate::manifest::search::{ManifestSearch, ManifestSearchHandle};
@@ -27,7 +28,7 @@ use crate::params::{
     GetSqlParams, GetTestCoverageParams, GetUndocumentedParams, IndicatorInventoryParams,
     ListEntitiesParams, ModellingConsistencyReportParams, PaginationParams, ParentGroupMode,
     ReloadManifestParams, RunRecipeParams, SearchColumnsParams, SearchIndicatorParams,
-    SearchParams, SearchRecipesParams, ValidateDagParams,
+    SearchParams, SearchRecipesParams, ValidateDagParams, ValidateNovaMetaParams,
 };
 use crate::responses::SuccessResponse;
 use crate::server::health::build_manifest_health_payload;
@@ -1643,6 +1644,19 @@ impl DbtNovaServer {
         .await
     }
 
+    /// Validate project YAML meta.nova blocks.
+    #[tool(
+        name = "validate_nova_meta",
+        description = "Validate meta.nova blocks in dbt project YAML using the same schema and semantic checks as audit nova-meta. Uses local server filesystem paths scoped under the server working directory."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn validate_nova_meta(&self, params: Parameters<ValidateNovaMetaParams>) -> String {
+        self.handle_async("validate_nova_meta", None, |_searcher| async move {
+            build_nova_meta_tool_response(&params.0)
+        })
+        .await
+    }
+
     /// Show manifest metadata and statistics.
     #[tool(
         name = "show_metadata",
@@ -2858,6 +2872,121 @@ mod tests {
         assert_eq!(
             response["data"]["summary"]["required_fail_count"],
             serde_json::json!(1)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn validate_nova_meta_returns_report_contract() {
+        let root = std::env::current_dir()
+            .expect("cwd")
+            .canonicalize()
+            .expect("canonical cwd");
+        let project_dir = TempDir::new_in(&root).expect("temp project");
+        let project_relative = project_dir
+            .path()
+            .strip_prefix(&root)
+            .expect("relative temp project")
+            .display()
+            .to_string();
+        let models_dir = project_dir.path().join("models");
+        std::fs::create_dir_all(&models_dir).expect("models dir");
+        std::fs::write(
+            models_dir.join("orders.yml"),
+            r"
+version: 2
+models:
+  - name: fct_orders
+    meta:
+      nova:
+        canonical: true
+    columns:
+      - name: order_id
+        meta:
+          nova:
+            role: identifier
+",
+        )
+        .expect("fixture");
+
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path());
+        config.mcp_max_response_bytes = 0;
+        let handle = ManifestSearchHandle::spawn(config);
+        handle
+            .wait_ready()
+            .await
+            .expect("fixture manifest should load");
+        let server = DbtNovaServer::new(handle);
+
+        let response: serde_json::Value = serde_json::from_str(
+            &server
+                .validate_nova_meta(Parameters(ValidateNovaMetaParams {
+                    project_dir: Some(project_relative),
+                    paths: vec!["models/orders.yml".to_string()],
+                    resource_kind: Some(crate::params::NovaMetaResourceKindParam::Model),
+                    resource_name: Some("fct_orders".to_string()),
+                    column: None,
+                }))
+                .await,
+        )
+        .expect("nova-meta response JSON");
+
+        assert_eq!(response["success"], serde_json::json!(true));
+        assert_eq!(response["count"], serde_json::json!(1));
+        assert_eq!(response["data"]["target_count"], serde_json::json!(2));
+        assert_eq!(response["data"]["error_count"], serde_json::json!(0));
+        assert_eq!(
+            response["data"]["selector"]["resource_kind"],
+            serde_json::json!("model")
+        );
+        assert_eq!(
+            response["data"]["selector"]["paths"],
+            serde_json::json!(["models/orders.yml"])
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn validate_nova_meta_rejects_unsafe_paths() {
+        let root = std::env::current_dir()
+            .expect("cwd")
+            .canonicalize()
+            .expect("canonical cwd");
+        let project_dir = TempDir::new_in(&root).expect("temp project");
+        let project_relative = project_dir
+            .path()
+            .strip_prefix(&root)
+            .expect("relative temp project")
+            .display()
+            .to_string();
+
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path());
+        config.mcp_max_response_bytes = 0;
+        let handle = ManifestSearchHandle::spawn(config);
+        handle
+            .wait_ready()
+            .await
+            .expect("fixture manifest should load");
+        let server = DbtNovaServer::new(handle);
+
+        let response: serde_json::Value = serde_json::from_str(
+            &server
+                .validate_nova_meta(Parameters(ValidateNovaMetaParams {
+                    project_dir: Some(project_relative),
+                    paths: vec!["../Cargo.toml".to_string()],
+                    ..ValidateNovaMetaParams::default()
+                }))
+                .await,
+        )
+        .expect("nova-meta error response JSON");
+
+        assert_eq!(response["success"], serde_json::json!(false));
+        assert_eq!(response["error_code"], serde_json::json!("INVALID_PARAMS"));
+        assert!(
+            response["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("must stay inside project_dir")
         );
     }
 

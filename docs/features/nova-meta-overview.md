@@ -149,7 +149,8 @@ score → identify gaps → fix meta → re‑score.
 
 The schema is versioned in `schemas/nova/v0.json`. Use
 `dbt-nova audit nova-meta` to validate `meta.nova` blocks in CI or during
-review.
+review. MCP clients can request the same report data with
+`validate_nova_meta`.
 
 Project-wide validation:
 
@@ -182,6 +183,12 @@ Project-wide scans skip common generated and vendor directories by default,
 including `.git`, `.venv`, `venv`, `target`, `dbt_packages`, and
 `node_modules`. Use `--path` to validate a specific file or subtree inside one
 of those directories when needed.
+
+MCP validation reads local files from the server process, not from the client.
+For safety, `validate_nova_meta` resolves `project_dir` under the server working
+directory and requires each supplied path to be relative and remain inside that
+project after symlink resolution. Hosted deployments should expose this tool only
+behind the same authentication posture used for the rest of the MCP surface.
 
 ## Best Practices
 

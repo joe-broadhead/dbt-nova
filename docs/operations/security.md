@@ -31,6 +31,11 @@ See [Configuration](../configuration/reference.md) for full limits.
 warehouse-backed `execute_sql` capability. dbt-nova does **not** provide built-in
 authentication or authorization for this transport.
 
+Some tools read from the server filesystem. `validate_nova_meta` validates dbt
+YAML under the server working directory and rejects absolute or traversal paths
+outside the selected project, but callers still control which in-scope project
+files are scanned.
+
 Operator policy:
 
 - Bind to loopback (`127.0.0.1` or `::1`) for local-only use.

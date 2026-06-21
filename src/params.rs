@@ -704,6 +704,40 @@ pub struct GetMetadataAuditParams {
     pub fail_on_no_targets: bool,
 }
 
+/// Resource kind selector for the validate_nova_meta tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NovaMetaResourceKindParam {
+    /// dbt model resource.
+    Model,
+    /// dbt source resource.
+    Source,
+    /// dbt source table resource.
+    Table,
+    /// dbt metric resource.
+    Metric,
+}
+
+/// Parameters for the validate_nova_meta tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct ValidateNovaMetaParams {
+    /// dbt project directory to scan. Relative paths are resolved under the server working directory.
+    #[serde(default)]
+    pub project_dir: Option<String>,
+    /// Relative YAML file or directory paths under project_dir. Omit for project-wide validation.
+    #[serde(default, alias = "path")]
+    pub paths: Vec<String>,
+    /// Optional resource kind selector.
+    #[serde(default)]
+    pub resource_kind: Option<NovaMetaResourceKindParam>,
+    /// Optional resource name selector.
+    #[serde(default)]
+    pub resource_name: Option<String>,
+    /// Optional column selector. Requires resource_name.
+    #[serde(default)]
+    pub column: Option<String>,
+}
+
 /// Parameters for the reload_manifest tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ReloadManifestParams {

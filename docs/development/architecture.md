@@ -27,7 +27,7 @@ flowchart TD
 
 ## Architecture Overview (Detailed)
 
-### Tool Map (35 MCP tools)
+### Tool Map (36 MCP tools)
 
 <div class="diagram-large diagram-vertical" markdown>
 
@@ -77,6 +77,7 @@ flowchart LR
     TR --> T_get_test_coverage["get_test_coverage"]
     TR --> T_get_undocumented["get_undocumented"]
     TR --> T_validate_dag["validate_dag"]
+    TR --> T_validate_nova_meta["validate_nova_meta"]
     TR --> T_metadata_score["get_metadata_score"]
     TR --> T_metadata_audit["get_metadata_audit"]
     TR --> T_agent_readiness["get_agent_readiness"]
@@ -167,6 +168,7 @@ Implementation note:
 | `get_test_coverage` | Indexes |
 | `get_undocumented` | Indexes |
 | `validate_dag` | Indexes |
+| `validate_nova_meta` | Nova metadata YAML validator |
 | `get_metadata_score` | EntityStore + Indexes |
 | `get_metadata_audit` | Metadata Score + Selection/Gate Logic |
 | `get_agent_readiness` | Metadata Score + Nova metadata |
