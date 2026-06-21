@@ -5,7 +5,7 @@ dbt-nova exposes two callable product surfaces:
 - MCP tools, used by MCP clients and hosted deployments.
 - CLI commands, used for one-shot local workflows and CI automation.
 
-The MCP catalog currently contains 48 MCP tools. `dbt-nova tool call` is the
+The MCP catalog currently contains 51 MCP tools. `dbt-nova tool call` is the
 CLI bridge to that same canonical tool catalog. Other CLI leaf commands are
 tracked below so each capability is either MCP-equivalent, a known parity gap,
 explicitly safety-gated, or a lifecycle exception.
@@ -31,7 +31,7 @@ sets the documented opt-in environment variable for local execution or writes.
 | `manifest load` | `health` | Lifecycle exception | - | MCP server startup performs the initial manifest load; `health` reports the active loaded manifest and `reload_manifest` replaces it. |
 | `manifest reload` | `reload_manifest` | Equivalent | - | MCP starts a background reload for the live server; CLI `manifest reload` and CLI `tool call reload_manifest` are one-shot reloads. |
 | `manifest warm` | `warm_manifest` | SafetyGated | - | MCP semantic cache warmup requires `DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1` and uses the current manifest source. |
-| `tool call <tool_name>` | 48 MCP tools | Equivalent | - | CLI tool-call mode supports the canonical MCP tool catalog. |
+| `tool call <tool_name>` | 51 MCP tools | Equivalent | - | CLI tool-call mode supports the canonical MCP tool catalog. |
 | `audit agent-readiness` | `get_agent_readiness` | Equivalent | - | MCP returns the same `agent_readiness.v1` report without CLI file writes. |
 | `audit metadata-score` | `get_metadata_audit` | Equivalent | - | MCP returns the same metadata audit report without CLI file writes or exit semantics. |
 | `audit nova-meta` | `validate_nova_meta` | Equivalent | - | MCP returns the same nova-meta validation report with scoped local path access. |
@@ -46,6 +46,9 @@ sets the documented opt-in environment variable for local execution or writes.
 | `eval agent run` | `run_agent_eval` | SafetyGated | - | MCP provider execution requires `DBT_NOVA_MCP_ENABLE_AGENT_EVAL=1`; custom commands also require `DBT_NOVA_MCP_ENABLE_CUSTOM_AGENT_PROVIDER=1`. |
 | `eval gate` | `get_eval_gate` | Equivalent | - | MCP returns the same eval gate report data. |
 | `eval history` | `get_eval_history` | Equivalent | - | MCP returns filtered eval telemetry rows in a standard envelope. |
+| `trace inspect` | `inspect_tool_trace` | Equivalent | - | MCP returns the same trace rows, parse warnings, and summary while scoping local paths under the server working directory. |
+| `trace summarize` | `summarize_tool_trace` | SafetyGated | - | MCP returns the same summary data; Markdown report writes require `DBT_NOVA_MCP_ENABLE_TRACE_WRITES=1`. |
+| `trace redact` | `redact_tool_trace` | SafetyGated | - | MCP safe-sharing redaction writes require `DBT_NOVA_MCP_ENABLE_TRACE_WRITES=1`. |
 | `health check` | `health` | Equivalent | - | Both surfaces report manifest/server readiness. |
 
 ## Drift Guards

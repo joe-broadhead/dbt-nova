@@ -25,6 +25,7 @@ use crate::params::{
     RunEvalParams, ValidateEvalSuiteParams,
 };
 use crate::responses::SuccessResponse;
+use crate::utils::tool_trace::{normalize_tool_trace_indices, read_tool_trace_file};
 
 const DEFAULT_TOP_K: usize = 5;
 const DEFAULT_FAIL_UNDER: f64 = 1.0;
@@ -1661,55 +1662,23 @@ fn reset_trace_file(path: &Path) -> std::io::Result<()> {
 }
 
 fn read_tool_trace(path: &Path) -> ToolTraceRead {
-    let raw = match fs::read_to_string(path) {
-        Ok(raw) => raw,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return ToolTraceRead {
-                rows: Vec::new(),
-                errors: Vec::new(),
-                missing: true,
-            };
-        }
-        Err(error) => {
-            return ToolTraceRead {
-                rows: Vec::new(),
-                errors: vec![format!(
-                    "failed to read tool trace '{}': {error}",
-                    path.display()
-                )],
-                missing: false,
-            };
-        }
-    };
-
-    let mut rows = Vec::new();
+    let read = read_tool_trace_file(path);
     let mut errors = Vec::new();
-    for (index, line) in raw.lines().enumerate() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        match serde_json::from_str::<JsonValue>(line) {
-            Ok(row) => rows.push(row),
-            Err(error) => errors.push(format!(
-                "failed to parse tool trace line {} in '{}': {error}",
-                index + 1,
-                path.display()
-            )),
-        }
+    if let Some(error) = read.read_error {
+        errors.push(error);
     }
-    normalize_tool_trace_indices(&mut rows);
+    errors.extend(read.parse_warnings.into_iter().map(|warning| {
+        format!(
+            "failed to parse tool trace line {} in '{}': {}",
+            warning.line,
+            path.display(),
+            warning.message
+        )
+    }));
     ToolTraceRead {
-        rows,
+        rows: read.rows,
         errors,
-        missing: false,
-    }
-}
-
-fn normalize_tool_trace_indices(rows: &mut [JsonValue]) {
-    for (index, row) in rows.iter_mut().enumerate() {
-        if let Some(obj) = row.as_object_mut() {
-            obj.insert("tool_call_index".to_string(), JsonValue::from(index as u64));
-        }
+        missing: read.missing,
     }
 }
 

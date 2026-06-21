@@ -16,6 +16,7 @@ pub mod output;
 pub mod server_cmd;
 pub mod storage_cmd;
 pub mod tool;
+pub mod trace_cmd;
 
 pub struct DispatchError {
     pub error: DbtNovaError,
@@ -79,6 +80,15 @@ pub async fn dispatch(command: args::Command) -> DispatchResult {
             args::StorageCommand::Cleanup(cleanup_args) => {
                 storage_cmd::run_cleanup_command(&cleanup_args)
             }
+        },
+        args::Command::Trace(trace_args) => match trace_args.command {
+            args::TraceCommand::Inspect(inspect_args) => {
+                trace_cmd::run_inspect_command(&inspect_args)
+            }
+            args::TraceCommand::Summarize(summarize_args) => {
+                trace_cmd::run_summarize_command(&summarize_args)
+            }
+            args::TraceCommand::Redact(redact_args) => trace_cmd::run_redact_command(&redact_args),
         },
         args::Command::Health(health_args) => match health_args.command {
             args::HealthCommand::Check(check_args) => {

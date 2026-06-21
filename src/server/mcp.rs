@@ -30,6 +30,10 @@ use crate::cli::storage_cmd::{
     build_storage_cleanup_tool_response, build_storage_inspect_tool_response,
     build_storage_prune_tool_response,
 };
+use crate::cli::trace_cmd::{
+    build_trace_inspect_tool_response, build_trace_redact_tool_response,
+    build_trace_summarize_tool_response,
+};
 use crate::config::DbtNovaConfig;
 use crate::error::DbtNovaError;
 use crate::manifest::search::{ManifestSearch, ManifestSearchHandle};
@@ -43,8 +47,9 @@ use crate::params::{
     InitEvalSuiteParams, ListEntitiesParams, ModellingConsistencyReportParams, PaginationParams,
     ParentGroupMode, ReloadManifestParams, RunAgentEvalParams, RunEvalParams, RunRecipeParams,
     SearchColumnsParams, SearchIndicatorParams, SearchParams, SearchRecipesParams,
-    StorageCleanupParams, StorageInspectParams, StoragePruneParams, ValidateDagParams,
-    ValidateEvalSuiteParams, ValidateNovaMetaParams, WarmManifestParams,
+    StorageCleanupParams, StorageInspectParams, StoragePruneParams, TraceInspectParams,
+    TraceRedactParams, TraceSummarizeParams, ValidateDagParams, ValidateEvalSuiteParams,
+    ValidateNovaMetaParams, WarmManifestParams,
 };
 use crate::responses::SuccessResponse;
 use crate::server::health::build_manifest_health_payload;
@@ -1747,6 +1752,45 @@ impl DbtNovaServer {
     async fn run_agent_eval(&self, params: Parameters<RunAgentEvalParams>) -> String {
         self.handle_async("run_agent_eval", None, |_searcher| async move {
             build_agent_eval_tool_response(&params.0).await
+        })
+        .await
+    }
+
+    /// Inspect a local tool-call trace JSONL file.
+    #[tool(
+        name = "inspect_tool_trace",
+        description = "Inspect a local Nova tool-call trace JSONL file and return rows, parse warnings, tool order, counts, response byte budgets, truncation, errors, and semantic-first signals. Trace paths are scoped under the server working directory."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn inspect_tool_trace(&self, params: Parameters<TraceInspectParams>) -> String {
+        self.handle_async("inspect_tool_trace", None, |_searcher| async move {
+            build_trace_inspect_tool_response(&params.0)
+        })
+        .await
+    }
+
+    /// Summarize a local tool-call trace JSONL file.
+    #[tool(
+        name = "summarize_tool_trace",
+        description = "Summarize a local Nova tool-call trace JSONL file and optionally write a Markdown report. Report writes are disabled unless DBT_NOVA_MCP_ENABLE_TRACE_WRITES=1 is set."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn summarize_tool_trace(&self, params: Parameters<TraceSummarizeParams>) -> String {
+        self.handle_async("summarize_tool_trace", None, |_searcher| async move {
+            build_trace_summarize_tool_response(&params.0)
+        })
+        .await
+    }
+
+    /// Redact a local tool-call trace JSONL file.
+    #[tool(
+        name = "redact_tool_trace",
+        description = "Redact a local Nova tool-call trace JSONL file for safe sharing. Writes are disabled unless DBT_NOVA_MCP_ENABLE_TRACE_WRITES=1 is set."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn redact_tool_trace(&self, params: Parameters<TraceRedactParams>) -> String {
+        self.handle_async("redact_tool_trace", None, |_searcher| async move {
+            build_trace_redact_tool_response(&params.0)
         })
         .await
     }

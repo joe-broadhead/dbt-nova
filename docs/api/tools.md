@@ -1,6 +1,6 @@
 # Tools Reference
 
-This reference lists all 48 MCP tools exposed by dbt‑nova, grouped by category.
+This reference lists all 51 MCP tools exposed by dbt‑nova, grouped by category.
 All tools return the standard envelope described in [Response Format](response-format.md).
 For CLI equivalents and known parity gaps, see
 [MCP/CLI Parity](mcp-cli-parity.md).
@@ -868,6 +868,53 @@ arguments also require `DBT_NOVA_MCP_ENABLE_CUSTOM_AGENT_PROVIDER=1`.
 
 ```json
 {"name":"run_agent_eval","arguments":{"suite":"evals/analyst-smoke.yml","provider":"opencode","case_ids":["metric_lookup_flow"]}}
+```
+
+## Trace Review
+
+### `inspect_tool_trace`
+Inspect a local Nova tool-call trace JSONL file and return valid rows, malformed
+row warnings, tool order, counts, response byte budgets, truncation, errors, and
+semantic-first signals.
+
+Required:
+- `path`: trace JSONL path under the MCP server working directory
+
+```json
+{"name":"inspect_tool_trace","arguments":{"path":".nova/eval-runs/agent/tool-calls/metric_lookup_flow.jsonl"}}
+```
+
+### `summarize_tool_trace`
+Summarize a local trace JSONL file for PRs, eval artifacts, and review handoffs.
+When `report_md_path` is provided, Nova writes the Markdown summary under the
+server working directory.
+
+Required:
+- `path`: trace JSONL path under the MCP server working directory
+
+Optional:
+- `report_md_path`
+
+Markdown report writes are disabled unless
+`DBT_NOVA_MCP_ENABLE_TRACE_WRITES=1` is set.
+
+```json
+{"name":"summarize_tool_trace","arguments":{"path":".nova/eval-runs/agent/tool-calls/metric_lookup_flow.redacted.jsonl","report_md_path":".nova/eval-runs/agent/tool-calls/metric_lookup_flow.redacted.md"}}
+```
+
+### `redact_tool_trace`
+Redact a local trace JSONL file for safe sharing. The output preserves tool name,
+call index, status, response bytes, truncation flags, selected IDs, top IDs, and
+sanitized scalar parameter summaries.
+
+Required:
+- `path`: input trace JSONL path under the MCP server working directory
+- `out`: redacted JSONL output path under the MCP server working directory
+
+Redaction writes are disabled unless `DBT_NOVA_MCP_ENABLE_TRACE_WRITES=1` is set.
+
+```json
+{"name":"redact_tool_trace","arguments":{"path":".nova/eval-runs/agent/tool-calls/metric_lookup_flow.jsonl","out":".nova/eval-runs/agent/tool-calls/metric_lookup_flow.redacted.jsonl"}}
 ```
 
 ### `get_undocumented`

@@ -848,6 +848,32 @@ pub struct RunAgentEvalParams {
     pub read_only: bool,
 }
 
+/// Parameters for the inspect_tool_trace tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct TraceInspectParams {
+    /// JSONL tool trace path under the server working directory.
+    pub path: String,
+}
+
+/// Parameters for the summarize_tool_trace tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct TraceSummarizeParams {
+    /// JSONL tool trace path under the server working directory.
+    pub path: String,
+    /// Optional Markdown report path under the server working directory. Requires trace write opt-in.
+    #[serde(default)]
+    pub report_md_path: Option<String>,
+}
+
+/// Parameters for the redact_tool_trace tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct TraceRedactParams {
+    /// JSONL tool trace path under the server working directory.
+    pub path: String,
+    /// Output JSONL path under the server working directory. Requires trace write opt-in.
+    pub out: String,
+}
+
 /// Parameters for the show_config tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
 pub struct ConfigShowParams {
