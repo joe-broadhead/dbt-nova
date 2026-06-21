@@ -48,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dbt-nova eval gate <NAME> --json` reads the latest full-suite telemetry and
   reports allowed/blocked status, pass rate, and failed case/assertion ids,
   blocking stale suite-file telemetry before allowing configured gates.
+- Added `dbt-nova audit agent-readiness` for metadata-only agent readiness
+  reports that combine project metadata scores, entity signal gaps, Nova
+  indicator checks, optional eval gate evidence, JSON/Markdown artifacts, and
+  opt-in blocker exit behavior.
 - Fixed release OCI publishing to build images from native Linux release binaries
   instead of compiling Rust inside the ARM64 Docker/QEMU path.
 - Fixed the Monthly workflow by refreshing advisory/dependency-watchlist review

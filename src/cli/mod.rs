@@ -4,6 +4,7 @@ use crate::config::DbtNovaConfig;
 use crate::error::{DbtNovaError, Result};
 use crate::utils::{dir_in_use, prune_dirs};
 
+pub mod agent_readiness_cmd;
 pub mod args;
 pub mod audit_cmd;
 pub mod config_cmd;
@@ -54,6 +55,9 @@ pub async fn dispatch(command: args::Command) -> DispatchResult {
             args::ToolCommand::Call(call_args) => tool::run_call_command(&call_args).await,
         },
         args::Command::Audit(audit_args) => match audit_args.command {
+            args::AuditCommand::AgentReadiness(readiness_args) => {
+                agent_readiness_cmd::run_agent_readiness_command(&readiness_args).await
+            }
             args::AuditCommand::MetadataScore(metadata_args) => {
                 audit_cmd::run_metadata_score_command(&metadata_args).await
             }
