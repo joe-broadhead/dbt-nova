@@ -16,7 +16,8 @@ use crate::cli::eval_cmd::{
 };
 use crate::cli::health_cmd::build_cli_health_payload;
 use crate::cli::manifest::{
-    build_manifest_load_config, build_manifest_reload_config, execute_manifest_load,
+    build_manifest_load_config, build_manifest_reload_config, build_manifest_warm_tool_response,
+    execute_manifest_load,
 };
 use crate::cli::nova_meta_cmd::build_nova_meta_tool_response;
 use crate::cli::output::{CliEnvelope, error_envelope};
@@ -31,7 +32,7 @@ use crate::params::{
     GetUndocumentedParams, IndicatorInventoryParams, InitEvalSuiteParams, ListEntitiesParams,
     ModellingConsistencyReportParams, ReloadManifestParams, RunAgentEvalParams, RunEvalParams,
     RunRecipeParams, SearchColumnsParams, SearchIndicatorParams, SearchParams, SearchRecipesParams,
-    ValidateDagParams, ValidateEvalSuiteParams, ValidateNovaMetaParams,
+    ValidateDagParams, ValidateEvalSuiteParams, ValidateNovaMetaParams, WarmManifestParams,
 };
 use crate::responses::SuccessResponse;
 
@@ -46,7 +47,7 @@ struct ToolRegistryEntry {
     dispatch: ToolDispatchFn,
 }
 
-const TOOL_REGISTRY: [ToolRegistryEntry; 42] = [
+const TOOL_REGISTRY: [ToolRegistryEntry; 43] = [
     ToolRegistryEntry {
         name: "search",
         dispatch: dispatch_search,
@@ -150,6 +151,10 @@ const TOOL_REGISTRY: [ToolRegistryEntry; 42] = [
     ToolRegistryEntry {
         name: "reload_manifest",
         dispatch: dispatch_reload_manifest,
+    },
+    ToolRegistryEntry {
+        name: "warm_manifest",
+        dispatch: dispatch_warm_manifest,
     },
     ToolRegistryEntry {
         name: "list_tags",
@@ -845,6 +850,13 @@ fn dispatch_reload_manifest(_searcher: &ManifestSearch, _params: JsonValue) -> T
     })
 }
 
+fn dispatch_warm_manifest(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: WarmManifestParams = decode_tool_params("warm_manifest", params)?;
+        build_manifest_warm_tool_response(searcher, &decoded).await
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -1108,6 +1120,25 @@ cases:
             serde_json::json!("dispatch-eval-smoke")
         );
         assert!(result["data"]["safety_policy"].is_object());
+    }
+
+    #[tokio::test]
+    async fn dispatch_warm_manifest_rejects_without_mcp_opt_in() {
+        let searcher = fixture_searcher().await;
+        let err = dispatch_tool(
+            &searcher,
+            "warm_manifest",
+            serde_json::json!({
+                "vector": true
+            }),
+        )
+        .await
+        .expect_err("warm should require opt-in");
+
+        assert!(
+            err.to_string()
+                .contains("DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1")
+        );
     }
 
     #[tokio::test]

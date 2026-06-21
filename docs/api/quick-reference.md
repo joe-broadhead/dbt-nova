@@ -1,6 +1,6 @@
 # Tools Quick Reference
 
-One-page cheatsheet for all 42 dbt-nova MCP tools.
+One-page cheatsheet for all 43 dbt-nova MCP tools.
 
 ## Discovery
 
@@ -93,6 +93,7 @@ One-page cheatsheet for all 42 dbt-nova MCP tools.
 |------|---------|----------------|
 | `health` | Readiness and status check | (none) |
 | `reload_manifest` | Reload manifest and rebuild indexes | `manifest_uri`, `manifest_path` (optional) |
+| `warm_manifest` | Warm semantic caches for current manifest source | `vector`, `sparse`, `reranker`, `force` |
 
 ---
 

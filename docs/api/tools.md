@@ -1,6 +1,6 @@
 # Tools Reference
 
-This reference lists all 42 MCP tools exposed by dbt‑nova, grouped by category.
+This reference lists all 43 MCP tools exposed by dbt‑nova, grouped by category.
 All tools return the standard envelope described in [Response Format](response-format.md).
 For CLI equivalents and known parity gaps, see
 [MCP/CLI Parity](mcp-cli-parity.md).
@@ -987,6 +987,30 @@ If no arguments are provided, Nova reloads the current manifest source.
 
 ```json
 {"name":"reload_manifest","arguments":{"manifest_uri":"dbfs:///path/to/manifest.json"}}
+```
+
+MCP `reload_manifest` starts a background reload for the running server and
+returns `status: "refreshing"` when accepted. CLI `dbt-nova manifest reload`
+and CLI `dbt-nova tool call reload_manifest` are one-shot reloads that load the
+target manifest before returning.
+
+### `warm_manifest`
+Warm semantic caches for the current manifest source.
+
+Optional:
+- `vector`, `sparse`, `reranker`
+- `force`: require freshly rebuilt manifest-scoped cache files
+
+When no component flag is supplied, `warm_manifest` requests vector and sparse
+warmup, matching `dbt-nova manifest warm`. The tool uses the manifest source and
+storage instance already configured for the running server or CLI `tool call`
+load; it does not accept a new manifest path or URI.
+
+This cache-write capability is disabled unless
+`DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1` is set. Read-only storage is rejected.
+
+```json
+{"name":"warm_manifest","arguments":{"vector":true,"sparse":true}}
 ```
 
 ---

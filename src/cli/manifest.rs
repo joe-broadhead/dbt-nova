@@ -4,6 +4,7 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Instant;
 
 use serde::Serialize;
+use serde_json::Value as JsonValue;
 
 use crate::cli::args::{ManifestLoadArgs, ManifestReloadArgs, ManifestWarmArgs};
 use crate::cli::output::{CliEnvelope, error_envelope};
@@ -14,6 +15,8 @@ use crate::manifest::rkyv_embeddings::{self, EmbeddingsCacheLoad};
 use crate::manifest::rkyv_sparse_embeddings::{self, SparseEmbeddingsCacheLoad};
 use crate::manifest::search::ManifestSearch;
 use crate::manifest::semantic_cache::default_sparse_model_name;
+use crate::params::WarmManifestParams;
+use crate::responses::SuccessResponse;
 use crate::utils::sanitize_uri;
 
 use super::{DispatchError, DispatchResult, prepare_storage};
@@ -65,6 +68,15 @@ struct WarmCacheVerification {
     persisted: SearchReadyInfo,
     cache_paths: BTreeMap<String, String>,
 }
+
+#[derive(Debug, Serialize)]
+struct ManifestWarmMcpSafetyPolicy {
+    enabled_env: &'static str,
+    uses_current_manifest_source: bool,
+    storage_read_only_allowed: bool,
+}
+
+const MCP_ENABLE_MANIFEST_WARM_ENV: &str = "DBT_NOVA_MCP_ENABLE_MANIFEST_WARM";
 
 /// Runs the `manifest load` CLI command.
 ///
@@ -145,6 +157,62 @@ pub async fn run_warm_command(args: &ManifestWarmArgs) -> DispatchResult {
     }
 
     Ok(())
+}
+
+/// Builds the MCP/CLI-tool response for semantic cache warmup.
+///
+/// # Errors
+/// Returns an error when warmup is not enabled, storage is read-only, manifest loading
+/// fails, or requested semantic caches cannot be warmed.
+pub async fn build_manifest_warm_tool_response(
+    search: &ManifestSearch,
+    params: &WarmManifestParams,
+) -> Result<JsonValue> {
+    require_mcp_manifest_warm_enabled()?;
+    if search.config().storage_read_only {
+        return Err(DbtNovaError::InvalidParams(
+            "warm_manifest cannot run while storage is read-only".to_string(),
+        ));
+    }
+
+    let started_at = Instant::now();
+    let warm_started_at = std::time::SystemTime::now();
+    let requested =
+        requested_warm_components_from_flags(params.vector, params.sparse, params.reranker);
+    let mut config = search.config().clone();
+    apply_manifest_warm_settings(&mut config, requested, params.force)?;
+    let mut load_result = execute_manifest_load(config).await?;
+    warm_requested_query_models(&mut load_result.search, requested)?;
+    let cache_verification = verify_requested_warm_caches(
+        &load_result.search,
+        requested,
+        params.force,
+        warm_started_at,
+    )?;
+    let mut payload = serde_json::to_value(warm_payload_from_result(
+        &load_result,
+        requested,
+        cache_verification,
+        params.force,
+    ))
+    .map_err(|error| DbtNovaError::ServerError(error.to_string()))?;
+    if let Some(object) = payload.as_object_mut() {
+        object.insert(
+            "safety_policy".to_string(),
+            serde_json::to_value(ManifestWarmMcpSafetyPolicy {
+                enabled_env: MCP_ENABLE_MANIFEST_WARM_ENV,
+                uses_current_manifest_source: true,
+                storage_read_only_allowed: false,
+            })
+            .map_err(|error| DbtNovaError::ServerError(error.to_string()))?,
+        );
+        object.insert(
+            "tool_elapsed_ms".to_string(),
+            serde_json::json!(started_at.elapsed().as_millis()),
+        );
+    }
+    serde_json::to_value(SuccessResponse::new(payload, 1))
+        .map_err(|error| DbtNovaError::ServerError(error.to_string()))
 }
 
 async fn run_manifest_command(
@@ -341,11 +409,7 @@ pub fn build_manifest_warm_config(args: &ManifestWarmArgs) -> Result<DbtNovaConf
         false,
     )?;
     let requested = requested_warm_components(args);
-    config.search.enable_vector_search = requested.vector;
-    config.search.enable_sparse_search = requested.sparse;
-    config.search.enable_reranker = requested.reranker;
-    config.search.cold_start_policy = crate::config::SearchColdStartPolicy::Build;
-    config.search.force_rebuild_semantic_caches = args.force;
+    apply_manifest_warm_settings(&mut config, requested, args.force)?;
     finalize_manifest_config(config)
 }
 
@@ -445,12 +509,52 @@ pub(crate) async fn execute_manifest_load(
 }
 
 fn requested_warm_components(args: &ManifestWarmArgs) -> SearchReadyInfo {
-    let any_explicit = args.vector || args.sparse || args.reranker;
+    requested_warm_components_from_flags(args.vector, args.sparse, args.reranker)
+}
+
+fn requested_warm_components_from_flags(
+    vector: bool,
+    sparse: bool,
+    reranker: bool,
+) -> SearchReadyInfo {
+    let any_explicit = vector || sparse || reranker;
     SearchReadyInfo {
-        vector: args.vector || !any_explicit,
-        sparse: args.sparse || !any_explicit,
-        reranker: args.reranker,
+        vector: vector || !any_explicit,
+        sparse: sparse || !any_explicit,
+        reranker,
     }
+}
+
+fn apply_manifest_warm_settings(
+    config: &mut DbtNovaConfig,
+    requested: SearchReadyInfo,
+    force: bool,
+) -> Result<()> {
+    if config.storage_read_only {
+        return Err(DbtNovaError::InvalidParams(
+            "manifest warm cannot run with read-only storage".to_string(),
+        ));
+    }
+    config.cleanup_storage_on_start = false;
+    config.search.enable_vector_search = requested.vector;
+    config.search.enable_sparse_search = requested.sparse;
+    config.search.enable_reranker = requested.reranker;
+    config.search.cold_start_policy = crate::config::SearchColdStartPolicy::Build;
+    config.search.force_rebuild_semantic_caches = force;
+    Ok(())
+}
+
+fn require_mcp_manifest_warm_enabled() -> Result<()> {
+    if std::env::var(MCP_ENABLE_MANIFEST_WARM_ENV)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+    {
+        return Ok(());
+    }
+    Err(DbtNovaError::InvalidParams(format!(
+        "warm_manifest is disabled for MCP/tool-call use; set {MCP_ENABLE_MANIFEST_WARM_ENV}=1 to enable semantic cache warmup"
+    )))
 }
 
 fn warm_requested_query_models(

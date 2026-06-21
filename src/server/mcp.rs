@@ -21,6 +21,7 @@ use crate::cli::eval_cmd::{
     build_eval_history_tool_response, build_eval_init_tool_response, build_eval_run_tool_response,
     build_eval_validate_tool_response,
 };
+use crate::cli::manifest::build_manifest_warm_tool_response;
 use crate::cli::nova_meta_cmd::build_nova_meta_tool_response;
 use crate::config::DbtNovaConfig;
 use crate::error::DbtNovaError;
@@ -35,7 +36,7 @@ use crate::params::{
     ModellingConsistencyReportParams, PaginationParams, ParentGroupMode, ReloadManifestParams,
     RunAgentEvalParams, RunEvalParams, RunRecipeParams, SearchColumnsParams, SearchIndicatorParams,
     SearchParams, SearchRecipesParams, ValidateDagParams, ValidateEvalSuiteParams,
-    ValidateNovaMetaParams,
+    ValidateNovaMetaParams, WarmManifestParams,
 };
 use crate::responses::SuccessResponse;
 use crate::server::health::build_manifest_health_payload;
@@ -1863,6 +1864,19 @@ impl DbtNovaServer {
         out
     }
 
+    /// Warm semantic caches for the current manifest source.
+    #[tool(
+        name = "warm_manifest",
+        description = "Warm vector/sparse/reranker semantic caches for the current manifest source. Disabled unless DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1 is set; read-only storage is rejected."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn warm_manifest(&self, params: Parameters<WarmManifestParams>) -> String {
+        self.handle_async("warm_manifest", None, |searcher| async move {
+            build_manifest_warm_tool_response(&searcher, &params.0).await
+        })
+        .await
+    }
+
     /// List all tags with counts.
     #[tool(
         name = "list_tags",
@@ -3080,6 +3094,38 @@ cases:
             serde_json::json!("mcp-eval-smoke")
         );
         assert!(response["data"]["safety_policy"].is_object());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn warm_manifest_rejects_without_mcp_opt_in() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path());
+        config.mcp_max_response_bytes = 0;
+        let handle = ManifestSearchHandle::spawn(config);
+        handle
+            .wait_ready()
+            .await
+            .expect("fixture manifest should load");
+        let server = DbtNovaServer::new(handle);
+
+        let response: serde_json::Value = serde_json::from_str(
+            &server
+                .warm_manifest(Parameters(WarmManifestParams {
+                    vector: true,
+                    ..WarmManifestParams::default()
+                }))
+                .await,
+        )
+        .expect("warm response JSON");
+
+        assert_eq!(response["success"], serde_json::json!(false));
+        assert_eq!(response["error_code"], serde_json::json!("INVALID_PARAMS"));
+        assert!(
+            response["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1")
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

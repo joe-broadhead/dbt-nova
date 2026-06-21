@@ -861,6 +861,24 @@ pub struct ReloadManifestParams {
     pub storage_instance_id: Option<String>,
 }
 
+/// Parameters for the warm_manifest tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct WarmManifestParams {
+    /// Warm vector embedding query/model caches.
+    #[serde(default)]
+    pub vector: bool,
+    /// Warm sparse embedding query/model caches.
+    #[serde(default)]
+    pub sparse: bool,
+    /// Warm reranker query/model caches.
+    #[serde(default)]
+    pub reranker: bool,
+    /// Require freshly rebuilt manifest-scoped cache files.
+    #[serde(default)]
+    pub force: bool,
+}
+
 /// Parameters for the execute_sql tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
 pub struct ExecuteSqlParams {

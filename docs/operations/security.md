@@ -50,6 +50,11 @@ structured invalid-parameter errors until the operator opts in:
 Keep these flags disabled for hosted MCP unless the process runs in an isolated
 trusted environment with appropriate filesystem and provider-command controls.
 
+`warm_manifest` writes semantic cache artifacts and is also disabled by default.
+Set `DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1` only for trusted local or isolated
+operator sessions; the tool rejects read-only storage and always uses the
+server/tool-call manifest source rather than accepting an arbitrary source.
+
 Operator policy:
 
 - Bind to loopback (`127.0.0.1` or `::1`) for local-only use.

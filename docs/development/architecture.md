@@ -27,7 +27,7 @@ flowchart TD
 
 ## Architecture Overview (Detailed)
 
-### Tool Map (42 MCP tools)
+### Tool Map (43 MCP tools)
 
 <div class="diagram-large diagram-vertical" markdown>
 
@@ -52,6 +52,7 @@ flowchart LR
     TR --> T_list_databases["list_databases"]
     TR --> T_health["health"]
     TR --> T_reload["reload_manifest"]
+    TR --> T_warm["warm_manifest"]
   end
 
   subgraph Entity["Entity Access"]
@@ -161,6 +162,7 @@ Implementation note:
 | `list_databases` | Indexes |
 | `health` | ManifestSearch |
 | `reload_manifest` | ManifestLoader |
+| `warm_manifest` | ManifestLoader + semantic cache warmup |
 | `get_entity` | EntityStore |
 | `batch_get_entities` | EntityStore |
 | `get_context` | EntityStore + Indexes |

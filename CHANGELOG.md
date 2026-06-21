@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `init_eval_suite`, and `run_agent_eval`, with explicit opt-in environment
   gates for local writes, bridge eval execution, provider-backed agent evals,
   and custom provider commands.
+- Added safety-gated `warm_manifest` MCP and CLI `tool call` parity for
+  semantic cache warmup, using the current manifest source and requiring
+  `DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1`.
 - Fixed release OCI publishing to build images from native Linux release binaries
   instead of compiling Rust inside the ARM64 Docker/QEMU path.
 - Fixed the Monthly workflow by refreshing advisory/dependency-watchlist review

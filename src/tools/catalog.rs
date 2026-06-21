@@ -1,5 +1,5 @@
 /// Canonical MCP tool names exposed by dbt-nova.
-pub const MCP_TOOL_NAMES: [&str; 42] = [
+pub const MCP_TOOL_NAMES: [&str; 43] = [
     "search",
     "search_indicator",
     "indicator_inventory",
@@ -26,6 +26,7 @@ pub const MCP_TOOL_NAMES: [&str; 42] = [
     "show_metadata",
     "health",
     "reload_manifest",
+    "warm_manifest",
     "list_tags",
     "list_packages",
     "list_databases",
@@ -90,24 +91,24 @@ pub const CLI_MCP_PARITY_MATRIX: [CliMcpParityEntry; 20] = [
     },
     CliMcpParityEntry {
         cli_command: "manifest load",
-        mcp_tool: Some("reload_manifest"),
-        status: CliMcpParityStatus::Gap,
-        issue: Some("JOE-216"),
-        notes: "MCP reloads a running server; CLI load is a one-shot lifecycle command",
+        mcp_tool: Some("health"),
+        status: CliMcpParityStatus::LifecycleException,
+        issue: None,
+        notes: "MCP server startup performs the initial manifest load; health reports the active loaded manifest and reload_manifest replaces it",
     },
     CliMcpParityEntry {
         cli_command: "manifest reload",
         mcp_tool: Some("reload_manifest"),
-        status: CliMcpParityStatus::Gap,
-        issue: Some("JOE-216"),
-        notes: "semantics differ between one-shot CLI reload and live MCP reload",
+        status: CliMcpParityStatus::Equivalent,
+        issue: None,
+        notes: "MCP starts a background reload for the live server; CLI reload and CLI tool-call reload are one-shot reloads",
     },
     CliMcpParityEntry {
         cli_command: "manifest warm",
-        mcp_tool: None,
-        status: CliMcpParityStatus::Gap,
-        issue: Some("JOE-216"),
-        notes: "cache warming is CLI-only today",
+        mcp_tool: Some("warm_manifest"),
+        status: CliMcpParityStatus::SafetyGated,
+        issue: None,
+        notes: "MCP semantic cache warmup requires DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1 and uses the current manifest source",
     },
     CliMcpParityEntry {
         cli_command: "tool call <tool_name>",

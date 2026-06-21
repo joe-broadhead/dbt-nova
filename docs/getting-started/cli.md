@@ -4,7 +4,7 @@ Use `dbt-nova` in two modes:
 
 - No subcommand: start MCP server (backward compatible behavior)
 - Subcommand: run one-shot CLI commands and exit
-- CLI surface: 20 CLI leaf commands, including `tool call` access to all 42 MCP tools
+- CLI surface: 20 CLI leaf commands, including `tool call` access to all 43 MCP tools
 
 For the command-by-command MCP equivalent map, see
 [MCP/CLI Parity](../api/mcp-cli-parity.md).
@@ -258,6 +258,28 @@ metadata (`manifest_hash`, `manifest_version`, `entity_count`).
 
 If both `manifest_uri` and `manifest_path` are provided in params, `manifest_path`
 takes precedence.
+
+MCP `reload_manifest` differs because it mutates a running server: it accepts
+the request, starts a background rebuild, and keeps serving the previous
+manifest until the new one is ready. CLI `manifest reload` and CLI `tool call
+reload_manifest` load once and return after the target manifest is available.
+
+## `warm_manifest` via `tool call`
+
+`warm_manifest` is available through `tool call` for parity with
+`manifest warm`, but it is disabled by default because it writes semantic cache
+artifacts:
+
+```bash
+DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1 \
+dbt-nova tool call warm_manifest \
+  --manifest-path /path/to/target/manifest.json \
+  --params-json '{"vector":true,"sparse":true}' \
+  --json
+```
+
+The tool-call form uses the manifest source loaded for the tool call. The MCP
+server form uses the currently configured live-server manifest source.
 
 ## JSON Envelope and Exit Codes
 
