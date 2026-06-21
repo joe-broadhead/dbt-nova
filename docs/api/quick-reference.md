@@ -1,6 +1,6 @@
 # Tools Quick Reference
 
-One-page cheatsheet for all dbt-nova MCP tools.
+One-page cheatsheet for all 33 dbt-nova MCP tools.
 
 ## Discovery
 
@@ -8,6 +8,9 @@ One-page cheatsheet for all dbt-nova MCP tools.
 |------|---------|----------------|
 | `search` | Full-text and hybrid search | `query`, `persona`, `resource_types`, `detail`, `include_highlights`, `include_sql` |
 | `search_indicator` | Resolve Nova measures/metrics to execution parents | `query`, `indicator_types`, `resource_types`, `detail`, `group_mode`, `limit` |
+| `indicator_inventory` | List Nova measures and metrics deterministically | `indicator_types`, `resource_types`, `canonical_only`, `limit`, `offset` |
+| `search_columns` | Search columns by names and semantic hints | `query`, `resource_types`, `roles`, `semantic_types`, `limit`, `offset` |
+| `column_inventory` | List columns with semantic context | `resource_types`, `roles`, `semantic_types`, `limit`, `offset` |
 | `get_entity` | Fetch single entity by ID or name | `id_or_name` (`unique_id` alias), `resource_type`, `detail` |
 | `list_entities` | List entities by type with filters | `resource_type`, `package`, `tags`, `detail` |
 | `batch_get_entities` | Retrieve multiple entities at once | `unique_ids`, `detail` |
@@ -45,6 +48,14 @@ One-page cheatsheet for all dbt-nova MCP tools.
 | `search_recipes` | Find analysis recipe templates + parameter contracts | `topic`, `query`, `include_queries`, `limit`, `offset` |
 | `get_recipe` | Load a recipe, SQL, and parameter requirements | `recipe_id`, `include_sql`, `include_queries`, `parameters`, `placeholder_types` |
 | `run_recipe` | Execute recipe queries with preflight parameter validation | `recipe_id`, `query_names`, `query_indexes`, `stop_on_failure`, `parameters`, `placeholder_types`, `sql_parameter_types` |
+
+## Modeling
+
+| Tool | Purpose | Key Parameters |
+|------|---------|----------------|
+| `compare_grains` | Compare grain metadata between two entities | `entity1`, `entity2`, `entity1_resource_type`, `entity2_resource_type` |
+| `find_entity_overlap` | Detect overlapping entities using semantic evidence | `resource_types`, `package`, `min_overlap_score`, `limit`, `offset` |
+| `modelling_consistency_report` | Audit duplicate indicators, conflicts, and grain drift | `resource_types`, `package`, `limit`, `offset` |
 
 ## Validation
 

@@ -748,6 +748,7 @@ mod tests {
     use crate::cli::manifest::{build_manifest_load_config, execute_manifest_load};
     use crate::params::ReloadManifestParams;
     use crate::tests::common::fixture_manifest_path_string;
+    use crate::tools::catalog::MCP_TOOL_NAMES;
 
     async fn fixture_searcher() -> crate::manifest::search::ManifestSearch {
         let args = ManifestLoadArgs {
@@ -967,41 +968,7 @@ mod tests {
 
     #[test]
     fn tool_registry_has_full_mcp_name_parity() {
-        let expected = vec![
-            "search",
-            "search_indicator",
-            "indicator_inventory",
-            "search_columns",
-            "column_inventory",
-            "compare_grains",
-            "find_entity_overlap",
-            "modelling_consistency_report",
-            "get_entity",
-            "list_entities",
-            "get_lineage",
-            "get_sql",
-            "get_columns",
-            "diff_entities",
-            "get_impact",
-            "validate_dag",
-            "show_metadata",
-            "health",
-            "reload_manifest",
-            "list_tags",
-            "list_packages",
-            "list_databases",
-            "get_column_lineage",
-            "get_test_coverage",
-            "get_metadata_score",
-            "batch_get_entities",
-            "find_by_path",
-            "search_recipes",
-            "get_recipe",
-            "run_recipe",
-            "get_undocumented",
-            "get_context",
-            "execute_sql",
-        ];
+        let expected = MCP_TOOL_NAMES.to_vec();
         assert_eq!(tool_registry_names(), expected);
     }
 }

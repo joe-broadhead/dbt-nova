@@ -27,7 +27,7 @@ flowchart TD
 
 ## Architecture Overview (Detailed)
 
-### Tool Map (26 MCP tools)
+### Tool Map (33 MCP tools)
 
 <div class="diagram-large diagram-vertical" markdown>
 
@@ -37,6 +37,10 @@ flowchart LR
 
   subgraph Discovery["Discovery + Ops"]
     TR --> T_search["search"]
+    TR --> T_search_indicator["search_indicator"]
+    TR --> T_indicator_inventory["indicator_inventory"]
+    TR --> T_search_columns["search_columns"]
+    TR --> T_column_inventory["column_inventory"]
     TR --> T_list_entities["list_entities"]
     TR --> T_find_by_path["find_by_path"]
     TR --> T_search_recipes["search_recipes"]
@@ -74,6 +78,12 @@ flowchart LR
     TR --> T_get_undocumented["get_undocumented"]
     TR --> T_validate_dag["validate_dag"]
     TR --> T_metadata_score["get_metadata_score"]
+  end
+
+  subgraph Modeling["Modeling Consistency"]
+    TR --> T_compare_grains["compare_grains"]
+    TR --> T_find_entity_overlap["find_entity_overlap"]
+    TR --> T_modeling_report["modelling_consistency_report"]
   end
 ```
 
@@ -127,6 +137,10 @@ Implementation note:
 | Tool | Primary components |
 | --- | --- |
 | `search` | Tantivy + Vector Search |
+| `search_indicator` | Nova semantic metadata + ranking indexes |
+| `indicator_inventory` | Nova semantic metadata + indexes |
+| `search_columns` | Column metadata indexes |
+| `column_inventory` | Column metadata indexes |
 | `list_entities` | Indexes |
 | `find_by_path` | Indexes |
 | `search_recipes` | ManifestSearch + manifest `analysis` |
@@ -152,6 +166,9 @@ Implementation note:
 | `get_undocumented` | Indexes |
 | `validate_dag` | Indexes |
 | `get_metadata_score` | EntityStore + Indexes |
+| `compare_grains` | Nova metadata + EntityStore |
+| `find_entity_overlap` | Nova metadata + Indexes |
+| `modelling_consistency_report` | Nova metadata + Indexes |
 
 ### Legend
 

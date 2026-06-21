@@ -118,6 +118,7 @@ nav:
   - API:
     - Quick Reference: api/quick-reference.md
     - Tools Reference: api/tools.md
+    - MCP/CLI Parity: api/mcp-cli-parity.md
     - Response Format: api/response-format.md
     - Error Codes: api/error-codes.md
     - Metrics Reference: api/metrics-reference.md

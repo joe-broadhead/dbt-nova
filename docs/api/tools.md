@@ -1,7 +1,9 @@
 # Tools Reference
 
-This reference lists all MCP tools exposed by dbt‑nova, grouped by category.
+This reference lists all 33 MCP tools exposed by dbt‑nova, grouped by category.
 All tools return the standard envelope described in [Response Format](response-format.md).
+For CLI equivalents and known parity gaps, see
+[MCP/CLI Parity](mcp-cli-parity.md).
 
 > Tip: use `persona` in `search` to tune ranking (`analyst`, `engineer`, `governance`).
 

@@ -8,6 +8,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdout, Command};
 use tokio::time::timeout;
 
+use dbt_nova::tools::catalog::MCP_TOOL_COUNT;
+
 async fn write_json_line(
     stdin: &mut tokio::process::ChildStdin,
     payload: &Value,
@@ -144,11 +146,7 @@ async fn mcp_stdio_round_trip_supports_initialize_and_tools_list() {
         .and_then(|result| result.get("tools"))
         .and_then(Value::as_array)
         .expect("tools/list response missing result.tools");
-    assert!(
-        tools.len() >= 20,
-        "expected >=20 MCP tools, got {}",
-        tools.len()
-    );
+    assert_eq!(tools.len(), MCP_TOOL_COUNT);
     let has_search = tools
         .iter()
         .any(|tool| tool.get("name").and_then(Value::as_str) == Some("search"));
