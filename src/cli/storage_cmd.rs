@@ -5,11 +5,14 @@ use std::time::{Instant, UNIX_EPOCH};
 
 use fs4::FileExt;
 use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
 
 use crate::cli::args::{StorageCleanupArgs, StorageInspectArgs, StoragePruneArgs};
 use crate::cli::output::{CliEnvelope, error_envelope};
 use crate::config::DbtNovaConfig;
 use crate::error::{DbtNovaError, Result};
+use crate::params::{StorageCleanupParams, StorageInspectParams, StoragePruneParams};
+use crate::responses::SuccessResponse;
 use crate::utils::{IN_USE_LOCK_FILENAME, dir_in_use};
 
 use super::{DispatchError, DispatchResult, cleanup_storage_dir, prune_storage_instances};
@@ -56,9 +59,76 @@ pub struct StorageCleanupData {
     pub removed: bool,
 }
 
+#[derive(Debug, Serialize)]
+struct StorageAdminSafetyPolicy {
+    enabled_env: &'static str,
+    operation: &'static str,
+    storage_instance_id_override_allowed: bool,
+}
+
 #[derive(Debug, Deserialize)]
 struct ManifestCurrentFile {
     version: String,
+}
+
+pub const MCP_ENABLE_STORAGE_ADMIN_ENV: &str = "DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN";
+
+/// Builds the shared MCP/CLI-tool response for storage inspection.
+///
+/// # Errors
+/// Returns an error when storage paths are invalid, metadata cannot be inspected,
+/// or response serialization fails.
+pub fn build_storage_inspect_tool_response(
+    active_config: &DbtNovaConfig,
+    params: &StorageInspectParams,
+) -> Result<JsonValue> {
+    let config = build_storage_config_from_base(
+        active_config.clone(),
+        params.storage_instance_id.as_deref(),
+    )?;
+    serde_json::to_value(SuccessResponse::new(inspect_storage(&config)?, 1))
+        .map_err(|error| DbtNovaError::ServerError(error.to_string()))
+}
+
+/// Builds the shared MCP/CLI-tool response for storage pruning.
+///
+/// # Errors
+/// Returns an error when destructive storage administration is not enabled,
+/// pruning fails, or response serialization fails.
+pub fn build_storage_prune_tool_response(
+    active_config: &DbtNovaConfig,
+    params: &StoragePruneParams,
+) -> Result<JsonValue> {
+    require_mcp_storage_admin_enabled("prune_storage")?;
+    let mut config = build_storage_config_from_base(
+        active_config.clone(),
+        params.storage_instance_id.as_deref(),
+    )?;
+    let payload = with_storage_admin_safety_policy(
+        prune_storage(&mut config, params.max_keep, params.max_bytes)?,
+        "prune_storage",
+    )?;
+    serde_json::to_value(SuccessResponse::new(payload, 1))
+        .map_err(|error| DbtNovaError::ServerError(error.to_string()))
+}
+
+/// Builds the shared MCP/CLI-tool response for storage cleanup.
+///
+/// # Errors
+/// Returns an error when destructive storage administration is not enabled,
+/// cleanup fails, or response serialization fails.
+pub fn build_storage_cleanup_tool_response(
+    active_config: &DbtNovaConfig,
+    params: &StorageCleanupParams,
+) -> Result<JsonValue> {
+    require_mcp_storage_admin_enabled("cleanup_storage")?;
+    let config = build_storage_config_from_base(
+        active_config.clone(),
+        params.storage_instance_id.as_deref(),
+    )?;
+    let payload = with_storage_admin_safety_policy(cleanup_storage(&config)?, "cleanup_storage")?;
+    serde_json::to_value(SuccessResponse::new(payload, 1))
+        .map_err(|error| DbtNovaError::ServerError(error.to_string()))
 }
 
 /// Runs the `storage inspect` CLI command.
@@ -115,11 +185,7 @@ pub fn run_prune_command(args: &StoragePruneArgs) -> DispatchResult {
             )
         })?;
 
-    let (max_keep, max_keep_report) = resolve_max_keep(args.max_keep, config.storage_max_instances);
-    let max_bytes = args.max_bytes.unwrap_or(config.storage_max_bytes);
-    config.storage_max_bytes = max_bytes;
-
-    let instances_dir = config.storage_instances_dir().map_err(|error| {
+    let payload = prune_storage(&mut config, args.max_keep, args.max_bytes).map_err(|error| {
         render_or_propagate_error(
             args.json,
             "storage prune",
@@ -127,62 +193,6 @@ pub fn run_prune_command(args: &StoragePruneArgs) -> DispatchResult {
             started.elapsed().as_millis(),
         )
     })?;
-    let before = list_instance_ids(&instances_dir).map_err(|error| {
-        render_or_propagate_error(
-            args.json,
-            "storage prune",
-            error,
-            started.elapsed().as_millis(),
-        )
-    })?;
-
-    prune_storage_instances(&config, max_keep, Some(config.storage_instance_id.as_str())).map_err(
-        |error| {
-            render_or_propagate_error(
-                args.json,
-                "storage prune",
-                error,
-                started.elapsed().as_millis(),
-            )
-        },
-    )?;
-
-    let after = list_instance_ids(&instances_dir).map_err(|error| {
-        render_or_propagate_error(
-            args.json,
-            "storage prune",
-            error,
-            started.elapsed().as_millis(),
-        )
-    })?;
-    let after_set: BTreeSet<&str> = after.iter().map(String::as_str).collect();
-    let pruned_instances = before
-        .iter()
-        .filter(|id| !after_set.contains(id.as_str()))
-        .cloned()
-        .collect::<Vec<_>>();
-
-    let payload = StoragePruneData {
-        storage_root: config
-            .storage_root_dir()
-            .map_err(|error| {
-                render_or_propagate_error(
-                    args.json,
-                    "storage prune",
-                    error,
-                    started.elapsed().as_millis(),
-                )
-            })?
-            .to_string_lossy()
-            .to_string(),
-        instances_dir: instances_dir.to_string_lossy().to_string(),
-        configured_instance_id: config.storage_instance_id.clone(),
-        max_keep: max_keep_report,
-        max_bytes,
-        instances_before: before.len(),
-        instances_after: after.len(),
-        pruned_instances,
-    };
 
     if args.json {
         let envelope =
@@ -226,7 +236,7 @@ pub fn run_cleanup_command(args: &StorageCleanupArgs) -> DispatchResult {
         )
     })?;
 
-    let storage_root = config.storage_root_dir().map_err(|error| {
+    let payload = cleanup_storage(&config).map_err(|error| {
         render_or_propagate_error(
             args.json,
             "storage cleanup",
@@ -234,34 +244,6 @@ pub fn run_cleanup_command(args: &StorageCleanupArgs) -> DispatchResult {
             started.elapsed().as_millis(),
         )
     })?;
-    let instance_path = config.storage_instance_root_dir().map_err(|error| {
-        render_or_propagate_error(
-            args.json,
-            "storage cleanup",
-            error,
-            started.elapsed().as_millis(),
-        )
-    })?;
-    let existed_before = instance_path.exists();
-    let in_use_before = existed_before && dir_in_use(&instance_path);
-
-    cleanup_storage_dir(&config).map_err(|error| {
-        render_or_propagate_error(
-            args.json,
-            "storage cleanup",
-            error,
-            started.elapsed().as_millis(),
-        )
-    })?;
-
-    let payload = StorageCleanupData {
-        storage_root: storage_root.to_string_lossy().to_string(),
-        instance_id: config.storage_instance_id.clone(),
-        instance_path: instance_path.to_string_lossy().to_string(),
-        existed_before,
-        in_use_before,
-        removed: existed_before && !instance_path.exists(),
-    };
 
     if args.json {
         let envelope =
@@ -279,7 +261,13 @@ pub fn run_cleanup_command(args: &StorageCleanupArgs) -> DispatchResult {
 }
 
 fn build_storage_config(storage_instance_id_override: Option<&str>) -> Result<DbtNovaConfig> {
-    let mut config = DbtNovaConfig::from_env();
+    build_storage_config_from_base(DbtNovaConfig::from_env(), storage_instance_id_override)
+}
+
+fn build_storage_config_from_base(
+    mut config: DbtNovaConfig,
+    storage_instance_id_override: Option<&str>,
+) -> Result<DbtNovaConfig> {
     if let Some(storage_instance_id) = storage_instance_id_override {
         let trimmed = storage_instance_id.trim();
         if trimmed.is_empty() {
@@ -295,6 +283,56 @@ fn build_storage_config(storage_instance_id_override: Option<&str>) -> Result<Db
     let _ = config.storage_instances_dir()?;
     let _ = config.storage_base_dir()?;
     Ok(config)
+}
+
+fn prune_storage(
+    config: &mut DbtNovaConfig,
+    max_keep_arg: Option<usize>,
+    max_bytes_arg: Option<u64>,
+) -> Result<StoragePruneData> {
+    let (max_keep, max_keep_report) = resolve_max_keep(max_keep_arg, config.storage_max_instances);
+    let max_bytes = max_bytes_arg.unwrap_or(config.storage_max_bytes);
+    config.storage_max_bytes = max_bytes;
+
+    let instances_dir = config.storage_instances_dir()?;
+    let before = list_instance_ids(&instances_dir)?;
+    prune_storage_instances(config, max_keep, Some(config.storage_instance_id.as_str()))?;
+    let after = list_instance_ids(&instances_dir)?;
+    let after_set: BTreeSet<&str> = after.iter().map(String::as_str).collect();
+    let pruned_instances = before
+        .iter()
+        .filter(|id| !after_set.contains(id.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    Ok(StoragePruneData {
+        storage_root: config.storage_root_dir()?.to_string_lossy().to_string(),
+        instances_dir: instances_dir.to_string_lossy().to_string(),
+        configured_instance_id: config.storage_instance_id.clone(),
+        max_keep: max_keep_report,
+        max_bytes,
+        instances_before: before.len(),
+        instances_after: after.len(),
+        pruned_instances,
+    })
+}
+
+fn cleanup_storage(config: &DbtNovaConfig) -> Result<StorageCleanupData> {
+    let storage_root = config.storage_root_dir()?;
+    let instance_path = config.storage_instance_root_dir()?;
+    let existed_before = instance_path.exists();
+    let in_use_before = existed_before && dir_in_use(&instance_path);
+
+    cleanup_storage_dir(config)?;
+
+    Ok(StorageCleanupData {
+        storage_root: storage_root.to_string_lossy().to_string(),
+        instance_id: config.storage_instance_id.clone(),
+        instance_path: instance_path.to_string_lossy().to_string(),
+        existed_before,
+        in_use_before,
+        removed: existed_before && !instance_path.exists(),
+    })
 }
 
 fn inspect_storage(config: &DbtNovaConfig) -> Result<StorageInspectData> {
@@ -420,6 +458,39 @@ fn read_current_version(instance_path: &Path) -> Result<Option<String>> {
     Ok(Some(parsed.version))
 }
 
+fn with_storage_admin_safety_policy<T: Serialize>(
+    payload: T,
+    operation: &'static str,
+) -> Result<JsonValue> {
+    let mut payload = serde_json::to_value(payload)
+        .map_err(|error| DbtNovaError::ServerError(error.to_string()))?;
+    if let Some(object) = payload.as_object_mut() {
+        object.insert(
+            "safety_policy".to_string(),
+            serde_json::to_value(StorageAdminSafetyPolicy {
+                enabled_env: MCP_ENABLE_STORAGE_ADMIN_ENV,
+                operation,
+                storage_instance_id_override_allowed: true,
+            })
+            .map_err(|error| DbtNovaError::ServerError(error.to_string()))?,
+        );
+    }
+    Ok(payload)
+}
+
+fn require_mcp_storage_admin_enabled(tool_name: &'static str) -> Result<()> {
+    if std::env::var(MCP_ENABLE_STORAGE_ADMIN_ENV)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+    {
+        return Ok(());
+    }
+    Err(DbtNovaError::InvalidParams(format!(
+        "{tool_name} is disabled for MCP/tool-call use; set {MCP_ENABLE_STORAGE_ADMIN_ENV}=1 to enable destructive storage administration"
+    )))
+}
+
 fn dir_in_use_readonly(path: &Path) -> bool {
     let lock_path = path.join(IN_USE_LOCK_FILENAME);
     if !lock_path.exists() {
@@ -541,12 +612,44 @@ fn print_storage_cleanup_human(payload: &StorageCleanupData) {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::sync::{LazyLock, Mutex, MutexGuard};
 
     use tempfile::TempDir;
 
-    use super::{build_storage_config, inspect_storage, resolve_max_keep};
+    use super::{
+        MCP_ENABLE_STORAGE_ADMIN_ENV, build_storage_cleanup_tool_response, build_storage_config,
+        build_storage_inspect_tool_response, build_storage_prune_tool_response, inspect_storage,
+        resolve_max_keep,
+    };
     use crate::config::DbtNovaConfig;
+    use crate::params::{StorageCleanupParams, StorageInspectParams, StoragePruneParams};
     use crate::utils::IN_USE_LOCK_FILENAME;
+
+    static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    struct EnvGuard {
+        previous: Option<String>,
+        _guard: MutexGuard<'static, ()>,
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.previous.as_deref() {
+                Some(value) => unsafe { std::env::set_var(MCP_ENABLE_STORAGE_ADMIN_ENV, value) },
+                None => unsafe { std::env::remove_var(MCP_ENABLE_STORAGE_ADMIN_ENV) },
+            }
+        }
+    }
+
+    fn unset_storage_admin_env() -> EnvGuard {
+        let guard = ENV_LOCK.lock().expect("env lock");
+        let previous = std::env::var(MCP_ENABLE_STORAGE_ADMIN_ENV).ok();
+        unsafe { std::env::remove_var(MCP_ENABLE_STORAGE_ADMIN_ENV) };
+        EnvGuard {
+            previous,
+            _guard: guard,
+        }
+    }
 
     #[test]
     fn build_storage_config_rejects_unsafe_instance_id() {
@@ -593,6 +696,43 @@ mod tests {
     }
 
     #[test]
+    fn inspect_storage_tool_response_matches_cli_payload() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = DbtNovaConfig {
+            storage_dir: temp_dir.path().join(".nova").to_string_lossy().to_string(),
+            ..DbtNovaConfig::default()
+        };
+        config.ensure_storage_instance_id();
+        let instances_dir = config.storage_instances_dir().expect("instances dir");
+        let instance_path = instances_dir.join("manifest-abc");
+        fs::create_dir_all(instance_path.join("versions").join("version-a")).expect("versions");
+        fs::write(
+            instance_path.join("manifest.current.json"),
+            r#"{"version":"version-a","updated_ms":1}"#,
+        )
+        .expect("manifest.current");
+
+        let cli_payload = inspect_storage(&config).expect("inspect");
+        let response =
+            build_storage_inspect_tool_response(&config, &StorageInspectParams::default())
+                .expect("inspect response");
+
+        assert_eq!(response["success"], serde_json::json!(true));
+        assert_eq!(
+            response["data"]["instance_count"],
+            serde_json::json!(cli_payload.instance_count)
+        );
+        assert_eq!(
+            response["data"]["instances"][0]["instance_id"],
+            serde_json::json!("manifest-abc")
+        );
+        assert_eq!(
+            response["data"]["instances"][0]["current_version"],
+            serde_json::json!("version-a")
+        );
+    }
+
+    #[test]
     fn inspect_storage_does_not_create_missing_lock_files() {
         let temp_dir = TempDir::new().expect("temp dir");
         let mut config = DbtNovaConfig {
@@ -616,6 +756,36 @@ mod tests {
         let (effective, reported) = resolve_max_keep(None, 0);
         assert_eq!(effective, usize::MAX);
         assert_eq!(reported, 0);
+    }
+
+    #[test]
+    fn storage_prune_tool_response_rejects_without_mcp_opt_in() {
+        let _env = unset_storage_admin_env();
+        let err = build_storage_prune_tool_response(
+            &DbtNovaConfig::default(),
+            &StoragePruneParams::default(),
+        )
+        .expect_err("prune should require opt-in");
+
+        assert!(
+            err.to_string()
+                .contains("DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1")
+        );
+    }
+
+    #[test]
+    fn storage_cleanup_tool_response_rejects_without_mcp_opt_in() {
+        let _env = unset_storage_admin_env();
+        let err = build_storage_cleanup_tool_response(
+            &DbtNovaConfig::default(),
+            &StorageCleanupParams::default(),
+        )
+        .expect_err("cleanup should require opt-in");
+
+        assert!(
+            err.to_string()
+                .contains("DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1")
+        );
     }
 
     #[test]

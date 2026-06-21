@@ -116,9 +116,13 @@ Remote manifest notes:
     - `DBT_NOVA_TOOL_ALLOWLIST=search,get_entity`
   - Denylist only (hide query execution tools):
     - `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe`
+  - Deny operator/admin tools for normal agent clients:
+    - `DBT_NOVA_TOOL_DENYLIST=show_config,validate_config,inspect_storage,prune_storage,cleanup_storage`
   - Combined with denylist precedence (effective exposed set: `search`):
     - `DBT_NOVA_TOOL_ALLOWLIST=search,execute_sql`
     - `DBT_NOVA_TOOL_DENYLIST=execute_sql`
+- Destructive storage admin tools (`prune_storage`, `cleanup_storage`) are also
+  disabled by default and require `DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1`.
 - Streamable HTTP mode has **no built-in authentication**. Keep it bound to loopback for local use, or set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when an authenticating reverse proxy is enforcing access in front of dbt-nova.
 - The MCP endpoint is mounted at `DBT_NOVA_HTTP_PATH`; plain probe endpoints are always available at `/healthz` and `/readyz`.
 

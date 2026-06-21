@@ -848,6 +848,18 @@ pub struct RunAgentEvalParams {
     pub read_only: bool,
 }
 
+/// Parameters for the show_config tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct ConfigShowParams {
+    /// Return default configuration instead of the active runtime configuration.
+    #[serde(default)]
+    pub defaults: bool,
+}
+
+/// Parameters for the validate_config tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct ConfigValidateParams {}
+
 /// Parameters for the reload_manifest tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ReloadManifestParams {
@@ -877,6 +889,36 @@ pub struct WarmManifestParams {
     /// Require freshly rebuilt manifest-scoped cache files.
     #[serde(default)]
     pub force: bool,
+}
+
+/// Parameters for the inspect_storage tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct StorageInspectParams {
+    /// Optional storage instance id to inspect as the configured instance.
+    #[serde(default)]
+    pub storage_instance_id: Option<String>,
+}
+
+/// Parameters for the prune_storage tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct StoragePruneParams {
+    /// Number of stale storage instances to retain. Defaults to storage policy.
+    #[serde(default)]
+    pub max_keep: Option<usize>,
+    /// Maximum total storage bytes to retain. Defaults to storage policy.
+    #[serde(default)]
+    pub max_bytes: Option<u64>,
+    /// Optional storage instance id to protect from pruning.
+    #[serde(default)]
+    pub storage_instance_id: Option<String>,
+}
+
+/// Parameters for the cleanup_storage tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct StorageCleanupParams {
+    /// Optional storage instance id to clean up.
+    #[serde(default)]
+    pub storage_instance_id: Option<String>,
 }
 
 /// Parameters for the execute_sql tool.

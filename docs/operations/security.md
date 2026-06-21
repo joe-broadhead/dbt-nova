@@ -55,6 +55,13 @@ Set `DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1` only for trusted local or isolated
 operator sessions; the tool rejects read-only storage and always uses the
 server/tool-call manifest source rather than accepting an arbitrary source.
 
+`show_config`, `validate_config`, and `inspect_storage` are operator/admin
+inspection tools. `prune_storage` and `cleanup_storage` are destructive storage
+admin tools and reject by default until `DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1` is
+set. Keep that flag disabled for hosted MCP unless the process is isolated and
+access controlled; use `DBT_NOVA_TOOL_DENYLIST` to hide admin tools from normal
+agent clients.
+
 Operator policy:
 
 - Bind to loopback (`127.0.0.1` or `::1`) for local-only use.

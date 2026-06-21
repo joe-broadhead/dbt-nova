@@ -4,7 +4,7 @@ Use `dbt-nova` in two modes:
 
 - No subcommand: start MCP server (backward compatible behavior)
 - Subcommand: run one-shot CLI commands and exit
-- CLI surface: 20 CLI leaf commands, including `tool call` access to all 43 MCP tools
+- CLI surface: 20 CLI leaf commands, including `tool call` access to all 48 MCP tools
 
 For the command-by-command MCP equivalent map, see
 [MCP/CLI Parity](../api/mcp-cli-parity.md).
@@ -280,6 +280,34 @@ dbt-nova tool call warm_manifest \
 
 The tool-call form uses the manifest source loaded for the tool call. The MCP
 server form uses the currently configured live-server manifest source.
+
+## Operator admin tools via `tool call`
+
+The config and storage admin MCP tools are also available through `tool call`:
+
+```bash
+dbt-nova tool call show_config \
+  --manifest-path /path/to/target/manifest.json \
+  --params-json '{"defaults":true}' \
+  --json
+
+dbt-nova tool call inspect_storage \
+  --manifest-path /path/to/target/manifest.json \
+  --params-json '{}' \
+  --json
+```
+
+`prune_storage` and `cleanup_storage` are disabled by default because they
+delete storage directories. Set `DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1` only for
+trusted local or isolated operator sessions:
+
+```bash
+DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1 \
+dbt-nova tool call prune_storage \
+  --manifest-path /path/to/target/manifest.json \
+  --params-json '{"max_keep":1}' \
+  --json
+```
 
 ## JSON Envelope and Exit Codes
 

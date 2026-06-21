@@ -27,7 +27,7 @@ flowchart TD
 
 ## Architecture Overview (Detailed)
 
-### Tool Map (43 MCP tools)
+### Tool Map (48 MCP tools)
 
 <div class="diagram-large diagram-vertical" markdown>
 
@@ -53,6 +53,11 @@ flowchart LR
     TR --> T_health["health"]
     TR --> T_reload["reload_manifest"]
     TR --> T_warm["warm_manifest"]
+    TR --> T_show_config["show_config"]
+    TR --> T_validate_config["validate_config"]
+    TR --> T_inspect_storage["inspect_storage"]
+    TR --> T_prune_storage["prune_storage"]
+    TR --> T_cleanup_storage["cleanup_storage"]
   end
 
   subgraph Entity["Entity Access"]
@@ -163,6 +168,11 @@ Implementation note:
 | `health` | ManifestSearch |
 | `reload_manifest` | ManifestLoader |
 | `warm_manifest` | ManifestLoader + semantic cache warmup |
+| `show_config` | DbtNovaConfig |
+| `validate_config` | DbtNovaConfig + runtime validation |
+| `inspect_storage` | Storage metadata |
+| `prune_storage` | Storage retention policy + safety gate |
+| `cleanup_storage` | Storage cleanup + safety gate |
 | `get_entity` | EntityStore |
 | `batch_get_entities` | EntityStore |
 | `get_context` | EntityStore + Indexes |

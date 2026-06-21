@@ -1,6 +1,6 @@
 # Tools Reference
 
-This reference lists all 43 MCP tools exposed by dbt‑nova, grouped by category.
+This reference lists all 48 MCP tools exposed by dbt‑nova, grouped by category.
 All tools return the standard envelope described in [Response Format](response-format.md).
 For CLI equivalents and known parity gaps, see
 [MCP/CLI Parity](mcp-cli-parity.md).
@@ -1011,6 +1011,78 @@ This cache-write capability is disabled unless
 
 ```json
 {"name":"warm_manifest","arguments":{"vector":true,"sparse":true}}
+```
+
+### `show_config`
+Inspect operator configuration.
+
+Optional:
+- `defaults`: return built-in defaults instead of the active runtime config
+
+`show_config` returns the active dbt-nova runtime configuration used by the
+server or CLI `tool call` process. Credential values such as warehouse tokens
+and private keys are read directly by providers from environment variables and
+are not persisted in this config payload.
+
+```json
+{"name":"show_config","arguments":{"defaults":true}}
+```
+
+### `validate_config`
+Validate operator configuration.
+
+`validate_config` checks the active runtime configuration and returns the same
+structured validation payload as `dbt-nova config validate --json`, including
+the resolved `storage_instance_id` and `embedding_cache_dir`.
+
+```json
+{"name":"validate_config","arguments":{}}
+```
+
+### `inspect_storage`
+Inspect Nova storage instances without mutating storage.
+
+Optional:
+- `storage_instance_id`: treat this instance as the configured instance for the
+  response
+
+The payload matches `dbt-nova storage inspect --json`: storage root, instances
+directory, configured instance id, count, and per-instance metadata including
+size, lock status, current manifest version, and version count.
+
+```json
+{"name":"inspect_storage","arguments":{}}
+```
+
+### `prune_storage`
+Prune stale Nova storage instances.
+
+Optional:
+- `max_keep`: number of stale instances to retain
+- `max_bytes`: total storage bytes to retain
+- `storage_instance_id`: instance id to protect from pruning
+
+This destructive operator tool is disabled unless
+`DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1` is set. When enabled, it returns the same
+storage prune payload as the CLI plus a `safety_policy` object.
+
+```json
+{"name":"prune_storage","arguments":{"max_keep":1}}
+```
+
+### `cleanup_storage`
+Remove the configured Nova storage instance when it is not in use.
+
+Optional:
+- `storage_instance_id`: instance id to remove
+
+This destructive operator tool is disabled unless
+`DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1` is set. In-use storage directories are
+left in place, matching CLI cleanup behavior, and the response includes a
+`safety_policy` object.
+
+```json
+{"name":"cleanup_storage","arguments":{"storage_instance_id":"manifest-abc123"}}
 ```
 
 ---

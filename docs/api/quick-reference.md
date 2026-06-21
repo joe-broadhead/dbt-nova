@@ -1,6 +1,6 @@
 # Tools Quick Reference
 
-One-page cheatsheet for all 43 dbt-nova MCP tools.
+One-page cheatsheet for all 48 dbt-nova MCP tools.
 
 ## Discovery
 
@@ -94,6 +94,11 @@ One-page cheatsheet for all 43 dbt-nova MCP tools.
 | `health` | Readiness and status check | (none) |
 | `reload_manifest` | Reload manifest and rebuild indexes | `manifest_uri`, `manifest_path` (optional) |
 | `warm_manifest` | Warm semantic caches for current manifest source | `vector`, `sparse`, `reranker`, `force` |
+| `show_config` | Inspect active/default runtime config | `defaults` |
+| `validate_config` | Validate active runtime config | (none) |
+| `inspect_storage` | Inspect storage instances and metadata | `storage_instance_id` |
+| `prune_storage` | Prune stale storage instances | `max_keep`, `max_bytes`, `storage_instance_id` |
+| `cleanup_storage` | Remove configured storage instance when not in use | `storage_instance_id` |
 
 ---
 

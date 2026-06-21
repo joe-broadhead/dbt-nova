@@ -66,6 +66,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added safety-gated `warm_manifest` MCP and CLI `tool call` parity for
   semantic cache warmup, using the current manifest source and requiring
   `DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1`.
+- Added config and storage admin MCP parity with `show_config`,
+  `validate_config`, `inspect_storage`, and safety-gated `prune_storage` /
+  `cleanup_storage` behind `DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1`.
 - Fixed release OCI publishing to build images from native Linux release binaries
   instead of compiling Rust inside the ARM64 Docker/QEMU path.
 - Fixed the Monthly workflow by refreshing advisory/dependency-watchlist review

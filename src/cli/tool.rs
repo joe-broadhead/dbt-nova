@@ -9,6 +9,9 @@ use serde_json::Value as JsonValue;
 use crate::cli::agent_readiness_cmd::build_agent_readiness_tool_response;
 use crate::cli::args::{ManifestLoadArgs, ManifestReloadArgs, ToolCallArgs};
 use crate::cli::audit_cmd::build_metadata_audit_tool_response;
+use crate::cli::config_cmd::{
+    build_config_show_tool_response, build_config_validate_tool_response,
+};
 use crate::cli::eval_cmd::{
     build_agent_eval_tool_response, build_eval_gate_tool_response,
     build_eval_history_tool_response, build_eval_init_tool_response, build_eval_run_tool_response,
@@ -21,18 +24,24 @@ use crate::cli::manifest::{
 };
 use crate::cli::nova_meta_cmd::build_nova_meta_tool_response;
 use crate::cli::output::{CliEnvelope, error_envelope};
+use crate::cli::storage_cmd::{
+    build_storage_cleanup_tool_response, build_storage_inspect_tool_response,
+    build_storage_prune_tool_response,
+};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::search::ManifestSearch;
 use crate::params::{
-    BatchGetParams, ColumnInventoryParams, CompareGrainsParams, DiffEntitiesParams,
-    ExecuteSqlParams, FindByPathParams, FindEntityOverlapParams, GetAgentReadinessParams,
-    GetColumnLineageParams, GetColumnsParams, GetContextParams, GetEntityParams, GetEvalGateParams,
-    GetEvalHistoryParams, GetImpactParams, GetLineageParams, GetMetadataAuditParams,
-    GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
-    GetUndocumentedParams, IndicatorInventoryParams, InitEvalSuiteParams, ListEntitiesParams,
-    ModellingConsistencyReportParams, ReloadManifestParams, RunAgentEvalParams, RunEvalParams,
-    RunRecipeParams, SearchColumnsParams, SearchIndicatorParams, SearchParams, SearchRecipesParams,
-    ValidateDagParams, ValidateEvalSuiteParams, ValidateNovaMetaParams, WarmManifestParams,
+    BatchGetParams, ColumnInventoryParams, CompareGrainsParams, ConfigShowParams,
+    ConfigValidateParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams,
+    FindEntityOverlapParams, GetAgentReadinessParams, GetColumnLineageParams, GetColumnsParams,
+    GetContextParams, GetEntityParams, GetEvalGateParams, GetEvalHistoryParams, GetImpactParams,
+    GetLineageParams, GetMetadataAuditParams, GetMetadataScoreParams, GetRecipeParams,
+    GetSqlParams, GetTestCoverageParams, GetUndocumentedParams, IndicatorInventoryParams,
+    InitEvalSuiteParams, ListEntitiesParams, ModellingConsistencyReportParams,
+    ReloadManifestParams, RunAgentEvalParams, RunEvalParams, RunRecipeParams, SearchColumnsParams,
+    SearchIndicatorParams, SearchParams, SearchRecipesParams, StorageCleanupParams,
+    StorageInspectParams, StoragePruneParams, ValidateDagParams, ValidateEvalSuiteParams,
+    ValidateNovaMetaParams, WarmManifestParams,
 };
 use crate::responses::SuccessResponse;
 
@@ -47,7 +56,7 @@ struct ToolRegistryEntry {
     dispatch: ToolDispatchFn,
 }
 
-const TOOL_REGISTRY: [ToolRegistryEntry; 43] = [
+const TOOL_REGISTRY: [ToolRegistryEntry; 48] = [
     ToolRegistryEntry {
         name: "search",
         dispatch: dispatch_search,
@@ -155,6 +164,26 @@ const TOOL_REGISTRY: [ToolRegistryEntry; 43] = [
     ToolRegistryEntry {
         name: "warm_manifest",
         dispatch: dispatch_warm_manifest,
+    },
+    ToolRegistryEntry {
+        name: "show_config",
+        dispatch: dispatch_show_config,
+    },
+    ToolRegistryEntry {
+        name: "validate_config",
+        dispatch: dispatch_validate_config,
+    },
+    ToolRegistryEntry {
+        name: "inspect_storage",
+        dispatch: dispatch_inspect_storage,
+    },
+    ToolRegistryEntry {
+        name: "prune_storage",
+        dispatch: dispatch_prune_storage,
+    },
+    ToolRegistryEntry {
+        name: "cleanup_storage",
+        dispatch: dispatch_cleanup_storage,
     },
     ToolRegistryEntry {
         name: "list_tags",
@@ -854,6 +883,41 @@ fn dispatch_warm_manifest(searcher: &ManifestSearch, params: JsonValue) -> ToolF
     Box::pin(async move {
         let decoded: WarmManifestParams = decode_tool_params("warm_manifest", params)?;
         build_manifest_warm_tool_response(searcher, &decoded).await
+    })
+}
+
+fn dispatch_show_config(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: ConfigShowParams = decode_tool_params("show_config", params)?;
+        build_config_show_tool_response(searcher.config(), &decoded)
+    })
+}
+
+fn dispatch_validate_config(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: ConfigValidateParams = decode_tool_params("validate_config", params)?;
+        build_config_validate_tool_response(searcher.config(), &decoded)
+    })
+}
+
+fn dispatch_inspect_storage(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: StorageInspectParams = decode_tool_params("inspect_storage", params)?;
+        build_storage_inspect_tool_response(searcher.config(), &decoded)
+    })
+}
+
+fn dispatch_prune_storage(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: StoragePruneParams = decode_tool_params("prune_storage", params)?;
+        build_storage_prune_tool_response(searcher.config(), &decoded)
+    })
+}
+
+fn dispatch_cleanup_storage(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: StorageCleanupParams = decode_tool_params("cleanup_storage", params)?;
+        build_storage_cleanup_tool_response(searcher.config(), &decoded)
     })
 }
 

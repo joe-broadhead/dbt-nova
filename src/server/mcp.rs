@@ -16,6 +16,9 @@ use tracing::instrument;
 
 use crate::cli::agent_readiness_cmd::build_agent_readiness_tool_response;
 use crate::cli::audit_cmd::build_metadata_audit_tool_response;
+use crate::cli::config_cmd::{
+    build_config_show_tool_response, build_config_validate_tool_response,
+};
 use crate::cli::eval_cmd::{
     build_agent_eval_tool_response, build_eval_gate_tool_response,
     build_eval_history_tool_response, build_eval_init_tool_response, build_eval_run_tool_response,
@@ -23,20 +26,25 @@ use crate::cli::eval_cmd::{
 };
 use crate::cli::manifest::build_manifest_warm_tool_response;
 use crate::cli::nova_meta_cmd::build_nova_meta_tool_response;
+use crate::cli::storage_cmd::{
+    build_storage_cleanup_tool_response, build_storage_inspect_tool_response,
+    build_storage_prune_tool_response,
+};
 use crate::config::DbtNovaConfig;
 use crate::error::DbtNovaError;
 use crate::manifest::search::{ManifestSearch, ManifestSearchHandle};
 use crate::params::{
-    BatchGetParams, ColumnInventoryParams, CompareGrainsParams, DiffEntitiesParams,
-    ExecuteSqlParams, FindByPathParams, FindEntityOverlapParams, GetAgentReadinessParams,
-    GetColumnLineageParams, GetColumnsParams, GetContextParams, GetEntityParams, GetEvalGateParams,
-    GetEvalHistoryParams, GetImpactParams, GetLineageParams, GetMetadataAuditParams,
-    GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
-    GetUndocumentedParams, IndicatorInventoryParams, InitEvalSuiteParams, ListEntitiesParams,
-    ModellingConsistencyReportParams, PaginationParams, ParentGroupMode, ReloadManifestParams,
-    RunAgentEvalParams, RunEvalParams, RunRecipeParams, SearchColumnsParams, SearchIndicatorParams,
-    SearchParams, SearchRecipesParams, ValidateDagParams, ValidateEvalSuiteParams,
-    ValidateNovaMetaParams, WarmManifestParams,
+    BatchGetParams, ColumnInventoryParams, CompareGrainsParams, ConfigShowParams,
+    ConfigValidateParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams,
+    FindEntityOverlapParams, GetAgentReadinessParams, GetColumnLineageParams, GetColumnsParams,
+    GetContextParams, GetEntityParams, GetEvalGateParams, GetEvalHistoryParams, GetImpactParams,
+    GetLineageParams, GetMetadataAuditParams, GetMetadataScoreParams, GetRecipeParams,
+    GetSqlParams, GetTestCoverageParams, GetUndocumentedParams, IndicatorInventoryParams,
+    InitEvalSuiteParams, ListEntitiesParams, ModellingConsistencyReportParams, PaginationParams,
+    ParentGroupMode, ReloadManifestParams, RunAgentEvalParams, RunEvalParams, RunRecipeParams,
+    SearchColumnsParams, SearchIndicatorParams, SearchParams, SearchRecipesParams,
+    StorageCleanupParams, StorageInspectParams, StoragePruneParams, ValidateDagParams,
+    ValidateEvalSuiteParams, ValidateNovaMetaParams, WarmManifestParams,
 };
 use crate::responses::SuccessResponse;
 use crate::server::health::build_manifest_health_payload;
@@ -1873,6 +1881,71 @@ impl DbtNovaServer {
     async fn warm_manifest(&self, params: Parameters<WarmManifestParams>) -> String {
         self.handle_async("warm_manifest", None, |searcher| async move {
             build_manifest_warm_tool_response(&searcher, &params.0).await
+        })
+        .await
+    }
+
+    /// Show active or default runtime configuration.
+    #[tool(
+        name = "show_config",
+        description = "Operator config inspection. Returns the active runtime configuration, or defaults when defaults=true. Secret credential values are not part of the persisted Nova config."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn show_config(&self, params: Parameters<ConfigShowParams>) -> String {
+        self.handle_async("show_config", None, |searcher| async move {
+            build_config_show_tool_response(searcher.config(), &params.0)
+        })
+        .await
+    }
+
+    /// Validate active runtime configuration.
+    #[tool(
+        name = "validate_config",
+        description = "Operator config validation. Validates the active runtime configuration and returns the same JSON payload as config validate."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn validate_config(&self, params: Parameters<ConfigValidateParams>) -> String {
+        self.handle_async("validate_config", None, |searcher| async move {
+            build_config_validate_tool_response(searcher.config(), &params.0)
+        })
+        .await
+    }
+
+    /// Inspect Nova storage instances.
+    #[tool(
+        name = "inspect_storage",
+        description = "Operator storage inspection. Lists storage instances and metadata without mutating storage."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn inspect_storage(&self, params: Parameters<StorageInspectParams>) -> String {
+        self.handle_async("inspect_storage", None, |searcher| async move {
+            build_storage_inspect_tool_response(searcher.config(), &params.0)
+        })
+        .await
+    }
+
+    /// Prune stale Nova storage instances.
+    #[tool(
+        name = "prune_storage",
+        description = "Operator storage pruning. Destructive; disabled unless DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1 is set."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn prune_storage(&self, params: Parameters<StoragePruneParams>) -> String {
+        self.handle_async("prune_storage", None, |searcher| async move {
+            build_storage_prune_tool_response(searcher.config(), &params.0)
+        })
+        .await
+    }
+
+    /// Clean up the configured Nova storage instance.
+    #[tool(
+        name = "cleanup_storage",
+        description = "Operator storage cleanup. Destructive; disabled unless DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1 is set."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn cleanup_storage(&self, params: Parameters<StorageCleanupParams>) -> String {
+        self.handle_async("cleanup_storage", None, |searcher| async move {
+            build_storage_cleanup_tool_response(searcher.config(), &params.0)
         })
         .await
     }
