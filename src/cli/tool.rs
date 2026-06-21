@@ -9,6 +9,11 @@ use serde_json::Value as JsonValue;
 use crate::cli::agent_readiness_cmd::build_agent_readiness_tool_response;
 use crate::cli::args::{ManifestLoadArgs, ManifestReloadArgs, ToolCallArgs};
 use crate::cli::audit_cmd::build_metadata_audit_tool_response;
+use crate::cli::eval_cmd::{
+    build_agent_eval_tool_response, build_eval_gate_tool_response,
+    build_eval_history_tool_response, build_eval_init_tool_response, build_eval_run_tool_response,
+    build_eval_validate_tool_response,
+};
 use crate::cli::health_cmd::build_cli_health_payload;
 use crate::cli::manifest::{
     build_manifest_load_config, build_manifest_reload_config, execute_manifest_load,
@@ -20,12 +25,13 @@ use crate::manifest::search::ManifestSearch;
 use crate::params::{
     BatchGetParams, ColumnInventoryParams, CompareGrainsParams, DiffEntitiesParams,
     ExecuteSqlParams, FindByPathParams, FindEntityOverlapParams, GetAgentReadinessParams,
-    GetColumnLineageParams, GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams,
-    GetLineageParams, GetMetadataAuditParams, GetMetadataScoreParams, GetRecipeParams,
-    GetSqlParams, GetTestCoverageParams, GetUndocumentedParams, IndicatorInventoryParams,
-    ListEntitiesParams, ModellingConsistencyReportParams, ReloadManifestParams, RunRecipeParams,
-    SearchColumnsParams, SearchIndicatorParams, SearchParams, SearchRecipesParams,
-    ValidateDagParams, ValidateNovaMetaParams,
+    GetColumnLineageParams, GetColumnsParams, GetContextParams, GetEntityParams, GetEvalGateParams,
+    GetEvalHistoryParams, GetImpactParams, GetLineageParams, GetMetadataAuditParams,
+    GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
+    GetUndocumentedParams, IndicatorInventoryParams, InitEvalSuiteParams, ListEntitiesParams,
+    ModellingConsistencyReportParams, ReloadManifestParams, RunAgentEvalParams, RunEvalParams,
+    RunRecipeParams, SearchColumnsParams, SearchIndicatorParams, SearchParams, SearchRecipesParams,
+    ValidateDagParams, ValidateEvalSuiteParams, ValidateNovaMetaParams,
 };
 use crate::responses::SuccessResponse;
 
@@ -40,7 +46,7 @@ struct ToolRegistryEntry {
     dispatch: ToolDispatchFn,
 }
 
-const TOOL_REGISTRY: [ToolRegistryEntry; 36] = [
+const TOOL_REGISTRY: [ToolRegistryEntry; 42] = [
     ToolRegistryEntry {
         name: "search",
         dispatch: dispatch_search,
@@ -108,6 +114,30 @@ const TOOL_REGISTRY: [ToolRegistryEntry; 36] = [
     ToolRegistryEntry {
         name: "validate_nova_meta",
         dispatch: dispatch_validate_nova_meta,
+    },
+    ToolRegistryEntry {
+        name: "validate_eval_suite",
+        dispatch: dispatch_validate_eval_suite,
+    },
+    ToolRegistryEntry {
+        name: "get_eval_gate",
+        dispatch: dispatch_get_eval_gate,
+    },
+    ToolRegistryEntry {
+        name: "get_eval_history",
+        dispatch: dispatch_get_eval_history,
+    },
+    ToolRegistryEntry {
+        name: "run_eval",
+        dispatch: dispatch_run_eval,
+    },
+    ToolRegistryEntry {
+        name: "init_eval_suite",
+        dispatch: dispatch_init_eval_suite,
+    },
+    ToolRegistryEntry {
+        name: "run_agent_eval",
+        dispatch: dispatch_run_agent_eval,
     },
     ToolRegistryEntry {
         name: "show_metadata",
@@ -670,6 +700,48 @@ fn dispatch_validate_nova_meta(_searcher: &ManifestSearch, params: JsonValue) ->
     })
 }
 
+fn dispatch_validate_eval_suite(_searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: ValidateEvalSuiteParams = decode_tool_params("validate_eval_suite", params)?;
+        build_eval_validate_tool_response(&decoded)
+    })
+}
+
+fn dispatch_get_eval_gate(_searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: GetEvalGateParams = decode_tool_params("get_eval_gate", params)?;
+        build_eval_gate_tool_response(&decoded)
+    })
+}
+
+fn dispatch_get_eval_history(_searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: GetEvalHistoryParams = decode_tool_params("get_eval_history", params)?;
+        build_eval_history_tool_response(&decoded)
+    })
+}
+
+fn dispatch_run_eval(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: RunEvalParams = decode_tool_params("run_eval", params)?;
+        build_eval_run_tool_response(searcher, &decoded).await
+    })
+}
+
+fn dispatch_init_eval_suite(_searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: InitEvalSuiteParams = decode_tool_params("init_eval_suite", params)?;
+        build_eval_init_tool_response(&decoded)
+    })
+}
+
+fn dispatch_run_agent_eval(_searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: RunAgentEvalParams = decode_tool_params("run_agent_eval", params)?;
+        build_agent_eval_tool_response(&decoded).await
+    })
+}
+
 empty_dispatch!(dispatch_show_metadata, "show_metadata", show_metadata);
 empty_dispatch!(dispatch_list_tags, "list_tags", list_tags);
 empty_dispatch!(dispatch_list_packages, "list_packages", list_packages);
@@ -992,6 +1064,50 @@ models:
             result["data"]["selector"]["paths"],
             serde_json::json!(["models/orders.yml"])
         );
+    }
+
+    #[tokio::test]
+    async fn dispatch_validate_eval_suite_returns_validation_report() {
+        let root = std::env::current_dir()
+            .expect("cwd")
+            .canonicalize()
+            .expect("canonical cwd");
+        let temp_dir = tempfile::TempDir::new_in(&root).expect("temp suite dir");
+        let suite_path = temp_dir.path().join("suite.yml");
+        std::fs::write(
+            &suite_path,
+            r"
+version: 1
+name: dispatch-eval-smoke
+cases:
+  - id: one
+    assertions:
+      - type: tool_success
+        tool: search
+        params: {}
+",
+        )
+        .expect("suite fixture");
+
+        let searcher = fixture_searcher().await;
+        let result = dispatch_tool(
+            &searcher,
+            "validate_eval_suite",
+            serde_json::json!({
+                "suite": suite_path.display().to_string()
+            }),
+        )
+        .await
+        .expect("eval validation");
+
+        assert_eq!(result["success"], serde_json::json!(true));
+        assert_eq!(result["count"], serde_json::json!(1));
+        assert_eq!(result["data"]["valid"], serde_json::json!(true));
+        assert_eq!(
+            result["data"]["suite_name"],
+            serde_json::json!("dispatch-eval-smoke")
+        );
+        assert!(result["data"]["safety_policy"].is_object());
     }
 
     #[tokio::test]

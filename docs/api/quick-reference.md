@@ -1,6 +1,6 @@
 # Tools Quick Reference
 
-One-page cheatsheet for all 36 dbt-nova MCP tools.
+One-page cheatsheet for all 42 dbt-nova MCP tools.
 
 ## Discovery
 
@@ -65,6 +65,12 @@ One-page cheatsheet for all 36 dbt-nova MCP tools.
 |------|---------|----------------|
 | `validate_dag` | Check for cycles/orphans | `detail` (full \| summary) |
 | `validate_nova_meta` | Validate project YAML `meta.nova` | `project_dir`, `paths`, `resource_kind`, `resource_name`, `column` |
+| `validate_eval_suite` | Validate eval suite YAML/JSON | `suite` |
+| `get_eval_gate` | Latest eval gate report | `suite` |
+| `get_eval_history` | Filtered eval telemetry rows | `suite`, `since` |
+| `run_eval` | Run deterministic bridge evals against loaded manifest | `suite`, `output_dir`, `telemetry`, `case_ids`, `fail_under` |
+| `init_eval_suite` | Write a starter eval suite | `persona`, `out`, `force` |
+| `run_agent_eval` | Run provider-backed agent evals | `suite`, `provider`, `manifest_path`, `output_dir`, `case_ids`, `timeout_secs`, `fail_under` |
 
 ## Metadata Inventory
 

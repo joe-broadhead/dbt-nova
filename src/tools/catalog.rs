@@ -1,5 +1,5 @@
 /// Canonical MCP tool names exposed by dbt-nova.
-pub const MCP_TOOL_NAMES: [&str; 36] = [
+pub const MCP_TOOL_NAMES: [&str; 42] = [
     "search",
     "search_indicator",
     "indicator_inventory",
@@ -17,6 +17,12 @@ pub const MCP_TOOL_NAMES: [&str; 36] = [
     "get_impact",
     "validate_dag",
     "validate_nova_meta",
+    "validate_eval_suite",
+    "get_eval_gate",
+    "get_eval_history",
+    "run_eval",
+    "init_eval_suite",
+    "run_agent_eval",
     "show_metadata",
     "health",
     "reload_manifest",
@@ -50,6 +56,8 @@ pub enum CliMcpParityStatus {
     LifecycleException,
     /// A product capability exists in CLI but does not yet have full MCP parity.
     Gap,
+    /// MCP exposes the capability behind an explicit local execution safety gate.
+    SafetyGated,
 }
 
 /// Checked-in CLI/MCP parity matrix entry.
@@ -166,45 +174,45 @@ pub const CLI_MCP_PARITY_MATRIX: [CliMcpParityEntry; 20] = [
     },
     CliMcpParityEntry {
         cli_command: "eval init",
-        mcp_tool: None,
-        status: CliMcpParityStatus::Gap,
-        issue: Some("JOE-215"),
-        notes: "eval file creation is CLI-only today",
+        mcp_tool: Some("init_eval_suite"),
+        status: CliMcpParityStatus::SafetyGated,
+        issue: None,
+        notes: "MCP file writes require DBT_NOVA_MCP_ENABLE_EVAL_WRITES=1",
     },
     CliMcpParityEntry {
         cli_command: "eval validate",
-        mcp_tool: None,
-        status: CliMcpParityStatus::Gap,
-        issue: Some("JOE-215"),
-        notes: "eval suite validation is CLI-only today",
+        mcp_tool: Some("validate_eval_suite"),
+        status: CliMcpParityStatus::Equivalent,
+        issue: None,
+        notes: "MCP returns the same eval suite validation data",
     },
     CliMcpParityEntry {
         cli_command: "eval run",
-        mcp_tool: None,
-        status: CliMcpParityStatus::Gap,
-        issue: Some("JOE-215"),
-        notes: "deterministic eval execution is CLI-only today",
+        mcp_tool: Some("run_eval"),
+        status: CliMcpParityStatus::SafetyGated,
+        issue: None,
+        notes: "MCP bridge eval execution uses the loaded manifest and requires DBT_NOVA_MCP_ENABLE_EVAL_RUN=1",
     },
     CliMcpParityEntry {
         cli_command: "eval agent run",
-        mcp_tool: None,
-        status: CliMcpParityStatus::Gap,
-        issue: Some("JOE-215"),
-        notes: "provider-backed execution needs explicit MCP safety controls",
+        mcp_tool: Some("run_agent_eval"),
+        status: CliMcpParityStatus::SafetyGated,
+        issue: None,
+        notes: "MCP provider execution requires DBT_NOVA_MCP_ENABLE_AGENT_EVAL=1; custom commands also require DBT_NOVA_MCP_ENABLE_CUSTOM_AGENT_PROVIDER=1",
     },
     CliMcpParityEntry {
         cli_command: "eval gate",
-        mcp_tool: None,
-        status: CliMcpParityStatus::Gap,
-        issue: Some("JOE-215"),
-        notes: "eval gate reporting is CLI-only today",
+        mcp_tool: Some("get_eval_gate"),
+        status: CliMcpParityStatus::Equivalent,
+        issue: None,
+        notes: "MCP returns the same eval gate report data",
     },
     CliMcpParityEntry {
         cli_command: "eval history",
-        mcp_tool: None,
-        status: CliMcpParityStatus::Gap,
-        issue: Some("JOE-215"),
-        notes: "eval telemetry history reporting is CLI-only today",
+        mcp_tool: Some("get_eval_history"),
+        status: CliMcpParityStatus::Equivalent,
+        issue: None,
+        notes: "MCP returns filtered eval telemetry rows in a standard envelope",
     },
     CliMcpParityEntry {
         cli_command: "health check",

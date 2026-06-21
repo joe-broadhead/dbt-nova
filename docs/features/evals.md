@@ -165,6 +165,29 @@ assertions:
       - data.0.explain
 ```
 
+## MCP Tool Parity
+
+Eval workflows are available through MCP and `dbt-nova tool call` with the same
+report contracts used by the CLI:
+
+| CLI command | MCP tool | MCP safety policy |
+| --- | --- | --- |
+| `eval validate` | `validate_eval_suite` | Reads suite files under the server working directory. |
+| `eval gate` | `get_eval_gate` | Reads eval telemetry and returns gate report JSON. |
+| `eval history` | `get_eval_history` | Reads eval telemetry and returns filtered rows. |
+| `eval run` | `run_eval` | Disabled unless `DBT_NOVA_MCP_ENABLE_EVAL_RUN=1`. |
+| `eval init` | `init_eval_suite` | Disabled unless `DBT_NOVA_MCP_ENABLE_EVAL_WRITES=1`. |
+| `eval agent run` | `run_agent_eval` | Disabled unless `DBT_NOVA_MCP_ENABLE_AGENT_EVAL=1`; custom provider commands also require `DBT_NOVA_MCP_ENABLE_CUSTOM_AGENT_PROVIDER=1`. |
+
+MCP eval file paths are resolved under the server working directory and reject
+traversal outside that root. `run_eval` executes against the manifest already
+loaded by the MCP server; use CLI `eval run` when a one-shot run needs to supply
+its own `--manifest-path` or `--manifest-uri`.
+
+Hosted MCP deployments should leave eval write and execution flags disabled
+unless the server is isolated for trusted operators. Local MCP deployments can
+enable the flags deliberately when agents need to create suites or run evals.
+
 ## Run Agent Evals
 
 Agent evals execute a provider CLI and score observed Nova tool calls. The

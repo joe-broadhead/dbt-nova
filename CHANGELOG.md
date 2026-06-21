@@ -58,6 +58,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for metadata audit reports and required/advisory gate status.
 - Added the `validate_nova_meta` MCP tool and CLI `tool call` bridge support
   for nova-meta schema/semantic validation with scoped local path access.
+- Added MCP and CLI `tool call` parity for eval workflows:
+  `validate_eval_suite`, `get_eval_gate`, `get_eval_history`, `run_eval`,
+  `init_eval_suite`, and `run_agent_eval`, with explicit opt-in environment
+  gates for local writes, bridge eval execution, provider-backed agent evals,
+  and custom provider commands.
 - Fixed release OCI publishing to build images from native Linux release binaries
   instead of compiling Rust inside the ARM64 Docker/QEMU path.
 - Fixed the Monthly workflow by refreshing advisory/dependency-watchlist review

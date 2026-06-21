@@ -1,6 +1,6 @@
 # Tools Reference
 
-This reference lists all 36 MCP tools exposed by dbt‑nova, grouped by category.
+This reference lists all 42 MCP tools exposed by dbt‑nova, grouped by category.
 All tools return the standard envelope described in [Response Format](response-format.md).
 For CLI equivalents and known parity gaps, see
 [MCP/CLI Parity](mcp-cli-parity.md).
@@ -751,6 +751,105 @@ The response `data` object includes `schema_version`, `project_dir`,
 
 See `docs/features/nova-meta-overview.md` for schema and semantic validation
 rules.
+
+### `validate_eval_suite`
+Validate a local YAML or JSON eval suite without loading a manifest or running a
+provider.
+
+Required:
+- `suite`: suite path under the MCP server working directory
+
+The response `data` includes `valid`, `path`, `suite_name`, `version`,
+`bridge_case_count`, `agent_case_count`, and `safety_policy`.
+
+```json
+{"name":"validate_eval_suite","arguments":{"suite":"evals/analyst-smoke.yml"}}
+```
+
+### `get_eval_gate`
+Read eval telemetry and return the same gate report data as
+`dbt-nova eval gate <SUITE> --json`.
+
+Required:
+- `suite`: suite name used in telemetry
+
+```json
+{"name":"get_eval_gate","arguments":{"suite":"analyst-smoke"}}
+```
+
+### `get_eval_history`
+Read filtered eval telemetry rows for a suite.
+
+Required:
+- `suite`: suite name used in telemetry
+- `since`: UTC lower bound in `YYYY-MM-DD` format
+
+The response `data` includes `suite_name`, the normalized `since` boundary,
+`row_count`, `rows`, and `safety_policy`.
+
+```json
+{"name":"get_eval_history","arguments":{"suite":"analyst-smoke","since":"2026-06-01"}}
+```
+
+### `run_eval`
+Run deterministic bridge eval assertions against the currently loaded MCP
+manifest.
+
+Required:
+- `suite`: suite path under the MCP server working directory
+
+Optional:
+- `output_dir`: artifact directory under the server working directory
+- `telemetry`, `telemetry_retention`
+- `case_ids`
+- `fail_under`
+
+This local execution capability is disabled unless
+`DBT_NOVA_MCP_ENABLE_EVAL_RUN=1` is set. Unlike the CLI, MCP `run_eval` uses the
+manifest already loaded by the server.
+
+```json
+{"name":"run_eval","arguments":{"suite":"evals/analyst-smoke.yml","telemetry":true,"fail_under":1.0}}
+```
+
+### `init_eval_suite`
+Write a starter eval suite file under the server working directory.
+
+Required:
+- `out`: output path under the MCP server working directory
+
+Optional:
+- `persona`
+- `force`
+
+This file-write capability is disabled unless
+`DBT_NOVA_MCP_ENABLE_EVAL_WRITES=1` is set.
+
+```json
+{"name":"init_eval_suite","arguments":{"persona":"analyst","out":"evals/analyst-smoke.yml"}}
+```
+
+### `run_agent_eval`
+Run provider-backed agent evals and score observed Nova tool-use traces.
+
+Required:
+- `suite`: suite path under the MCP server working directory
+
+Optional:
+- `provider`, `provider_model`
+- `provider_command`, `provider_args_json`
+- `manifest_path`, `manifest_uri`, `storage_instance_id`
+- `output_dir`, `telemetry`, `telemetry_retention`
+- `case_ids`, `timeout_secs`, `fail_under`
+- `cleanup_storage_on_start`, `read_only`
+
+This provider execution capability is disabled unless
+`DBT_NOVA_MCP_ENABLE_AGENT_EVAL=1` is set. Custom provider commands and
+arguments also require `DBT_NOVA_MCP_ENABLE_CUSTOM_AGENT_PROVIDER=1`.
+
+```json
+{"name":"run_agent_eval","arguments":{"suite":"evals/analyst-smoke.yml","provider":"opencode","case_ids":["metric_lookup_flow"]}}
+```
 
 ### `get_undocumented`
 Find entities missing descriptions (optionally columns).

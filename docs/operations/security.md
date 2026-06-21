@@ -36,6 +36,20 @@ YAML under the server working directory and rejects absolute or traversal paths
 outside the selected project, but callers still control which in-scope project
 files are scanned.
 
+Eval MCP tools also use the server filesystem. `validate_eval_suite`,
+`get_eval_gate`, and `get_eval_history` are read/reporting tools. `run_eval`,
+`init_eval_suite`, and `run_agent_eval` are disabled by default and return
+structured invalid-parameter errors until the operator opts in:
+
+- `DBT_NOVA_MCP_ENABLE_EVAL_RUN=1` for bridge eval execution.
+- `DBT_NOVA_MCP_ENABLE_EVAL_WRITES=1` for starter suite file writes.
+- `DBT_NOVA_MCP_ENABLE_AGENT_EVAL=1` for provider-backed agent eval execution.
+- `DBT_NOVA_MCP_ENABLE_CUSTOM_AGENT_PROVIDER=1` for custom agent provider
+  commands or argument JSON.
+
+Keep these flags disabled for hosted MCP unless the process runs in an isolated
+trusted environment with appropriate filesystem and provider-command controls.
+
 Operator policy:
 
 - Bind to loopback (`127.0.0.1` or `::1`) for local-only use.

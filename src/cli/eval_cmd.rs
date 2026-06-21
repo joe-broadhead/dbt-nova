@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write as IoWrite};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command as StdCommand;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -20,6 +20,11 @@ use crate::cli::output::{CliEnvelope, error_envelope};
 use crate::cli::{DispatchError, DispatchResult};
 use crate::error::DbtNovaError;
 use crate::manifest::ManifestSearch;
+use crate::params::{
+    GetEvalGateParams, GetEvalHistoryParams, InitEvalSuiteParams, RunAgentEvalParams,
+    RunEvalParams, ValidateEvalSuiteParams,
+};
+use crate::responses::SuccessResponse;
 
 const DEFAULT_TOP_K: usize = 5;
 const DEFAULT_FAIL_UNDER: f64 = 1.0;
@@ -336,6 +341,30 @@ enum GateConfigStatus {
     Unavailable(String),
 }
 
+#[derive(Debug, Serialize)]
+struct EvalMcpSafetyPolicy {
+    filesystem_root: String,
+    eval_run_enabled_env: &'static str,
+    eval_writes_enabled_env: &'static str,
+    agent_eval_enabled_env: &'static str,
+    custom_agent_provider_enabled_env: &'static str,
+    local_paths_must_stay_under_filesystem_root: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct EvalHistoryPayload {
+    suite_name: String,
+    since: String,
+    row_count: usize,
+    rows: Vec<JsonValue>,
+    safety_policy: EvalMcpSafetyPolicy,
+}
+
+const MCP_ENABLE_EVAL_RUN_ENV: &str = "DBT_NOVA_MCP_ENABLE_EVAL_RUN";
+const MCP_ENABLE_EVAL_WRITES_ENV: &str = "DBT_NOVA_MCP_ENABLE_EVAL_WRITES";
+const MCP_ENABLE_AGENT_EVAL_ENV: &str = "DBT_NOVA_MCP_ENABLE_AGENT_EVAL";
+const MCP_ENABLE_CUSTOM_AGENT_PROVIDER_ENV: &str = "DBT_NOVA_MCP_ENABLE_CUSTOM_AGENT_PROVIDER";
+
 /// Writes a starter eval suite.
 ///
 /// # Errors
@@ -373,7 +402,7 @@ pub fn run_init_command(args: &EvalInitArgs) -> DispatchResult {
 /// Returns an error when the suite cannot be read or fails schema validation.
 pub fn run_validate_command(args: &EvalValidateArgs) -> DispatchResult {
     let started = Instant::now();
-    let suite = load_suite(&args.suite).map_err(|error| {
+    let payload = build_eval_validate_payload(&args.suite).map_err(|error| {
         if args.json {
             let envelope = error_envelope("eval validate", &error, started.elapsed().as_millis());
             if let Ok(out) = serde_json::to_string_pretty(&envelope) {
@@ -389,14 +418,6 @@ pub fn run_validate_command(args: &EvalValidateArgs) -> DispatchResult {
             rendered: false,
         }
     })?;
-    let payload = json!({
-        "valid": true,
-        "path": args.suite,
-        "suite_name": suite.name.as_deref().unwrap_or("suite"),
-        "version": suite.version,
-        "bridge_case_count": suite.cases.len(),
-        "agent_case_count": suite.agent_cases.len(),
-    });
     if args.json {
         let envelope =
             CliEnvelope::success("eval validate", payload, started.elapsed().as_millis());
@@ -405,10 +426,34 @@ pub fn run_validate_command(args: &EvalValidateArgs) -> DispatchResult {
         println!("{out}");
     } else {
         println!("eval suite is valid");
-        println!("  suite: {}", suite.name.as_deref().unwrap_or("suite"));
-        println!("  version: {}", suite.version);
-        println!("  bridge cases: {}", suite.cases.len());
-        println!("  agent cases: {}", suite.agent_cases.len());
+        println!(
+            "  suite: {}",
+            payload
+                .get("suite_name")
+                .and_then(JsonValue::as_str)
+                .unwrap_or("suite")
+        );
+        println!(
+            "  version: {}",
+            payload
+                .get("version")
+                .and_then(JsonValue::as_u64)
+                .unwrap_or(0)
+        );
+        println!(
+            "  bridge cases: {}",
+            payload
+                .get("bridge_case_count")
+                .and_then(JsonValue::as_u64)
+                .unwrap_or(0)
+        );
+        println!(
+            "  agent cases: {}",
+            payload
+                .get("agent_case_count")
+                .and_then(JsonValue::as_u64)
+                .unwrap_or(0)
+        );
     }
     Ok(())
 }
@@ -419,8 +464,7 @@ pub fn run_validate_command(args: &EvalValidateArgs) -> DispatchResult {
 /// Returns an error when existing telemetry or suite configuration cannot be parsed.
 pub fn run_gate_command(args: &EvalGateArgs) -> DispatchResult {
     let started = Instant::now();
-    let rows = read_telemetry_rows_for_suite(&args.suite)?;
-    let report = build_eval_gate_report(&args.suite, &rows)?;
+    let report = build_eval_gate_report_for_suite(&args.suite)?;
     if args.json {
         let envelope = CliEnvelope::success("eval gate", &report, started.elapsed().as_millis());
         let out = serde_json::to_string_pretty(&envelope)
@@ -437,16 +481,187 @@ pub fn run_gate_command(args: &EvalGateArgs) -> DispatchResult {
 /// # Errors
 /// Returns an error when `--since` is invalid or existing telemetry cannot be read.
 pub fn run_history_command(args: &EvalHistoryArgs) -> DispatchResult {
-    let since_boundary = validate_since_date(&args.since)?;
-    let rows = read_telemetry_rows_for_suite(&args.suite)?;
+    let (_since_boundary, rows) = eval_history_rows(&args.suite, &args.since)?;
     for row in rows {
-        if telemetry_row_matches_since(&row, &since_boundary) {
-            let out =
-                serde_json::to_string(&row).map_err(|error| server_error(error.to_string()))?;
-            println!("{out}");
-        }
+        let out = serde_json::to_string(&row).map_err(|error| server_error(error.to_string()))?;
+        println!("{out}");
     }
     Ok(())
+}
+
+/// Builds the MCP/CLI-tool response for eval suite validation.
+///
+/// # Errors
+/// Returns an error when the suite path is unsafe, unreadable, or invalid.
+pub fn build_eval_validate_tool_response(
+    params: &ValidateEvalSuiteParams,
+) -> crate::error::Result<JsonValue> {
+    let suite_path = resolve_mcp_existing_file(&params.suite, "suite")?;
+    let payload = build_eval_validate_payload(&suite_path.display().to_string())?;
+    success_value(with_eval_safety_policy(payload)?, 1)
+}
+
+/// Builds the MCP/CLI-tool response for eval gate status.
+///
+/// # Errors
+/// Returns an error when telemetry or referenced suite configuration cannot be parsed.
+pub fn build_eval_gate_tool_response(
+    params: &GetEvalGateParams,
+) -> crate::error::Result<JsonValue> {
+    let rows = read_telemetry_rows_for_suite(&params.suite)?;
+    ensure_mcp_telemetry_suite_paths_under_root(&rows)?;
+    let report = build_eval_gate_report(&params.suite, &rows)?;
+    let payload = with_eval_safety_policy(serde_json::to_value(report).map_err(|error| {
+        DbtNovaError::ServerError(format!("failed to serialize eval gate report: {error}"))
+    })?)?;
+    success_value(payload, 1)
+}
+
+/// Builds the MCP/CLI-tool response for eval telemetry history.
+///
+/// # Errors
+/// Returns an error when the since date is invalid or telemetry cannot be read.
+pub fn build_eval_history_tool_response(
+    params: &GetEvalHistoryParams,
+) -> crate::error::Result<JsonValue> {
+    let (since_boundary, rows) = eval_history_rows(&params.suite, &params.since)?;
+    let row_count = rows.len();
+    let payload = EvalHistoryPayload {
+        suite_name: params.suite.clone(),
+        since: since_boundary,
+        row_count,
+        rows,
+        safety_policy: eval_mcp_safety_policy()?,
+    };
+    success_value(payload, row_count)
+}
+
+/// Builds the MCP/CLI-tool response for deterministic bridge eval execution.
+///
+/// # Errors
+/// Returns an error when MCP eval execution is not explicitly enabled, paths are
+/// unsafe, suite validation fails, artifact writes fail, or eval execution fails.
+pub async fn build_eval_run_tool_response(
+    search: &ManifestSearch,
+    params: &RunEvalParams,
+) -> crate::error::Result<JsonValue> {
+    require_mcp_eval_flag(MCP_ENABLE_EVAL_RUN_ENV, "run_eval")?;
+    let suite_path = resolve_mcp_existing_file(&params.suite, "suite")?;
+    let output_dir = params
+        .output_dir
+        .as_deref()
+        .map(|path| resolve_mcp_writable_path(path, "output_dir"))
+        .transpose()?;
+    let output_dir_string = output_dir.as_ref().map(|path| path.display().to_string());
+    let report = execute_bridge_eval(
+        search,
+        &suite_path.display().to_string(),
+        output_dir_string.as_deref(),
+        params.telemetry,
+        params.telemetry_retention,
+        &params.case_ids,
+        params.fail_under,
+        Some(search.manifest_hash.as_str()),
+    )
+    .await?;
+    let payload = with_eval_safety_policy(serde_json::to_value(report).map_err(|error| {
+        DbtNovaError::ServerError(format!("failed to serialize eval report: {error}"))
+    })?)?;
+    success_value(payload, 1)
+}
+
+/// Builds the MCP/CLI-tool response for starter eval suite creation.
+///
+/// # Errors
+/// Returns an error when MCP eval writes are not explicitly enabled, the output
+/// path is unsafe, the target exists without force, or writing fails.
+pub fn build_eval_init_tool_response(
+    params: &InitEvalSuiteParams,
+) -> crate::error::Result<JsonValue> {
+    require_mcp_eval_flag(MCP_ENABLE_EVAL_WRITES_ENV, "init_eval_suite")?;
+    let out = resolve_mcp_writable_path(&params.out, "out")?;
+    if out.exists() && !params.force {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "eval suite '{}' already exists; set force=true to overwrite",
+            out.display()
+        )));
+    }
+    if let Some(parent) = out.parent() {
+        fs::create_dir_all(parent).map_err(|error| server_error(error.to_string()))?;
+    }
+    let persona = params
+        .persona
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("analyst");
+    fs::write(&out, starter_suite(persona)).map_err(|error| server_error(error.to_string()))?;
+    let payload = with_eval_safety_policy(json!({
+        "path": out.display().to_string(),
+        "persona": persona,
+    }))?;
+    success_value(payload, 1)
+}
+
+/// Builds the MCP/CLI-tool response for provider-backed agent eval execution.
+///
+/// # Errors
+/// Returns an error when MCP agent eval execution is not explicitly enabled,
+/// custom provider execution is requested without its opt-in, paths are unsafe,
+/// or the provider-backed eval fails to run.
+pub async fn build_agent_eval_tool_response(
+    params: &RunAgentEvalParams,
+) -> crate::error::Result<JsonValue> {
+    require_mcp_eval_flag(MCP_ENABLE_AGENT_EVAL_ENV, "run_agent_eval")?;
+    if (params.provider_command.is_some() || params.provider_args_json.is_some())
+        && !mcp_eval_flag_enabled(MCP_ENABLE_CUSTOM_AGENT_PROVIDER_ENV)
+    {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "run_agent_eval custom provider commands require {MCP_ENABLE_CUSTOM_AGENT_PROVIDER_ENV}=1"
+        )));
+    }
+
+    let suite_path = resolve_mcp_existing_file(&params.suite, "suite")?;
+    let output_dir = params
+        .output_dir
+        .as_deref()
+        .map(|path| resolve_mcp_writable_path(path, "output_dir"))
+        .transpose()?;
+    let manifest_path = params
+        .manifest_path
+        .as_deref()
+        .map(|path| resolve_mcp_existing_file(path, "manifest_path"))
+        .transpose()?;
+    let args = EvalAgentRunArgs {
+        suite: suite_path.display().to_string(),
+        provider: params
+            .provider
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("opencode")
+            .to_string(),
+        provider_model: params.provider_model.clone(),
+        provider_command: params.provider_command.clone(),
+        provider_args_json: params.provider_args_json.clone(),
+        manifest_path: manifest_path.map(|path| path.display().to_string()),
+        manifest_uri: params.manifest_uri.clone(),
+        storage_instance_id: params.storage_instance_id.clone(),
+        output_dir: output_dir.map(|path| path.display().to_string()),
+        telemetry: params.telemetry,
+        telemetry_retention: params.telemetry_retention,
+        case_ids: params.case_ids.clone(),
+        timeout_secs: params.timeout_secs.unwrap_or(600),
+        fail_under: params.fail_under,
+        cleanup_storage_on_start: params.cleanup_storage_on_start,
+        read_only: params.read_only,
+        json: false,
+    };
+    let report = execute_agent_eval_from_args(&args).await?;
+    let payload = with_eval_safety_policy(serde_json::to_value(report).map_err(|error| {
+        DbtNovaError::ServerError(format!("failed to serialize agent eval report: {error}"))
+    })?)?;
+    success_value(payload, 1)
 }
 
 /// Runs deterministic Nova bridge assertions against a manifest.
@@ -455,57 +670,8 @@ pub fn run_history_command(args: &EvalHistoryArgs) -> DispatchResult {
 /// Returns an error when the suite is invalid, manifest loading fails, assertions error, or the score gate fails.
 pub async fn run_eval_command(args: &EvalRunArgs) -> DispatchResult {
     let started = Instant::now();
-    let (suite, suite_hash) = load_suite_with_hash(&args.suite)?;
-    validate_fail_under(args.fail_under)?;
-    validate_telemetry_retention(args.telemetry_retention)?;
-    validate_telemetry_suite_name(&suite, args.telemetry)?;
-    if suite.cases.is_empty() {
-        return Err(
-            DbtNovaError::InvalidParams("eval suite contains no bridge cases".to_string()).into(),
-        );
-    }
-    let selected_cases = selected_bridge_cases(&suite.cases, &args.case_ids)?;
-    let output_dir = resolve_output_dir(args.output_dir.as_deref(), &suite, "bridge");
-    fs::create_dir_all(&output_dir).map_err(|error| server_error(error.to_string()))?;
-
-    let config = build_manifest_load_config(&ManifestLoadArgs {
-        manifest_path: args.manifest_path.clone(),
-        manifest_uri: args.manifest_uri.clone(),
-        storage_instance_id: args.storage_instance_id.clone(),
-        cleanup_storage_on_start: args.cleanup_storage_on_start,
-        read_only: args.read_only,
-        json: false,
-    })?;
-    let load_result = execute_manifest_load(config).await?;
-
-    let mut cases = Vec::with_capacity(selected_cases.len());
-    for case in selected_cases {
-        cases.push(evaluate_bridge_case(case, &suite, &load_result.search).await);
-    }
-    let report = build_report(
-        &suite,
-        "bridge",
-        output_dir.display().to_string(),
-        args.fail_under.unwrap_or(DEFAULT_FAIL_UNDER),
-        cases,
-    );
-    write_report_artifacts(&output_dir, &report, &args.suite)?;
-    let elapsed = started.elapsed();
-    let elapsed_ms = elapsed.as_millis();
-    if args.telemetry {
-        write_eval_telemetry(
-            &report,
-            EvalTelemetryRunContext {
-                suite_path: &args.suite,
-                suite_hash: &suite_hash,
-                suite_case_count: suite.cases.len(),
-                manifest_hash: Some(&load_result.search.manifest_hash),
-                duration_ms: elapsed_ms_to_u64(elapsed),
-                retention: args.telemetry_retention,
-                agent: None,
-            },
-        )?;
-    }
+    let report = execute_bridge_eval_from_args(args).await?;
+    let elapsed_ms = started.elapsed().as_millis();
     finish_report("eval run", &report, args.json, elapsed_ms)
 }
 
@@ -515,14 +681,99 @@ pub async fn run_eval_command(args: &EvalRunArgs) -> DispatchResult {
 /// Returns an error when the suite is invalid, a provider command cannot be run, or the score gate fails.
 pub async fn run_agent_eval_command(args: &EvalAgentRunArgs) -> DispatchResult {
     let started = Instant::now();
+    let report = execute_agent_eval_from_args(args).await?;
+    let elapsed_ms = started.elapsed().as_millis();
+    finish_report("eval agent run", &report, args.json, elapsed_ms)
+}
+
+async fn execute_bridge_eval_from_args(args: &EvalRunArgs) -> crate::error::Result<EvalReport> {
+    let config = build_manifest_load_config(&ManifestLoadArgs {
+        manifest_path: args.manifest_path.clone(),
+        manifest_uri: args.manifest_uri.clone(),
+        storage_instance_id: args.storage_instance_id.clone(),
+        cleanup_storage_on_start: args.cleanup_storage_on_start,
+        read_only: args.read_only,
+        json: false,
+    })?;
+    let load_result = execute_manifest_load(config).await?;
+    execute_bridge_eval(
+        &load_result.search,
+        &args.suite,
+        args.output_dir.as_deref(),
+        args.telemetry,
+        args.telemetry_retention,
+        &args.case_ids,
+        args.fail_under,
+        Some(load_result.search.manifest_hash.as_str()),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn execute_bridge_eval(
+    search: &ManifestSearch,
+    suite_path: &str,
+    output_dir: Option<&str>,
+    telemetry: bool,
+    telemetry_retention: Option<usize>,
+    case_ids: &[String],
+    fail_under: Option<f64>,
+    manifest_hash: Option<&str>,
+) -> crate::error::Result<EvalReport> {
+    let started = Instant::now();
+    let (suite, suite_hash) = load_suite_with_hash(suite_path)?;
+    validate_fail_under(fail_under)?;
+    validate_telemetry_retention(telemetry_retention)?;
+    validate_telemetry_suite_name(&suite, telemetry)?;
+    if suite.cases.is_empty() {
+        return Err(DbtNovaError::InvalidParams(
+            "eval suite contains no bridge cases".to_string(),
+        ));
+    }
+    let selected_cases = selected_bridge_cases(&suite.cases, case_ids)?;
+    let output_dir = resolve_output_dir(output_dir, &suite, "bridge");
+    fs::create_dir_all(&output_dir).map_err(|error| server_error(error.to_string()))?;
+
+    let mut cases = Vec::with_capacity(selected_cases.len());
+    for case in selected_cases {
+        cases.push(evaluate_bridge_case(case, &suite, search).await);
+    }
+    let report = build_report(
+        &suite,
+        "bridge",
+        output_dir.display().to_string(),
+        fail_under.unwrap_or(DEFAULT_FAIL_UNDER),
+        cases,
+    );
+    write_report_artifacts(&output_dir, &report, suite_path).map_err(|error| error.error)?;
+    if telemetry {
+        write_eval_telemetry(
+            &report,
+            EvalTelemetryRunContext {
+                suite_path,
+                suite_hash: &suite_hash,
+                suite_case_count: suite.cases.len(),
+                manifest_hash,
+                duration_ms: elapsed_ms_to_u64(started.elapsed()),
+                retention: telemetry_retention,
+                agent: None,
+            },
+        )
+        .map_err(|error| error.error)?;
+    }
+    Ok(report)
+}
+
+async fn execute_agent_eval_from_args(args: &EvalAgentRunArgs) -> crate::error::Result<EvalReport> {
+    let started = Instant::now();
     let (suite, suite_hash) = load_suite_with_hash(&args.suite)?;
     validate_fail_under(args.fail_under)?;
     validate_telemetry_retention(args.telemetry_retention)?;
     validate_telemetry_suite_name(&suite, args.telemetry)?;
     if suite.agent_cases.is_empty() {
-        return Err(
-            DbtNovaError::InvalidParams("eval suite contains no agent_cases".to_string()).into(),
-        );
+        return Err(DbtNovaError::InvalidParams(
+            "eval suite contains no agent_cases".to_string(),
+        ));
     }
     let selected_cases = selected_agent_cases(&suite.agent_cases, &args.case_ids)?;
     let output_dir = resolve_output_dir(args.output_dir.as_deref(), &suite, "agent");
@@ -540,9 +791,8 @@ pub async fn run_agent_eval_command(args: &EvalAgentRunArgs) -> DispatchResult {
         args.fail_under.unwrap_or(DEFAULT_FAIL_UNDER),
         cases,
     );
-    write_report_artifacts(&output_dir, &report, &args.suite)?;
+    write_report_artifacts(&output_dir, &report, &args.suite).map_err(|error| error.error)?;
     let elapsed = started.elapsed();
-    let elapsed_ms = elapsed.as_millis();
     if args.telemetry {
         write_eval_telemetry(
             &report,
@@ -558,9 +808,10 @@ pub async fn run_agent_eval_command(args: &EvalAgentRunArgs) -> DispatchResult {
                     provider_command_preset: agent_provider_command_preset(args),
                 }),
             },
-        )?;
+        )
+        .map_err(|error| error.error)?;
     }
-    finish_report("eval agent run", &report, args.json, elapsed_ms)
+    Ok(report)
 }
 
 async fn evaluate_bridge_case(
@@ -2887,6 +3138,250 @@ impl AgentExpected {
             || self.max_total_response_bytes.is_some()
             || !self.max_response_bytes_by_tool.is_empty()
     }
+}
+
+fn build_eval_validate_payload(path: &str) -> crate::error::Result<JsonValue> {
+    let suite = load_suite(path)?;
+    Ok(json!({
+        "valid": true,
+        "path": path,
+        "suite_name": suite.name.as_deref().unwrap_or("suite"),
+        "version": suite.version,
+        "bridge_case_count": suite.cases.len(),
+        "agent_case_count": suite.agent_cases.len(),
+    }))
+}
+
+fn build_eval_gate_report_for_suite(suite_name: &str) -> crate::error::Result<EvalGateReport> {
+    let rows = read_telemetry_rows_for_suite(suite_name)?;
+    build_eval_gate_report(suite_name, &rows)
+}
+
+fn eval_history_rows(
+    suite_name: &str,
+    since: &str,
+) -> crate::error::Result<(String, Vec<JsonValue>)> {
+    let since_boundary = validate_since_date(since)?;
+    let rows = read_telemetry_rows_for_suite(suite_name)?
+        .into_iter()
+        .filter(|row| telemetry_row_matches_since(row, &since_boundary))
+        .collect();
+    Ok((since_boundary, rows))
+}
+
+fn ensure_mcp_telemetry_suite_paths_under_root(rows: &[JsonValue]) -> crate::error::Result<()> {
+    for row in latest_telemetry_rows(rows) {
+        let Some(path) = row
+            .get("suite_path")
+            .and_then(JsonValue::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let (_root, candidate) = mcp_eval_candidate_path(path, "suite_path")?;
+        if candidate.exists() {
+            let canonical = candidate.canonicalize().map_err(|error| {
+                DbtNovaError::InvalidParams(format!(
+                    "failed to resolve suite_path '{}': {error}",
+                    candidate.display()
+                ))
+            })?;
+            let root = mcp_eval_filesystem_root()?;
+            ensure_mcp_eval_path_under_root(&canonical, &root, "suite_path")?;
+            if !canonical.is_file() {
+                return Err(DbtNovaError::InvalidParams(format!(
+                    "suite_path '{}' is not a file",
+                    canonical.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn success_value<T: Serialize>(payload: T, count: usize) -> crate::error::Result<JsonValue> {
+    serde_json::to_value(SuccessResponse::new(payload, count))
+        .map_err(|error| DbtNovaError::ServerError(error.to_string()))
+}
+
+fn with_eval_safety_policy(mut payload: JsonValue) -> crate::error::Result<JsonValue> {
+    let policy = serde_json::to_value(eval_mcp_safety_policy()?)
+        .map_err(|error| DbtNovaError::ServerError(error.to_string()))?;
+    let Some(object) = payload.as_object_mut() else {
+        return Err(DbtNovaError::ServerError(
+            "failed to serialize eval response payload as object".to_string(),
+        ));
+    };
+    object.insert("safety_policy".to_string(), policy);
+    Ok(payload)
+}
+
+fn eval_mcp_safety_policy() -> crate::error::Result<EvalMcpSafetyPolicy> {
+    Ok(EvalMcpSafetyPolicy {
+        filesystem_root: mcp_eval_filesystem_root()?.display().to_string(),
+        eval_run_enabled_env: MCP_ENABLE_EVAL_RUN_ENV,
+        eval_writes_enabled_env: MCP_ENABLE_EVAL_WRITES_ENV,
+        agent_eval_enabled_env: MCP_ENABLE_AGENT_EVAL_ENV,
+        custom_agent_provider_enabled_env: MCP_ENABLE_CUSTOM_AGENT_PROVIDER_ENV,
+        local_paths_must_stay_under_filesystem_root: true,
+    })
+}
+
+fn require_mcp_eval_flag(env_name: &'static str, tool_name: &str) -> crate::error::Result<()> {
+    if mcp_eval_flag_enabled(env_name) {
+        return Ok(());
+    }
+    Err(DbtNovaError::InvalidParams(format!(
+        "{tool_name} is disabled for MCP/tool-call use; set {env_name}=1 to enable this local execution capability"
+    )))
+}
+
+fn mcp_eval_flag_enabled(env_name: &str) -> bool {
+    std::env::var(env_name)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+}
+
+fn resolve_mcp_existing_file(raw_path: &str, label: &str) -> crate::error::Result<PathBuf> {
+    let (_root, candidate) = mcp_eval_candidate_path(raw_path, label)?;
+    let canonical = candidate.canonicalize().map_err(|error| {
+        DbtNovaError::InvalidParams(format!(
+            "failed to resolve {label} '{}': {error}",
+            candidate.display()
+        ))
+    })?;
+    let root = mcp_eval_filesystem_root()?;
+    ensure_mcp_eval_path_under_root(&canonical, &root, label)?;
+    if !canonical.is_file() {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "{label} '{}' is not a file",
+            canonical.display()
+        )));
+    }
+    Ok(canonical)
+}
+
+fn resolve_mcp_writable_path(raw_path: &str, label: &str) -> crate::error::Result<PathBuf> {
+    let (root, candidate) = mcp_eval_candidate_path(raw_path, label)?;
+    if candidate.exists() {
+        let canonical = candidate.canonicalize().map_err(|error| {
+            DbtNovaError::InvalidParams(format!(
+                "failed to resolve {label} '{}': {error}",
+                candidate.display()
+            ))
+        })?;
+        ensure_mcp_eval_path_under_root(&canonical, &root, label)?;
+        return Ok(canonical);
+    }
+    ensure_existing_ancestor_under_root(&candidate, &root, label)?;
+    Ok(candidate)
+}
+
+fn mcp_eval_candidate_path(
+    raw_path: &str,
+    label: &str,
+) -> crate::error::Result<(PathBuf, PathBuf)> {
+    let trimmed = raw_path.trim();
+    if trimmed.is_empty() {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "{label} must not be empty"
+        )));
+    }
+    let root = mcp_eval_filesystem_root()?;
+    let path = PathBuf::from(trimmed);
+    reject_mcp_eval_parent_dirs(&path, label)?;
+    if !path.is_absolute() {
+        reject_mcp_eval_relative_traversal(&path, label)?;
+    }
+    let candidate = if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    };
+    ensure_mcp_eval_path_under_root(&candidate, &root, label)?;
+    Ok((root, candidate))
+}
+
+fn reject_mcp_eval_parent_dirs(path: &Path, label: &str) -> crate::error::Result<()> {
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "{label} must stay under the server working directory"
+        )));
+    }
+    Ok(())
+}
+
+fn reject_mcp_eval_relative_traversal(path: &Path, label: &str) -> crate::error::Result<()> {
+    for component in path.components() {
+        match component {
+            Component::Normal(_) | Component::CurDir => {}
+            Component::ParentDir => {
+                return Err(DbtNovaError::InvalidParams(format!(
+                    "{label} must stay under the server working directory"
+                )));
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(DbtNovaError::InvalidParams(format!(
+                    "{label} must be relative or resolve under the server working directory"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn ensure_existing_ancestor_under_root(
+    candidate: &Path,
+    root: &Path,
+    label: &str,
+) -> crate::error::Result<()> {
+    let mut ancestor = candidate.parent();
+    while let Some(path) = ancestor {
+        if path.exists() {
+            let canonical = path.canonicalize().map_err(|error| {
+                DbtNovaError::InvalidParams(format!(
+                    "failed to resolve parent for {label} '{}': {error}",
+                    path.display()
+                ))
+            })?;
+            return ensure_mcp_eval_path_under_root(&canonical, root, label);
+        }
+        ancestor = path.parent();
+    }
+    Err(DbtNovaError::InvalidParams(format!(
+        "{label} has no existing parent under '{}'",
+        root.display()
+    )))
+}
+
+fn ensure_mcp_eval_path_under_root(
+    path: &Path,
+    root: &Path,
+    label: &str,
+) -> crate::error::Result<()> {
+    if path.starts_with(root) {
+        return Ok(());
+    }
+    Err(DbtNovaError::InvalidParams(format!(
+        "{label} '{}' is outside server working directory '{}'",
+        path.display(),
+        root.display()
+    )))
+}
+
+fn mcp_eval_filesystem_root() -> crate::error::Result<PathBuf> {
+    std::env::current_dir()
+        .and_then(|path| path.canonicalize())
+        .map_err(|error| {
+            DbtNovaError::InvalidParams(format!(
+                "failed to resolve server working directory: {error}"
+            ))
+        })
 }
 
 fn load_suite(path: &str) -> crate::error::Result<EvalSuite> {

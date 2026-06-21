@@ -738,6 +738,116 @@ pub struct ValidateNovaMetaParams {
     pub column: Option<String>,
 }
 
+/// Parameters for the validate_eval_suite tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct ValidateEvalSuiteParams {
+    /// YAML or JSON eval suite path under the server working directory.
+    pub suite: String,
+}
+
+/// Parameters for the get_eval_gate tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct GetEvalGateParams {
+    /// Eval suite name to check in telemetry.
+    pub suite: String,
+}
+
+/// Parameters for the get_eval_history tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct GetEvalHistoryParams {
+    /// Eval suite name to read history for.
+    pub suite: String,
+    /// Only return telemetry rows on or after this UTC date (YYYY-MM-DD).
+    pub since: String,
+}
+
+/// Parameters for the run_eval tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct RunEvalParams {
+    /// YAML or JSON eval suite path under the server working directory.
+    pub suite: String,
+    /// Directory for eval result artifacts. Defaults to `.nova/eval-runs/...`.
+    #[serde(default)]
+    pub output_dir: Option<String>,
+    /// Append per-assertion JSONL telemetry for this eval run.
+    #[serde(default)]
+    pub telemetry: bool,
+    /// After writing telemetry, keep only the newest ROWS rows for this suite.
+    #[serde(default)]
+    pub telemetry_retention: Option<usize>,
+    /// Only run the named bridge cases.
+    #[serde(default)]
+    pub case_ids: Vec<String>,
+    /// Required pass rate between 0.0 and 1.0.
+    #[serde(default)]
+    pub fail_under: Option<f64>,
+}
+
+/// Parameters for the init_eval_suite tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct InitEvalSuiteParams {
+    /// Persona to use in the generated starter suite. Defaults to analyst.
+    #[serde(default)]
+    pub persona: Option<String>,
+    /// Path to write the suite YAML under the server working directory.
+    pub out: String,
+    /// Overwrite an existing suite file.
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// Parameters for the run_agent_eval tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct RunAgentEvalParams {
+    /// YAML or JSON eval suite path under the server working directory.
+    pub suite: String,
+    /// Provider preset: opencode, codex, claude, goose, or custom.
+    #[serde(default)]
+    pub provider: Option<String>,
+    /// Model id to pass to provider presets that support --model.
+    #[serde(default)]
+    pub provider_model: Option<String>,
+    /// Custom provider command to execute. Requires explicit custom-provider opt-in.
+    #[serde(default)]
+    pub provider_command: Option<String>,
+    /// Custom provider arguments as a JSON string array with placeholders. Requires explicit custom-provider opt-in.
+    #[serde(default)]
+    pub provider_args_json: Option<String>,
+    /// Local dbt manifest.json path under the server working directory.
+    #[serde(default)]
+    pub manifest_path: Option<String>,
+    /// Remote manifest or prebuilt artifact URI.
+    #[serde(default)]
+    pub manifest_uri: Option<String>,
+    /// Storage instance id for cached Nova assets.
+    #[serde(default)]
+    pub storage_instance_id: Option<String>,
+    /// Directory for eval result artifacts. Defaults to `.nova/eval-runs/...`.
+    #[serde(default)]
+    pub output_dir: Option<String>,
+    /// Append per-assertion JSONL telemetry for this eval run.
+    #[serde(default)]
+    pub telemetry: bool,
+    /// After writing telemetry, keep only the newest ROWS rows for this suite.
+    #[serde(default)]
+    pub telemetry_retention: Option<usize>,
+    /// Only run the named agent cases.
+    #[serde(default)]
+    pub case_ids: Vec<String>,
+    /// Provider command timeout in seconds. Defaults to 600.
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+    /// Required pass rate between 0.0 and 1.0.
+    #[serde(default)]
+    pub fail_under: Option<f64>,
+    /// Clear the selected storage instance before running the provider.
+    #[serde(default)]
+    pub cleanup_storage_on_start: bool,
+    /// Open storage in read-only mode.
+    #[serde(default)]
+    pub read_only: bool,
+}
+
 /// Parameters for the reload_manifest tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ReloadManifestParams {

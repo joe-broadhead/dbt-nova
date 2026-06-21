@@ -16,6 +16,11 @@ use tracing::instrument;
 
 use crate::cli::agent_readiness_cmd::build_agent_readiness_tool_response;
 use crate::cli::audit_cmd::build_metadata_audit_tool_response;
+use crate::cli::eval_cmd::{
+    build_agent_eval_tool_response, build_eval_gate_tool_response,
+    build_eval_history_tool_response, build_eval_init_tool_response, build_eval_run_tool_response,
+    build_eval_validate_tool_response,
+};
 use crate::cli::nova_meta_cmd::build_nova_meta_tool_response;
 use crate::config::DbtNovaConfig;
 use crate::error::DbtNovaError;
@@ -23,12 +28,14 @@ use crate::manifest::search::{ManifestSearch, ManifestSearchHandle};
 use crate::params::{
     BatchGetParams, ColumnInventoryParams, CompareGrainsParams, DiffEntitiesParams,
     ExecuteSqlParams, FindByPathParams, FindEntityOverlapParams, GetAgentReadinessParams,
-    GetColumnLineageParams, GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams,
-    GetLineageParams, GetMetadataAuditParams, GetMetadataScoreParams, GetRecipeParams,
-    GetSqlParams, GetTestCoverageParams, GetUndocumentedParams, IndicatorInventoryParams,
-    ListEntitiesParams, ModellingConsistencyReportParams, PaginationParams, ParentGroupMode,
-    ReloadManifestParams, RunRecipeParams, SearchColumnsParams, SearchIndicatorParams,
-    SearchParams, SearchRecipesParams, ValidateDagParams, ValidateNovaMetaParams,
+    GetColumnLineageParams, GetColumnsParams, GetContextParams, GetEntityParams, GetEvalGateParams,
+    GetEvalHistoryParams, GetImpactParams, GetLineageParams, GetMetadataAuditParams,
+    GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
+    GetUndocumentedParams, IndicatorInventoryParams, InitEvalSuiteParams, ListEntitiesParams,
+    ModellingConsistencyReportParams, PaginationParams, ParentGroupMode, ReloadManifestParams,
+    RunAgentEvalParams, RunEvalParams, RunRecipeParams, SearchColumnsParams, SearchIndicatorParams,
+    SearchParams, SearchRecipesParams, ValidateDagParams, ValidateEvalSuiteParams,
+    ValidateNovaMetaParams,
 };
 use crate::responses::SuccessResponse;
 use crate::server::health::build_manifest_health_payload;
@@ -1657,6 +1664,84 @@ impl DbtNovaServer {
         .await
     }
 
+    /// Validate an eval suite file without running it.
+    #[tool(
+        name = "validate_eval_suite",
+        description = "Validate a local YAML/JSON eval suite file using the same schema checks as eval validate. Suite paths are scoped under the server working directory."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn validate_eval_suite(&self, params: Parameters<ValidateEvalSuiteParams>) -> String {
+        self.handle_async("validate_eval_suite", None, |_searcher| async move {
+            build_eval_validate_tool_response(&params.0)
+        })
+        .await
+    }
+
+    /// Get eval gate status from latest telemetry.
+    #[tool(
+        name = "get_eval_gate",
+        description = "Read eval telemetry and return the same gate report data as eval gate --json for a suite name."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn get_eval_gate(&self, params: Parameters<GetEvalGateParams>) -> String {
+        self.handle_async("get_eval_gate", None, |_searcher| async move {
+            build_eval_gate_tool_response(&params.0)
+        })
+        .await
+    }
+
+    /// Get filtered eval telemetry history.
+    #[tool(
+        name = "get_eval_history",
+        description = "Read eval telemetry rows for a suite on or after a YYYY-MM-DD UTC date, matching eval history data without line-oriented CLI output."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn get_eval_history(&self, params: Parameters<GetEvalHistoryParams>) -> String {
+        self.handle_async("get_eval_history", None, |_searcher| async move {
+            build_eval_history_tool_response(&params.0)
+        })
+        .await
+    }
+
+    /// Run deterministic bridge evals against the loaded MCP manifest.
+    #[tool(
+        name = "run_eval",
+        description = "Run deterministic bridge eval assertions against the currently loaded MCP manifest. Disabled unless DBT_NOVA_MCP_ENABLE_EVAL_RUN=1 is set."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn run_eval(&self, params: Parameters<RunEvalParams>) -> String {
+        self.handle_async("run_eval", None, |searcher| async move {
+            build_eval_run_tool_response(&searcher, &params.0).await
+        })
+        .await
+    }
+
+    /// Write a starter eval suite file.
+    #[tool(
+        name = "init_eval_suite",
+        description = "Write a starter eval suite under the server working directory. Disabled unless DBT_NOVA_MCP_ENABLE_EVAL_WRITES=1 is set."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn init_eval_suite(&self, params: Parameters<InitEvalSuiteParams>) -> String {
+        self.handle_async("init_eval_suite", None, |_searcher| async move {
+            build_eval_init_tool_response(&params.0)
+        })
+        .await
+    }
+
+    /// Run provider-backed agent evals.
+    #[tool(
+        name = "run_agent_eval",
+        description = "Run provider-backed agent evals and score tool-use traces. Disabled unless DBT_NOVA_MCP_ENABLE_AGENT_EVAL=1 is set; custom provider commands also require DBT_NOVA_MCP_ENABLE_CUSTOM_AGENT_PROVIDER=1."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn run_agent_eval(&self, params: Parameters<RunAgentEvalParams>) -> String {
+        self.handle_async("run_agent_eval", None, |_searcher| async move {
+            build_agent_eval_tool_response(&params.0).await
+        })
+        .await
+    }
+
     /// Show manifest metadata and statistics.
     #[tool(
         name = "show_metadata",
@@ -2943,6 +3028,58 @@ models:
             response["data"]["selector"]["paths"],
             serde_json::json!(["models/orders.yml"])
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn validate_eval_suite_returns_report_contract() {
+        let root = std::env::current_dir()
+            .expect("cwd")
+            .canonicalize()
+            .expect("canonical cwd");
+        let suite_dir = TempDir::new_in(&root).expect("temp suite dir");
+        let suite_path = suite_dir.path().join("suite.yml");
+        std::fs::write(
+            &suite_path,
+            r"
+version: 1
+name: mcp-eval-smoke
+cases:
+  - id: one
+    assertions:
+      - type: tool_success
+        tool: search
+        params: {}
+",
+        )
+        .expect("suite fixture");
+
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path());
+        config.mcp_max_response_bytes = 0;
+        let handle = ManifestSearchHandle::spawn(config);
+        handle
+            .wait_ready()
+            .await
+            .expect("fixture manifest should load");
+        let server = DbtNovaServer::new(handle);
+
+        let response: serde_json::Value = serde_json::from_str(
+            &server
+                .validate_eval_suite(Parameters(ValidateEvalSuiteParams {
+                    suite: suite_path.display().to_string(),
+                }))
+                .await,
+        )
+        .expect("eval validation response JSON");
+
+        assert_eq!(response["success"], serde_json::json!(true));
+        assert_eq!(response["count"], serde_json::json!(1));
+        assert_eq!(response["data"]["valid"], serde_json::json!(true));
+        assert_eq!(
+            response["data"]["suite_name"],
+            serde_json::json!("mcp-eval-smoke")
+        );
+        assert!(response["data"]["safety_policy"].is_object());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
