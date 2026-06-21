@@ -1,5 +1,5 @@
 /// Canonical MCP tool names exposed by dbt-nova.
-pub const MCP_TOOL_NAMES: [&str; 48] = [
+pub const MCP_TOOL_NAMES: [&str; 51] = [
     "search",
     "search_indicator",
     "indicator_inventory",
@@ -23,6 +23,9 @@ pub const MCP_TOOL_NAMES: [&str; 48] = [
     "run_eval",
     "init_eval_suite",
     "run_agent_eval",
+    "inspect_tool_trace",
+    "summarize_tool_trace",
+    "redact_tool_trace",
     "show_metadata",
     "health",
     "reload_manifest",
@@ -86,7 +89,7 @@ pub struct CliMcpParityEntry {
 /// Keep this matrix in sync with `docs/getting-started/cli.md` and
 /// `docs/api/mcp-cli-parity.md`. Product capabilities should trend from `Gap`
 /// to `Equivalent`; process lifecycle commands may remain `LifecycleException`.
-pub const CLI_MCP_PARITY_MATRIX: [CliMcpParityEntry; 20] = [
+pub const CLI_MCP_PARITY_MATRIX: [CliMcpParityEntry; 23] = [
     CliMcpParityEntry {
         cli_command: "server start",
         mcp_tool: None,
@@ -219,6 +222,27 @@ pub const CLI_MCP_PARITY_MATRIX: [CliMcpParityEntry; 20] = [
         status: CliMcpParityStatus::Equivalent,
         issue: None,
         notes: "MCP returns filtered eval telemetry rows in a standard envelope",
+    },
+    CliMcpParityEntry {
+        cli_command: "trace inspect",
+        mcp_tool: Some("inspect_tool_trace"),
+        status: CliMcpParityStatus::Equivalent,
+        issue: None,
+        notes: "MCP returns the same trace rows, parse warnings, and summary while scoping local paths under the server working directory",
+    },
+    CliMcpParityEntry {
+        cli_command: "trace summarize",
+        mcp_tool: Some("summarize_tool_trace"),
+        status: CliMcpParityStatus::SafetyGated,
+        issue: None,
+        notes: "MCP returns the same summary data; Markdown report writes require DBT_NOVA_MCP_ENABLE_TRACE_WRITES=1",
+    },
+    CliMcpParityEntry {
+        cli_command: "trace redact",
+        mcp_tool: Some("redact_tool_trace"),
+        status: CliMcpParityStatus::SafetyGated,
+        issue: None,
+        notes: "MCP safe-sharing redaction writes require DBT_NOVA_MCP_ENABLE_TRACE_WRITES=1",
     },
     CliMcpParityEntry {
         cli_command: "health check",

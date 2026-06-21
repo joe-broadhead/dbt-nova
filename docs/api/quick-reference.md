@@ -1,6 +1,6 @@
 # Tools Quick Reference
 
-One-page cheatsheet for all 48 dbt-nova MCP tools.
+One-page cheatsheet for all 51 dbt-nova MCP tools.
 
 ## Discovery
 
@@ -71,6 +71,14 @@ One-page cheatsheet for all 48 dbt-nova MCP tools.
 | `run_eval` | Run deterministic bridge evals against loaded manifest | `suite`, `output_dir`, `telemetry`, `case_ids`, `fail_under` |
 | `init_eval_suite` | Write a starter eval suite | `persona`, `out`, `force` |
 | `run_agent_eval` | Run provider-backed agent evals | `suite`, `provider`, `manifest_path`, `output_dir`, `case_ids`, `timeout_secs`, `fail_under` |
+
+## Trace Review
+
+| Tool | Purpose | Key Parameters |
+|------|---------|----------------|
+| `inspect_tool_trace` | Inspect tool-call trace JSONL rows and parse warnings | `path` |
+| `summarize_tool_trace` | Summarize trace order, budgets, errors, IDs, and semantic-first signal | `path`, `report_md_path` |
+| `redact_tool_trace` | Redact trace JSONL for safe sharing | `path`, `out` |
 
 ## Metadata Inventory
 

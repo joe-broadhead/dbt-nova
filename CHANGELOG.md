@@ -48,6 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dbt-nova eval gate <NAME> --json` reads the latest full-suite telemetry and
   reports allowed/blocked status, pass rate, and failed case/assertion ids,
   blocking stale suite-file telemetry before allowing configured gates.
+- Added `dbt-nova trace inspect`, `trace summarize`, and `trace redact`, plus
+  MCP/CLI `tool call` parity through `inspect_tool_trace`,
+  `summarize_tool_trace`, and `redact_tool_trace`, for inspecting sanitized
+  tool-call JSONL, writing Markdown trace summaries, and producing conservative
+  redacted trace artifacts for safe sharing. MCP trace writes require
+  `DBT_NOVA_MCP_ENABLE_TRACE_WRITES=1`.
 - Added `dbt-nova audit agent-readiness` for metadata-only agent readiness
   reports that combine project metadata scores, entity signal gaps, Nova
   indicator checks, optional eval gate evidence, JSON/Markdown artifacts, and

@@ -28,6 +28,10 @@ use crate::cli::storage_cmd::{
     build_storage_cleanup_tool_response, build_storage_inspect_tool_response,
     build_storage_prune_tool_response,
 };
+use crate::cli::trace_cmd::{
+    build_trace_inspect_tool_response, build_trace_redact_tool_response,
+    build_trace_summarize_tool_response,
+};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::search::ManifestSearch;
 use crate::params::{
@@ -40,8 +44,9 @@ use crate::params::{
     InitEvalSuiteParams, ListEntitiesParams, ModellingConsistencyReportParams,
     ReloadManifestParams, RunAgentEvalParams, RunEvalParams, RunRecipeParams, SearchColumnsParams,
     SearchIndicatorParams, SearchParams, SearchRecipesParams, StorageCleanupParams,
-    StorageInspectParams, StoragePruneParams, ValidateDagParams, ValidateEvalSuiteParams,
-    ValidateNovaMetaParams, WarmManifestParams,
+    StorageInspectParams, StoragePruneParams, TraceInspectParams, TraceRedactParams,
+    TraceSummarizeParams, ValidateDagParams, ValidateEvalSuiteParams, ValidateNovaMetaParams,
+    WarmManifestParams,
 };
 use crate::responses::SuccessResponse;
 
@@ -56,7 +61,7 @@ struct ToolRegistryEntry {
     dispatch: ToolDispatchFn,
 }
 
-const TOOL_REGISTRY: [ToolRegistryEntry; 48] = [
+const TOOL_REGISTRY: [ToolRegistryEntry; 51] = [
     ToolRegistryEntry {
         name: "search",
         dispatch: dispatch_search,
@@ -148,6 +153,18 @@ const TOOL_REGISTRY: [ToolRegistryEntry; 48] = [
     ToolRegistryEntry {
         name: "run_agent_eval",
         dispatch: dispatch_run_agent_eval,
+    },
+    ToolRegistryEntry {
+        name: "inspect_tool_trace",
+        dispatch: dispatch_inspect_tool_trace,
+    },
+    ToolRegistryEntry {
+        name: "summarize_tool_trace",
+        dispatch: dispatch_summarize_tool_trace,
+    },
+    ToolRegistryEntry {
+        name: "redact_tool_trace",
+        dispatch: dispatch_redact_tool_trace,
     },
     ToolRegistryEntry {
         name: "show_metadata",
@@ -773,6 +790,27 @@ fn dispatch_run_agent_eval(_searcher: &ManifestSearch, params: JsonValue) -> Too
     Box::pin(async move {
         let decoded: RunAgentEvalParams = decode_tool_params("run_agent_eval", params)?;
         build_agent_eval_tool_response(&decoded).await
+    })
+}
+
+fn dispatch_inspect_tool_trace(_searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: TraceInspectParams = decode_tool_params("inspect_tool_trace", params)?;
+        build_trace_inspect_tool_response(&decoded)
+    })
+}
+
+fn dispatch_summarize_tool_trace(_searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: TraceSummarizeParams = decode_tool_params("summarize_tool_trace", params)?;
+        build_trace_summarize_tool_response(&decoded)
+    })
+}
+
+fn dispatch_redact_tool_trace(_searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: TraceRedactParams = decode_tool_params("redact_tool_trace", params)?;
+        build_trace_redact_tool_response(&decoded)
     })
 }
 

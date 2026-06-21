@@ -402,6 +402,10 @@ Trace rows deliberately do not record SQL recipe parameter maps or credential
 values. Keep eval artifacts out of public bug reports unless you have reviewed
 them for project-specific identifiers.
 
+Use [Trace Inspection And Redaction](traces.md) to inspect trace JSONL, write a
+Markdown summary, and create a redacted JSONL artifact before sharing trace
+evidence.
+
 ## CI Pattern
 
 Use bridge evals as a fast metadata quality gate after producing a manifest:

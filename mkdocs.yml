@@ -124,6 +124,7 @@ nav:
     - Metrics Reference: api/metrics-reference.md
   - Features:
     - Nova Evals: features/evals.md
+    - Trace Inspection And Redaction: features/traces.md
     - Analysis Recipes: features/recipes.md
     - Column Lineage: features/column-lineage.md
     - Agent Readiness Audit: features/agent-readiness.md

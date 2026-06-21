@@ -15,6 +15,7 @@ pub enum Command {
     Audit(AuditArgs),
     Config(ConfigArgs),
     Storage(StorageArgs),
+    Trace(TraceArgs),
     Health(HealthArgs),
     Eval(EvalArgs),
 }
@@ -150,6 +151,47 @@ pub struct ToolCallArgs {
     pub cleanup_storage_on_start: bool,
     #[arg(long, default_value_t = false)]
     pub read_only: bool,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct TraceArgs {
+    #[command(subcommand)]
+    pub command: TraceCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TraceCommand {
+    Inspect(TraceInspectArgs),
+    Summarize(TraceSummarizeArgs),
+    Redact(TraceRedactArgs),
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct TraceInspectArgs {
+    #[arg(long, value_name = "PATH")]
+    pub path: String,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct TraceSummarizeArgs {
+    #[arg(long, value_name = "PATH")]
+    pub path: String,
+    #[arg(long, value_name = "PATH")]
+    pub report_md_path: Option<String>,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct TraceRedactArgs {
+    #[arg(long, value_name = "PATH")]
+    pub path: String,
+    #[arg(long, value_name = "PATH")]
+    pub out: String,
     #[arg(long, default_value_t = false)]
     pub json: bool,
 }
@@ -617,7 +659,7 @@ mod tests {
     use super::{
         AuditCommand, Cli, Command, ConfigCommand, EvalAgentCommand, EvalCommand, HealthCommand,
         ManifestCommand, MetadataAuditSelectionModeArg, NovaMetaResourceKindArg, ServerCommand,
-        ServerTransportArg, StorageCommand, ToolCommand,
+        ServerTransportArg, StorageCommand, ToolCommand, TraceCommand,
     };
 
     #[test]
@@ -948,6 +990,77 @@ mod tests {
             }
             _ => panic!("expected tool command"),
         }
+    }
+
+    #[test]
+    fn trace_commands_parse_flags() {
+        let inspect = Cli::parse_from([
+            "dbt-nova",
+            "trace",
+            "inspect",
+            "--path",
+            "tool-calls.jsonl",
+            "--json",
+        ]);
+        match inspect.command.expect("command") {
+            Command::Trace(trace) => {
+                let TraceCommand::Inspect(args) = trace.command else {
+                    panic!("expected trace inspect command");
+                };
+                assert_eq!(args.path, "tool-calls.jsonl");
+                assert!(args.json);
+            }
+            _ => panic!("expected trace command"),
+        }
+
+        let summarize = Cli::parse_from([
+            "dbt-nova",
+            "trace",
+            "summarize",
+            "--path",
+            "tool-calls.jsonl",
+            "--report-md-path",
+            "trace.md",
+        ]);
+        match summarize.command.expect("command") {
+            Command::Trace(trace) => {
+                let TraceCommand::Summarize(args) = trace.command else {
+                    panic!("expected trace summarize command");
+                };
+                assert_eq!(args.path, "tool-calls.jsonl");
+                assert_eq!(args.report_md_path.as_deref(), Some("trace.md"));
+            }
+            _ => panic!("expected trace command"),
+        }
+
+        let redact = Cli::parse_from([
+            "dbt-nova",
+            "trace",
+            "redact",
+            "--path",
+            "tool-calls.jsonl",
+            "--out",
+            "tool-calls.redacted.jsonl",
+            "--json",
+        ]);
+        match redact.command.expect("command") {
+            Command::Trace(trace) => {
+                let TraceCommand::Redact(args) = trace.command else {
+                    panic!("expected trace redact command");
+                };
+                assert_eq!(args.path, "tool-calls.jsonl");
+                assert_eq!(args.out, "tool-calls.redacted.jsonl");
+                assert!(args.json);
+            }
+            _ => panic!("expected trace command"),
+        }
+    }
+
+    #[test]
+    fn trace_redact_requires_output_path() {
+        let parsed =
+            Cli::try_parse_from(["dbt-nova", "trace", "redact", "--path", "tool-calls.jsonl"]);
+        assert!(parsed.is_err());
     }
 
     #[test]
