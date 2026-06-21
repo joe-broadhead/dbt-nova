@@ -136,6 +136,21 @@ dbt-nova tool call search_indicator \
   --json
 ```
 
+### Agent-readiness report for CI
+
+```bash
+dbt-nova audit agent-readiness \
+  --manifest-path /path/to/target/manifest.json \
+  --thresholds-json '{"overall":{"min_score":70,"severity":"advisory"},"persona":{"engineer":{"min_score":70,"severity":"advisory"},"analyst":{"min_score":65,"severity":"advisory"},"governance":{"min_score":65,"severity":"advisory"}}}' \
+  --report-json-path out/agent-readiness.json \
+  --report-md-path out/agent-readiness.md \
+  --json
+```
+
+Add `--fail-on-blockers` only after you have moved the relevant thresholds from
+advisory to required. See [Agent Readiness Audit](../features/agent-readiness.md)
+for the GitHub Actions pattern and report artifact guidance.
+
 ### Metadata audit for changed models
 
 ```bash

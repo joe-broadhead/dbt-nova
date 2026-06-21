@@ -61,6 +61,10 @@ truncation, because those runs do not prove current full-suite readiness. Gates
 are advisory in v1: use blocked results to warn before high-stakes analysis or
 launch-readiness claims, then inspect the reported failed case/assertion ids.
 
+For release or PR evidence that combines metadata scores, readiness bands,
+blocker categories, optional eval gate output, and JSON/Markdown artifacts, see
+[Agent Readiness Audit](../features/agent-readiness.md).
+
 ## Test Storage Cleanup
 
 Tests use temporary storage under `target/dbt-nova-tests` and clean up automatically.

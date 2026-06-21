@@ -13,9 +13,11 @@ The MCP tool accepts inline `personas_json`, `thresholds_json`, and
 `eval_gate_json`, and returns the report without writing files or applying CLI
 exit semantics.
 
-## Command
+## Local Command
 
 ```bash
+mkdir -p out
+
 dbt-nova audit agent-readiness \
   --manifest-path target/manifest.json \
   --report-json-path out/agent-readiness.json \
@@ -26,6 +28,10 @@ dbt-nova audit agent-readiness \
 The command is metadata-only by default. It loads the manifest with vector,
 sparse, and reranker search disabled, even when those search features are
 enabled in the surrounding environment.
+
+Use a stable `--storage-instance-id` in repeatable automation so reruns share
+the same manifest index cache. Add `--cleanup-storage-on-start` when you want a
+fresh local cache for the manifest under test.
 
 ## Inputs
 
@@ -44,7 +50,87 @@ enabled in the surrounding environment.
 - `--fail-on-blockers`: exit non-zero when blocking findings are present
 - `--json`: print a CLI envelope containing the report
 
-## Thresholds
+## CI Workflow
+
+Run agent readiness after dbt has produced `target/manifest.json`. This example
+starts in advisory mode, writes machine and human reports, always uploads the
+reports as workflow artifacts, and mirrors the Markdown report into the job
+summary.
+
+```yaml
+name: Agent readiness
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  agent_readiness:
+    runs-on: ubuntu-22.04
+    env:
+      READINESS_THRESHOLDS: >-
+        {"overall":{"min_score":70,"severity":"advisory"},"persona":{"engineer":{"min_score":70,"severity":"advisory"},"analyst":{"min_score":65,"severity":"advisory"},"governance":{"min_score":65,"severity":"advisory"}}}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dbt project dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Generate dbt manifest
+        run: |
+          dbt deps
+          dbt parse --target prod
+
+      - name: Install dbt-nova
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+            bash -s -- --slim --non-interactive
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run agent-readiness report
+        run: |
+          mkdir -p out
+          dbt-nova audit agent-readiness \
+            --manifest-path target/manifest.json \
+            --storage-instance-id "agent-readiness-${{ github.event.pull_request.number || github.run_id }}" \
+            --thresholds-json "$READINESS_THRESHOLDS" \
+            --report-json-path out/agent-readiness.json \
+            --report-md-path out/agent-readiness.md \
+            --json | tee out/agent-readiness.envelope.json
+
+      - name: Publish readiness artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-readiness
+          path: |
+            out/agent-readiness.json
+            out/agent-readiness.md
+            out/agent-readiness.envelope.json
+          if-no-files-found: error
+
+      - name: Add readiness summary
+        if: always()
+        run: |
+          if [ -f out/agent-readiness.md ]; then
+            cat out/agent-readiness.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+```
+
+Replace the dependency installation and dbt command with the same setup your
+project uses in CI, such as `dbt compile`, `dbt parse`, or `dbt build`. Keep
+database credentials in GitHub secrets or your normal dbt profile mechanism;
+the readiness command only needs the generated manifest. For production
+workflows, pin GitHub Action refs and the dbt-nova installer URL to a release
+tag or immutable commit.
+
+## Thresholds And Blocking
 
 Thresholds are optional JSON. Default thresholds are advisory so the command can
 produce evidence without failing valid manifests.
@@ -63,6 +149,53 @@ produce evidence without failing valid manifests.
 Set `severity` to `required` for a threshold that should create a blocker.
 `--fail-on-blockers` turns blockers into a failing CLI exit after reports have
 been written.
+
+The recommended rollout is:
+
+- first run advisory thresholds and publish reports without
+  `--fail-on-blockers`
+- use several runs to establish the project baseline and fix noisy metadata
+  gaps
+- tighten selected thresholds to `required`
+- add `--fail-on-blockers` once the team wants readiness regressions to block
+  merges or releases
+
+Example required gate after baseline:
+
+```bash
+dbt-nova audit agent-readiness \
+  --manifest-path target/manifest.json \
+  --thresholds-json '{"overall":{"min_score":80,"severity":"required"},"persona":{"default":{"min_grade":"B","severity":"required"}}}' \
+  --report-json-path out/agent-readiness.json \
+  --report-md-path out/agent-readiness.md \
+  --fail-on-blockers \
+  --json
+```
+
+## Readiness Bands And Blockers
+
+The report's `readiness_band` is deterministic:
+
+- `blocked`: one or more blocking findings are present
+- `high`: no blockers and `overall_score >= 85`
+- `medium`: no blockers and `70 <= overall_score < 85`
+- `low`: no blockers and `overall_score < 70`
+
+The report's `gate_status` is `fail` when blockers exist, `advisory` when only
+improvement findings exist, and `pass` when neither blockers nor material
+improvements are detected.
+
+Blocking findings come from:
+
+- required `overall_score` threshold misses (`overall_threshold_missed`)
+- required persona threshold misses (`persona_threshold_missed`)
+- blocked eval gate evidence (`eval_gate_blocked`)
+
+Advisory improvement findings can include missed advisory thresholds, missing
+or unavailable eval gate evidence, low-scoring entity metadata, signal gaps such
+as missing owners or primary-key evidence, and ambiguous indicator metadata.
+Missing eval evidence is a next action by default; it is not a blocker unless a
+provided eval gate report is blocked.
 
 ## Eval Gate Evidence
 
@@ -84,6 +217,25 @@ The readiness command accepts either the raw gate report or the full CLI
 envelope emitted by `eval gate --json`. A blocked eval gate is recorded as a
 readiness blocker. Missing eval gate evidence is recorded as a next action, not
 as a blocker.
+
+See [Evals](evals.md#readiness-gates) for gate telemetry rules and
+[Metadata Audit](metadata-audit.md) for changed-entity metadata gates that fit
+PR-only checks.
+
+## Metadata-Only Scope And Limitations
+
+Agent readiness is a manifest and metadata quality signal. It does not execute
+warehouse SQL, call an LLM provider, or prove that an agent's final answer is
+correct. Treat it as launch evidence for discoverability, metadata coverage,
+indicator clarity, and optional eval gate freshness.
+
+Use metadata-only readiness when you want a fast report from `manifest.json` in
+PRs, release checks, or recurring metadata reviews. Use
+`dbt-nova eval run` for bridge eval assertions against Nova tool results, and
+use `dbt-nova eval agent run` only for slower provider-backed smoke tests where
+you need to verify how a configured agent uses the tools. Use warehouse or
+provider-specific checks separately when the question depends on live data,
+credentials, SQL execution, or generated answer quality.
 
 ## Report Contract
 
@@ -112,6 +264,40 @@ JSON reports use `schema_version: "agent_readiness.v1"` and include:
 
 Markdown reports contain the same evidence in a compact review format for PR
 comments, release notes, or CI job summaries.
+
+## Report Artifacts
+
+Write both report files in CI:
+
+- `agent-readiness.json` is the machine contract for bots, dashboards, and
+  follow-up automation
+- `agent-readiness.md` is the review artifact for PR comments, release notes,
+  and `GITHUB_STEP_SUMMARY`
+- `agent-readiness.envelope.json`, when captured from `--json`, preserves the
+  CLI success/error envelope used in logs
+
+Upload reports with `if: always()` so reviewers can inspect readiness evidence
+even when a later required gate fails. Do not commit generated reports. Treat
+manifest sources, original file paths, and metadata values as project evidence:
+avoid printing private manifest URIs or secrets in surrounding CI logs.
+
+## Using Output To Create Work
+
+Use `next_actions` as the ordered triage list. Promote items into remediation
+issues or PR tasks based on their `category`, `priority`, and evidence.
+
+Use `suggested_meta_patches` as reviewable dbt YAML work, not as automatic
+edits. Assign owner, grain, primary-key, sensitivity, and indicator metadata
+placeholders to the people who can supply real project truth.
+
+Use `golden_question_seeds` as an eval backlog starter. Review each seed,
+replace placeholders or date-sensitive wording, then copy approved cases into
+an eval suite. Bridge seeds can become `eval run` checks; manual-review seeds
+should become human-authored cases before they block CI.
+
+Use `summary.drill_down_hints` to fetch detailed metadata-score rows only for
+the weakest entities or personas. That keeps reports compact while preserving a
+path to deeper analysis with `get_metadata_score`.
 
 ## Remediation Suggestions
 
@@ -171,3 +357,10 @@ cases should be anchored manually with explicit dates before becoming CI gates.
 
 To include eval gate evidence, pass either the raw gate report or the full
 `eval gate --json` CLI envelope as `eval_gate_json`.
+
+See also:
+
+- [MCP and CLI parity](../api/mcp-cli-parity.md)
+- [MCP tool reference](../api/tools.md#get_agent_readiness)
+- [Metadata Audit](metadata-audit.md)
+- [Evals](evals.md)
