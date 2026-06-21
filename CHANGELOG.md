@@ -55,6 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Agent-readiness reports now include advisory `suggested_meta_patches` for
   reviewable `meta.nova` remediation and draft `golden_question_seeds` for
   turning readiness gaps into eval backlog candidates.
+- Documented the agent-readiness CI workflow with local and GitHub Actions
+  commands, readiness bands, blocker categories, report artifact handling, and
+  guidance for turning readiness output into remediation and eval work.
 - Metadata scoring now returns a shared `metadata_score_contract.v1` scoring
   contract plus machine-readable diagnostics for description tiers, array-count
   tier progress, invalid Nova grain shapes, and primary-key integrity test gaps.
