@@ -27,7 +27,7 @@ flowchart TD
 
 ## Architecture Overview (Detailed)
 
-### Tool Map (33 MCP tools)
+### Tool Map (34 MCP tools)
 
 <div class="diagram-large diagram-vertical" markdown>
 
@@ -78,6 +78,7 @@ flowchart LR
     TR --> T_get_undocumented["get_undocumented"]
     TR --> T_validate_dag["validate_dag"]
     TR --> T_metadata_score["get_metadata_score"]
+    TR --> T_agent_readiness["get_agent_readiness"]
   end
 
   subgraph Modeling["Modeling Consistency"]
@@ -166,6 +167,7 @@ Implementation note:
 | `get_undocumented` | Indexes |
 | `validate_dag` | Indexes |
 | `get_metadata_score` | EntityStore + Indexes |
+| `get_agent_readiness` | Metadata Score + Nova metadata |
 | `compare_grains` | Nova metadata + EntityStore |
 | `find_entity_overlap` | Nova metadata + Indexes |
 | `modelling_consistency_report` | Nova metadata + Indexes |

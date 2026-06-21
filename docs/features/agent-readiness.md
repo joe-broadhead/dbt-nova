@@ -8,6 +8,11 @@ and Markdown artifact.
 Use it before enabling a manifest for production agent analysis, launch reviews,
 or recurring CI evidence.
 
+MCP clients can request the same JSON report with `get_agent_readiness`.
+The MCP tool accepts inline `personas_json`, `thresholds_json`, and
+`eval_gate_json`, and returns the report without writing files or applying CLI
+exit semantics.
+
 ## Command
 
 ```bash
@@ -97,3 +102,12 @@ JSON reports use `schema_version: "agent_readiness.v1"` and include:
 
 Markdown reports contain the same evidence in a compact review format for PR
 comments, release notes, or CI job summaries.
+
+## MCP Tool
+
+```json
+{"name":"get_agent_readiness","arguments":{"personas_json":"[\"engineer\",\"analyst\"]"}}
+```
+
+To include eval gate evidence, pass either the raw gate report or the full
+`eval gate --json` CLI envelope as `eval_gate_json`.

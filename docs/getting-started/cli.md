@@ -4,7 +4,7 @@ Use `dbt-nova` in two modes:
 
 - No subcommand: start MCP server (backward compatible behavior)
 - Subcommand: run one-shot CLI commands and exit
-- CLI surface: 19 CLI-only leaf commands, plus `tool call` access to all 33 MCP tools
+- CLI surface: 20 CLI leaf commands, including `tool call` access to all 34 MCP tools
 
 For the command-by-command MCP equivalent map, see
 [MCP/CLI Parity](../api/mcp-cli-parity.md).

@@ -52,6 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reports that combine project metadata scores, entity signal gaps, Nova
   indicator checks, optional eval gate evidence, JSON/Markdown artifacts, and
   opt-in blocker exit behavior.
+- Added the `get_agent_readiness` MCP tool and CLI `tool call` bridge support
+  for the same `agent_readiness.v1` report without CLI report-file writes.
 - Fixed release OCI publishing to build images from native Linux release binaries
   instead of compiling Rust inside the ARM64 Docker/QEMU path.
 - Fixed the Monthly workflow by refreshing advisory/dependency-watchlist review

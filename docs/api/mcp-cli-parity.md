@@ -5,7 +5,7 @@ dbt-nova exposes two callable product surfaces:
 - MCP tools, used by MCP clients and hosted deployments.
 - CLI commands, used for one-shot local workflows and CI automation.
 
-The MCP catalog currently contains 33 MCP tools. `dbt-nova tool call` is the
+The MCP catalog currently contains 34 MCP tools. `dbt-nova tool call` is the
 CLI bridge to that same canonical tool catalog. Other CLI leaf commands are
 tracked below so each capability is either MCP-equivalent, a known parity gap,
 or a lifecycle exception.
@@ -28,8 +28,8 @@ are exposed to hosted or remote clients.
 | `manifest load` | `reload_manifest` | Gap | JOE-216 | MCP reloads a running server; CLI load is a one-shot lifecycle command. |
 | `manifest reload` | `reload_manifest` | Gap | JOE-216 | Semantics differ between one-shot CLI reload and live MCP reload. |
 | `manifest warm` | None | Gap | JOE-216 | Cache warming is CLI-only today. |
-| `tool call <tool_name>` | 33 MCP tools | Equivalent | - | CLI tool-call mode supports the canonical MCP tool catalog. |
-| `audit agent-readiness` | None | Gap | JOE-213 | Agent-readiness report is CLI-only today. |
+| `tool call <tool_name>` | 34 MCP tools | Equivalent | - | CLI tool-call mode supports the canonical MCP tool catalog. |
+| `audit agent-readiness` | `get_agent_readiness` | Equivalent | - | MCP returns the same `agent_readiness.v1` report without CLI file writes. |
 | `audit metadata-score` | `get_metadata_score` | Gap | JOE-218 | MCP has the primitive score tool but not the audit/report/gate wrapper. |
 | `audit nova-meta` | None | Gap | JOE-214 | Project-file nova-meta validation is CLI-only today. |
 | `config show` | None | Gap | JOE-217 | Runtime config inspection is CLI-only today. |

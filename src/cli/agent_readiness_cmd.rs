@@ -13,7 +13,8 @@ use crate::cli::output::{CliEnvelope, error_envelope};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::entity::{ArchivedEntity, column_primary_key_bool, entity_nova_meta_json};
 use crate::manifest::search::ManifestSearch;
-use crate::params::GetMetadataScoreParams;
+use crate::params::{GetAgentReadinessParams, GetMetadataScoreParams};
+use crate::responses::SuccessResponse;
 use crate::tools::metadata_score::grade_from_score;
 use crate::utils::{SearchPersona, sanitize_uri};
 
@@ -362,6 +363,20 @@ pub async fn run_agent_readiness_command(args: &AgentReadinessArgs) -> DispatchR
     Ok(())
 }
 
+/// Builds the MCP/CLI-tool response for the agent-readiness report.
+///
+/// # Errors
+/// Returns an error when parameter JSON is invalid or report generation fails.
+pub(crate) async fn build_agent_readiness_tool_response(
+    search: &ManifestSearch,
+    params: &GetAgentReadinessParams,
+) -> Result<JsonValue> {
+    let inputs = parse_readiness_tool_inputs(params)?;
+    let report = build_agent_readiness_report(search, &inputs).await?;
+    serde_json::to_value(SuccessResponse::new(report, 1))
+        .map_err(|error| DbtNovaError::ServerError(error.to_string()))
+}
+
 fn build_agent_readiness_load_config(
     args: &AgentReadinessArgs,
 ) -> Result<crate::config::DbtNovaConfig> {
@@ -381,9 +396,38 @@ fn build_agent_readiness_load_config(
 }
 
 fn parse_readiness_inputs(args: &AgentReadinessArgs) -> Result<ReadinessInputs> {
+    parse_readiness_inputs_from_sources(
+        args.personas_json.as_deref(),
+        None,
+        args.thresholds_json.as_deref(),
+        args.thresholds_file.as_deref(),
+        args.eval_gate_json.as_deref(),
+        args.eval_gate_file.as_deref(),
+    )
+}
+
+fn parse_readiness_tool_inputs(params: &GetAgentReadinessParams) -> Result<ReadinessInputs> {
+    parse_readiness_inputs_from_sources(
+        params.personas_json.as_deref(),
+        None,
+        params.thresholds_json.as_deref(),
+        None,
+        params.eval_gate_json.as_deref(),
+        None,
+    )
+}
+
+fn parse_readiness_inputs_from_sources(
+    personas_json: Option<&str>,
+    personas_file: Option<&str>,
+    thresholds_json: Option<&str>,
+    thresholds_file: Option<&str>,
+    eval_gate_json: Option<&str>,
+    eval_gate_file: Option<&str>,
+) -> Result<ReadinessInputs> {
     let mut seen_personas = BTreeSet::new();
     let personas: Vec<String> =
-        parse_json_array_input(args.personas_json.as_deref(), None, DEFAULT_PERSONAS_JSON)?
+        parse_json_array_input(personas_json, personas_file, DEFAULT_PERSONAS_JSON)?
             .into_iter()
             .map(|value| value.trim().to_ascii_lowercase())
             .filter(|value| !value.is_empty())
@@ -402,15 +446,9 @@ fn parse_readiness_inputs(args: &AgentReadinessArgs) -> Result<ReadinessInputs> 
         }
     }
 
-    let thresholds: ReadinessThresholdConfig = parse_json_input(
-        args.thresholds_json.as_deref(),
-        args.thresholds_file.as_deref(),
-        DEFAULT_THRESHOLDS_JSON,
-    )?;
-    let eval_status = parse_eval_status(
-        args.eval_gate_json.as_deref(),
-        args.eval_gate_file.as_deref(),
-    )?;
+    let thresholds: ReadinessThresholdConfig =
+        parse_json_input(thresholds_json, thresholds_file, DEFAULT_THRESHOLDS_JSON)?;
+    let eval_status = parse_eval_status(eval_gate_json, eval_gate_file)?;
 
     Ok(ReadinessInputs {
         personas,
@@ -1676,11 +1714,12 @@ mod tests {
     use super::{
         EvalReadinessStatus, ReadinessFinding, ReadinessThresholdConfig, ThresholdRule,
         ThresholdSeverity, build_agent_readiness_load_config, build_agent_readiness_report,
-        evaluate_threshold, parse_eval_status, parse_json_input, render_markdown_report,
-        write_report,
+        build_agent_readiness_tool_response, evaluate_threshold, parse_eval_status,
+        parse_json_input, render_markdown_report, write_report,
     };
     use crate::cli::args::AgentReadinessArgs;
     use crate::cli::manifest::execute_manifest_load;
+    use crate::params::GetAgentReadinessParams;
     use crate::tests::common::fixture_manifest_path_string;
 
     fn fixture_path_string(fixture_name: &str) -> String {
@@ -1811,6 +1850,44 @@ mod tests {
         assert!(markdown.contains("# Nova Agent Readiness"));
         assert!(markdown.contains("## Persona Scores"));
         assert!(markdown.contains("## Next Actions"));
+    }
+
+    #[tokio::test]
+    async fn agent_readiness_tool_response_uses_report_contract() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let args = AgentReadinessArgs {
+            manifest_path: Some(fixture_manifest_path_string()),
+            storage_instance_id: Some("agent-readiness-tool-response-test".to_string()),
+            cleanup_storage_on_start: true,
+            ..AgentReadinessArgs::default()
+        };
+        let mut config = build_agent_readiness_load_config(&args).expect("config");
+        config.storage_dir = temp_dir.path().to_string_lossy().to_string();
+        let loaded = execute_manifest_load(config).await.expect("load");
+
+        let response = build_agent_readiness_tool_response(
+            &loaded.search,
+            &GetAgentReadinessParams {
+                personas_json: Some(r#"["engineer"]"#.to_string()),
+                eval_gate_json: Some(
+                    r#"{"allowed":true,"blocked":false,"message":"gate passed"}"#.to_string(),
+                ),
+                ..GetAgentReadinessParams::default()
+            },
+        )
+        .await
+        .expect("tool response");
+
+        assert_eq!(response["success"], json!(true));
+        assert_eq!(response["count"], json!(1));
+        assert_eq!(
+            response["data"]["schema_version"],
+            json!("agent_readiness.v1")
+        );
+        assert_eq!(response["data"]["config"]["personas"], json!(["engineer"]));
+        assert_eq!(response["data"]["eval_status"]["status"], json!("allowed"));
+        assert!(response["data"]["entity_findings"].is_array());
+        assert!(response["data"]["next_actions"].is_array());
     }
 
     #[tokio::test]

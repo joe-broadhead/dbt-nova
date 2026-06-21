@@ -1,6 +1,6 @@
 # Tools Reference
 
-This reference lists all 33 MCP tools exposed by dbt‑nova, grouped by category.
+This reference lists all 34 MCP tools exposed by dbt‑nova, grouped by category.
 All tools return the standard envelope described in [Response Format](response-format.md).
 For CLI equivalents and known parity gaps, see
 [MCP/CLI Parity](mcp-cli-parity.md).
@@ -668,6 +668,28 @@ across the returned entities and use deterministic ordering for pagination.
 ```
 
 See `docs/features/metadata-scoring.md` for scoring rules, personas, and examples.
+
+### `get_agent_readiness`
+Manifest-level readiness report for agent workflows.
+
+Optional:
+- `personas_json`: JSON array of personas, defaulting to
+  `["engineer","analyst","governance"]`
+- `thresholds_json`: JSON readiness threshold configuration
+- `eval_gate_json`: raw `eval gate` report JSON or the full CLI JSON envelope
+
+The tool returns the same `agent_readiness.v1` report contract as
+`dbt-nova audit agent-readiness --json`, without writing report files or applying
+CLI exit semantics.
+
+Large reports use the standard MCP response-budget behavior; check
+`_nova_result_meta.truncated` when response budgeting is enabled.
+
+```json
+{"name":"get_agent_readiness","arguments":{"personas_json":"[\"engineer\",\"analyst\"]"}}
+```
+
+See `docs/features/agent-readiness.md` for report fields and threshold examples.
 
 ### `get_undocumented`
 Find entities missing descriptions (optionally columns).

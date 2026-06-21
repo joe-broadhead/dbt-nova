@@ -645,6 +645,20 @@ impl Default for GetMetadataScoreParams {
     }
 }
 
+/// Parameters for the get_agent_readiness tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct GetAgentReadinessParams {
+    /// JSON array of personas to score. Defaults to `["engineer","analyst","governance"]`.
+    #[serde(default)]
+    pub personas_json: Option<String>,
+    /// JSON threshold configuration. Defaults to advisory readiness thresholds.
+    #[serde(default)]
+    pub thresholds_json: Option<String>,
+    /// Inline JSON from `dbt-nova eval gate <SUITE> --json` or the raw gate report.
+    #[serde(default)]
+    pub eval_gate_json: Option<String>,
+}
+
 /// Parameters for the reload_manifest tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ReloadManifestParams {

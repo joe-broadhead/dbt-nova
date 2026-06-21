@@ -1,5 +1,5 @@
 /// Canonical MCP tool names exposed by dbt-nova.
-pub const MCP_TOOL_NAMES: [&str; 33] = [
+pub const MCP_TOOL_NAMES: [&str; 34] = [
     "search",
     "search_indicator",
     "indicator_inventory",
@@ -25,6 +25,7 @@ pub const MCP_TOOL_NAMES: [&str; 33] = [
     "get_column_lineage",
     "get_test_coverage",
     "get_metadata_score",
+    "get_agent_readiness",
     "batch_get_entities",
     "find_by_path",
     "search_recipes",
@@ -107,10 +108,10 @@ pub const CLI_MCP_PARITY_MATRIX: [CliMcpParityEntry; 20] = [
     },
     CliMcpParityEntry {
         cli_command: "audit agent-readiness",
-        mcp_tool: None,
-        status: CliMcpParityStatus::Gap,
-        issue: Some("JOE-213"),
-        notes: "agent-readiness report is CLI-only today",
+        mcp_tool: Some("get_agent_readiness"),
+        status: CliMcpParityStatus::Equivalent,
+        issue: None,
+        notes: "MCP returns the same agent_readiness.v1 report without CLI file writes",
     },
     CliMcpParityEntry {
         cli_command: "audit metadata-score",

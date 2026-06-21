@@ -14,14 +14,15 @@ use rmcp::{
 };
 use tracing::instrument;
 
+use crate::cli::agent_readiness_cmd::build_agent_readiness_tool_response;
 use crate::config::DbtNovaConfig;
 use crate::error::DbtNovaError;
 use crate::manifest::search::{ManifestSearch, ManifestSearchHandle};
 use crate::params::{
     BatchGetParams, ColumnInventoryParams, CompareGrainsParams, DiffEntitiesParams,
-    ExecuteSqlParams, FindByPathParams, FindEntityOverlapParams, GetColumnLineageParams,
-    GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams, GetLineageParams,
-    GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
+    ExecuteSqlParams, FindByPathParams, FindEntityOverlapParams, GetAgentReadinessParams,
+    GetColumnLineageParams, GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams,
+    GetLineageParams, GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
     GetUndocumentedParams, IndicatorInventoryParams, ListEntitiesParams,
     ModellingConsistencyReportParams, PaginationParams, ParentGroupMode, ReloadManifestParams,
     RunRecipeParams, SearchColumnsParams, SearchIndicatorParams, SearchParams, SearchRecipesParams,
@@ -1846,6 +1847,19 @@ impl DbtNovaServer {
         .await
     }
 
+    /// Get the manifest-level agent-readiness report.
+    #[tool(
+        name = "get_agent_readiness",
+        description = "Agent readiness audit. Returns the same agent_readiness.v1 JSON report as the CLI audit command without writing files or applying CLI exit semantics."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn get_agent_readiness(&self, params: Parameters<GetAgentReadinessParams>) -> String {
+        self.handle_async("get_agent_readiness", None, |searcher| async move {
+            build_agent_readiness_tool_response(&searcher, &params.0).await
+        })
+        .await
+    }
+
     /// Get multiple entities in one call.
     #[tool(
         name = "batch_get_entities",
@@ -2748,6 +2762,48 @@ mod tests {
             response["_nova_result_meta"]["next_offset"],
             serde_json::json!(2)
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn agent_readiness_returns_report_contract() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path());
+        config.mcp_max_response_bytes = 0;
+        let handle = ManifestSearchHandle::spawn(config);
+        handle
+            .wait_ready()
+            .await
+            .expect("fixture manifest should load");
+        let server = DbtNovaServer::new(handle);
+
+        let response: serde_json::Value = serde_json::from_str(
+            &server
+                .get_agent_readiness(Parameters(GetAgentReadinessParams {
+                    personas_json: Some(r#"["engineer"]"#.to_string()),
+                    eval_gate_json: Some(
+                        r#"{"allowed":true,"blocked":false,"message":"gate passed"}"#.to_string(),
+                    ),
+                    ..GetAgentReadinessParams::default()
+                }))
+                .await,
+        )
+        .expect("agent readiness response JSON");
+
+        assert_eq!(response["success"], serde_json::json!(true));
+        assert_eq!(response["count"], serde_json::json!(1));
+        assert_eq!(
+            response["data"]["schema_version"],
+            serde_json::json!("agent_readiness.v1")
+        );
+        assert_eq!(
+            response["data"]["config"]["personas"],
+            serde_json::json!(["engineer"])
+        );
+        assert_eq!(
+            response["data"]["eval_status"]["status"],
+            serde_json::json!("allowed")
+        );
+        assert!(response["data"]["persona_scores"]["engineer"].is_object());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

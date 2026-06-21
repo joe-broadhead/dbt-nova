@@ -1,6 +1,6 @@
 # Tools Quick Reference
 
-One-page cheatsheet for all 33 dbt-nova MCP tools.
+One-page cheatsheet for all 34 dbt-nova MCP tools.
 
 ## Discovery
 
@@ -44,6 +44,7 @@ One-page cheatsheet for all 33 dbt-nova MCP tools.
 |------|---------|----------------|
 | `get_test_coverage` | Schema/data test coverage | `id_or_name`, `resource_type`, `include_full`, `columns_limit` |
 | `get_metadata_score` | Metadata quality score | `id_or_name`, `persona`, `scope` |
+| `get_agent_readiness` | Agent-readiness report | `personas_json`, `thresholds_json`, `eval_gate_json` |
 | `get_undocumented` | Find entities missing descriptions | `resource_type`, `include_columns`, `package`, `path_prefix` |
 | `search_recipes` | Find analysis recipe templates + parameter contracts | `topic`, `query`, `include_queries`, `limit`, `offset` |
 | `get_recipe` | Load a recipe, SQL, and parameter requirements | `recipe_id`, `include_sql`, `include_queries`, `parameters`, `placeholder_types` |

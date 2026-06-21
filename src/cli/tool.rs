@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
 
+use crate::cli::agent_readiness_cmd::build_agent_readiness_tool_response;
 use crate::cli::args::{ManifestLoadArgs, ManifestReloadArgs, ToolCallArgs};
 use crate::cli::health_cmd::build_cli_health_payload;
 use crate::cli::manifest::{
@@ -16,9 +17,9 @@ use crate::error::{DbtNovaError, Result};
 use crate::manifest::search::ManifestSearch;
 use crate::params::{
     BatchGetParams, ColumnInventoryParams, CompareGrainsParams, DiffEntitiesParams,
-    ExecuteSqlParams, FindByPathParams, FindEntityOverlapParams, GetColumnLineageParams,
-    GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams, GetLineageParams,
-    GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
+    ExecuteSqlParams, FindByPathParams, FindEntityOverlapParams, GetAgentReadinessParams,
+    GetColumnLineageParams, GetColumnsParams, GetContextParams, GetEntityParams, GetImpactParams,
+    GetLineageParams, GetMetadataScoreParams, GetRecipeParams, GetSqlParams, GetTestCoverageParams,
     GetUndocumentedParams, IndicatorInventoryParams, ListEntitiesParams,
     ModellingConsistencyReportParams, ReloadManifestParams, RunRecipeParams, SearchColumnsParams,
     SearchIndicatorParams, SearchParams, SearchRecipesParams, ValidateDagParams,
@@ -36,7 +37,7 @@ struct ToolRegistryEntry {
     dispatch: ToolDispatchFn,
 }
 
-const TOOL_REGISTRY: [ToolRegistryEntry; 33] = [
+const TOOL_REGISTRY: [ToolRegistryEntry; 34] = [
     ToolRegistryEntry {
         name: "search",
         dispatch: dispatch_search,
@@ -136,6 +137,10 @@ const TOOL_REGISTRY: [ToolRegistryEntry; 33] = [
     ToolRegistryEntry {
         name: "get_metadata_score",
         dispatch: dispatch_get_metadata_score,
+    },
+    ToolRegistryEntry {
+        name: "get_agent_readiness",
+        dispatch: dispatch_get_agent_readiness,
     },
     ToolRegistryEntry {
         name: "batch_get_entities",
@@ -668,6 +673,14 @@ typed_dispatch!(
     GetMetadataScoreParams,
     get_metadata_score
 );
+
+fn dispatch_get_agent_readiness(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: GetAgentReadinessParams = decode_tool_params("get_agent_readiness", params)?;
+        build_agent_readiness_tool_response(searcher, &decoded).await
+    })
+}
+
 typed_dispatch!(
     dispatch_batch_get_entities,
     "batch_get_entities",
@@ -851,6 +864,31 @@ mod tests {
         assert!(result["data"]["tool_metrics"].is_object());
         assert!(result["data"]["search_concurrency"].is_object());
         assert!(result["data"]["sql_concurrency"].is_object());
+    }
+
+    #[tokio::test]
+    async fn dispatch_get_agent_readiness_returns_standard_response_shape() {
+        let searcher = fixture_searcher().await;
+        let result = dispatch_tool(
+            &searcher,
+            "get_agent_readiness",
+            serde_json::json!({
+                "personas_json": "[\"engineer\"]",
+                "eval_gate_json": "{\"allowed\":true,\"blocked\":false,\"message\":\"gate passed\"}"
+            }),
+        )
+        .await
+        .expect("agent readiness");
+        assert_eq!(result["success"], serde_json::json!(true));
+        assert_eq!(result["count"], serde_json::json!(1));
+        assert_eq!(
+            result["data"]["schema_version"],
+            serde_json::json!("agent_readiness.v1")
+        );
+        assert_eq!(
+            result["data"]["eval_status"]["status"],
+            serde_json::json!("allowed")
+        );
     }
 
     #[tokio::test]
