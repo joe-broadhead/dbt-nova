@@ -87,17 +87,22 @@ Rules:
 JSON reports include:
 
 - manifest hash/version
+- `scoring_contract` with grade bands, description tiers, array tiers, canonical
+  grain shape, and primary-key integrity evidence rules
 - selected entities
 - per-persona scores
 - per-category breakdowns
 - recommendations
-- gate summary
+- gate summary plus agent triage fields under `summary`: score/grade buckets,
+  worst entities by persona, category weak spots, repeated recommendation
+  fields, estimated point impact, and drill-down hints
 
 Markdown reports include:
 
 - overall gate status
 - scored target count
 - pass/fail counts
+- compact triage summary for weak spots and repeated fields
 - compact per-entity table
 - top findings for failing entities
 

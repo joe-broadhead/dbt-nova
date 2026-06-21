@@ -50,12 +50,14 @@ Notes:
     "persona": "analyst",
     "overall_score": 72,
     "grade": "C",
+    "scoring_contract": { "schema_version": "metadata_score_contract.v1" },
     "categories": {
       "documentation": { "score": 85, "weight": 0.20, "weighted": 17.0 },
       "semantic": { "score": 65, "weight": 0.45, "weighted": 29.25 },
       "governance": { "score": 40, "weight": 0.15, "weighted": 6.0 },
       "quality": { "score": 98, "weight": 0.20, "weighted": 19.6 }
     },
+    "diagnostics": [ /* machine-readable scoring evidence */ ],
     "breakdown": { /* per-check detail */ },
     "recommendations": [ /* suggestions */ ]
   }
@@ -66,6 +68,37 @@ For `scope=project`, the tool returns an overall score and a list of scored
 entities, honoring `limit` and marking responses as `truncated` when needed.
 It also returns `quality_summary.test_coverage`, aggregated across the
 returned entities (or all entities when not truncated).
+
+All scopes include `scoring_contract.schema_version:
+"metadata_score_contract.v1"` so agents can explain scores without reading
+source code. The contract includes grade bands, description tiers, array-count
+tiers, canonical grain shape, and the primary-key integrity evidence rule.
+
+Entity and column responses include `diagnostics` when Nova can explain partial
+or missing credit. Diagnostics are deterministic JSON rows with `code`,
+`category`, `field`, observed values, expected thresholds, and a short message.
+Common diagnostic codes:
+
+- `description_tier_progress`: shows observed character count, the 50-character
+  good-enough threshold, and the 100-character full-credit threshold
+- `array_tier_progress`: shows current count, next useful count, full-credit
+  count, score, and max points for tiered arrays
+- `invalid_grain_shape`: identifies `meta.nova.grain`, `meta.nova.metric.grain`,
+  or `meta.nova.metrics[].grain` values that are strings, empty objects, or
+  otherwise not canonical grain objects
+- `primary_key_integrity_missing_tests`: names the primary key column and the
+  missing `unique` or `not_null` dbt manifest test evidence; Nova does not infer
+  uniqueness from compiled SQL or warehouse introspection
+
+Project scope responses include `summary` for agent triage:
+
+- `scope`, `entities`, `entities_total`, `truncated`, and `page` so agents know
+  whether the summary covers all matching entities or only the returned page
+- `score_buckets` and `grade_buckets`
+- `worst_entities`
+- `category_weak_spots`
+- `top_recommendation_fields` with estimated point impact where available
+- `drill_down_hints` with exact `get_metadata_score` calls for detailed follow-up
 
 ## Scoring Model
 
@@ -181,6 +214,7 @@ The overall column score is still weighted by persona category weights.
 - sorts selected `resource_types` and entity IDs deterministically
 - scores entities using `limit` + `offset` paging
 - returns an overall average and per‑entity results
+- returns compact summary buckets and drill-down hints for agent triage
 - sets `truncated: true` if `offset + count < total_available`
 
 ## Examples

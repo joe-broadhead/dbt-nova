@@ -119,6 +119,33 @@ async fn test_modelling_consistency_report_surfaces_duplicate_indicators() {
         .json();
 
     let data = result.get("data").expect("data");
+    let summary = data.get("summary").expect("summary");
+    assert!(
+        summary["section_counts"]["duplicate_indicators"]
+            .as_u64()
+            .is_some_and(|count| count > 0)
+    );
+    assert!(
+        summary["top_duplicate_indicator_groups"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty())
+    );
+    assert!(
+        summary["overlap_evidence_categories"]["shared_column_names"]
+            .as_u64()
+            .is_some_and(|count| count > 0)
+    );
+    assert!(
+        summary["overlap_examples"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| row["shared_column_examples"]
+                .as_array()
+                .is_some_and(|examples| !examples.is_empty())))
+    );
+    assert!(summary["drill_down_hints"].as_array().is_some_and(|rows| {
+        rows.iter()
+            .any(|row| row["tool"].as_str() == Some("find_entity_overlap"))
+    }));
     let duplicate_indicators = data
         .get("duplicate_indicators")
         .and_then(JsonValue::as_array)

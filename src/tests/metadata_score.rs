@@ -1,6 +1,7 @@
 //! Tests for metadata scoring logic and outputs.
 use super::common::*;
 use crate::tools::metadata_score::{array_tier_score, description_tier_score, grade_from_score};
+use serde_json::json;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_metadata_score_entity_not_found() {
@@ -224,6 +225,129 @@ fn test_grade_boundaries() {
     assert_eq!(grade_from_score(60), "D");
     assert_eq!(grade_from_score(59), "F");
     assert_eq!(grade_from_score(0), "F");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn metadata_score_diagnostics_cover_agent_feedback_cases() {
+    let searcher = get_searcher_with_fixture("metadata_diagnostics.json");
+    let params = GetMetadataScoreParams {
+        id_or_name: Some("model.pkg.bad_grain_orders".to_string()),
+        persona: Some("governance".to_string()),
+        scope: Some("entity".to_string()),
+        include_breakdown: true,
+        include_recommendations: true,
+        ..Default::default()
+    };
+    let result = searcher.get_metadata_score(&params).await.json();
+    let data = result.get("data").expect("data");
+    assert_eq!(
+        data["scoring_contract"]["grade_bands"][0],
+        json!({"grade": "A", "min_score": 90, "max_score": 100})
+    );
+
+    let diagnostics = data["diagnostics"].as_array().expect("diagnostics array");
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"] == json!("invalid_grain_shape")
+            && diagnostic["field"] == json!("meta.nova.grain")
+            && diagnostic["observed_type"] == json!("string")
+            && diagnostic["expected_shape"]["primary_key"] == json!(["order_id"])
+    }));
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"] == json!("array_tier_progress")
+            && diagnostic["field"] == json!("meta.nova.governance.compliance")
+            && diagnostic["count"] == json!(1)
+            && diagnostic["full_credit_count"] == json!(3)
+    }));
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"] == json!("description_tier_progress")
+            && diagnostic["field"] == json!("description")
+            && diagnostic["good_enough_chars"] == json!(50)
+            && diagnostic["full_credit_chars"] == json!(100)
+    }));
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"] == json!("primary_key_integrity_missing_tests")
+            && diagnostic["column"] == json!("order_id")
+            && diagnostic["missing_tests"] == json!(["not_null"])
+            && diagnostic["warehouse_introspection"] == json!(false)
+    }));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn metadata_score_column_diagnostics_expose_description_and_array_tiers() {
+    let searcher = get_searcher_with_fixture("metadata_diagnostics.json");
+    let params = GetMetadataScoreParams {
+        id_or_name: Some("model.pkg.bad_grain_orders".to_string()),
+        persona: Some("analyst".to_string()),
+        scope: Some("column".to_string()),
+        include_breakdown: true,
+        include_recommendations: true,
+        ..Default::default()
+    };
+    let result = searcher.get_metadata_score(&params).await.json();
+    let columns = result["data"]["columns"].as_array().expect("columns array");
+    let order_id = columns
+        .iter()
+        .find(|column| column["column"] == json!("order_id"))
+        .expect("order_id column");
+    let diagnostics = order_id["diagnostics"]
+        .as_array()
+        .expect("column diagnostics");
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"] == json!("description_tier_progress")
+            && diagnostic["field"] == json!("columns.order_id.description")
+            && diagnostic["full_credit_chars"] == json!(100)
+    }));
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"] == json!("array_tier_progress")
+            && diagnostic["field"] == json!("columns.order_id.meta.nova.synonyms")
+            && diagnostic["count"] == json!(1)
+            && diagnostic["next_useful_count"] == json!(2)
+            && diagnostic["full_credit_count"] == json!(3)
+    }));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn metadata_score_project_summary_answers_agent_triage_questions() {
+    let searcher = get_searcher_with_fixture("metadata_diagnostics.json");
+    let params = GetMetadataScoreParams {
+        persona: Some("governance".to_string()),
+        scope: Some("project".to_string()),
+        resource_types: vec!["model".to_string()],
+        include_recommendations: true,
+        limit: Some(10),
+        ..Default::default()
+    };
+    let result = searcher.get_metadata_score(&params).await.json();
+    let summary = result["data"]["summary"].as_object().expect("summary");
+    assert_eq!(summary["scope"], json!("all_entities"));
+    assert_eq!(summary["entities"], json!(2));
+    assert_eq!(summary["entities_total"], json!(2));
+    assert_eq!(summary["truncated"], json!(false));
+    assert_eq!(summary["page"]["limit"], json!(10));
+    assert_eq!(summary["page"]["offset"], json!(0));
+    assert!(summary["page"]["next_offset"].is_null());
+    assert!(summary.contains_key("score_buckets"));
+    assert!(summary.contains_key("grade_buckets"));
+    assert!(summary["worst_entities"].as_array().is_some_and(|rows| {
+        rows.iter()
+            .any(|row| row["unique_id"] == json!("model.pkg.bad_grain_orders"))
+    }));
+    assert!(
+        summary["category_weak_spots"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty())
+    );
+    assert!(
+        summary["top_recommendation_fields"]
+            .as_array()
+            .is_some_and(|rows| rows
+                .iter()
+                .any(|row| row["estimated_point_impact"].as_u64().unwrap_or(0) > 0))
+    );
+    assert!(summary["drill_down_hints"].as_array().is_some_and(|rows| {
+        rows.iter()
+            .any(|row| row["tool"] == json!("get_metadata_score"))
+    }));
 }
 
 #[tokio::test]

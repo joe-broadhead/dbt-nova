@@ -92,10 +92,16 @@ JSON reports use `schema_version: "agent_readiness.v1"` and include:
 - sanitized manifest source, hash, version, entity counts, and search readiness
 - personas, selected resource types, thresholds, storage mode, and metadata-only
   mode
+- `scoring_contract` with the metadata score grade bands, description tiers,
+  array tiers, canonical grain shape, and primary-key integrity evidence rules
 - overall readiness score, grade, readiness band, and gate status
 - per-persona project metadata scores and threshold status
+- compact triage fields in `summary`: score/grade buckets, worst entities by
+  persona, category weak spots, repeated recommendation fields, estimated point
+  impact, and drill-down hints
 - blocking findings and improvement findings
-- lowest-scoring or signal-poor entity findings with top recommendations
+- lowest-scoring or signal-poor entity findings with top recommendations and
+  metadata score diagnostics
 - ambiguous Nova indicator definitions that need stronger execution metadata
 - advisory `suggested_meta_patches` for missing or weak `meta`, `meta.nova`,
   and column metadata fields
@@ -129,6 +135,12 @@ Suggestions stay conservative. For example, missing ownership produces a
 placeholder owner suggestion rather than a fabricated person, and ambiguous
 metrics ask for expression/canonical clarification rather than inventing ground
 truth.
+
+Suggestions consume metadata score diagnostics where available. For example, a
+string-valued `meta.nova.grain` produces an `invalid_grain_shape` diagnostic and
+a whole-object `meta.nova.grain` suggestion using the canonical
+`primary_key`/`time_field`/`dimensions` shape, rather than suggesting unsafe
+nested edits under a non-object value.
 
 ## Golden-Question Seeds
 

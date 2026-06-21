@@ -17,6 +17,7 @@ use crate::params::{
     GetMetadataAuditParams, GetMetadataScoreParams, MetadataAuditSelectionModeParam,
 };
 use crate::responses::SuccessResponse;
+use crate::tools::metadata_score::metadata_score_scoring_contract;
 use crate::utils::SearchPersona;
 
 use super::{DispatchError, DispatchResult};
@@ -37,6 +38,7 @@ struct MetadataAuditReport {
     manifest_hash: String,
     manifest_version: String,
     manifest_source: String,
+    scoring_contract: JsonValue,
     resource_types: Vec<String>,
     personas: Vec<String>,
     changed_files: Vec<String>,
@@ -56,6 +58,12 @@ struct AuditSummary {
     pass_count: usize,
     no_target: bool,
     no_target_reason: Option<String>,
+    score_buckets: JsonValue,
+    grade_buckets: JsonValue,
+    worst_entities_by_persona: JsonValue,
+    category_weak_spots: JsonValue,
+    top_recommendation_fields: JsonValue,
+    drill_down_hints: JsonValue,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -409,12 +417,14 @@ async fn build_metadata_audit_report(
         (0, advisory) if advisory > 0 => "advisory",
         _ => "pass",
     };
+    let triage_summary = build_audit_triage_summary(&entities, &inputs.personas);
 
     Ok(MetadataAuditReport {
         selection_mode: selection_mode_label(inputs.selection_mode).to_string(),
         manifest_hash: search.manifest_hash.clone(),
         manifest_version: search.manifest_version.clone(),
         manifest_source: search.manifest_source_uri.clone(),
+        scoring_contract: metadata_score_scoring_contract(),
         resource_types: inputs.resource_types.clone(),
         personas: inputs.personas.clone(),
         changed_files: inputs.changed_files.clone(),
@@ -428,10 +438,293 @@ async fn build_metadata_audit_report(
             pass_count,
             no_target: selected_entity_ids.is_empty(),
             no_target_reason,
+            score_buckets: triage_summary.score_buckets,
+            grade_buckets: triage_summary.grade_buckets,
+            worst_entities_by_persona: triage_summary.worst_entities_by_persona,
+            category_weak_spots: triage_summary.category_weak_spots,
+            top_recommendation_fields: triage_summary.top_recommendation_fields,
+            drill_down_hints: triage_summary.drill_down_hints,
         },
         project_summary,
         entities,
     })
+}
+
+struct AuditTriageSummary {
+    score_buckets: JsonValue,
+    grade_buckets: JsonValue,
+    worst_entities_by_persona: JsonValue,
+    category_weak_spots: JsonValue,
+    top_recommendation_fields: JsonValue,
+    drill_down_hints: JsonValue,
+}
+
+#[derive(Clone)]
+struct AuditWorstEntity {
+    persona: String,
+    unique_id: String,
+    resource_type: Option<String>,
+    overall_score: u8,
+    grade: String,
+    gate_status: &'static str,
+}
+
+#[derive(Default)]
+struct AuditCategoryAggregate {
+    total_score: u64,
+    count: u64,
+    point_gap: u64,
+    weighted_point_gap: f64,
+}
+
+#[derive(Default)]
+struct AuditRecommendationAggregate {
+    category: Option<String>,
+    count: usize,
+    total_impact: u64,
+}
+
+fn build_audit_triage_summary(
+    entities: &[EntityAuditReport],
+    personas: &[String],
+) -> AuditTriageSummary {
+    let mut score_buckets = BTreeMap::<String, BTreeMap<String, usize>>::new();
+    let mut grade_buckets = BTreeMap::<String, BTreeMap<String, usize>>::new();
+    let mut worst_by_persona = Vec::<AuditWorstEntity>::new();
+    let mut categories = BTreeMap::<(String, String), AuditCategoryAggregate>::new();
+    let mut recommendations = BTreeMap::<String, AuditRecommendationAggregate>::new();
+
+    for entity in entities {
+        for persona in personas {
+            let Some(score) = entity.personas.get(persona) else {
+                continue;
+            };
+            *score_buckets
+                .entry(persona.clone())
+                .or_default()
+                .entry(audit_score_bucket(score.overall_score).to_string())
+                .or_default() += 1;
+            *grade_buckets
+                .entry(persona.clone())
+                .or_default()
+                .entry(score.grade.clone())
+                .or_default() += 1;
+            worst_by_persona.push(AuditWorstEntity {
+                persona: persona.clone(),
+                unique_id: entity.unique_id.clone(),
+                resource_type: entity.resource_type.clone(),
+                overall_score: score.overall_score,
+                grade: score.grade.clone(),
+                gate_status: score.gate_status,
+            });
+            ingest_audit_categories(&mut categories, persona, &score.categories);
+            ingest_audit_recommendations(&mut recommendations, &score.recommendations);
+        }
+    }
+
+    let worst_entities = audit_worst_entities(worst_by_persona);
+    let category_weak_spots = audit_category_weak_spots(categories);
+    let top_recommendation_fields = audit_recommendation_fields(recommendations);
+    let drill_down_hints = audit_drill_down_hints(&worst_entities);
+
+    AuditTriageSummary {
+        score_buckets: serde_json::to_value(score_buckets).unwrap_or(JsonValue::Null),
+        grade_buckets: serde_json::to_value(grade_buckets).unwrap_or(JsonValue::Null),
+        worst_entities_by_persona: JsonValue::Array(worst_entities),
+        category_weak_spots: JsonValue::Array(category_weak_spots),
+        top_recommendation_fields: JsonValue::Array(top_recommendation_fields),
+        drill_down_hints: JsonValue::Array(drill_down_hints),
+    }
+}
+
+fn audit_worst_entities(mut candidates: Vec<AuditWorstEntity>) -> Vec<JsonValue> {
+    candidates.sort_by(|left, right| {
+        left.persona
+            .cmp(&right.persona)
+            .then_with(|| left.overall_score.cmp(&right.overall_score))
+            .then_with(|| left.unique_id.cmp(&right.unique_id))
+    });
+
+    let mut worst_entities = Vec::new();
+    let mut worst_counts = BTreeMap::<String, usize>::new();
+    for entity in &candidates {
+        let count = worst_counts.entry(entity.persona.clone()).or_default();
+        if *count >= 5 {
+            continue;
+        }
+        *count += 1;
+        worst_entities.push(serde_json::json!({
+            "persona": entity.persona,
+            "unique_id": entity.unique_id,
+            "resource_type": entity.resource_type,
+            "overall_score": entity.overall_score,
+            "grade": entity.grade,
+            "gate_status": entity.gate_status
+        }));
+    }
+    worst_entities
+}
+
+fn audit_category_weak_spots(
+    categories: BTreeMap<(String, String), AuditCategoryAggregate>,
+) -> Vec<JsonValue> {
+    let mut weak_spots = categories
+        .into_iter()
+        .filter(|(_, aggregate)| aggregate.count > 0)
+        .map(|((persona, category), aggregate)| {
+            serde_json::json!({
+                "persona": persona,
+                "category": category,
+                "average_score": average_u64(aggregate.total_score, aggregate.count),
+                "entity_count": aggregate.count,
+                "estimated_point_gap": aggregate.point_gap,
+                "estimated_weighted_point_gap": aggregate.weighted_point_gap
+            })
+        })
+        .collect::<Vec<_>>();
+    weak_spots.sort_by(|left, right| {
+        json_f64(right, "estimated_weighted_point_gap")
+            .partial_cmp(&json_f64(left, "estimated_weighted_point_gap"))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    weak_spots.truncate(12);
+    weak_spots
+}
+
+fn audit_recommendation_fields(
+    recommendations: BTreeMap<String, AuditRecommendationAggregate>,
+) -> Vec<JsonValue> {
+    let mut fields = recommendations
+        .into_iter()
+        .map(|(field, aggregate)| {
+            serde_json::json!({
+                "field": field,
+                "category": aggregate.category,
+                "count": aggregate.count,
+                "estimated_point_impact": aggregate.total_impact
+            })
+        })
+        .collect::<Vec<_>>();
+    fields.sort_by(|left, right| {
+        right
+            .get("count")
+            .and_then(JsonValue::as_u64)
+            .cmp(&left.get("count").and_then(JsonValue::as_u64))
+            .then_with(|| {
+                right
+                    .get("estimated_point_impact")
+                    .and_then(JsonValue::as_u64)
+                    .cmp(
+                        &left
+                            .get("estimated_point_impact")
+                            .and_then(JsonValue::as_u64),
+                    )
+            })
+            .then_with(|| {
+                left.get("field")
+                    .and_then(JsonValue::as_str)
+                    .cmp(&right.get("field").and_then(JsonValue::as_str))
+            })
+    });
+    fields.truncate(10);
+    fields
+}
+
+fn audit_drill_down_hints(worst_entities: &[JsonValue]) -> Vec<JsonValue> {
+    worst_entities
+        .iter()
+        .take(5)
+        .filter_map(|entity| {
+            Some(serde_json::json!({
+                "purpose": "inspect_low_scoring_entity",
+                "tool": "get_metadata_score",
+                "arguments": {
+                    "scope": "entity",
+                    "id_or_name": entity.get("unique_id")?.clone(),
+                    "resource_type": entity.get("resource_type").cloned().unwrap_or(JsonValue::Null),
+                    "persona": entity.get("persona")?.clone(),
+                    "include_breakdown": true,
+                    "include_recommendations": true
+                }
+            }))
+        })
+        .collect()
+}
+
+fn ingest_audit_categories(
+    categories: &mut BTreeMap<(String, String), AuditCategoryAggregate>,
+    persona: &str,
+    value: &JsonValue,
+) {
+    let Some(map) = value.as_object() else {
+        return;
+    };
+    for (category, details) in map {
+        let Some(score) = details.get("score").and_then(JsonValue::as_u64) else {
+            continue;
+        };
+        let weight = details
+            .get("weight")
+            .and_then(JsonValue::as_f64)
+            .unwrap_or(0.0);
+        let entry = categories
+            .entry((persona.to_string(), category.clone()))
+            .or_default();
+        entry.total_score += score;
+        entry.count += 1;
+        let score_gap = 100_u64.saturating_sub(score);
+        entry.point_gap += score_gap;
+        entry.weighted_point_gap += f64::from(u32::try_from(score_gap).unwrap_or(100)) * weight;
+    }
+}
+
+fn ingest_audit_recommendations(
+    recommendations: &mut BTreeMap<String, AuditRecommendationAggregate>,
+    value: &JsonValue,
+) {
+    let Some(items) = value.as_array() else {
+        return;
+    };
+    for recommendation in items {
+        let field = recommendation
+            .get("field")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("metadata")
+            .to_string();
+        let entry = recommendations.entry(field).or_default();
+        entry.count += 1;
+        entry.total_impact += recommendation
+            .get("impact")
+            .and_then(JsonValue::as_u64)
+            .unwrap_or(0);
+        if entry.category.is_none() {
+            entry.category = recommendation
+                .get("category")
+                .and_then(JsonValue::as_str)
+                .map(ToString::to_string);
+        }
+    }
+}
+
+fn audit_score_bucket(score: u8) -> &'static str {
+    match score {
+        90..=100 => "90-100",
+        80..=89 => "80-89",
+        70..=79 => "70-79",
+        60..=69 => "60-69",
+        _ => "0-59",
+    }
+}
+
+fn average_u64(total: u64, count: u64) -> u8 {
+    if count == 0 {
+        return 0;
+    }
+    u8::try_from((total / count).min(100)).unwrap_or(100)
+}
+
+fn json_f64(value: &JsonValue, field: &str) -> f64 {
+    value.get(field).and_then(JsonValue::as_f64).unwrap_or(0.0)
 }
 
 async fn score_entity(
@@ -732,6 +1025,7 @@ fn render_markdown_report(report: &MetadataAuditReport) -> String {
         append_no_target_markdown(&mut out, report);
         return out;
     }
+    append_audit_triage_markdown(&mut out, report);
 
     if let Some(project_summary) = &report.project_summary {
         out.push_str("## Project Summary\n\n");
@@ -821,6 +1115,63 @@ fn render_markdown_report(report: &MetadataAuditReport) -> String {
     }
 
     out
+}
+
+fn append_audit_triage_markdown(out: &mut String, report: &MetadataAuditReport) {
+    let weak_spots = report
+        .summary
+        .category_weak_spots
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    let repeated_fields = report
+        .summary
+        .top_recommendation_fields
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    if weak_spots.is_empty() && repeated_fields.is_empty() {
+        return;
+    }
+
+    out.push_str("## Triage Summary\n\n");
+    out.push_str("- grade_bands: `A >= 90`, `B >= 80`, `C >= 70`, `D >= 60`, `F < 60`\n");
+    for weak_spot in weak_spots.iter().take(5) {
+        let persona = weak_spot
+            .get("persona")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("project");
+        let category = weak_spot
+            .get("category")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("metadata");
+        let average_score = weak_spot
+            .get("average_score")
+            .and_then(JsonValue::as_u64)
+            .unwrap_or(0);
+        let gap = weak_spot
+            .get("estimated_point_gap")
+            .and_then(JsonValue::as_u64)
+            .unwrap_or(0);
+        let _ = writeln!(
+            out,
+            "- `{persona}` `{category}` average score `{average_score}`, estimated point gap `{gap}`"
+        );
+    }
+    for field in repeated_fields.iter().take(5) {
+        let field_name = field
+            .get("field")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("metadata");
+        let count = field.get("count").and_then(JsonValue::as_u64).unwrap_or(0);
+        let impact = field
+            .get("estimated_point_impact")
+            .and_then(JsonValue::as_u64)
+            .unwrap_or(0);
+        let _ = writeln!(
+            out,
+            "- repeated field `{field_name}` appears `{count}` time(s), estimated point impact `{impact}`"
+        );
+    }
+    out.push('\n');
 }
 
 fn append_no_target_markdown(out: &mut String, report: &MetadataAuditReport) {
@@ -1176,6 +1527,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn metadata_audit_summary_answers_agent_triage_questions() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let args = MetadataAuditArgs {
+            selection_mode: MetadataAuditSelectionModeArg::Project,
+            resource_types_json: Some("[\"model\"]".to_string()),
+            personas_json: Some("[\"governance\"]".to_string()),
+            manifest_path: Some(fixture_path_string("metadata_diagnostics.json")),
+            storage_instance_id: Some("metadata-audit-triage-summary-test".to_string()),
+            cleanup_storage_on_start: true,
+            include_recommendations: Some(true),
+            ..MetadataAuditArgs::default()
+        };
+        let inputs = super::parse_audit_inputs(&args).expect("audit inputs");
+        let load_args = crate::cli::args::ManifestLoadArgs {
+            manifest_path: args.manifest_path.clone(),
+            storage_instance_id: args.storage_instance_id.clone(),
+            cleanup_storage_on_start: args.cleanup_storage_on_start,
+            ..crate::cli::args::ManifestLoadArgs::default()
+        };
+        let mut config = build_manifest_load_config(&load_args).expect("config");
+        config.storage_dir = temp_dir.path().to_string_lossy().to_string();
+        let loaded = execute_manifest_load(config).await.expect("load");
+        let report = super::build_metadata_audit_report(&loaded.search, &inputs, &args)
+            .await
+            .expect("report");
+
+        assert!(report.scoring_contract["grade_bands"].is_array());
+        assert!(
+            report
+                .summary
+                .worst_entities_by_persona
+                .as_array()
+                .is_some_and(|rows| rows
+                    .iter()
+                    .any(|row| row["unique_id"] == json!("model.pkg.bad_grain_orders")))
+        );
+        assert!(
+            report
+                .summary
+                .category_weak_spots
+                .as_array()
+                .is_some_and(|rows| !rows.is_empty())
+        );
+        assert!(
+            report
+                .summary
+                .top_recommendation_fields
+                .as_array()
+                .is_some_and(|rows| rows
+                    .iter()
+                    .any(|row| row["estimated_point_impact"].as_u64().unwrap_or(0) > 0))
+        );
+        assert!(
+            report
+                .summary
+                .drill_down_hints
+                .as_array()
+                .is_some_and(|rows| rows
+                    .iter()
+                    .any(|row| row["tool"] == json!("get_metadata_score")))
+        );
+    }
+
+    #[tokio::test]
     async fn changed_selection_no_target_for_model_yaml_is_advisory() {
         let temp_dir = TempDir::new().expect("temp dir");
         let args = MetadataAuditArgs {
@@ -1285,6 +1700,7 @@ mod tests {
             manifest_hash: "abc".to_string(),
             manifest_version: "abc".to_string(),
             manifest_source: "file:///tmp/manifest.json".to_string(),
+            scoring_contract: json!({}),
             resource_types: vec!["model".to_string()],
             personas: vec!["engineer".to_string()],
             changed_files: vec!["models/marts/orders.sql".to_string()],
@@ -1298,6 +1714,12 @@ mod tests {
                 pass_count: 0,
                 no_target: false,
                 no_target_reason: None,
+                score_buckets: json!({}),
+                grade_buckets: json!({}),
+                worst_entities_by_persona: json!([]),
+                category_weak_spots: json!([]),
+                top_recommendation_fields: json!([]),
+                drill_down_hints: json!([]),
             },
             project_summary: None,
             entities: vec![super::EntityAuditReport {

@@ -17,7 +17,7 @@ use crate::manifest::entity::{
 use crate::manifest::search::ManifestSearch;
 use crate::params::{GetAgentReadinessParams, GetMetadataScoreParams};
 use crate::responses::SuccessResponse;
-use crate::tools::metadata_score::grade_from_score;
+use crate::tools::metadata_score::{grade_from_score, metadata_score_scoring_contract};
 use crate::utils::{SearchPersona, sanitize_uri};
 
 use super::{DispatchError, DispatchResult};
@@ -46,6 +46,7 @@ struct AgentReadinessReport {
     generated_at_ms: u128,
     manifest: ReadinessManifestSummary,
     config: ReadinessConfigSummary,
+    scoring_contract: JsonValue,
     overall_score: u8,
     grade: String,
     readiness_band: &'static str,
@@ -100,6 +101,12 @@ struct ReadinessSummary {
     ambiguous_indicator_count: usize,
     suggested_meta_patch_count: usize,
     golden_question_seed_count: usize,
+    score_buckets: JsonValue,
+    grade_buckets: JsonValue,
+    worst_entities_by_persona: JsonValue,
+    category_weak_spots: JsonValue,
+    top_recommendation_fields: JsonValue,
+    drill_down_hints: JsonValue,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -111,6 +118,7 @@ struct PersonaReadinessScore {
     scored_count: usize,
     total_available: usize,
     quality_summary: JsonValue,
+    metadata_summary: JsonValue,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -132,6 +140,7 @@ struct EntityReadinessFinding {
     grade: String,
     persona_scores: BTreeMap<String, u8>,
     signals: EntityReadinessSignals,
+    diagnostics: JsonValue,
     recommendations: Vec<ReadinessRecommendation>,
 }
 
@@ -158,6 +167,11 @@ struct ReadinessRecommendation {
     impact: Option<u8>,
     field: Option<String>,
     message: String,
+}
+
+struct EntityScoreEvidence {
+    diagnostics: JsonValue,
+    recommendations: Vec<ReadinessRecommendation>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -566,12 +580,14 @@ async fn build_agent_readiness_report(
         suggested_meta_patches.len(),
         golden_question_seeds.len(),
     );
+    let triage_summary = build_readiness_triage_summary(&persona_scores);
 
     Ok(AgentReadinessReport {
         schema_version: "agent_readiness.v1",
         generated_at_ms: current_timestamp_ms(),
         manifest: build_manifest_summary(search),
         config: build_config_summary(search, inputs, &resource_types),
+        scoring_contract: metadata_score_scoring_contract(),
         overall_score,
         grade: grade.to_string(),
         readiness_band,
@@ -585,6 +601,12 @@ async fn build_agent_readiness_report(
             ambiguous_indicator_count,
             suggested_meta_patch_count: suggested_meta_patches.len(),
             golden_question_seed_count: golden_question_seeds.len(),
+            score_buckets: triage_summary.score_buckets,
+            grade_buckets: triage_summary.grade_buckets,
+            worst_entities_by_persona: triage_summary.worst_entities_by_persona,
+            category_weak_spots: triage_summary.category_weak_spots,
+            top_recommendation_fields: triage_summary.top_recommendation_fields,
+            drill_down_hints: triage_summary.drill_down_hints,
         },
         persona_scores,
         blocking_findings,
@@ -704,7 +726,7 @@ async fn score_project_personas(
             persona: Some(persona.clone()),
             scope: Some("project".to_string()),
             include_breakdown: false,
-            include_recommendations: false,
+            include_recommendations: true,
             resource_types: resource_types.to_vec(),
             limit: Some(target_count),
             offset: Some(0),
@@ -742,11 +764,186 @@ async fn score_project_personas(
                     .get("quality_summary")
                     .cloned()
                     .unwrap_or(JsonValue::Null),
+                metadata_summary: data.get("summary").cloned().unwrap_or(JsonValue::Null),
             },
         );
     }
 
     Ok((persona_scores, entity_scores))
+}
+
+struct ReadinessTriageSummary {
+    score_buckets: JsonValue,
+    grade_buckets: JsonValue,
+    worst_entities_by_persona: JsonValue,
+    category_weak_spots: JsonValue,
+    top_recommendation_fields: JsonValue,
+    drill_down_hints: JsonValue,
+}
+
+#[derive(Default)]
+struct ReadinessRecommendationAggregate {
+    categories: BTreeSet<String>,
+    count: usize,
+    total_impact: u64,
+}
+
+fn build_readiness_triage_summary(
+    persona_scores: &BTreeMap<String, PersonaReadinessScore>,
+) -> ReadinessTriageSummary {
+    let mut score_buckets = BTreeMap::new();
+    let mut grade_buckets = BTreeMap::new();
+    let mut worst_entities = Vec::new();
+    let mut category_weak_spots = Vec::new();
+    let mut drill_down_hints = Vec::new();
+    let mut recommendation_fields = BTreeMap::<String, ReadinessRecommendationAggregate>::new();
+
+    for (persona, score) in persona_scores {
+        if let Some(summary) = score.metadata_summary.as_object() {
+            score_buckets.insert(
+                persona.clone(),
+                summary
+                    .get("score_buckets")
+                    .cloned()
+                    .unwrap_or_else(|| json!({})),
+            );
+            grade_buckets.insert(
+                persona.clone(),
+                summary
+                    .get("grade_buckets")
+                    .cloned()
+                    .unwrap_or_else(|| json!({})),
+            );
+            append_persona_summary_rows(
+                persona,
+                summary.get("worst_entities").and_then(JsonValue::as_array),
+                &mut worst_entities,
+            );
+            append_persona_summary_rows(
+                persona,
+                summary
+                    .get("category_weak_spots")
+                    .and_then(JsonValue::as_array),
+                &mut category_weak_spots,
+            );
+            append_persona_summary_rows(
+                persona,
+                summary
+                    .get("drill_down_hints")
+                    .and_then(JsonValue::as_array),
+                &mut drill_down_hints,
+            );
+            ingest_readiness_recommendation_summary(
+                &mut recommendation_fields,
+                summary
+                    .get("top_recommendation_fields")
+                    .and_then(JsonValue::as_array),
+            );
+        }
+    }
+
+    category_weak_spots.sort_by(|left, right| {
+        json_f64(right, "estimated_weighted_point_gap")
+            .partial_cmp(&json_f64(left, "estimated_weighted_point_gap"))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    category_weak_spots.truncate(12);
+
+    let mut top_recommendation_fields = recommendation_fields
+        .into_iter()
+        .map(|(field, aggregate)| {
+            let categories = aggregate.categories.into_iter().collect::<Vec<_>>();
+            json!({
+                "field": field,
+                "categories": categories,
+                "count": aggregate.count,
+                "estimated_point_impact": aggregate.total_impact
+            })
+        })
+        .collect::<Vec<_>>();
+    top_recommendation_fields.sort_by(|left, right| {
+        right
+            .get("count")
+            .and_then(JsonValue::as_u64)
+            .cmp(&left.get("count").and_then(JsonValue::as_u64))
+            .then_with(|| {
+                right
+                    .get("estimated_point_impact")
+                    .and_then(JsonValue::as_u64)
+                    .cmp(
+                        &left
+                            .get("estimated_point_impact")
+                            .and_then(JsonValue::as_u64),
+                    )
+            })
+            .then_with(|| {
+                left.get("field")
+                    .and_then(JsonValue::as_str)
+                    .cmp(&right.get("field").and_then(JsonValue::as_str))
+            })
+    });
+    top_recommendation_fields.truncate(10);
+    drill_down_hints.truncate(10);
+
+    ReadinessTriageSummary {
+        score_buckets: serde_json::to_value(score_buckets).unwrap_or(JsonValue::Null),
+        grade_buckets: serde_json::to_value(grade_buckets).unwrap_or(JsonValue::Null),
+        worst_entities_by_persona: JsonValue::Array(worst_entities),
+        category_weak_spots: JsonValue::Array(category_weak_spots),
+        top_recommendation_fields: JsonValue::Array(top_recommendation_fields),
+        drill_down_hints: JsonValue::Array(drill_down_hints),
+    }
+}
+
+fn append_persona_summary_rows(
+    persona: &str,
+    rows: Option<&Vec<JsonValue>>,
+    out: &mut Vec<JsonValue>,
+) {
+    let Some(rows) = rows else {
+        return;
+    };
+    for row in rows.iter().take(5) {
+        let mut row = row.clone();
+        if let Some(obj) = row.as_object_mut() {
+            obj.entry("persona".to_string())
+                .or_insert_with(|| JsonValue::String(persona.to_string()));
+        }
+        out.push(row);
+    }
+}
+
+fn ingest_readiness_recommendation_summary(
+    aggregate: &mut BTreeMap<String, ReadinessRecommendationAggregate>,
+    rows: Option<&Vec<JsonValue>>,
+) {
+    let Some(rows) = rows else {
+        return;
+    };
+    for row in rows {
+        let field = row
+            .get("field")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("metadata")
+            .to_string();
+        let entry = aggregate.entry(field).or_default();
+        entry.count += row
+            .get("count")
+            .and_then(JsonValue::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or(0);
+        entry.total_impact += row
+            .get("estimated_point_impact")
+            .and_then(JsonValue::as_u64)
+            .unwrap_or(0);
+        if let Some(category) = row.get("category").and_then(JsonValue::as_str) {
+            entry.categories.insert(category.to_string());
+        }
+    }
+}
+
+fn json_f64(value: &JsonValue, field: &str) -> f64 {
+    value.get(field).and_then(JsonValue::as_f64).unwrap_or(0.0)
 }
 
 fn ingest_project_entity_scores(
@@ -818,7 +1015,7 @@ async fn build_entity_findings(
         let score = entity_scores.get(&unique_id).ok_or_else(|| {
             DbtNovaError::ServerError(format!("missing entity score accumulator for {unique_id}"))
         })?;
-        let recommendations = entity_recommendations(search, &unique_id, score).await?;
+        let score_evidence = entity_score_evidence(search, &unique_id, score).await?;
         let grade = grade_from_score(average);
         let message = if average < 70 {
             format!("{unique_id} scored {average} ({grade}) across readiness personas")
@@ -846,18 +1043,19 @@ async fn build_entity_findings(
             grade: grade.to_string(),
             persona_scores: score.persona_scores.clone(),
             signals,
-            recommendations,
+            diagnostics: score_evidence.diagnostics,
+            recommendations: score_evidence.recommendations,
         });
     }
 
     Ok((entity_findings, improvements))
 }
 
-async fn entity_recommendations(
+async fn entity_score_evidence(
     search: &ManifestSearch,
     unique_id: &str,
     score: &EntityScoreAccumulator,
-) -> Result<Vec<ReadinessRecommendation>> {
+) -> Result<EntityScoreEvidence> {
     let persona = score
         .persona_scores
         .iter()
@@ -876,14 +1074,23 @@ async fn entity_recommendations(
     let data = result.get("data").ok_or_else(|| {
         DbtNovaError::ServerError("metadata score response missing data".to_string())
     })?;
-    let Some(recommendations) = data.get("recommendations").and_then(JsonValue::as_array) else {
-        return Ok(Vec::new());
-    };
-    Ok(recommendations
-        .iter()
-        .take(MAX_ENTITY_RECOMMENDATIONS)
-        .map(readiness_recommendation_from_json)
-        .collect())
+    let recommendations = data
+        .get("recommendations")
+        .and_then(JsonValue::as_array)
+        .map_or_else(Vec::new, |recommendations| {
+            recommendations
+                .iter()
+                .take(MAX_ENTITY_RECOMMENDATIONS)
+                .map(readiness_recommendation_from_json)
+                .collect()
+        });
+    Ok(EntityScoreEvidence {
+        diagnostics: data
+            .get("diagnostics")
+            .cloned()
+            .unwrap_or_else(|| JsonValue::Array(Vec::new())),
+        recommendations,
+    })
 }
 
 fn entity_signals(
@@ -1258,6 +1465,11 @@ fn append_grain_meta_patches(
     patches: &mut Vec<SuggestedMetaPatch>,
     seen: &mut BTreeSet<String>,
 ) {
+    if has_invalid_grain_diagnostic(&finding.diagnostics, "meta.nova.grain") {
+        append_invalid_grain_shape_patch(entity, entity_json, patches, seen);
+        return;
+    }
+
     let primary_keys = nova
         .and_then(|nova| nova.get("grain"))
         .and_then(|grain| grain.get("primary_key"))
@@ -1332,6 +1544,49 @@ fn append_grain_meta_patches(
             ),
         );
     }
+}
+
+fn append_invalid_grain_shape_patch(
+    entity: &ArchivedEntity,
+    entity_json: &JsonValue,
+    patches: &mut Vec<SuggestedMetaPatch>,
+    seen: &mut BTreeSet<String>,
+) {
+    let primary_key = infer_primary_key_column(entity_json).map_or_else(
+        || json!(["__PRIMARY_KEY_COLUMN__"]),
+        |column| json!([column]),
+    );
+    let time_field = infer_time_column(entity_json)
+        .map_or_else(|| json!("__TIME_FIELD__"), |column| json!(column));
+    push_meta_patch(
+        patches,
+        seen,
+        entity_patch(
+            entity,
+            MetaPatchTarget::Entity,
+            MetaPatchContent {
+                field_path: "meta.nova.grain",
+                suggested_value: json!({
+                    "primary_key": primary_key,
+                    "time_field": time_field,
+                    "dimensions": ["__DIMENSION_COLUMN__"]
+                }),
+                placeholder: true,
+                rationale: "Replace the invalid grain value with the canonical Nova object shape before adding nested grain fields.",
+                confidence: 0.74,
+                evidence: json!({"diagnostic": "invalid_grain_shape"}),
+            },
+        ),
+    );
+}
+
+fn has_invalid_grain_diagnostic(diagnostics: &JsonValue, field: &str) -> bool {
+    diagnostics.as_array().is_some_and(|items| {
+        items.iter().any(|item| {
+            item.get("code").and_then(JsonValue::as_str) == Some("invalid_grain_shape")
+                && item.get("field").and_then(JsonValue::as_str) == Some(field)
+        })
+    })
 }
 
 fn append_governance_meta_patches(
@@ -2616,6 +2871,8 @@ fn render_markdown_report(report: &AgentReadinessReport) -> String {
     let mut out = String::new();
     out.push_str("# Nova Agent Readiness\n\n");
     append_markdown_summary(&mut out, report);
+    append_scoring_contract_summary(&mut out, report);
+    append_readiness_triage_summary(&mut out, report);
     append_persona_score_table(&mut out, report);
     append_findings_table(&mut out, "Blockers", &report.blocking_findings);
     append_findings_table(&mut out, "Improvements", &report.improvement_findings);
@@ -2626,6 +2883,72 @@ fn render_markdown_report(report: &AgentReadinessReport) -> String {
     append_golden_question_seeds_table(&mut out, &report.golden_question_seeds);
     append_next_actions(&mut out, &report.next_actions);
     out
+}
+
+fn append_scoring_contract_summary(out: &mut String, report: &AgentReadinessReport) {
+    if report.gate_status == "pass" {
+        return;
+    }
+    out.push_str("## Scoring Contract\n\n");
+    out.push_str("- grade_bands: `A >= 90`, `B >= 80`, `C >= 70`, `D >= 60`, `F < 60`\n");
+    out.push_str("- description_tiers: `50-99 chars = 80%`, `100+ chars = full credit`\n");
+    out.push_str("- array_tiers: `1 item = 40%`, `2 items = 70%`, `3+ items = full credit`\n\n");
+}
+
+fn append_readiness_triage_summary(out: &mut String, report: &AgentReadinessReport) {
+    let weak_spots = report
+        .summary
+        .category_weak_spots
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    let repeated_fields = report
+        .summary
+        .top_recommendation_fields
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    if weak_spots.is_empty() && repeated_fields.is_empty() {
+        return;
+    }
+
+    out.push_str("## Triage Summary\n\n");
+    for weak_spot in weak_spots.iter().take(5) {
+        let persona = weak_spot
+            .get("persona")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("project");
+        let category = weak_spot
+            .get("category")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("metadata");
+        let average_score = weak_spot
+            .get("average_score")
+            .and_then(JsonValue::as_u64)
+            .unwrap_or(0);
+        let gap = weak_spot
+            .get("estimated_point_gap")
+            .and_then(JsonValue::as_u64)
+            .unwrap_or(0);
+        let _ = writeln!(
+            out,
+            "- `{persona}` `{category}` average score `{average_score}`, estimated point gap `{gap}`"
+        );
+    }
+    for field in repeated_fields.iter().take(5) {
+        let field_name = field
+            .get("field")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("metadata");
+        let count = field.get("count").and_then(JsonValue::as_u64).unwrap_or(0);
+        let impact = field
+            .get("estimated_point_impact")
+            .and_then(JsonValue::as_u64)
+            .unwrap_or(0);
+        let _ = writeln!(
+            out,
+            "- repeated field `{field_name}` appears `{count}` time(s), estimated point impact `{impact}`"
+        );
+    }
+    out.push('\n');
 }
 
 fn append_markdown_summary(out: &mut String, report: &AgentReadinessReport) {
@@ -3233,6 +3556,7 @@ mod tests {
             generated_at_ms: 1,
             manifest: markdown_fixture_manifest(),
             config: markdown_fixture_config(),
+            scoring_contract: json!({}),
             overall_score: 60,
             grade: "D".to_string(),
             readiness_band: "blocked",
@@ -3246,6 +3570,12 @@ mod tests {
                 ambiguous_indicator_count: 0,
                 suggested_meta_patch_count: 1,
                 golden_question_seed_count: 1,
+                score_buckets: json!({}),
+                grade_buckets: json!({}),
+                worst_entities_by_persona: json!([]),
+                category_weak_spots: json!([]),
+                top_recommendation_fields: json!([]),
+                drill_down_hints: json!([]),
             },
             persona_scores: markdown_fixture_persona_scores(),
             blocking_findings: vec![ReadinessFinding {
@@ -3307,6 +3637,7 @@ mod tests {
                 scored_count: 1,
                 total_available: 1,
                 quality_summary: json!({}),
+                metadata_summary: json!({}),
             },
         )])
     }
@@ -3406,6 +3737,35 @@ mod tests {
         let markdown = render_markdown_report(&report);
         assert!(markdown.contains("## Suggested Meta Patches"));
         assert!(markdown.contains("meta.nova.governance.sensitivity"));
+    }
+
+    #[tokio::test]
+    async fn readiness_uses_score_diagnostics_for_invalid_grain_patch() {
+        let report = readiness_report_for_fixture(
+            "metadata_diagnostics.json",
+            "agent-readiness-invalid-grain-diagnostics",
+        )
+        .await;
+
+        let bad_grain = report
+            .entity_findings
+            .iter()
+            .find(|finding| finding.unique_id == "model.pkg.bad_grain_orders")
+            .expect("bad grain finding");
+        assert!(bad_grain.diagnostics.as_array().is_some_and(|diagnostics| {
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic["code"] == json!("invalid_grain_shape")
+                    && diagnostic["field"] == json!("meta.nova.grain")
+            })
+        }));
+        assert!(report.suggested_meta_patches.iter().any(|patch| {
+            patch.unique_id == "model.pkg.bad_grain_orders"
+                && patch.field_path == "meta.nova.grain"
+                && patch.evidence["diagnostic"] == json!("invalid_grain_shape")
+        }));
+        assert!(report.scoring_contract["grade_bands"].is_array());
+        assert!(report.summary.worst_entities_by_persona.is_array());
+        assert!(report.summary.top_recommendation_fields.is_array());
     }
 
     #[tokio::test]

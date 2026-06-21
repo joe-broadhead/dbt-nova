@@ -1,4 +1,5 @@
 mod column;
+mod diagnostics;
 mod documentation;
 mod entry;
 mod governance;
@@ -6,6 +7,9 @@ mod helpers;
 mod quality;
 mod semantic;
 
+pub(crate) use diagnostics::{
+    build_column_score_diagnostics, build_entity_score_diagnostics, metadata_score_scoring_contract,
+};
 pub use helpers::{array_tier_score, description_tier_score, grade_from_score};
 
 use serde_json::Value as JsonValue;
@@ -37,5 +41,6 @@ pub(crate) struct ScoredMetadata {
     pub(crate) grade: String,
     pub(crate) categories: JsonValue,
     pub(crate) breakdown: Option<JsonValue>,
+    pub(crate) diagnostics: JsonValue,
     pub(crate) recommendations: Vec<JsonValue>,
 }

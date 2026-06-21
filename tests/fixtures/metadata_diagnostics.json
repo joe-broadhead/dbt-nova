@@ -1,0 +1,158 @@
+{
+  "metadata": {
+    "dbt_version": "1.10.2",
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json"
+  },
+  "nodes": {
+    "model.pkg.bad_grain_orders": {
+      "name": "bad_grain_orders",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "analytics",
+      "schema": "mart",
+      "raw_code": "select 1 as order_id, current_date as order_date",
+      "description": "Orders",
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "data_type": "int",
+          "description": "Short identifier",
+          "meta": {
+            "primary_key": true,
+            "nova": {
+              "role": "identifier",
+              "semantic_type": "order_id",
+              "synonyms": ["order id"]
+            }
+          },
+          "constraints": [{"type": "unique"}]
+        },
+        "order_date": {
+          "name": "order_date",
+          "data_type": "date",
+          "description": "Date when the order was placed for daily order analysis and time-bounded reporting.",
+          "meta": {
+            "nova": {
+              "role": "time",
+              "semantic_type": "date"
+            }
+          }
+        }
+      },
+      "meta": {
+        "owner": "analytics",
+        "nova": {
+          "synonyms": ["orders"],
+          "domains": ["commerce"],
+          "use_cases": ["order reporting"],
+          "grain": "daily",
+          "governance": {
+            "sensitivity": "internal",
+            "pii": false,
+            "compliance": ["SOX"]
+          }
+        }
+      },
+      "original_file_path": "models/marts/bad_grain_orders.sql"
+    },
+    "model.pkg.good_orders": {
+      "name": "good_orders",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "analytics",
+      "schema": "mart",
+      "raw_code": "select 1 as order_id, current_date as order_date",
+      "description": "Canonical orders model with enough business context for agents to understand grain, ownership, usage, and governance.",
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "data_type": "int",
+          "description": "Primary order identifier at the order grain for commerce reporting and reconciliation.",
+          "meta": {
+            "primary_key": true,
+            "nova": {
+              "role": "identifier",
+              "semantic_type": "order_id",
+              "synonyms": ["order id", "order key", "transaction id"]
+            }
+          },
+          "constraints": [{"type": "unique"}, {"type": "not_null"}]
+        },
+        "order_date": {
+          "name": "order_date",
+          "data_type": "date",
+          "description": "Date when the order was placed, used as the default time field for daily reporting.",
+          "meta": {
+            "nova": {
+              "role": "time",
+              "semantic_type": "date"
+            }
+          }
+        }
+      },
+      "meta": {
+        "owner": "analytics",
+        "nova": {
+          "synonyms": ["orders", "sales orders", "transactions"],
+          "domains": ["commerce", "finance", "operations"],
+          "use_cases": ["order reporting", "revenue analysis", "daily operations"],
+          "grain": {
+            "primary_key": ["order_id"],
+            "time_field": "order_date",
+            "dimensions": ["country_code"]
+          },
+          "governance": {
+            "sensitivity": "internal",
+            "pii": false,
+            "compliance": ["SOX", "GDPR", "CCPA"]
+          }
+        }
+      },
+      "original_file_path": "models/marts/good_orders.sql"
+    },
+    "test.pkg.unique_bad_grain_orders_order_id": {
+      "name": "unique_bad_grain_orders_order_id",
+      "resource_type": "test",
+      "package_name": "pkg",
+      "unique_id": "test.pkg.unique_bad_grain_orders_order_id",
+      "attached_node": "model.pkg.bad_grain_orders",
+      "column_name": "order_id",
+      "test_metadata": {"name": "unique"}
+    },
+    "test.pkg.unique_good_orders_order_id": {
+      "name": "unique_good_orders_order_id",
+      "resource_type": "test",
+      "package_name": "pkg",
+      "unique_id": "test.pkg.unique_good_orders_order_id",
+      "attached_node": "model.pkg.good_orders",
+      "column_name": "order_id",
+      "test_metadata": {"name": "unique"}
+    },
+    "test.pkg.not_null_good_orders_order_id": {
+      "name": "not_null_good_orders_order_id",
+      "resource_type": "test",
+      "package_name": "pkg",
+      "unique_id": "test.pkg.not_null_good_orders_order_id",
+      "attached_node": "model.pkg.good_orders",
+      "column_name": "order_id",
+      "test_metadata": {"name": "not_null"}
+    }
+  },
+  "sources": {},
+  "macros": {},
+  "docs": {},
+  "groups": {},
+  "exposures": {},
+  "metrics": {},
+  "parent_map": {
+    "model.pkg.bad_grain_orders": [],
+    "model.pkg.good_orders": [],
+    "test.pkg.unique_bad_grain_orders_order_id": ["model.pkg.bad_grain_orders"],
+    "test.pkg.unique_good_orders_order_id": ["model.pkg.good_orders"],
+    "test.pkg.not_null_good_orders_order_id": ["model.pkg.good_orders"]
+  },
+  "child_map": {
+    "model.pkg.bad_grain_orders": ["test.pkg.unique_bad_grain_orders_order_id"],
+    "model.pkg.good_orders": ["test.pkg.unique_good_orders_order_id", "test.pkg.not_null_good_orders_order_id"]
+  }
+}

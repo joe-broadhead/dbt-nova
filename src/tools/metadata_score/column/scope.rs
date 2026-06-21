@@ -7,6 +7,7 @@ use crate::params::GetMetadataScoreParams;
 use crate::responses::SuccessResponse;
 
 use crate::tools::metadata_score::helpers::{average_score, grade_from_score};
+use crate::tools::metadata_score::metadata_score_scoring_contract;
 
 impl ManifestSearch {
     #[allow(clippy::unused_async)]
@@ -53,6 +54,7 @@ impl ManifestSearch {
             "persona": persona,
             "overall_score": avg_overall,
             "grade": grade_from_score(avg_overall),
+            "scoring_contract": metadata_score_scoring_contract(),
             "columns": scored_columns
         });
 

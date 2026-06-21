@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use rkyv::string::ArchivedString;
 use serde::Serialize;
-use serde_json::Value as JsonValue;
+use serde_json::{Value as JsonValue, json};
 use tracing::instrument;
 
 use crate::error::{DbtNovaError, Result};
@@ -109,12 +109,12 @@ impl ManifestSearch {
         let section_limit = self.page_limit(params.pagination.limit);
         let section_offset = params.pagination.offset;
 
-        let mut overlap = overlap_rows(&profiles, None);
+        let mut overlap_rows_all = overlap_rows(&profiles, None);
         if let Some(min_score) = params.min_score {
-            overlap.retain(|row| row.score >= min_score);
+            overlap_rows_all.retain(|row| row.score >= min_score);
         }
-        let overlap_count = overlap.len();
-        let overlap = paginate_section(overlap, section_offset, section_limit);
+        let overlap_count = overlap_rows_all.len();
+        let overlap = paginate_section(overlap_rows_all.clone(), section_offset, section_limit);
 
         let duplicate_indicator_rows = duplicate_indicator_rows(&profiles, usize::MAX);
         let duplicate_indicator_count = duplicate_indicator_rows.len();
@@ -124,18 +124,35 @@ impl ManifestSearch {
             section_limit,
         );
         let canonical_conflict_rows: Vec<DuplicateIndicatorRow> = duplicate_indicator_rows
-            .into_iter()
+            .iter()
             .filter(|row| row.canonical_parent_count > 1)
+            .cloned()
             .collect();
         let canonical_conflict_count = canonical_conflict_rows.len();
-        let canonical_conflicts =
-            paginate_section(canonical_conflict_rows, section_offset, section_limit);
-        let mut multi_grain_entities = multi_grain_entity_rows(&profiles);
-        let multi_grain_entity_count = multi_grain_entities.len();
-        multi_grain_entities =
-            paginate_section(multi_grain_entities, section_offset, section_limit);
+        let canonical_conflicts = paginate_section(
+            canonical_conflict_rows.clone(),
+            section_offset,
+            section_limit,
+        );
+        let multi_grain_entity_rows_all = multi_grain_entity_rows(&profiles);
+        let multi_grain_entity_count = multi_grain_entity_rows_all.len();
+        let multi_grain_entities = paginate_section(
+            multi_grain_entity_rows_all.clone(),
+            section_offset,
+            section_limit,
+        );
+        let summary = build_modelling_consistency_summary(
+            params,
+            section_limit,
+            section_offset,
+            &overlap_rows_all,
+            &duplicate_indicator_rows,
+            &canonical_conflict_rows,
+            &multi_grain_entity_rows_all,
+        );
 
         let report = ModellingConsistencyReport {
+            summary,
             entity_count: profiles.len(),
             overlap_candidate_count: overlap_count,
             duplicate_indicator_count,
@@ -279,6 +296,7 @@ struct MultiGrainEntityRow {
 
 #[derive(Debug, Clone, Serialize)]
 struct ModellingConsistencyReport {
+    summary: JsonValue,
     entity_count: usize,
     overlap_candidate_count: usize,
     duplicate_indicator_count: usize,
@@ -870,6 +888,209 @@ fn multi_grain_entity_rows(profiles: &[EntityOverlapProfile]) -> Vec<MultiGrainE
             .then_with(|| left.entity.unique_id.cmp(&right.entity.unique_id))
     });
     rows
+}
+
+fn build_modelling_consistency_summary(
+    params: &ModellingConsistencyReportParams,
+    section_limit: usize,
+    section_offset: usize,
+    overlap_rows: &[EntityOverlapRow],
+    duplicate_indicator_rows: &[DuplicateIndicatorRow],
+    canonical_conflict_rows: &[DuplicateIndicatorRow],
+    multi_grain_entity_rows: &[MultiGrainEntityRow],
+) -> JsonValue {
+    let overlap_evidence_categories = overlap_evidence_category_counts(overlap_rows);
+    let overlap_examples = overlap_rows
+        .iter()
+        .take(5)
+        .map(|row| {
+            json!({
+                "entity1": &row.entity1.unique_id,
+                "entity2": &row.entity2.unique_id,
+                "score": row.score,
+                "surface_overlap_count": row.surface_overlap_count,
+                "evidence_categories": overlap_evidence_categories_for_row(row),
+                "shared_column_examples": row.evidence.shared_column_names.iter().take(5).collect::<Vec<_>>(),
+                "shared_name_token_examples": row.evidence.shared_name_tokens.iter().take(5).collect::<Vec<_>>(),
+                "shared_indicator_examples": row.evidence.shared_indicators.iter().take(5).collect::<Vec<_>>(),
+                "shared_domain_examples": row.evidence.shared_domains.iter().take(5).collect::<Vec<_>>(),
+                "shared_time_field": row.evidence.shared_time_field
+            })
+        })
+        .collect::<Vec<_>>();
+    let top_duplicate_indicator_groups = duplicate_indicator_rows
+        .iter()
+        .take(5)
+        .map(duplicate_indicator_summary_row)
+        .collect::<Vec<_>>();
+    let top_canonical_conflicts = canonical_conflict_rows
+        .iter()
+        .take(5)
+        .map(duplicate_indicator_summary_row)
+        .collect::<Vec<_>>();
+    let top_multi_grain_entities = multi_grain_entity_rows
+        .iter()
+        .take(5)
+        .map(|row| {
+            json!({
+                "unique_id": &row.entity.unique_id,
+                "name": &row.entity.name,
+                "resource_type": &row.entity.resource_type,
+                "grain_variant_count": row.grain_variant_count,
+                "variant_sources": row.grain_variants.iter().flat_map(|variant| variant.sources.iter()).take(8).collect::<Vec<_>>()
+            })
+        })
+        .collect::<Vec<_>>();
+    let next_offset = modelling_has_next_page(
+        section_limit,
+        section_offset,
+        overlap_rows,
+        multi_grain_entity_rows,
+    )
+    .then_some(section_offset.saturating_add(section_limit));
+
+    json!({
+        "section_counts": {
+            "overlap_candidates": overlap_rows.len(),
+            "duplicate_indicators": duplicate_indicator_rows.len(),
+            "canonical_indicator_conflicts": canonical_conflict_rows.len(),
+            "entities_with_multiple_grain_variants": multi_grain_entity_rows.len()
+        },
+        "page": {
+            "limit": section_limit,
+            "offset": section_offset,
+            "next_offset": next_offset
+        },
+        "overlap_evidence_categories": overlap_evidence_categories,
+        "overlap_examples": overlap_examples,
+        "top_duplicate_indicator_groups": top_duplicate_indicator_groups,
+        "top_canonical_conflicts": top_canonical_conflicts,
+        "top_multi_grain_entities": top_multi_grain_entities,
+        "drill_down_hints": modelling_drill_down_hints(params, section_limit, section_offset, overlap_rows, multi_grain_entity_rows)
+    })
+}
+
+fn overlap_evidence_category_counts(rows: &[EntityOverlapRow]) -> JsonValue {
+    let mut counts = BTreeMap::<String, usize>::new();
+    for row in rows {
+        for category in overlap_evidence_categories_for_row(row) {
+            if let Some(category) = category.as_str() {
+                *counts.entry(category.to_string()).or_default() += 1;
+            }
+        }
+    }
+    serde_json::to_value(counts).unwrap_or(JsonValue::Null)
+}
+
+fn overlap_evidence_categories_for_row(row: &EntityOverlapRow) -> Vec<JsonValue> {
+    let mut categories = Vec::new();
+    if !row.evidence.shared_name_tokens.is_empty() {
+        categories.push(json!("shared_name_tokens"));
+    }
+    if !row.evidence.shared_column_names.is_empty() {
+        categories.push(json!("shared_column_names"));
+    }
+    if !row.evidence.shared_parent_synonyms.is_empty() {
+        categories.push(json!("shared_parent_synonyms"));
+    }
+    if !row.evidence.shared_domains.is_empty() {
+        categories.push(json!("shared_domains"));
+    }
+    if !row.evidence.shared_indicators.is_empty() {
+        categories.push(json!("shared_indicators"));
+    }
+    if !row.evidence.shared_column_semantic_types.is_empty() {
+        categories.push(json!("shared_column_semantic_types"));
+    }
+    if !row.evidence.shared_dimensions.is_empty() {
+        categories.push(json!("shared_dimensions"));
+    }
+    if row.evidence.shared_time_field.is_some() {
+        categories.push(json!("shared_time_field"));
+    }
+    categories
+}
+
+fn duplicate_indicator_summary_row(row: &DuplicateIndicatorRow) -> JsonValue {
+    json!({
+        "indicator_name": &row.indicator_name,
+        "indicator_type": &row.indicator_type,
+        "parent_count": row.parent_count,
+        "canonical_parent_count": row.canonical_parent_count,
+        "parents_without_grain": row.parents_without_grain,
+        "inconsistent_grains": row.inconsistent_grains,
+        "parent_examples": row.parents.iter().take(5).map(|parent| {
+            json!({
+                "unique_id": &parent.unique_id,
+                "name": &parent.name,
+                "resource_type": &parent.resource_type,
+                "canonical": parent.canonical
+            })
+        }).collect::<Vec<_>>(),
+        "grain_variant_count": row.grain_signatures.len()
+    })
+}
+
+fn modelling_drill_down_hints(
+    params: &ModellingConsistencyReportParams,
+    section_limit: usize,
+    section_offset: usize,
+    overlap_rows: &[EntityOverlapRow],
+    multi_grain_entity_rows: &[MultiGrainEntityRow],
+) -> Vec<JsonValue> {
+    let mut hints = Vec::new();
+    if modelling_has_next_page(
+        section_limit,
+        section_offset,
+        overlap_rows,
+        multi_grain_entity_rows,
+    ) {
+        hints.push(json!({
+            "purpose": "fetch_next_report_page",
+            "tool": "modelling_consistency_report",
+            "arguments": {
+                "resource_types": &params.resource_types,
+                "limit": section_limit,
+                "offset": section_offset.saturating_add(section_limit),
+                "min_score": params.min_score
+            }
+        }));
+    }
+    if let Some(row) = overlap_rows.first() {
+        hints.push(json!({
+            "purpose": "inspect_top_overlap_pair",
+            "tool": "find_entity_overlap",
+            "arguments": {
+                "id_or_name": &row.entity1.unique_id,
+                "resource_type": &row.entity1.resource_type,
+                "resource_types": &params.resource_types,
+                "limit": 10,
+                "offset": 0
+            }
+        }));
+    }
+    if let Some(row) = multi_grain_entity_rows.first() {
+        hints.push(json!({
+            "purpose": "compare_multi_grain_entity_with_related_model",
+            "tool": "compare_grains",
+            "arguments": {
+                "entity1": &row.entity.unique_id,
+                "entity2": "__RELATED_ENTITY_ID__"
+            }
+        }));
+    }
+    hints
+}
+
+fn modelling_has_next_page(
+    section_limit: usize,
+    section_offset: usize,
+    overlap_rows: &[EntityOverlapRow],
+    multi_grain_entity_rows: &[MultiGrainEntityRow],
+) -> bool {
+    [overlap_rows.len(), multi_grain_entity_rows.len()]
+        .into_iter()
+        .any(|total| section_offset.saturating_add(section_limit) < total)
 }
 
 fn grain_signature_key(grain: &GrainVariant) -> String {
