@@ -288,26 +288,48 @@ mod tests {
     #[test]
     fn docs_tool_counts_match_catalog() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let expected = format!("{MCP_TOOL_COUNT} MCP");
         let checked_docs = [
             "docs/index.md",
             "docs/getting-started/cli.md",
             "docs/development/architecture.md",
             "docs/api/mcp-cli-parity.md",
+            "docs/api/quick-reference.md",
+            "docs/api/tools.md",
         ];
 
         for path in checked_docs {
             let full_path = root.join(path);
             let text = fs::read_to_string(&full_path)
                 .unwrap_or_else(|error| panic!("failed to read {}: {error}", full_path.display()));
+            let counts = mentioned_mcp_counts(&text);
             assert!(
-                text.contains(&expected),
-                "{path} must mention the current MCP tool count as '{expected}'"
+                counts.contains(&MCP_TOOL_COUNT),
+                "{path} must mention the current MCP tool count {MCP_TOOL_COUNT}; found {counts:?}"
             );
+            let stale_counts = counts
+                .into_iter()
+                .filter(|count| *count != MCP_TOOL_COUNT)
+                .collect::<BTreeSet<_>>();
             assert!(
-                !text.contains("26 MCP"),
-                "{path} still contains stale MCP tool count text"
+                stale_counts.is_empty(),
+                "{path} still contains stale MCP tool counts {stale_counts:?}"
             );
+        }
+    }
+
+    #[test]
+    fn docs_reference_each_mcp_tool() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let checked_docs = ["docs/api/quick-reference.md", "docs/api/tools.md"];
+
+        for path in checked_docs {
+            let full_path = root.join(path);
+            let text = fs::read_to_string(&full_path)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", full_path.display()));
+            for tool in MCP_TOOL_NAMES {
+                let token = format!("`{tool}`");
+                assert!(text.contains(&token), "{path} must mention {token}");
+            }
         }
     }
 
@@ -358,5 +380,26 @@ mod tests {
         } else {
             command
         }
+    }
+
+    fn mentioned_mcp_counts(text: &str) -> BTreeSet<usize> {
+        let tokens = text
+            .split(|ch: char| !ch.is_ascii_alphanumeric())
+            .filter(|token| !token.is_empty())
+            .collect::<Vec<_>>();
+        let mut counts = BTreeSet::new();
+        for (index, token) in tokens.iter().enumerate() {
+            if *token != "MCP" {
+                continue;
+            }
+            let start = index.saturating_sub(3);
+            for previous in tokens[start..index].iter().rev() {
+                if let Ok(count) = previous.parse::<usize>() {
+                    counts.insert(count);
+                    break;
+                }
+            }
+        }
+        counts
     }
 }
