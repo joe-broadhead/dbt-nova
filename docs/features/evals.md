@@ -58,6 +58,62 @@ Validate suite shape before running against a manifest or provider:
 dbt-nova eval validate --suite evals/analyst-smoke.yml
 ```
 
+## Date Anchors
+
+Use date anchors when a case contains relative time language such as "last
+month", "this week", or "current quarter". Anchors are suite/case metadata:
+they validate the intended dates, appear in artifacts and telemetry, and are
+injected into agent eval prompts. They do not rewrite SQL, guess date columns,
+or create warehouse snapshots.
+
+Put common anchors at the suite level, then override any field on individual
+bridge or agent cases:
+
+```yaml
+version: 1
+name: analyst-date-smoke
+snapshot_date: "2026-03-31"
+date_field: order_date
+cases:
+  - id: march_revenue_context
+    question: Find the model for revenue last month.
+    date_range_start: "2026-03-01"
+    date_range_end: "2026-03-31"
+    assertions:
+      - type: search_indicator_rank
+        query: gross revenue last month
+        expected: gross_revenue
+        max_rank: 3
+agent_cases:
+  - id: march_revenue_agent
+    task: Compare gross revenue last month with the prior month.
+    date_range_start: "2026-03-01"
+    date_range_end: "2026-03-31"
+    expected:
+      must_call:
+        - search_indicator
+```
+
+Supported fields are:
+
+- `snapshot_date`: the absolute "as of" date for interpreting relative terms.
+- `date_range_start` and `date_range_end`: an inclusive date range; set both
+  fields together.
+- `date_field`: the expected business/date column name when the case needs one.
+
+Dates must be valid `YYYY-MM-DD` calendar dates. `date_field` is optional, but
+when set it must accompany either `snapshot_date` or a full date range after
+suite/case inheritance is applied. Case fields override suite fields one by
+one, so a case can inherit `snapshot_date`, `date_range_end`, or `date_field`
+while setting only the fields that differ. If the effective case anchor has an
+incomplete range, validation fails.
+
+Date anchoring answers "what dates should this case mean?" Query-structure
+grading answers a different question: "did the generated SQL use the expected
+tables, joins, filters, projections, and grouping even if returned values
+drift?" Date anchors provide deterministic prompt/report context; they are not
+a SQL-structure grader.
+
 ## Run The Packaged Starter Suite
 
 dbt-nova ships `evals/starter.yml` plus a synthetic manifest fixture at
@@ -117,9 +173,10 @@ Outputs are written to `.nova/eval-runs/<timestamp>-<suite>-bridge/` by default:
 `eval_card.v1`. The card summarizes the suite name/version, optional suite
 `purpose`, default persona, declared `manifest_scope`, bridge and agent case
 counts, latest run status, pass rate, configured gate evidence when telemetry is
-available, telemetry timestamp or explicit missing-telemetry status, provider
-metadata for agent runs, and declared `known_gaps`. `report.md` starts with the
-same card before listing assertion-level details, so `card.md` can be pasted
+available, telemetry timestamp or explicit missing-telemetry status, suite-level
+date anchor metadata when declared, provider metadata for agent runs, and
+declared `known_gaps`. `report.md` starts with the same card before listing
+assertion-level details and per-case date anchors, so `card.md` can be pasted
 directly into PR descriptions.
 
 Bridge assertions currently support:
@@ -346,8 +403,10 @@ name/path/hash, mode, case id, assertion name/type, status, run duration, output
 directory, git SHA when available, and manifest hash for bridge runs. Agent rows
 also include provider metadata and sanitized trace counters such as tool-call
 count, distinct tool count, response bytes, and token counts when a provider
-trace exposes them. Telemetry does not store raw SQL parameter maps, provider
-stdout/stderr, or credentials.
+trace exposes them. When a suite or case declares date anchors, each assertion
+row also includes the effective `snapshot_date`, `date_range_start`,
+`date_range_end`, `date_field`, and nested `date_anchor` object. Telemetry does
+not store raw SQL parameter maps, provider stdout/stderr, or credentials.
 
 Use `eval history` for a thin date filter over the JSONL file:
 
