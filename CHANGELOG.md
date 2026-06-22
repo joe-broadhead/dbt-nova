@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added default-off extended metadata search config for allowlisted non-Nova
+  dbt `meta.*` paths, including value modes, caps, sensitive-key guardrails,
+  docs/reference output, and manifest-scoped search index identity.
 - Hardened CI workflows by caching reusable semantic model snapshots during
   model artifact builds and upgrading maintained GitHub Actions to Node
   24-compatible pinned releases.

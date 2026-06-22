@@ -236,6 +236,40 @@ Note: `DBT_NOVA_MAX_LINEAGE_RESULTS` applies to **column lineage** (`get_column_
 - `DBT_NOVA_SEARCH_MAX_CONCURRENT` – max concurrent search requests (`0` = unlimited, default: `4`)
 - `DBT_NOVA_SEARCH_MAX_QUEUE` – max queued searches when saturated (default: `8`)
 
+## Extended Metadata Search
+
+Extended metadata search config is default-off. It only describes an explicit
+allowlist for later indexing; extraction and summary output are not enabled when
+`fields` is empty.
+
+- `DBT_NOVA_SEARCH_EXTENDED_META_FIELDS_JSON` – JSON array of allowlisted non-Nova dbt metadata fields (default: `[]`)
+- `DBT_NOVA_SEARCH_EXTENDED_META_MAX_FIELDS` – max configured fields (default: `32`, hard cap: `128`)
+- `DBT_NOVA_SEARCH_EXTENDED_META_MAX_VALUES_PER_FIELD` – max values retained per field (default: `64`, hard cap: `1024`)
+- `DBT_NOVA_SEARCH_EXTENDED_META_MAX_BYTES_PER_VALUE` – max bytes retained per value (default: `4096`, hard cap: `65536`)
+
+Each field object accepts:
+- `path` – logical dbt metadata path beginning with `meta.` or `columns.*.meta.`
+- `alias` – lowercase ASCII field alias for future fielded search
+- `mode` – one of `keyword`, `text`, `string_array`, or `bool`
+- `boost` – non-negative ranking boost (default: `1.0`)
+- `summary` – whether the field is eligible for future summaries (default: `false`)
+
+Example:
+
+```bash
+export DBT_NOVA_SEARCH_EXTENDED_META_FIELDS_JSON='[
+  {"path":"meta.owner","alias":"owner","mode":"keyword","boost":1.25,"summary":true},
+  {"path":"columns.*.meta.semantic_group","alias":"semantic_group","mode":"string_array"}
+]'
+```
+
+Guardrails:
+- No fields preserves current behavior and produces no search-index fingerprint.
+- `meta.nova` paths are rejected because Nova metadata is already indexed.
+- Sensitive key segments are rejected before indexing: `token`, `secret`, `password`, `credential`, `private_key`, and `api_key`.
+- `*` is only accepted in `columns.*.meta.` paths; runtime schema discovery is not performed.
+- Changing extended metadata config changes the manifest-scoped search index identity.
+
 ## Embeddings (Dense + Sparse)
 
 !!! warning "High Memory Usage"

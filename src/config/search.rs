@@ -1,7 +1,290 @@
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::collections::BTreeSet;
 use std::thread::available_parallelism;
 
 use super::{env_string, parse_bool, parse_f32, parse_u64, parse_usize, set_string};
+use crate::error::{DbtNovaError, Result};
+
+const EXTENDED_META_DEFAULT_MAX_FIELDS: usize = 32;
+const EXTENDED_META_HARD_MAX_FIELDS: usize = 128;
+const EXTENDED_META_DEFAULT_MAX_VALUES_PER_FIELD: usize = 64;
+const EXTENDED_META_HARD_MAX_VALUES_PER_FIELD: usize = 1024;
+const EXTENDED_META_DEFAULT_MAX_BYTES_PER_VALUE: usize = 4096;
+const EXTENDED_META_HARD_MAX_BYTES_PER_VALUE: usize = 65_536;
+
+/// Supported value treatment for allowlisted non-Nova dbt metadata fields.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtendedMetaFieldMode {
+    /// Index scalar metadata as exact/filterable keywords.
+    #[default]
+    Keyword,
+    /// Index scalar metadata as full text.
+    Text,
+    /// Index string arrays as repeated keyword values.
+    StringArray,
+    /// Index boolean metadata values.
+    Bool,
+}
+
+/// One allowlisted non-Nova dbt metadata path for future extended-meta indexing.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct ExtendedMetaFieldConfig {
+    /// Logical dbt metadata path, such as `meta.owner` or `columns.*.meta.semantic_group`.
+    pub path: String,
+    /// Stable search alias used for future fielded search and summaries.
+    pub alias: String,
+    /// Value mode for this path.
+    pub mode: ExtendedMetaFieldMode,
+    /// Optional ranking boost applied by later indexing work.
+    pub boost: f32,
+    /// Whether this field is eligible for future summary payloads.
+    pub summary: bool,
+}
+
+impl Default for ExtendedMetaFieldConfig {
+    fn default() -> Self {
+        Self {
+            path: String::new(),
+            alias: String::new(),
+            mode: ExtendedMetaFieldMode::default(),
+            boost: 1.0,
+            summary: false,
+        }
+    }
+}
+
+/// Default-off extended metadata search configuration.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct ExtendedMetaSearchConfig {
+    /// Explicit allowlist of non-Nova dbt metadata fields.
+    pub fields: Vec<ExtendedMetaFieldConfig>,
+    /// Maximum configured fields accepted.
+    pub max_fields: usize,
+    /// Maximum values indexed per configured field.
+    pub max_values_per_field: usize,
+    /// Maximum UTF-8 bytes retained per value.
+    pub max_bytes_per_value: usize,
+}
+
+impl Default for ExtendedMetaSearchConfig {
+    fn default() -> Self {
+        Self {
+            fields: Vec::new(),
+            max_fields: EXTENDED_META_DEFAULT_MAX_FIELDS,
+            max_values_per_field: EXTENDED_META_DEFAULT_MAX_VALUES_PER_FIELD,
+            max_bytes_per_value: EXTENDED_META_DEFAULT_MAX_BYTES_PER_VALUE,
+        }
+    }
+}
+
+impl ExtendedMetaSearchConfig {
+    /// Validate configured extended metadata paths and caps.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the allowlist contains unsafe paths, duplicate
+    /// aliases, unsupported caps, or values that cannot be indexed safely.
+    pub fn validate(&self) -> Result<()> {
+        validate_bounded_usize(
+            "search.extended_meta.max_fields",
+            self.max_fields,
+            EXTENDED_META_HARD_MAX_FIELDS,
+        )?;
+        validate_bounded_usize(
+            "search.extended_meta.max_values_per_field",
+            self.max_values_per_field,
+            EXTENDED_META_HARD_MAX_VALUES_PER_FIELD,
+        )?;
+        validate_bounded_usize(
+            "search.extended_meta.max_bytes_per_value",
+            self.max_bytes_per_value,
+            EXTENDED_META_HARD_MAX_BYTES_PER_VALUE,
+        )?;
+
+        if self.fields.len() > self.max_fields {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "search.extended_meta.fields configures {} fields but max_fields is {}",
+                self.fields.len(),
+                self.max_fields
+            )));
+        }
+
+        let mut aliases = BTreeSet::new();
+        let mut paths = BTreeSet::new();
+        for (index, field) in self.fields.iter().enumerate() {
+            validate_extended_meta_path(index, &field.path)?;
+            let alias = validate_extended_meta_alias(index, &field.alias)?;
+            if !aliases.insert(alias.to_string()) {
+                return Err(DbtNovaError::InvalidParams(format!(
+                    "search.extended_meta.fields[{index}].alias '{alias}' is configured more than once"
+                )));
+            }
+
+            let path = field.path.trim();
+            if !paths.insert(path.to_string()) {
+                return Err(DbtNovaError::InvalidParams(format!(
+                    "search.extended_meta.fields[{index}].path '{path}' is configured more than once"
+                )));
+            }
+
+            if !field.boost.is_finite() || field.boost < 0.0 {
+                return Err(DbtNovaError::InvalidParams(format!(
+                    "search.extended_meta.fields[{index}].boost must be a finite number greater than or equal to 0"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn validate_bounded_usize(name: &str, value: usize, hard_max: usize) -> Result<()> {
+    if value == 0 || value > hard_max {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "{name} must be between 1 and {hard_max}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_extended_meta_alias(index: usize, alias: &str) -> Result<&str> {
+    let alias = alias.trim();
+    if alias.is_empty() {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "search.extended_meta.fields[{index}].alias is required"
+        )));
+    }
+    let mut chars = alias.chars();
+    let Some(first) = chars.next() else {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "search.extended_meta.fields[{index}].alias is required"
+        )));
+    };
+    if !first.is_ascii_lowercase() {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "search.extended_meta.fields[{index}].alias '{alias}' must start with a lowercase ASCII letter"
+        )));
+    }
+    if !chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_') {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "search.extended_meta.fields[{index}].alias '{alias}' must contain only lowercase ASCII letters, digits, and underscores"
+        )));
+    }
+
+    Ok(alias)
+}
+
+fn validate_extended_meta_path(index: usize, path: &str) -> Result<()> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "search.extended_meta.fields[{index}].path is required"
+        )));
+    }
+
+    let segments = path.split('.').collect::<Vec<_>>();
+    if segments.iter().any(|segment| segment.trim().is_empty()) {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "search.extended_meta.fields[{index}].path '{path}' contains an empty segment"
+        )));
+    }
+    for (segment_index, segment) in segments.iter().enumerate() {
+        let valid_segment = *segment == "*"
+            || segment
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-');
+        if !valid_segment {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "search.extended_meta.fields[{index}].path '{path}' must use dot-separated ASCII key names"
+            )));
+        }
+        if *segment == "*" && !(segment_index == 1 && segments.first() == Some(&"columns")) {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "search.extended_meta.fields[{index}].path '{path}' may only use '*' in 'columns.*.meta.' paths"
+            )));
+        }
+        if let Some(sensitive) = contains_sensitive_segment(segment) {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "search.extended_meta.fields[{index}].path '{path}' is not allowed because segment '{segment}' matches sensitive key '{sensitive}'"
+            )));
+        }
+    }
+
+    if !is_supported_extended_meta_path(&segments) {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "search.extended_meta.fields[{index}].path '{path}' must start with 'meta.' or 'columns.*.meta.'"
+        )));
+    }
+    if is_nova_meta_path(&segments) {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "search.extended_meta.fields[{index}].path '{path}' targets meta.nova, which is already indexed by Nova"
+        )));
+    }
+
+    Ok(())
+}
+
+fn is_supported_extended_meta_path(segments: &[&str]) -> bool {
+    if segments.len() >= 2 && segments[0] == "meta" {
+        return true;
+    }
+    segments.len() >= 4 && segments[0] == "columns" && segments[1] == "*" && segments[2] == "meta"
+}
+
+fn is_nova_meta_path(segments: &[&str]) -> bool {
+    (segments.len() >= 2 && segments[0] == "meta" && segments[1] == "nova")
+        || (segments.len() >= 4
+            && segments[0] == "columns"
+            && segments[1] == "*"
+            && segments[2] == "meta"
+            && segments[3] == "nova")
+}
+
+fn contains_sensitive_segment(segment: &str) -> Option<&'static str> {
+    let normalized = normalize_sensitive_segment(segment);
+    if normalized.contains("private_key") || normalized.contains("privatekey") {
+        return Some("private_key");
+    }
+    if normalized.contains("api_key") || normalized.contains("apikey") {
+        return Some("api_key");
+    }
+
+    for token in normalized.split('_') {
+        match token {
+            "token" => return Some("token"),
+            "secret" => return Some("secret"),
+            "password" => return Some("password"),
+            "credential" | "credentials" => return Some("credential"),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn normalize_sensitive_segment(segment: &str) -> String {
+    let mut normalized = String::with_capacity(segment.len());
+    let mut previous_was_separator = true;
+    for ch in segment.chars() {
+        if ch.is_ascii_uppercase() {
+            if !previous_was_separator {
+                normalized.push('_');
+            }
+            normalized.push(ch.to_ascii_lowercase());
+            previous_was_separator = false;
+        } else if ch.is_ascii_alphanumeric() {
+            normalized.push(ch.to_ascii_lowercase());
+            previous_was_separator = false;
+        } else if !previous_was_separator {
+            normalized.push('_');
+            previous_was_separator = true;
+        }
+    }
+    normalized.trim_matches('_').to_string()
+}
 
 /// Weight multipliers for persona-aware ranking signals.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -411,6 +694,8 @@ pub struct SearchConfig {
     pub indicator_ranking: IndicatorRankingConfig,
     /// Metadata-support signal weights and output caps.
     pub metadata_support: MetadataSupportConfig,
+    /// Default-off allowlist for selected non-Nova dbt metadata fields.
+    pub extended_meta: ExtendedMetaSearchConfig,
     /// Enable hybrid search with reciprocal rank fusion
     pub enable_rrf: bool,
     /// RRF smoothing constant
@@ -472,6 +757,9 @@ pub struct SearchConfig {
     /// Ignore existing semantic caches and rebuild them on next load.
     #[serde(skip)]
     pub force_rebuild_semantic_caches: bool,
+    /// Environment parsing errors that must surface during validation.
+    #[serde(skip)]
+    pub env_errors: Vec<String>,
 }
 
 impl Default for SearchConfig {
@@ -526,6 +814,7 @@ impl Default for SearchConfig {
             engineer_exact_match_multiplier: 2.0,
             indicator_ranking: IndicatorRankingConfig::default(),
             metadata_support: MetadataSupportConfig::default(),
+            extended_meta: ExtendedMetaSearchConfig::default(),
             enable_rrf: true,
             rrf_k: 60.0,
             rrf_overfetch: 3,
@@ -556,6 +845,7 @@ impl Default for SearchConfig {
             reranker_model: "jinaai/jina-reranker-v2-base-multilingual".to_string(),
             rerank_top_n: 20,
             force_rebuild_semantic_caches: false,
+            env_errors: Vec::new(),
         }
     }
 }
@@ -567,6 +857,55 @@ impl SearchConfig {
         let mut config = Self::default();
         apply_search_env(&mut config);
         config
+    }
+
+    /// Validate search configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid environment overrides or unsafe extended
+    /// metadata search configuration.
+    pub fn validate(&self) -> Result<()> {
+        if !self.env_errors.is_empty() {
+            return Err(DbtNovaError::InvalidParams(self.env_errors.join("; ")));
+        }
+        self.extended_meta.validate()
+    }
+
+    /// Deterministic fingerprint for search-index-affecting config.
+    #[must_use]
+    pub fn index_fingerprint(&self) -> String {
+        if self.extended_meta.fields.is_empty() {
+            return String::new();
+        }
+
+        let mut fields = self
+            .extended_meta
+            .fields
+            .iter()
+            .map(|field| {
+                json!({
+                    "path": field.path.trim(),
+                    "alias": field.alias.trim(),
+                    "mode": field.mode,
+                    "boost": field.boost,
+                    "summary": field.summary,
+                })
+            })
+            .collect::<Vec<_>>();
+        fields.sort_by_key(std::string::ToString::to_string);
+
+        let payload = json!({
+            "extended_meta": {
+                "fields": fields,
+                "max_fields": self.extended_meta.max_fields,
+                "max_values_per_field": self.extended_meta.max_values_per_field,
+                "max_bytes_per_value": self.extended_meta.max_bytes_per_value,
+            }
+        });
+        blake3::hash(payload.to_string().as_bytes())
+            .to_hex()
+            .to_string()
     }
 }
 
@@ -1575,6 +1914,37 @@ fn apply_metadata_support_env(config: &mut SearchConfig) {
     );
 }
 
+fn apply_extended_meta_env(config: &mut SearchConfig) {
+    if let Some(value) = env_string("DBT_NOVA_SEARCH_EXTENDED_META_FIELDS_JSON") {
+        match serde_json::from_str::<Vec<ExtendedMetaFieldConfig>>(&value) {
+            Ok(fields) => config.extended_meta.fields = fields,
+            Err(err) => {
+                config.env_errors.push(format!(
+                    "Invalid DBT_NOVA_SEARCH_EXTENDED_META_FIELDS_JSON JSON; expected a JSON array of extended metadata field objects with mode keyword|text|string_array|bool (error: {err})"
+                ));
+            }
+        }
+    }
+    crate::env_config!(
+        config,
+        extended_meta.max_fields,
+        "DBT_NOVA_SEARCH_EXTENDED_META_MAX_FIELDS",
+        parse_usize
+    );
+    crate::env_config!(
+        config,
+        extended_meta.max_values_per_field,
+        "DBT_NOVA_SEARCH_EXTENDED_META_MAX_VALUES_PER_FIELD",
+        parse_usize
+    );
+    crate::env_config!(
+        config,
+        extended_meta.max_bytes_per_value,
+        "DBT_NOVA_SEARCH_EXTENDED_META_MAX_BYTES_PER_VALUE",
+        parse_usize
+    );
+}
+
 fn apply_search_env(config: &mut SearchConfig) {
     apply_search_limits_env(config);
     apply_search_index_env(config);
@@ -1588,14 +1958,53 @@ fn apply_search_env(config: &mut SearchConfig) {
     apply_semantic_scoring_env(config);
     apply_indicator_ranking_env(config);
     apply_metadata_support_env(config);
+    apply_extended_meta_env(config);
 }
 
 #[cfg(test)]
 mod tests {
-    use super::SearchConfig;
+    use super::{
+        ExtendedMetaFieldConfig, ExtendedMetaFieldMode, ExtendedMetaSearchConfig, SearchConfig,
+    };
     use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_env_vars<R>(vars: &[(&str, Option<&str>)], run: impl FnOnce() -> R) -> R {
+        let previous = vars
+            .iter()
+            .map(|(key, _)| (*key, std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: callers serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: callers serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let result = run();
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: callers serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: callers serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        result
+    }
 
     #[test]
     fn default_sparse_batch_size_is_smaller_than_dense_batch_size() {
@@ -1784,5 +2193,211 @@ mod tests {
 
         assert_eq!(config.metadata_support.max_values_per_field, 6);
         assert!((config.metadata_support.example_value_weight - 0.75).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn extended_meta_is_default_off() {
+        let config = SearchConfig::default();
+        assert!(config.extended_meta.fields.is_empty());
+        assert_eq!(config.index_fingerprint(), "");
+        config.validate().expect("default config should validate");
+    }
+
+    #[test]
+    fn extended_meta_env_overrides_apply() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let fields = r#"[
+            {
+                "path": "meta.owner",
+                "alias": "owner",
+                "mode": "keyword",
+                "boost": 1.25,
+                "summary": true
+            },
+            {
+                "path": "columns.*.meta.semantic_group",
+                "alias": "semantic_group",
+                "mode": "string_array"
+            }
+        ]"#;
+        let vars = [
+            ("DBT_NOVA_SEARCH_EXTENDED_META_FIELDS_JSON", Some(fields)),
+            ("DBT_NOVA_SEARCH_EXTENDED_META_MAX_FIELDS", Some("12")),
+            (
+                "DBT_NOVA_SEARCH_EXTENDED_META_MAX_VALUES_PER_FIELD",
+                Some("9"),
+            ),
+            (
+                "DBT_NOVA_SEARCH_EXTENDED_META_MAX_BYTES_PER_VALUE",
+                Some("2048"),
+            ),
+        ];
+
+        let config = with_env_vars(&vars, SearchConfig::from_env);
+
+        config
+            .validate()
+            .expect("extended meta config should validate");
+        assert_eq!(config.extended_meta.fields.len(), 2);
+        assert_eq!(config.extended_meta.fields[0].path, "meta.owner");
+        assert_eq!(config.extended_meta.fields[0].alias, "owner");
+        assert_eq!(
+            config.extended_meta.fields[1].mode,
+            ExtendedMetaFieldMode::StringArray
+        );
+        assert_eq!(config.extended_meta.max_fields, 12);
+        assert_eq!(config.extended_meta.max_values_per_field, 9);
+        assert_eq!(config.extended_meta.max_bytes_per_value, 2048);
+        assert_eq!(config.index_fingerprint().len(), 64);
+    }
+
+    #[test]
+    fn extended_meta_invalid_mode_env_fails_validation() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let fields = r#"[{"path":"meta.owner","alias":"owner","mode":"number"}]"#;
+        let vars = [("DBT_NOVA_SEARCH_EXTENDED_META_FIELDS_JSON", Some(fields))];
+
+        let config = with_env_vars(&vars, SearchConfig::from_env);
+
+        let error = config
+            .validate()
+            .expect_err("invalid extended meta mode should fail validation");
+        let message = error.to_string();
+        assert!(message.contains("DBT_NOVA_SEARCH_EXTENDED_META_FIELDS_JSON"));
+        assert!(message.contains("keyword|text|string_array|bool"));
+    }
+
+    #[test]
+    fn extended_meta_rejects_sensitive_paths() {
+        let config = SearchConfig {
+            extended_meta: ExtendedMetaSearchConfig {
+                fields: vec![ExtendedMetaFieldConfig {
+                    path: "meta.accessToken".to_string(),
+                    alias: "owner".to_string(),
+                    mode: ExtendedMetaFieldMode::Keyword,
+                    boost: 1.0,
+                    summary: false,
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let error = config
+            .validate()
+            .expect_err("sensitive extended meta path should fail");
+        assert!(error.to_string().contains("token"));
+    }
+
+    #[test]
+    fn extended_meta_rejects_non_nova_scope_and_discovery_wildcards() {
+        let nova_path = SearchConfig {
+            extended_meta: ExtendedMetaSearchConfig {
+                fields: vec![ExtendedMetaFieldConfig {
+                    path: "meta.nova.owner".to_string(),
+                    alias: "owner".to_string(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let wildcard_path = SearchConfig {
+            extended_meta: ExtendedMetaSearchConfig {
+                fields: vec![ExtendedMetaFieldConfig {
+                    path: "meta.*".to_string(),
+                    alias: "anything".to_string(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(
+            nova_path
+                .validate()
+                .expect_err("meta.nova path should fail")
+                .to_string()
+                .contains("meta.nova")
+        );
+        assert!(
+            wildcard_path
+                .validate()
+                .expect_err("schema discovery wildcard should fail")
+                .to_string()
+                .contains("columns.*.meta")
+        );
+    }
+
+    #[test]
+    fn extended_meta_caps_limit_configured_fields() {
+        let config = SearchConfig {
+            extended_meta: ExtendedMetaSearchConfig {
+                max_fields: 1,
+                fields: vec![
+                    ExtendedMetaFieldConfig {
+                        path: "meta.owner".to_string(),
+                        alias: "owner".to_string(),
+                        ..Default::default()
+                    },
+                    ExtendedMetaFieldConfig {
+                        path: "meta.domain".to_string(),
+                        alias: "domain".to_string(),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let error = config
+            .validate()
+            .expect_err("too many configured fields should fail");
+        assert!(error.to_string().contains("max_fields"));
+    }
+
+    #[test]
+    fn extended_meta_index_fingerprint_is_order_independent_and_changes_with_config() {
+        let field_a = ExtendedMetaFieldConfig {
+            path: "meta.owner".to_string(),
+            alias: "owner".to_string(),
+            ..Default::default()
+        };
+        let field_b = ExtendedMetaFieldConfig {
+            path: "columns.*.meta.semantic_group".to_string(),
+            alias: "semantic_group".to_string(),
+            mode: ExtendedMetaFieldMode::StringArray,
+            ..Default::default()
+        };
+        let config_a = SearchConfig {
+            extended_meta: ExtendedMetaSearchConfig {
+                fields: vec![field_a.clone(), field_b.clone()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let config_b = SearchConfig {
+            extended_meta: ExtendedMetaSearchConfig {
+                fields: vec![field_b, field_a],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let config_c = SearchConfig {
+            extended_meta: ExtendedMetaSearchConfig {
+                max_bytes_per_value: 1024,
+                fields: config_a.extended_meta.fields.clone(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        config_a.validate().expect("config a should validate");
+        config_b.validate().expect("config b should validate");
+        config_c.validate().expect("config c should validate");
+        assert_eq!(config_a.index_fingerprint(), config_b.index_fingerprint());
+        assert_ne!(config_a.index_fingerprint(), config_c.index_fingerprint());
     }
 }

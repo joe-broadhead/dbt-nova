@@ -280,6 +280,12 @@
       "max_bonus": 1.25,
       "max_values_per_field": 4
     },
+    "extended_meta": {
+      "fields": [],
+      "max_fields": 32,
+      "max_values_per_field": 64,
+      "max_bytes_per_value": 4096
+    },
     "enable_rrf": true,
     "rrf_k": 60.0,
     "rrf_overfetch": 3,

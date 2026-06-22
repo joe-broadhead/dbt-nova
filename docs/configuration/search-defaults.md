@@ -66,6 +66,7 @@ calling `get_context`.
 ## Off by Default
 
 - **Vector quantization** (8‑bit): `DBT_NOVA_SEARCH_ENABLE_VECTOR_QUANTIZATION=false`
+- **Extended dbt metadata indexing**: `search.extended_meta.fields=[]`
 
 ## Where to Configure
 
@@ -102,6 +103,25 @@ Canonical defaults are also captured in `docs/config_defaults.json`
 | `tag` | 3.0 | dbt tags |
 | `path` | 2.0 | File paths |
 | `code` | 1.5 | SQL code (lowest priority) |
+
+### Extended Metadata
+
+Extended metadata indexing is default-off. Configure
+`search.extended_meta.fields` only for selected non-Nova dbt metadata paths that
+should become searchable in the extended metadata bridge.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `extended_meta.fields` | `[]` | Explicit allowlist of metadata field objects |
+| `extended_meta.max_fields` | 32 | Maximum configured fields |
+| `extended_meta.max_values_per_field` | 64 | Maximum values retained per field |
+| `extended_meta.max_bytes_per_value` | 4096 | Maximum bytes retained per value |
+
+Supported field modes are `keyword`, `text`, `string_array`, and `bool`.
+Paths must start with `meta.` or `columns.*.meta.`, must not target
+`meta.nova`, and sensitive key segments such as `token`, `secret`, `password`,
+`credential`, `private_key`, and `api_key` are rejected during config
+validation.
 
 ### Hybrid Search
 

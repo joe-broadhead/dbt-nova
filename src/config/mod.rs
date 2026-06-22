@@ -22,7 +22,10 @@ pub use core::{
 pub use metadata_score::{
     MetadataCategoryWeights, MetadataScoreConfig, MetadataScoreWeightProfiles,
 };
-pub use search::{PersonaProfile, PersonaWeights, SearchColdStartPolicy, SearchConfig};
+pub use search::{
+    ExtendedMetaFieldConfig, ExtendedMetaFieldMode, ExtendedMetaSearchConfig, PersonaProfile,
+    PersonaWeights, SearchColdStartPolicy, SearchConfig,
+};
 
 /// Read a string environment variable.
 pub(crate) fn env_string(name: &str) -> Option<String> {

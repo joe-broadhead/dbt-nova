@@ -640,6 +640,7 @@ impl DbtNovaConfig {
         if !self.env_errors.is_empty() {
             return Err(DbtNovaError::InvalidParams(self.env_errors.join("; ")));
         }
+        self.search.validate()?;
 
         if !self.manifest_allow_http && self.manifest_uri.trim().starts_with("http://") {
             return Err(DbtNovaError::InvalidParams(

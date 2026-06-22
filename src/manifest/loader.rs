@@ -282,6 +282,7 @@ fn prepare_storage(
         ))
     })?;
     signature.prune_fingerprint = config.manifest_prune_fingerprint();
+    signature.search_index_fingerprint = config.search.index_fingerprint();
     let version_hash = scoped_manifest_hash(&signature);
     let mut version_id = version_hash.chars().take(12).collect::<String>();
     if version_id.is_empty() {
@@ -727,14 +728,17 @@ fn build_search_backends_for_manifest(
 }
 
 fn scoped_manifest_hash(signature: &ManifestSignature) -> String {
-    if signature.prune_fingerprint.is_empty() {
+    if signature.prune_fingerprint.is_empty() && signature.search_index_fingerprint.is_empty() {
         signature.content_hash.clone()
     } else {
-        blake3::hash(
-            format!("{}:{}", signature.content_hash, signature.prune_fingerprint).as_bytes(),
-        )
-        .to_hex()
-        .to_string()
+        let payload = serde_json::json!({
+            "content_hash": signature.content_hash.as_str(),
+            "prune_fingerprint": signature.prune_fingerprint.as_str(),
+            "search_index_fingerprint": signature.search_index_fingerprint.as_str(),
+        });
+        blake3::hash(payload.to_string().as_bytes())
+            .to_hex()
+            .to_string()
     }
 }
 
@@ -1194,6 +1198,7 @@ mod tests {
             modified_ms: 9_999,
             content_hash: "same-hash".to_string(),
             prune_fingerprint: String::new(),
+            search_index_fingerprint: String::new(),
             source_uri: "file:///new/path".to_string(),
         };
         let existing = ManifestSignature {
@@ -1202,6 +1207,7 @@ mod tests {
             modified_ms: 1,
             content_hash: "same-hash".to_string(),
             prune_fingerprint: String::new(),
+            search_index_fingerprint: String::new(),
             source_uri: "file:///old/path".to_string(),
         };
         assert!(
@@ -1218,6 +1224,7 @@ mod tests {
             modified_ms: 9_999,
             content_hash: "expected-hash".to_string(),
             prune_fingerprint: String::new(),
+            search_index_fingerprint: String::new(),
             source_uri: "file:///new/path".to_string(),
         };
         let different_hash = ManifestSignature {
@@ -1226,6 +1233,7 @@ mod tests {
             modified_ms: 1,
             content_hash: "different-hash".to_string(),
             prune_fingerprint: String::new(),
+            search_index_fingerprint: String::new(),
             source_uri: "file:///old/path".to_string(),
         };
         let missing_hash = ManifestSignature {
@@ -1234,6 +1242,7 @@ mod tests {
             modified_ms: 1,
             content_hash: String::new(),
             prune_fingerprint: String::new(),
+            search_index_fingerprint: String::new(),
             source_uri: "file:///old/path".to_string(),
         };
         assert!(!manifest_signature_matches_for_reuse(
@@ -1254,6 +1263,7 @@ mod tests {
             modified_ms: 9_999,
             content_hash: "same-hash".to_string(),
             prune_fingerprint: "fingerprint-a".to_string(),
+            search_index_fingerprint: String::new(),
             source_uri: "file:///new/path".to_string(),
         };
         let existing = ManifestSignature {
@@ -1262,16 +1272,33 @@ mod tests {
             modified_ms: 1,
             content_hash: "same-hash".to_string(),
             prune_fingerprint: "fingerprint-b".to_string(),
+            search_index_fingerprint: String::new(),
             source_uri: "file:///old/path".to_string(),
         };
         assert!(!manifest_signature_matches_for_reuse(&existing, &expected));
     }
 
     #[test]
-    fn scoped_manifest_hash_includes_prune_fingerprint() {
-        let unpruned = ManifestSignature {
+    fn manifest_signature_reuse_match_rejects_search_index_fingerprint_mismatch() {
+        let expected = ManifestSignature {
+            content_hash: "same-hash".to_string(),
+            search_index_fingerprint: "fingerprint-a".to_string(),
+            ..ManifestSignature::default()
+        };
+        let existing = ManifestSignature {
+            content_hash: "same-hash".to_string(),
+            search_index_fingerprint: "fingerprint-b".to_string(),
+            ..ManifestSignature::default()
+        };
+        assert!(!manifest_signature_matches_for_reuse(&existing, &expected));
+    }
+
+    #[test]
+    fn scoped_manifest_hash_includes_scope_fingerprints() {
+        let unscoped = ManifestSignature {
             content_hash: "same-hash".to_string(),
             prune_fingerprint: String::new(),
+            search_index_fingerprint: String::new(),
             ..ManifestSignature::default()
         };
         let pruned = ManifestSignature {
@@ -1279,9 +1306,20 @@ mod tests {
             prune_fingerprint: "fingerprint-a".to_string(),
             ..ManifestSignature::default()
         };
-        assert_eq!(scoped_manifest_hash(&unpruned), "same-hash");
+        let search_scoped = ManifestSignature {
+            content_hash: "same-hash".to_string(),
+            search_index_fingerprint: "fingerprint-a".to_string(),
+            ..ManifestSignature::default()
+        };
+        assert_eq!(scoped_manifest_hash(&unscoped), "same-hash");
         assert_ne!(scoped_manifest_hash(&pruned), "same-hash");
         assert_eq!(scoped_manifest_hash(&pruned).len(), 64);
+        assert_ne!(scoped_manifest_hash(&search_scoped), "same-hash");
+        assert_eq!(scoped_manifest_hash(&search_scoped).len(), 64);
+        assert_ne!(
+            scoped_manifest_hash(&pruned),
+            scoped_manifest_hash(&search_scoped)
+        );
     }
 
     #[test]
