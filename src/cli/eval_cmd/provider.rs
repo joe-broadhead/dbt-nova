@@ -761,7 +761,31 @@ fn provider_params_summary(params: Option<&JsonValue>) -> JsonValue {
             summary.insert(key.to_string(), value);
         }
     }
+    insert_provider_statement_structure(
+        &mut summary,
+        map.get("statement").and_then(JsonValue::as_str),
+    );
     JsonValue::Object(summary)
+}
+
+fn insert_provider_statement_structure(
+    summary: &mut serde_json::Map<String, JsonValue>,
+    statement: Option<&str>,
+) {
+    let Some(statement) = statement.map(str::trim).filter(|value| !value.is_empty()) else {
+        return;
+    };
+    match crate::utils::sql_structure::sql_structure_summary_json(statement) {
+        Ok(structure) => {
+            summary.insert("statement_structure".to_string(), structure);
+        }
+        Err(_error) => {
+            summary.insert(
+                "statement_structure_error".to_string(),
+                JsonValue::String("failed to parse SQL structure summary".to_string()),
+            );
+        }
+    }
 }
 
 fn provider_safe_value(value: &JsonValue) -> Option<JsonValue> {
@@ -1087,6 +1111,26 @@ mod tests {
                     .len()
             )
         );
+    }
+
+    #[test]
+    fn provider_trace_records_statement_structure_without_raw_sql() {
+        let stdout = r#"{"type":"item.completed","item":{"type":"mcp_tool_call","server":"nova","tool":"execute_sql","arguments":{"statement":"select country from analytics.orders where order_date = '2026-03-01'","row_limit":10},"result":{"data":[]},"error":null,"status":"completed"}}"#;
+        let trace = read_provider_tool_trace(stdout);
+        assert_eq!(trace.errors, Vec::<String>::new());
+        assert_eq!(trace.rows.len(), 1);
+        assert_eq!(trace.rows[0]["tool"], "execute_sql");
+        assert_eq!(trace.rows[0]["params_summary"]["row_limit"], 10);
+        assert_eq!(
+            trace.rows[0]["params_summary"]["statement_structure"]["tables"],
+            json!(["analytics.orders"])
+        );
+        assert_eq!(
+            trace.rows[0]["params_summary"]["statement_structure"]["filters"],
+            json!(["order_date = ?"])
+        );
+        assert!(trace.rows[0]["params_summary"].get("statement").is_none());
+        assert!(!trace.rows[0].to_string().contains("2026-03-01"));
     }
 
     #[test]

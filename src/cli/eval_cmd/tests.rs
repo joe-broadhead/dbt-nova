@@ -5,18 +5,19 @@ use serde_json::json;
 use tempfile::{NamedTempFile, TempDir};
 
 use super::{
-    AgentCalledWith, AgentEntityRank, AgentExpected, AgentOrder, AssertionResult, DateAnchor,
-    EvalCardProvider, EvalCardRunContext, EvalCaseReport, EvalDefaults, EvalRunArgs, EvalSuite,
-    EvalValidateArgs, FinalAnswerExpected, agent_prompt, apply_telemetry_retention,
-    build_agent_eval_tool_response, build_eval_gate_report, build_eval_gate_tool_response,
-    build_eval_history_tool_response, build_eval_init_tool_response, build_eval_validate_payload,
-    build_eval_validate_tool_response, build_report, contains_rank_assertion,
-    context_contains_assertion, context_field_equals_assertion, eval_case_telemetry_from_trace,
-    format_utc_timestamp_millis, json_has_field_path, metadata_score_max_assertion,
-    metadata_score_min_assertion, read_tool_trace, recipe_rank_assertion, refresh_eval_card,
-    render_eval_card_markdown, resolve_mcp_writable_path, run_eval_command, run_validate_command,
-    safe_path_segment, score_agent_expectations, selected_agent_cases, selected_bridge_cases,
-    suite_file_hash, telemetry_path_for_suite, telemetry_row_matches_since,
+    AgentCalledWith, AgentEntityRank, AgentExpected, AgentOrder, AgentSqlStructureExpected,
+    AssertionResult, DateAnchor, EvalCardProvider, EvalCardRunContext, EvalCaseReport,
+    EvalDefaults, EvalRunArgs, EvalSuite, EvalValidateArgs, FinalAnswerExpected, agent_prompt,
+    apply_telemetry_retention, build_agent_eval_tool_response, build_eval_gate_report,
+    build_eval_gate_tool_response, build_eval_history_tool_response, build_eval_init_tool_response,
+    build_eval_validate_payload, build_eval_validate_tool_response, build_report,
+    contains_rank_assertion, context_contains_assertion, context_field_equals_assertion,
+    eval_case_telemetry_from_trace, format_utc_timestamp_millis, json_has_field_path,
+    metadata_score_max_assertion, metadata_score_min_assertion, read_tool_trace,
+    recipe_rank_assertion, refresh_eval_card, render_eval_card_markdown, resolve_mcp_writable_path,
+    run_eval_command, run_validate_command, safe_path_segment, score_agent_expectations,
+    selected_agent_cases, selected_bridge_cases, sql_structure_assertion, suite_file_hash,
+    telemetry_grade_mode, telemetry_path_for_suite, telemetry_row_matches_since,
     tool_response_budget_assertion, tool_success_assertion, validate_since_date, validate_suite,
     validate_telemetry_suite_name,
 };
@@ -101,6 +102,129 @@ fn agent_expectations_score_tool_trace() {
     ];
     let results = score_agent_expectations(&expected, &trace, "GMV uses model.pkg.orders");
     assert!(results.iter().all(|result| result.status == "pass"));
+}
+
+#[test]
+fn sql_structure_assertion_passes_when_only_literals_differ() {
+    let result = sql_structure_assertion(
+        "sql_structure",
+        "
+            select o.country, sum(o.amount) as revenue
+            from analytics.orders o
+            where o.order_date between '2026-03-01' and '2026-03-31'
+              and o.country = 'US'
+              and o.amount > 100
+            group by o.country
+        ",
+        "
+            select orders.country, sum(orders.amount) as revenue
+            from analytics.orders
+            where orders.order_date between '2024-01-01' and '2024-01-31'
+              and orders.country = 'GB'
+              and orders.amount > 250
+            group by orders.country
+        ",
+    );
+
+    assert_eq!(result.status, "pass", "{result:#?}");
+    assert_eq!(result.evidence["grade_mode"], "query_structure");
+}
+
+#[test]
+fn sql_structure_assertion_fails_with_missing_filter_diff() {
+    let result = sql_structure_assertion(
+        "sql_structure",
+        "select country, sum(amount) from analytics.orders group by country",
+        "
+            select country, sum(amount)
+            from analytics.orders
+            where country = 'US'
+            group by country
+        ",
+    );
+
+    assert_eq!(result.status, "fail");
+    assert!(result.message.contains("WHERE"));
+    assert_eq!(
+        result.evidence["diff"]["missing_filters"],
+        json!(["country = ?"])
+    );
+}
+
+#[test]
+fn sql_structure_assertion_fails_with_wrong_table_diff() {
+    let result = sql_structure_assertion(
+        "sql_structure",
+        "select country, sum(amount) from analytics.customers group by country",
+        "select country, sum(amount) from analytics.orders group by country",
+    );
+
+    assert_eq!(result.status, "fail");
+    assert!(result.message.contains("FROM"));
+    assert_eq!(
+        result.evidence["diff"]["missing_tables"],
+        json!(["analytics.orders"])
+    );
+    assert_eq!(
+        result.evidence["diff"]["unexpected_tables"],
+        json!(["analytics.customers"])
+    );
+}
+
+#[test]
+fn agent_sql_structure_scores_execute_sql_trace_without_raw_sql() {
+    let expected = AgentExpected {
+        sql_structures: vec![AgentSqlStructureExpected {
+            tool: "execute_sql".to_string(),
+            expected_sql: "
+                select country, sum(amount) as revenue
+                from analytics.orders
+                where order_date between '2024-01-01' and '2024-01-31'
+                  and country = 'GB'
+                group by country
+            "
+            .to_string(),
+        }],
+        ..AgentExpected::default()
+    };
+    let actual_sql = "
+        select o.country, sum(o.amount) as revenue
+        from analytics.orders o
+        where o.order_date between '2026-03-01' and '2026-03-31'
+          and o.country = 'US'
+        group by o.country
+    ";
+    let trace = vec![json!({
+        "tool": "execute_sql",
+        "params_summary": {
+            "keys": ["statement"],
+            "statement_structure": crate::utils::sql_structure::sql_structure_summary_json(actual_sql)
+                .expect("structure")
+        }
+    })];
+
+    let results = score_agent_expectations(&expected, &trace, "");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].status, "pass", "{results:#?}");
+    assert!(!results[0].evidence.to_string().contains("2026-03-01"));
+    assert!(!trace[0].to_string().contains("select o.country"));
+}
+
+#[test]
+fn query_structure_telemetry_grade_mode_is_explicit() {
+    assert_eq!(
+        telemetry_grade_mode("agent", "sql_structure:execute_sql"),
+        "query_structure"
+    );
+    assert_eq!(
+        telemetry_grade_mode("agent", "must_call:search"),
+        "provider_trace"
+    );
+    assert_eq!(
+        telemetry_grade_mode("bridge", "search_rank"),
+        "deterministic"
+    );
 }
 
 #[test]

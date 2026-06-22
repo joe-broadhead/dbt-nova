@@ -56,6 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `date_range_end`, and `date_field` anchors at suite or case level; Nova
   validates anchor dates, injects effective anchors into agent prompts, and
   includes them in reports and eval telemetry.
+- Eval suites can now grade SQL structure with `sql_structure` assertions and
+  agent `expected.sql_structures`, comparing tables, joins, projections,
+  filters, and groupings while masking string/date/numeric literals and
+  reporting structured clause diffs.
 - Documented bridge and provider-backed eval CI templates with GitHub Actions
   examples for manifest generation, telemetry retention, eval gates, artifact
   upload, private OpenCode provider runs, and redacted trace handling.
