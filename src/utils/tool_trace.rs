@@ -22,19 +22,36 @@ const MAX_UNIQUE_ID_CHARS: usize = 512;
 const REDACTED_VALUE: &str = "[REDACTED]";
 const TRACE_SUMMARY_SCHEMA_VERSION: &str = "tool_trace_summary.v1";
 const TRACE_REDACTION_SCHEMA_VERSION: &str = "tool_trace_redaction.v1";
-const SAFE_PARAM_SUMMARY_KEYS: [&str; 19] = [
+const SAFE_PARAM_SUMMARY_KEYS: [&str; 36] = [
     "query",
     "persona",
     "id_or_name",
     "resource_type",
     "resource_types",
+    "roles",
+    "semantic_types",
     "recipe_id",
     "direction",
+    "depth",
     "detail",
     "group_mode",
     "indicator_types",
     "include_support_signals",
     "max_parent_groups",
+    "min_score",
+    "fuzzy",
+    "include_highlights",
+    "include_sql",
+    "explain",
+    "include_columns",
+    "include_upstream",
+    "include_downstream",
+    "include_tests",
+    "include_docs",
+    "context_mode",
+    "lineage_depth",
+    "upstream_limit",
+    "downstream_limit",
     "preflight_only",
     "row_limit",
     "byte_limit",
@@ -987,7 +1004,7 @@ fn serialized_len(value: &Value) -> usize {
     serde_json::to_string(value).map_or(0, |serialized| serialized.len())
 }
 
-fn extract_response_truncated(response: &Value) -> bool {
+pub(crate) fn extract_response_truncated(response: &Value) -> bool {
     match response {
         Value::Object(map) => {
             map.get("truncated")
@@ -1016,26 +1033,7 @@ fn summarize_params(params: &Value) -> Value {
         .map(|key| Value::String(truncate_string(key, MAX_SUMMARY_STRING_CHARS)))
         .collect();
     let mut summary = serde_json::Map::from_iter([(String::from("keys"), Value::Array(keys))]);
-    for key in [
-        "query",
-        "persona",
-        "id_or_name",
-        "resource_type",
-        "resource_types",
-        "recipe_id",
-        "direction",
-        "detail",
-        "group_mode",
-        "indicator_types",
-        "include_support_signals",
-        "max_parent_groups",
-        "preflight_only",
-        "row_limit",
-        "byte_limit",
-        "max_poll_seconds",
-        "limit",
-        "offset",
-    ] {
+    for key in SAFE_PARAM_SUMMARY_KEYS {
         if let Some(value) = map.get(key).and_then(summarize_safe_value) {
             summary.insert(key.to_string(), value);
         }
@@ -1100,13 +1098,13 @@ fn extract_error_code(response: &Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn extract_unique_ids(response: &Value) -> Vec<String> {
+pub(crate) fn extract_unique_ids(response: &Value) -> Vec<String> {
     let mut out = BTreeSet::new();
     collect_unique_ids(response, &mut out);
     out.into_iter().collect()
 }
 
-fn extract_top_unique_ids(response: &Value) -> Vec<String> {
+pub(crate) fn extract_top_unique_ids(response: &Value) -> Vec<String> {
     let mut out = Vec::new();
     let mut seen = BTreeSet::new();
     if let Some(rows) = response.get("data").and_then(Value::as_array) {
@@ -1240,9 +1238,15 @@ mod tests {
         let summary = summarize_params(&json!({
             "query": "gmv",
             "parameters": {"token": "secret"},
+            "roles": ["dimension"],
+            "include_upstream": false,
+            "lineage_depth": 2,
             "limit": 5
         }));
         assert_eq!(summary["query"], "gmv");
+        assert_eq!(summary["roles"], json!(["dimension"]));
+        assert_eq!(summary["include_upstream"], false);
+        assert_eq!(summary["lineage_depth"], 2);
         assert_eq!(summary["limit"], 5);
         assert!(summary.get("parameters").is_none());
     }

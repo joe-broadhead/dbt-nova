@@ -1,5 +1,5 @@
 /// Canonical MCP tool names exposed by dbt-nova.
-pub const MCP_TOOL_NAMES: [&str; 51] = [
+pub const MCP_TOOL_NAMES: [&str; 52] = [
     "search",
     "search_indicator",
     "indicator_inventory",
@@ -26,6 +26,7 @@ pub const MCP_TOOL_NAMES: [&str; 51] = [
     "inspect_tool_trace",
     "summarize_tool_trace",
     "redact_tool_trace",
+    "replay_tool_trace",
     "show_metadata",
     "health",
     "reload_manifest",
@@ -89,7 +90,7 @@ pub struct CliMcpParityEntry {
 /// Keep this matrix in sync with `docs/getting-started/cli.md` and
 /// `docs/api/mcp-cli-parity.md`. Product capabilities should trend from `Gap`
 /// to `Equivalent`; process lifecycle commands may remain `LifecycleException`.
-pub const CLI_MCP_PARITY_MATRIX: [CliMcpParityEntry; 23] = [
+pub const CLI_MCP_PARITY_MATRIX: [CliMcpParityEntry; 24] = [
     CliMcpParityEntry {
         cli_command: "server start",
         mcp_tool: None,
@@ -243,6 +244,13 @@ pub const CLI_MCP_PARITY_MATRIX: [CliMcpParityEntry; 23] = [
         status: CliMcpParityStatus::SafetyGated,
         issue: None,
         notes: "MCP safe-sharing redaction writes require DBT_NOVA_MCP_ENABLE_TRACE_WRITES=1",
+    },
+    CliMcpParityEntry {
+        cli_command: "trace replay",
+        mcp_tool: Some("replay_tool_trace"),
+        status: CliMcpParityStatus::Equivalent,
+        issue: None,
+        notes: "MCP replays supported deterministic trace rows against the currently loaded manifest while CLI replay loads an explicit manifest source",
     },
     CliMcpParityEntry {
         cli_command: "health check",

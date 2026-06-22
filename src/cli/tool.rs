@@ -30,7 +30,7 @@ use crate::cli::storage_cmd::{
 };
 use crate::cli::trace_cmd::{
     build_trace_inspect_tool_response, build_trace_redact_tool_response,
-    build_trace_summarize_tool_response,
+    build_trace_replay_tool_response, build_trace_summarize_tool_response,
 };
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::search::ManifestSearch;
@@ -45,8 +45,8 @@ use crate::params::{
     ReloadManifestParams, RunAgentEvalParams, RunEvalParams, RunRecipeParams, SearchColumnsParams,
     SearchIndicatorParams, SearchParams, SearchRecipesParams, StorageCleanupParams,
     StorageInspectParams, StoragePruneParams, TraceInspectParams, TraceRedactParams,
-    TraceSummarizeParams, ValidateDagParams, ValidateEvalSuiteParams, ValidateNovaMetaParams,
-    WarmManifestParams,
+    TraceReplayParams, TraceSummarizeParams, ValidateDagParams, ValidateEvalSuiteParams,
+    ValidateNovaMetaParams, WarmManifestParams,
 };
 use crate::responses::SuccessResponse;
 
@@ -61,7 +61,7 @@ struct ToolRegistryEntry {
     dispatch: ToolDispatchFn,
 }
 
-const TOOL_REGISTRY: [ToolRegistryEntry; 51] = [
+const TOOL_REGISTRY: [ToolRegistryEntry; 52] = [
     ToolRegistryEntry {
         name: "search",
         dispatch: dispatch_search,
@@ -165,6 +165,10 @@ const TOOL_REGISTRY: [ToolRegistryEntry; 51] = [
     ToolRegistryEntry {
         name: "redact_tool_trace",
         dispatch: dispatch_redact_tool_trace,
+    },
+    ToolRegistryEntry {
+        name: "replay_tool_trace",
+        dispatch: dispatch_replay_tool_trace,
     },
     ToolRegistryEntry {
         name: "show_metadata",
@@ -811,6 +815,13 @@ fn dispatch_redact_tool_trace(_searcher: &ManifestSearch, params: JsonValue) -> 
     Box::pin(async move {
         let decoded: TraceRedactParams = decode_tool_params("redact_tool_trace", params)?;
         build_trace_redact_tool_response(&decoded)
+    })
+}
+
+fn dispatch_replay_tool_trace(searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: TraceReplayParams = decode_tool_params("replay_tool_trace", params)?;
+        build_trace_replay_tool_response(searcher, &decoded).await
     })
 }
 

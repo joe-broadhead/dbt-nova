@@ -32,7 +32,7 @@ use crate::cli::storage_cmd::{
 };
 use crate::cli::trace_cmd::{
     build_trace_inspect_tool_response, build_trace_redact_tool_response,
-    build_trace_summarize_tool_response,
+    build_trace_replay_tool_response, build_trace_summarize_tool_response,
 };
 use crate::config::DbtNovaConfig;
 use crate::error::DbtNovaError;
@@ -48,8 +48,8 @@ use crate::params::{
     ParentGroupMode, ReloadManifestParams, RunAgentEvalParams, RunEvalParams, RunRecipeParams,
     SearchColumnsParams, SearchIndicatorParams, SearchParams, SearchRecipesParams,
     StorageCleanupParams, StorageInspectParams, StoragePruneParams, TraceInspectParams,
-    TraceRedactParams, TraceSummarizeParams, ValidateDagParams, ValidateEvalSuiteParams,
-    ValidateNovaMetaParams, WarmManifestParams,
+    TraceRedactParams, TraceReplayParams, TraceSummarizeParams, ValidateDagParams,
+    ValidateEvalSuiteParams, ValidateNovaMetaParams, WarmManifestParams,
 };
 use crate::responses::SuccessResponse;
 use crate::server::health::build_manifest_health_payload;
@@ -1791,6 +1791,19 @@ impl DbtNovaServer {
     async fn redact_tool_trace(&self, params: Parameters<TraceRedactParams>) -> String {
         self.handle_async("redact_tool_trace", None, |_searcher| async move {
             build_trace_redact_tool_response(&params.0)
+        })
+        .await
+    }
+
+    /// Replay deterministic local Nova tool calls from a trace.
+    #[tool(
+        name = "replay_tool_trace",
+        description = "Replay supported deterministic Nova tool calls from a local trace JSONL file against the currently loaded MCP manifest. Unsupported, unsafe, under-specified, and execute_sql rows are skipped with explicit reasons."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn replay_tool_trace(&self, params: Parameters<TraceReplayParams>) -> String {
+        self.handle_async("replay_tool_trace", None, |searcher| async move {
+            build_trace_replay_tool_response(&searcher, &params.0).await
         })
         .await
     }

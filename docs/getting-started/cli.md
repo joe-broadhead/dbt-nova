@@ -4,7 +4,7 @@ Use `dbt-nova` in two modes:
 
 - No subcommand: start MCP server (backward compatible behavior)
 - Subcommand: run one-shot CLI commands and exit
-- CLI surface: 23 CLI leaf commands, including `tool call` access to all 51 MCP tools
+- CLI surface: 24 CLI leaf commands, including `tool call` access to all 52 MCP tools
 
 For the command-by-command MCP equivalent map, see
 [MCP/CLI Parity](../api/mcp-cli-parity.md).
@@ -29,6 +29,7 @@ dbt-nova
 ├── trace inspect --path <PATH> [--json]
 ├── trace summarize --path <PATH> [--report-md-path <PATH>] [--json]
 ├── trace redact --path <PATH> --out <PATH> [--json]
+├── trace replay --path <PATH> [--manifest-path|--manifest-uri] [--storage-instance-id] [--cleanup-storage-on-start] [--read-only] [--json]
 ├── eval init --out <PATH> [--persona] [--force]
 ├── eval validate --suite <PATH> [--json]
 ├── eval run --suite <PATH> [--manifest-path|--manifest-uri] [--storage-instance-id] [--output-dir] [--telemetry] [--telemetry-retention] [--case-id <ID>...] [--fail-under] [--cleanup-storage-on-start] [--read-only] [--json]
@@ -154,10 +155,15 @@ dbt-nova trace redact \
   --path out/nova-evals/tool-calls/analyst-smoke.jsonl \
   --out out/nova-evals/tool-calls/analyst-smoke.redacted.jsonl \
   --json
+
+dbt-nova trace replay \
+  --path out/nova-evals/tool-calls/analyst-smoke.redacted.jsonl \
+  --manifest-path /path/to/target/manifest.json \
+  --json
 ```
 
 See [Trace Inspection And Redaction](../features/traces.md) for safe-sharing
-guidance and Markdown report fields.
+guidance, Markdown report fields, and deterministic replay limits.
 
 ### Agent-readiness report for CI
 

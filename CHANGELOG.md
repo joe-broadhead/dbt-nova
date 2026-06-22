@@ -54,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tool-call JSONL, writing Markdown trace summaries, and producing conservative
   redacted trace artifacts for safe sharing. MCP trace writes require
   `DBT_NOVA_MCP_ENABLE_TRACE_WRITES=1`.
+- Added `dbt-nova trace replay` and MCP/CLI `tool call` parity through
+  `replay_tool_trace` to replay supported deterministic trace rows against a
+  manifest, compare compact response-shape evidence, and explicitly skip
+  unsupported, unsafe, under-specified, or SQL-execution rows.
 - Added `dbt-nova audit agent-readiness` for metadata-only agent readiness
   reports that combine project metadata scores, entity signal gaps, Nova
   indicator checks, optional eval gate evidence, JSON/Markdown artifacts, and

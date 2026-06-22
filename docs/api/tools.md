@@ -1,6 +1,6 @@
 # Tools Reference
 
-This reference lists all 51 MCP tools exposed by dbt‑nova, grouped by category.
+This reference lists all 52 MCP tools exposed by dbt‑nova, grouped by category.
 All tools return the standard envelope described in [Response Format](response-format.md).
 For CLI equivalents and known parity gaps, see
 [MCP/CLI Parity](mcp-cli-parity.md).
@@ -915,6 +915,23 @@ Redaction writes are disabled unless `DBT_NOVA_MCP_ENABLE_TRACE_WRITES=1` is set
 
 ```json
 {"name":"redact_tool_trace","arguments":{"path":".nova/eval-runs/agent/tool-calls/metric_lookup_flow.jsonl","out":".nova/eval-runs/agent/tool-calls/metric_lookup_flow.redacted.jsonl"}}
+```
+
+### `replay_tool_trace`
+Replay supported deterministic Nova tool calls from a local trace JSONL file
+against the currently loaded MCP manifest. Unsupported, unsafe,
+under-specified, and `execute_sql` rows are skipped with explicit reasons.
+Replay compares response-shape evidence such as success, result count,
+truncation, selected IDs, and top IDs; it does not return full response diffs.
+
+Required:
+- `path`: trace JSONL path under the MCP server working directory
+
+Supported replay tools are `search`, `search_indicator`, `search_columns`,
+`get_entity`, `get_context`, and `get_lineage`.
+
+```json
+{"name":"replay_tool_trace","arguments":{"path":".nova/eval-runs/agent/tool-calls/metric_lookup_flow.redacted.jsonl"}}
 ```
 
 ### `get_undocumented`
