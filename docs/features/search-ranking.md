@@ -29,6 +29,25 @@ Nova meta is indexed into dedicated search fields:
 Column‑level `meta.nova.synonyms`, `semantic_type`, and `example_values` are appended
 to the `columns` search field to improve column discovery (e.g., “UK” → `country_code`).
 
+## Optional Extended Metadata Fields
+
+Nova can also index selected non-Nova dbt metadata when
+`search.extended_meta.fields` is configured. This is intended as a bridge for
+existing project conventions, not a replacement for the first-class `meta.nova`
+contract.
+
+Each allowlisted field maps a dbt metadata path to a search alias:
+
+| Config path | Alias | Search field | Notes |
+| --- | --- | --- | --- |
+| `meta.owner` | `owner` | `meta.owner` | Entity-level metadata from legacy `meta` or dbt 1.11+ `config.meta` |
+| `columns.*.meta.semantic_group` | `semantic_group` | `meta.semantic_group` | Column metadata collected deterministically by column name |
+
+Unconfigured metadata is not searchable. Configured values are capped at
+indexing time with `extended_meta.max_values_per_field` and
+`extended_meta.max_bytes_per_value`, and sensitive key paths are rejected during
+configuration validation.
+
 ## Default Boosts (Config)
 
 These values are tuned for high signal with minimal noise:

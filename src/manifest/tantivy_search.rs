@@ -17,9 +17,12 @@ use tantivy::tokenizer::{
 };
 use tantivy::{Index, IndexReader, IndexWriter, Term};
 
-use crate::config::SearchConfig;
+use crate::config::{ExtendedMetaFieldConfig, ExtendedMetaFieldMode, SearchConfig};
 use crate::error::{DbtNovaError, Result};
-use crate::manifest::entity::{column_nova_meta_json, entity_nova_meta_json};
+use crate::manifest::entity::{
+    column_nova_meta_json, entity_nova_meta_json, normalized_column_meta_json,
+    normalized_entity_meta_json,
+};
 use crate::manifest::store::EntityStore;
 use crate::utils::{SearchPersona, has_query_syntax, tokenize_alnum_lowercase};
 use tracing::{debug, info, instrument, warn};
@@ -58,6 +61,21 @@ pub struct FieldHandles {
     pub nova_compliance: Field,
 }
 
+#[derive(Clone)]
+struct ExtendedMetaFieldHandle {
+    path: ExtendedMetaPath,
+    alias: String,
+    field: Field,
+    mode: ExtendedMetaFieldMode,
+    boost: f32,
+}
+
+#[derive(Clone)]
+enum ExtendedMetaPath {
+    Entity { segments: Vec<String> },
+    ColumnWildcard { segments: Vec<String> },
+}
+
 /// Search hit with score and optional highlights.
 pub struct SearchHit {
     pub unique_id: String,
@@ -91,6 +109,7 @@ pub struct TantivySearcher {
     index: Index,
     reader: IndexReader,
     fields: FieldHandles,
+    extended_meta_fields: Vec<ExtendedMetaFieldHandle>,
 }
 
 impl TantivySearcher {
@@ -103,7 +122,7 @@ impl TantivySearcher {
         if !index_dir.exists() {
             return Ok(None);
         }
-        let (schema, fields) = Self::build_schema();
+        let (schema, fields, extended_meta_fields) = Self::build_schema(config);
         let index = match Index::open_in_dir(&index_dir) {
             Ok(index) => index,
             Err(err) => {
@@ -121,6 +140,7 @@ impl TantivySearcher {
             index,
             reader,
             fields,
+            extended_meta_fields,
         }))
     }
     /// Build a new Tantivy index from on-disk entity storage.
@@ -145,7 +165,7 @@ impl TantivySearcher {
         tags_by_id: &HashMap<String, Vec<String>>,
         config: &SearchConfig,
     ) -> Result<Self> {
-        let (schema, fields) = Self::build_schema();
+        let (schema, fields, extended_meta_fields) = Self::build_schema(config);
 
         let index_dir = storage_dir.join(&config.index_dir);
         if index_dir.exists() {
@@ -442,6 +462,14 @@ impl TantivySearcher {
                 }
             }
 
+            Self::add_extended_meta_fields(
+                &mut doc,
+                unique_id,
+                &entity_json,
+                &extended_meta_fields,
+                config,
+            );
+
             writer.add_document(doc)?;
             doc_count += 1;
         }
@@ -459,6 +487,7 @@ impl TantivySearcher {
             index,
             reader,
             fields,
+            extended_meta_fields,
         })
     }
 
@@ -524,7 +553,7 @@ impl TantivySearcher {
         Ok(())
     }
 
-    fn build_schema() -> (Schema, FieldHandles) {
+    fn build_schema(config: &SearchConfig) -> (Schema, FieldHandles, Vec<ExtendedMetaFieldHandle>) {
         let mut schema_builder = Schema::builder();
 
         let simple_options = TextOptions::default()
@@ -548,6 +577,8 @@ impl TantivySearcher {
                 .set_tokenizer("code_lower")
                 .set_index_option(IndexRecordOption::WithFreqsAndPositions),
         );
+
+        let code_stored_options = code_options.clone().set_stored();
 
         let ngram_options = TextOptions::default().set_indexing_options(
             TextFieldIndexing::default()
@@ -617,7 +648,10 @@ impl TantivySearcher {
             nova_compliance,
         };
 
-        (schema_builder.build(), fields)
+        let extended_meta_fields =
+            add_extended_meta_schema_fields(&mut schema_builder, config, &code_stored_options);
+
+        (schema_builder.build(), fields, extended_meta_fields)
     }
 
     /// Search with boosted fields. Returns `unique_id`/`score` with optional highlights.
@@ -772,6 +806,21 @@ impl TantivySearcher {
                         };
 
                         let boosted = Box::new(BoostQuery::new(term_query, boost));
+                        field_queries.push((Occur::Should, boosted));
+                    }
+                    for field_config in &self.extended_meta_fields {
+                        let term_query: Box<dyn Query> = match distance_loose {
+                            Some(dist) => Box::new(FuzzyTermQuery::new(
+                                Term::from_field_text(field_config.field, term),
+                                dist,
+                                true,
+                            )),
+                            None => Box::new(TermQuery::new(
+                                Term::from_field_text(field_config.field, term),
+                                IndexRecordOption::WithFreqs,
+                            )),
+                        };
+                        let boosted = Box::new(BoostQuery::new(term_query, field_config.boost));
                         field_queries.push((Occur::Should, boosted));
                     }
 
@@ -959,6 +1008,9 @@ impl TantivySearcher {
                 self.fields.tags_ngram,
             ]);
         }
+        if scope == SearchScope::Full {
+            default_fields.extend(self.extended_meta_fields.iter().map(|field| field.field));
+        }
 
         let mut parser = QueryParser::for_index(&self.index, default_fields);
         parser.set_field_boost(self.fields.alias, config.field_boosts.alias);
@@ -991,6 +1043,9 @@ impl TantivySearcher {
             parser.set_field_boost(self.fields.file_path, config.field_boosts.path);
             parser.set_field_boost(self.fields.file_path_code, config.field_boosts.path);
             parser.set_field_boost(self.fields.raw_code, config.field_boosts.code);
+            for field_config in &self.extended_meta_fields {
+                parser.set_field_boost(field_config.field, field_config.boost);
+            }
         }
 
         if include_ngram && scope == SearchScope::Full {
@@ -1034,6 +1089,9 @@ impl TantivySearcher {
                 ];
                 for field in loose_fields {
                     parser.set_field_fuzzy(field, false, dist, true);
+                }
+                for field_config in &self.extended_meta_fields {
+                    parser.set_field_fuzzy(field_config.field, false, dist, true);
                 }
             }
         }
@@ -1137,6 +1195,222 @@ impl TantivySearcher {
                 ("raw_code", self.fields.raw_code),
             ],
         }
+    }
+}
+
+impl ExtendedMetaPath {
+    fn from_config_path(path: &str) -> Self {
+        let segments = path.trim().split('.').collect::<Vec<_>>();
+        if segments.len() >= 4
+            && segments.first() == Some(&"columns")
+            && segments.get(1) == Some(&"*")
+            && segments.get(2) == Some(&"meta")
+        {
+            return Self::ColumnWildcard {
+                segments: segments[3..]
+                    .iter()
+                    .map(|segment| (*segment).to_string())
+                    .collect(),
+            };
+        }
+
+        Self::Entity {
+            segments: segments
+                .get(1..)
+                .unwrap_or_default()
+                .iter()
+                .map(|segment| (*segment).to_string())
+                .collect(),
+        }
+    }
+}
+
+impl TantivySearcher {
+    fn add_extended_meta_fields(
+        doc: &mut tantivy::TantivyDocument,
+        unique_id: &str,
+        entity_json: &JsonValue,
+        fields: &[ExtendedMetaFieldHandle],
+        config: &SearchConfig,
+    ) {
+        if fields.is_empty() {
+            return;
+        }
+
+        for field in fields {
+            let values = collect_extended_meta_values(entity_json, field);
+            if values.is_empty() {
+                continue;
+            }
+
+            let mut retained = 0usize;
+            let mut dropped_for_cap = 0usize;
+            for value in values {
+                if retained >= config.extended_meta.max_values_per_field {
+                    dropped_for_cap += 1;
+                    continue;
+                }
+                let Some(value) =
+                    capped_non_empty_value(&value, config.extended_meta.max_bytes_per_value)
+                else {
+                    continue;
+                };
+                doc.add_text(field.field, &value);
+                retained += 1;
+            }
+
+            if dropped_for_cap > 0 {
+                warn!(
+                    unique_id,
+                    alias = %field.alias,
+                    retained_values = retained,
+                    dropped_values = dropped_for_cap,
+                    max_values_per_field = config.extended_meta.max_values_per_field,
+                    "extended metadata value cap exceeded; dropping excess values"
+                );
+            }
+        }
+    }
+}
+
+fn sorted_extended_meta_fields(config: &SearchConfig) -> Vec<&ExtendedMetaFieldConfig> {
+    let mut fields = config.extended_meta.fields.iter().collect::<Vec<_>>();
+    fields.sort_by(|left, right| {
+        left.alias
+            .cmp(&right.alias)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    fields
+}
+
+fn add_extended_meta_schema_fields(
+    schema_builder: &mut tantivy::schema::SchemaBuilder,
+    config: &SearchConfig,
+    code_stored_options: &TextOptions,
+) -> Vec<ExtendedMetaFieldHandle> {
+    let text_options = TextOptions::default()
+        .set_indexing_options(
+            TextFieldIndexing::default()
+                .set_tokenizer("text_en")
+                .set_index_option(IndexRecordOption::WithFreqsAndPositions),
+        )
+        .set_stored();
+
+    let mut extended_meta_fields = Vec::new();
+    for field_config in sorted_extended_meta_fields(config) {
+        let options = match field_config.mode {
+            ExtendedMetaFieldMode::Keyword
+            | ExtendedMetaFieldMode::StringArray
+            | ExtendedMetaFieldMode::Bool => code_stored_options.clone(),
+            ExtendedMetaFieldMode::Text => text_options.clone(),
+        };
+        let field_name = extended_meta_field_name(&field_config.alias);
+        let field = schema_builder.add_text_field(&field_name, options);
+        extended_meta_fields.push(ExtendedMetaFieldHandle {
+            path: ExtendedMetaPath::from_config_path(&field_config.path),
+            alias: field_config.alias.trim().to_string(),
+            field,
+            mode: field_config.mode,
+            boost: field_config.boost,
+        });
+    }
+    extended_meta_fields
+}
+
+fn extended_meta_field_name(alias: &str) -> String {
+    format!("meta.{}", alias.trim())
+}
+
+fn collect_extended_meta_values(
+    entity_json: &JsonValue,
+    field: &ExtendedMetaFieldHandle,
+) -> Vec<String> {
+    match &field.path {
+        ExtendedMetaPath::Entity { segments } => normalized_entity_meta_json(entity_json)
+            .as_ref()
+            .and_then(|meta| value_at_path(meta, segments))
+            .map(|value| values_for_mode(value, field.mode))
+            .unwrap_or_default(),
+        ExtendedMetaPath::ColumnWildcard { segments } => {
+            let Some(columns) = entity_json.get("columns").and_then(JsonValue::as_object) else {
+                return Vec::new();
+            };
+            let mut column_names = columns.keys().collect::<Vec<_>>();
+            column_names.sort();
+
+            let mut out = Vec::new();
+            for column_name in column_names {
+                let Some(column) = columns.get(column_name) else {
+                    continue;
+                };
+                let Some(meta) = normalized_column_meta_json(column) else {
+                    continue;
+                };
+                let Some(value) = value_at_path(&meta, segments) else {
+                    continue;
+                };
+                out.extend(values_for_mode(value, field.mode));
+            }
+            out
+        }
+    }
+}
+
+fn values_for_mode(value: &JsonValue, mode: ExtendedMetaFieldMode) -> Vec<String> {
+    match mode {
+        ExtendedMetaFieldMode::Keyword | ExtendedMetaFieldMode::Text => match value {
+            JsonValue::String(value) => vec![value.clone()],
+            JsonValue::Number(value) => vec![value.to_string()],
+            _ => Vec::new(),
+        },
+        ExtendedMetaFieldMode::StringArray => value
+            .as_array()
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(JsonValue::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        ExtendedMetaFieldMode::Bool => value
+            .as_bool()
+            .map(|value| value.to_string())
+            .into_iter()
+            .collect(),
+    }
+}
+
+fn capped_non_empty_value(value: &str, max_bytes: usize) -> Option<String> {
+    if max_bytes == 0 {
+        return None;
+    }
+
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    let mut end = value.len().min(max_bytes);
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value
+        .get(..end)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn value_at_path<'a>(root: &'a JsonValue, segments: &[String]) -> Option<&'a JsonValue> {
+    let mut current = root;
+    for segment in segments {
+        current = current.get(segment)?;
+    }
+    if current.is_null() {
+        None
+    } else {
+        Some(current)
     }
 }
 

@@ -1,4 +1,7 @@
 //! Integration tests for Tantivy search behavior and ranking.
+use dbt_nova::config::{
+    ExtendedMetaFieldConfig, ExtendedMetaFieldMode, ExtendedMetaSearchConfig, SearchConfig,
+};
 use dbt_nova::params::PaginationParams;
 use dbt_nova::params::{DetailLevel, SearchParams};
 use dbt_nova::{DbtNovaConfig, ManifestSearch};
@@ -103,6 +106,270 @@ fn create_searcher(manifest_file: &tempfile::NamedTempFile) -> support_fixtures:
     // Use a temporary storage root to avoid polluting local state during tests.
     support_fixtures::load_manifest_path(manifest_file.path())
         .expect("failed to build searcher from test manifest")
+}
+
+fn create_searcher_with_config(
+    manifest_file: &tempfile::NamedTempFile,
+    search: SearchConfig,
+) -> (ManifestSearch, support_config::TestStorageGuard) {
+    let guard = support_config::TestStorageGuard::new();
+    let mut cfg = DbtNovaConfig {
+        manifest_path: manifest_file.path().to_string_lossy().to_string(),
+        search,
+        ..Default::default()
+    };
+    support_config::apply_test_storage(&mut cfg, &guard);
+    let searcher = ManifestSearch::new(cfg)
+        .expect("failed to build searcher from test manifest")
+        .search;
+    (searcher, guard)
+}
+
+fn create_extended_meta_manifest() -> tempfile::NamedTempFile {
+    let manifest = json!({
+        "metadata": {
+            "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
+            "project_name": "extended_meta_project"
+        },
+        "nodes": {
+            "model.test.orders": {
+                "name": "orders",
+                "alias": "fct_orders",
+                "resource_type": "model",
+                "package_name": "test",
+                "description": "Orders model",
+                "original_file_path": "models/marts/orders.sql",
+                "raw_code": "select order_id, status, channel from stg_orders",
+                "meta": {
+                    "business_owner": "retention narrative steward",
+                    "team": "revenue operations",
+                    "unconfigured_probe": "hiddenneedle",
+                    "is_certified": true,
+                    "overflow_tags": ["one", "two", "three"],
+                    "long_code": "abcdef"
+                },
+                "columns": {
+                    "status": {
+                        "name": "status",
+                        "meta": {
+                            "semantic_group": ["lifecycle", "fulfillment"]
+                        }
+                    },
+                    "channel": {
+                        "name": "channel",
+                        "config": {
+                            "meta": {
+                                "semantic_group": ["acquisition"]
+                            }
+                        }
+                    }
+                }
+            },
+            "model.test.customers": {
+                "name": "customers",
+                "alias": "dim_customers",
+                "resource_type": "model",
+                "package_name": "test",
+                "description": "Customer dimension",
+                "original_file_path": "models/marts/customers.sql",
+                "raw_code": "select customer_id from stg_customers",
+                "config": {
+                    "meta": {
+                        "team": "customer operations"
+                    }
+                },
+                "columns": {
+                    "customer_id": {"name": "customer_id"}
+                }
+            }
+        },
+        "sources": {},
+        "macros": {},
+        "docs": {},
+        "groups": {},
+        "exposures": {},
+        "metrics": {},
+        "parent_map": {},
+        "child_map": {}
+    });
+
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    file.write_all(manifest.to_string().as_bytes()).unwrap();
+    file
+}
+
+fn extended_meta_search_config() -> SearchConfig {
+    let mut search = support_config::test_search_config();
+    search.enable_rrf = false;
+    search.extended_meta = ExtendedMetaSearchConfig {
+        fields: vec![
+            ExtendedMetaFieldConfig {
+                path: "meta.business_owner".to_string(),
+                alias: "owner".to_string(),
+                mode: ExtendedMetaFieldMode::Text,
+                boost: 3.0,
+                summary: true,
+            },
+            ExtendedMetaFieldConfig {
+                path: "columns.*.meta.semantic_group".to_string(),
+                alias: "semantic_group".to_string(),
+                mode: ExtendedMetaFieldMode::StringArray,
+                boost: 2.0,
+                summary: false,
+            },
+            ExtendedMetaFieldConfig {
+                path: "meta.team".to_string(),
+                alias: "team".to_string(),
+                mode: ExtendedMetaFieldMode::Keyword,
+                boost: 1.5,
+                summary: false,
+            },
+            ExtendedMetaFieldConfig {
+                path: "meta.is_certified".to_string(),
+                alias: "certified".to_string(),
+                mode: ExtendedMetaFieldMode::Bool,
+                boost: 1.0,
+                summary: false,
+            },
+        ],
+        ..Default::default()
+    };
+    search
+}
+
+async fn search_unique_ids(searcher: &ManifestSearch, query: &str) -> Vec<String> {
+    let params = SearchParams {
+        query: query.to_string(),
+        resource_types: vec!["model".to_string()],
+        persona: None,
+        detail: Some(DetailLevel::Standard),
+        min_score: None,
+        fuzzy: false,
+        include_highlights: false,
+        include_sql: false,
+        explain: false,
+        pagination: PaginationParams {
+            limit: Some(10),
+            offset: 0,
+        },
+    };
+
+    let result = searcher.search(&params).await.unwrap();
+    result["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|row| row["unique_id"].as_str().map(str::to_string))
+        .collect()
+}
+
+fn assert_has_id(ids: &[String], expected: &str) {
+    assert!(
+        ids.iter().any(|id| id == expected),
+        "expected search results to contain {expected}, got {ids:?}"
+    );
+}
+
+fn assert_missing_id(ids: &[String], unexpected: &str) {
+    assert!(
+        !ids.iter().any(|id| id == unexpected),
+        "expected search results not to contain {unexpected}, got {ids:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn extended_meta_indexes_allowlisted_entity_and_column_fields() {
+    let manifest_file = create_extended_meta_manifest();
+    let (searcher, _guard) =
+        create_searcher_with_config(&manifest_file, extended_meta_search_config());
+
+    let entity_text_ids = search_unique_ids(&searcher, "retention narrative").await;
+    assert_has_id(&entity_text_ids, "model.test.orders");
+
+    let column_wildcard_ids = search_unique_ids(&searcher, "lifecycle").await;
+    assert_has_id(&column_wildcard_ids, "model.test.orders");
+
+    let config_meta_column_ids = search_unique_ids(&searcher, "acquisition").await;
+    assert_has_id(&config_meta_column_ids, "model.test.orders");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn extended_meta_supports_fielded_alias_search() {
+    let manifest_file = create_extended_meta_manifest();
+    let (searcher, _guard) =
+        create_searcher_with_config(&manifest_file, extended_meta_search_config());
+
+    let owner_ids = search_unique_ids(&searcher, "meta.owner:retention").await;
+    assert_has_id(&owner_ids, "model.test.orders");
+
+    let team_ids = search_unique_ids(&searcher, "meta.team:revenue").await;
+    assert_has_id(&team_ids, "model.test.orders");
+    assert_missing_id(&team_ids, "model.test.customers");
+
+    let config_meta_team_ids = search_unique_ids(&searcher, "meta.team:customer").await;
+    assert_has_id(&config_meta_team_ids, "model.test.customers");
+    assert_missing_id(&config_meta_team_ids, "model.test.orders");
+
+    let bool_ids = search_unique_ids(&searcher, "meta.certified:true").await;
+    assert_has_id(&bool_ids, "model.test.orders");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn extended_meta_does_not_index_unconfigured_metadata() {
+    let manifest_file = create_extended_meta_manifest();
+    let (configured, _configured_guard) =
+        create_searcher_with_config(&manifest_file, extended_meta_search_config());
+    let hidden_ids = search_unique_ids(&configured, "hiddenneedle").await;
+    assert_missing_id(&hidden_ids, "model.test.orders");
+
+    let default_search = support_config::test_search_config();
+    let (default_off, _default_guard) = create_searcher_with_config(&manifest_file, default_search);
+    let owner_ids = search_unique_ids(&default_off, "retention narrative").await;
+    assert_missing_id(&owner_ids, "model.test.orders");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn extended_meta_enforces_value_caps_deterministically() {
+    let manifest_file = create_extended_meta_manifest();
+    let mut search = support_config::test_search_config();
+    search.enable_rrf = false;
+    search.extended_meta = ExtendedMetaSearchConfig {
+        fields: vec![
+            ExtendedMetaFieldConfig {
+                path: "meta.overflow_tags".to_string(),
+                alias: "overflow_tag".to_string(),
+                mode: ExtendedMetaFieldMode::StringArray,
+                boost: 1.0,
+                summary: false,
+            },
+            ExtendedMetaFieldConfig {
+                path: "meta.long_code".to_string(),
+                alias: "long_code".to_string(),
+                mode: ExtendedMetaFieldMode::Keyword,
+                boost: 1.0,
+                summary: false,
+            },
+        ],
+        max_values_per_field: 2,
+        max_bytes_per_value: 3,
+        ..Default::default()
+    };
+    let (searcher, _guard) = create_searcher_with_config(&manifest_file, search);
+
+    let first_ids = search_unique_ids(&searcher, "meta.overflow_tag:one").await;
+    assert_has_id(&first_ids, "model.test.orders");
+
+    let second_ids = search_unique_ids(&searcher, "meta.overflow_tag:two").await;
+    assert_has_id(&second_ids, "model.test.orders");
+
+    let dropped_ids = search_unique_ids(&searcher, "meta.overflow_tag:three").await;
+    assert_missing_id(&dropped_ids, "model.test.orders");
+
+    let retained_prefix_ids = search_unique_ids(&searcher, "meta.long_code:abc").await;
+    assert_has_id(&retained_prefix_ids, "model.test.orders");
+
+    let truncated_suffix_ids = search_unique_ids(&searcher, "meta.long_code:abcdef").await;
+    assert_missing_id(&truncated_suffix_ids, "model.test.orders");
 }
 
 #[tokio::test(flavor = "multi_thread")]

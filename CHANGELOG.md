@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added default-off extended metadata search config for allowlisted non-Nova
   dbt `meta.*` paths, including value modes, caps, sensitive-key guardrails,
   docs/reference output, and manifest-scoped search index identity.
+- Extended metadata search now indexes configured entity-level and column-level
+  allowlisted fields into dedicated `meta.<alias>` Tantivy fields, including
+  fielded alias queries and deterministic extraction-time caps.
 - Hardened CI workflows by caching reusable semantic model snapshots during
   model artifact builds and upgrading maintained GitHub Actions to Node
   24-compatible pinned releases.

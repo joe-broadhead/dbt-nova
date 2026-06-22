@@ -108,7 +108,9 @@ Canonical defaults are also captured in `docs/config_defaults.json`
 
 Extended metadata indexing is default-off. Configure
 `search.extended_meta.fields` only for selected non-Nova dbt metadata paths that
-should become searchable in the extended metadata bridge.
+should become searchable in the extended metadata bridge. Configured fields are
+indexed into dedicated `meta.<alias>` search fields, so both normal keyword
+search and fielded queries such as `meta.owner:alice` can match them.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -121,7 +123,9 @@ Supported field modes are `keyword`, `text`, `string_array`, and `bool`.
 Paths must start with `meta.` or `columns.*.meta.`, must not target
 `meta.nova`, and sensitive key segments such as `token`, `secret`, `password`,
 `credential`, `private_key`, and `api_key` are rejected during config
-validation.
+validation. At indexing time, Nova keeps values in deterministic path/column
+order and drops any values beyond `extended_meta.max_values_per_field` after
+truncating each retained value to `extended_meta.max_bytes_per_value`.
 
 ### Hybrid Search
 
