@@ -132,6 +132,7 @@ pub(crate) struct ManifestSignature {
     pub modified_ms: u128,
     pub content_hash: String,
     pub prune_fingerprint: String,
+    pub search_index_fingerprint: String,
     pub source_uri: String,
 }
 
@@ -169,6 +170,7 @@ pub(crate) fn manifest_signature(path: &Path, source_uri: &str) -> Result<Manife
         modified_ms,
         content_hash,
         prune_fingerprint: String::new(),
+        search_index_fingerprint: String::new(),
         source_uri: source_uri.to_string(),
     })
 }
