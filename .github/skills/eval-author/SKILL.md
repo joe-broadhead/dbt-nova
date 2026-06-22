@@ -53,7 +53,7 @@ Eval execution is CLI-only. MCP is for discovering ground truth and debugging ex
 8. Set a gate that matches the suite purpose.
 9. Run the full suite with `--telemetry` before checking readiness gates.
 10. Check readiness with `dbt-nova eval gate <suite_name> --json` for high-stakes, launch-readiness, or recurring production suites.
-11. Read `results.json` for machines, `report.md` for humans, and tool traces for agent behavior.
+11. Read `card.md` for PR summaries, `results.json` for machines, `report.md` for assertion details, and tool traces for agent behavior.
 
 ## Design rules
 
@@ -73,6 +73,7 @@ Eval execution is CLI-only. MCP is for discovering ground truth and debugging ex
 When handing off an eval suite or eval fix, include:
 - suite purpose and target persona
 - manifest source assumption
+- declared manifest scope and known gaps
 - bridge cases and what each proves
 - agent cases and what each proves
 - gate threshold and intended run cadence

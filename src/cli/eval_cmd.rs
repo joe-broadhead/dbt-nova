@@ -40,6 +40,12 @@ struct EvalSuite {
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
+    purpose: Option<String>,
+    #[serde(default)]
+    manifest_scope: Option<String>,
+    #[serde(default)]
+    known_gaps: Vec<String>,
+    #[serde(default)]
     gate: Option<EvalGateConfig>,
     #[serde(default)]
     defaults: EvalDefaults,
@@ -243,6 +249,7 @@ struct EvalReport {
     version: u32,
     mode: &'static str,
     output_dir: String,
+    eval_card: EvalCard,
     assertion_count: usize,
     pass_count: usize,
     fail_count: usize,
@@ -251,6 +258,80 @@ struct EvalReport {
     fail_under: f64,
     gate_status: &'static str,
     cases: Vec<EvalCaseReport>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EvalCard {
+    schema_version: &'static str,
+    suite_name: String,
+    version: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    suite_path: Option<String>,
+    purpose: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    persona: Option<String>,
+    manifest_scope: EvalCardManifestScope,
+    mode: &'static str,
+    bridge_case_count: usize,
+    agent_case_count: usize,
+    run_case_count: usize,
+    output_dir: String,
+    assertion_count: usize,
+    pass_count: usize,
+    fail_count: usize,
+    error_count: usize,
+    pass_rate: f64,
+    fail_under: f64,
+    run_status: &'static str,
+    gate: EvalCardGate,
+    telemetry: EvalCardTelemetry,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<EvalCardProvider>,
+    known_gaps: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EvalCardManifestScope {
+    declared: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    manifest_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    manifest_source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EvalCardGate {
+    status: String,
+    source: &'static str,
+    configured: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    threshold: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pass_rate: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total_evals: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failed_evals: Option<usize>,
+    message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EvalCardTelemetry {
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    timestamp: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    run_id: Option<String>,
+    row_count: usize,
+    message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct EvalCardProvider {
+    provider: String,
+    command_preset: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -359,6 +440,21 @@ struct EvalHistoryPayload {
     row_count: usize,
     rows: Vec<JsonValue>,
     safety_policy: EvalMcpSafetyPolicy,
+}
+
+#[derive(Debug, Clone, Default)]
+struct EvalCardRunContext {
+    suite_path: Option<String>,
+    manifest_hash: Option<String>,
+    manifest_source: Option<String>,
+    telemetry_requested: bool,
+    provider: Option<EvalCardProvider>,
+}
+
+#[derive(Debug, Clone)]
+struct EvalCardTelemetryEvidence {
+    telemetry: EvalCardTelemetry,
+    gate: EvalCardGate,
 }
 
 const MCP_ENABLE_EVAL_RUN_ENV: &str = "DBT_NOVA_MCP_ENABLE_EVAL_RUN";
@@ -739,14 +835,13 @@ async fn execute_bridge_eval(
     for case in selected_cases {
         cases.push(evaluate_bridge_case(case, &suite, search).await);
     }
-    let report = build_report(
+    let mut report = build_report(
         &suite,
         "bridge",
         output_dir.display().to_string(),
         fail_under.unwrap_or(DEFAULT_FAIL_UNDER),
         cases,
     );
-    write_report_artifacts(&output_dir, &report, suite_path).map_err(|error| error.error)?;
     if telemetry {
         write_eval_telemetry(
             &report,
@@ -762,6 +857,17 @@ async fn execute_bridge_eval(
         )
         .map_err(|error| error.error)?;
     }
+    refresh_eval_card(
+        &mut report,
+        &suite,
+        &EvalCardRunContext {
+            suite_path: Some(suite_path.to_string()),
+            manifest_hash: manifest_hash.map(str::to_string),
+            telemetry_requested: telemetry,
+            ..EvalCardRunContext::default()
+        },
+    );
+    write_report_artifacts(&output_dir, &report, suite_path).map_err(|error| error.error)?;
     Ok(report)
 }
 
@@ -785,14 +891,13 @@ async fn execute_agent_eval_from_args(args: &EvalAgentRunArgs) -> crate::error::
     for case in selected_cases {
         cases.push(run_agent_case(case, args, &output_dir).await);
     }
-    let report = build_report(
+    let mut report = build_report(
         &suite,
         "agent",
         output_dir.display().to_string(),
         args.fail_under.unwrap_or(DEFAULT_FAIL_UNDER),
         cases,
     );
-    write_report_artifacts(&output_dir, &report, &args.suite).map_err(|error| error.error)?;
     let elapsed = started.elapsed();
     if args.telemetry {
         write_eval_telemetry(
@@ -812,6 +917,22 @@ async fn execute_agent_eval_from_args(args: &EvalAgentRunArgs) -> crate::error::
         )
         .map_err(|error| error.error)?;
     }
+    refresh_eval_card(
+        &mut report,
+        &suite,
+        &EvalCardRunContext {
+            suite_path: Some(args.suite.clone()),
+            manifest_source: agent_manifest_source(args),
+            telemetry_requested: args.telemetry,
+            provider: Some(EvalCardProvider {
+                provider: args.provider.clone(),
+                command_preset: agent_provider_command_preset(args).to_string(),
+                model: args.provider_model.clone(),
+            }),
+            ..EvalCardRunContext::default()
+        },
+    );
+    write_report_artifacts(&output_dir, &report, &args.suite).map_err(|error| error.error)?;
     Ok(report)
 }
 
@@ -2222,11 +2343,33 @@ fn build_report(
     } else {
         "fail"
     };
+    let suite_name = suite.name.clone().unwrap_or_else(|| "unnamed".to_string());
+    let summary = EvalReportCardSummary {
+        suite_name: suite_name.clone(),
+        version: suite.version,
+        mode,
+        output_dir: output_dir.clone(),
+        assertion_count,
+        pass_count,
+        fail_count,
+        error_count,
+        pass_rate,
+        fail_under,
+        gate_status,
+        run_case_count: cases.len(),
+    };
+    let eval_card = build_eval_card(
+        suite,
+        &summary,
+        &EvalCardRunContext::default(),
+        eval_card_telemetry_evidence(&summary.suite_name, false),
+    );
     EvalReport {
-        suite_name: suite.name.clone().unwrap_or_else(|| "unnamed".to_string()),
+        suite_name,
         version: suite.version,
         mode,
         output_dir,
+        eval_card,
         assertion_count,
         pass_count,
         fail_count,
@@ -2236,6 +2379,239 @@ fn build_report(
         gate_status,
         cases,
     }
+}
+
+#[derive(Debug)]
+struct EvalReportCardSummary {
+    suite_name: String,
+    version: u32,
+    mode: &'static str,
+    output_dir: String,
+    assertion_count: usize,
+    pass_count: usize,
+    fail_count: usize,
+    error_count: usize,
+    pass_rate: f64,
+    fail_under: f64,
+    gate_status: &'static str,
+    run_case_count: usize,
+}
+
+fn refresh_eval_card(report: &mut EvalReport, suite: &EvalSuite, context: &EvalCardRunContext) {
+    let summary = EvalReportCardSummary::from_report(report);
+    report.eval_card = build_eval_card(
+        suite,
+        &summary,
+        context,
+        eval_card_telemetry_evidence(&report.suite_name, context.telemetry_requested),
+    );
+}
+
+fn build_eval_card(
+    suite: &EvalSuite,
+    summary: &EvalReportCardSummary,
+    context: &EvalCardRunContext,
+    evidence: EvalCardTelemetryEvidence,
+) -> EvalCard {
+    EvalCard {
+        schema_version: "eval_card.v1",
+        suite_name: summary.suite_name.clone(),
+        version: summary.version,
+        suite_path: context.suite_path.clone(),
+        purpose: suite
+            .purpose
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map_or_else(|| default_eval_card_purpose(summary.mode), str::to_string),
+        persona: suite
+            .defaults
+            .persona
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        manifest_scope: EvalCardManifestScope {
+            declared: suite
+                .manifest_scope
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("not declared")
+                .to_string(),
+            manifest_hash: context.manifest_hash.clone(),
+            manifest_source: context.manifest_source.clone(),
+        },
+        mode: summary.mode,
+        bridge_case_count: suite.cases.len(),
+        agent_case_count: suite.agent_cases.len(),
+        run_case_count: summary.run_case_count,
+        output_dir: summary.output_dir.clone(),
+        assertion_count: summary.assertion_count,
+        pass_count: summary.pass_count,
+        fail_count: summary.fail_count,
+        error_count: summary.error_count,
+        pass_rate: summary.pass_rate,
+        fail_under: summary.fail_under,
+        run_status: summary.gate_status,
+        gate: evidence.gate,
+        telemetry: evidence.telemetry,
+        provider: context.provider.clone(),
+        known_gaps: suite
+            .known_gaps
+            .iter()
+            .map(|gap| gap.trim())
+            .filter(|gap| !gap.is_empty())
+            .map(str::to_string)
+            .collect(),
+    }
+}
+
+fn eval_card_telemetry_evidence(
+    suite_name: &str,
+    telemetry_requested: bool,
+) -> EvalCardTelemetryEvidence {
+    match read_telemetry_rows_for_suite(suite_name) {
+        Ok(rows) if rows.is_empty() => missing_eval_card_telemetry(telemetry_requested),
+        Ok(rows) => {
+            let latest = latest_telemetry_rows(&rows);
+            let first = latest.first().copied();
+            let timestamp = first
+                .and_then(|row| row.get("timestamp"))
+                .and_then(JsonValue::as_str)
+                .map(str::to_string);
+            let run_id = first
+                .and_then(|row| row.get("run_id"))
+                .and_then(JsonValue::as_str)
+                .map(str::to_string);
+            let telemetry = EvalCardTelemetry {
+                status: "latest".to_string(),
+                timestamp,
+                run_id,
+                row_count: latest.len(),
+                message: format!(
+                    "latest telemetry includes {} assertion row(s) for suite '{suite_name}'",
+                    latest.len()
+                ),
+            };
+            let gate = build_eval_gate_report(suite_name, &rows).map_or_else(
+                |error| EvalCardGate {
+                    status: "unavailable".to_string(),
+                    source: "telemetry",
+                    configured: false,
+                    threshold: None,
+                    pass_rate: None,
+                    total_evals: Some(latest.len()),
+                    failed_evals: None,
+                    message: format!("eval gate could not be derived from telemetry: {error}"),
+                },
+                |report| EvalCardGate::from_report(&report),
+            );
+            EvalCardTelemetryEvidence { telemetry, gate }
+        }
+        Err(error) => EvalCardTelemetryEvidence {
+            telemetry: EvalCardTelemetry {
+                status: "unavailable".to_string(),
+                timestamp: None,
+                run_id: None,
+                row_count: 0,
+                message: format!("eval telemetry could not be read: {error}"),
+            },
+            gate: EvalCardGate {
+                status: "unavailable".to_string(),
+                source: "telemetry",
+                configured: false,
+                threshold: None,
+                pass_rate: None,
+                total_evals: None,
+                failed_evals: None,
+                message: format!(
+                    "eval gate could not be derived because telemetry is unreadable: {error}"
+                ),
+            },
+        },
+    }
+}
+
+fn missing_eval_card_telemetry(telemetry_requested: bool) -> EvalCardTelemetryEvidence {
+    let message = if telemetry_requested {
+        "telemetry was requested, but no telemetry rows were found for this suite"
+    } else {
+        "no telemetry found for this suite; run with --telemetry to populate latest gate evidence"
+    };
+    EvalCardTelemetryEvidence {
+        telemetry: EvalCardTelemetry {
+            status: "missing".to_string(),
+            timestamp: None,
+            run_id: None,
+            row_count: 0,
+            message: message.to_string(),
+        },
+        gate: EvalCardGate {
+            status: "missing_telemetry".to_string(),
+            source: "telemetry",
+            configured: false,
+            threshold: None,
+            pass_rate: None,
+            total_evals: Some(0),
+            failed_evals: None,
+            message: "gate status unavailable until telemetry exists for the suite".to_string(),
+        },
+    }
+}
+
+fn default_eval_card_purpose(mode: &str) -> String {
+    match mode {
+        "agent" => "Summarizes provider-backed agent tool-use evidence for this eval suite.",
+        _ => "Summarizes deterministic Nova bridge eval evidence for this eval suite.",
+    }
+    .to_string()
+}
+
+impl EvalReportCardSummary {
+    fn from_report(report: &EvalReport) -> Self {
+        Self {
+            suite_name: report.suite_name.clone(),
+            version: report.version,
+            mode: report.mode,
+            output_dir: report.output_dir.clone(),
+            assertion_count: report.assertion_count,
+            pass_count: report.pass_count,
+            fail_count: report.fail_count,
+            error_count: report.error_count,
+            pass_rate: report.pass_rate,
+            fail_under: report.fail_under,
+            gate_status: report.gate_status,
+            run_case_count: report.cases.len(),
+        }
+    }
+}
+
+impl EvalCardGate {
+    fn from_report(report: &EvalGateReport) -> Self {
+        let status = if report.gate_configured {
+            if report.allowed { "pass" } else { "fail" }
+        } else {
+            "not_configured"
+        };
+        Self {
+            status: status.to_string(),
+            source: "telemetry",
+            configured: report.gate_configured,
+            threshold: report.threshold,
+            pass_rate: Some(report.pass_rate),
+            total_evals: Some(report.total_evals),
+            failed_evals: Some(report.failed_evals),
+            message: report.message.clone(),
+        }
+    }
+}
+
+fn agent_manifest_source(args: &EvalAgentRunArgs) -> Option<String> {
+    args.manifest_path
+        .as_deref()
+        .or(args.manifest_uri.as_deref())
+        .map(crate::utils::sanitize_uri)
 }
 
 fn write_report_artifacts(
@@ -2250,6 +2626,11 @@ fn write_report_artifacts(
         .map_err(|error| server_error(error.to_string()))?;
     fs::write(output_dir.join("results.tsv"), render_tsv(report))
         .map_err(|error| server_error(error.to_string()))?;
+    fs::write(
+        output_dir.join("card.md"),
+        render_eval_card_markdown(&report.eval_card),
+    )
+    .map_err(|error| server_error(error.to_string()))?;
     fs::write(output_dir.join("report.md"), render_markdown(report))
         .map_err(|error| server_error(error.to_string()))?;
     if let Err(error) = fs::copy(suite_path, output_dir.join("suite.yml")) {
@@ -2957,18 +3338,10 @@ fn render_tsv(report: &EvalReport) -> String {
 }
 
 fn render_markdown(report: &EvalReport) -> String {
-    let mut out = format!(
-        "# Nova Eval Report\n\n- Suite: `{}`\n- Mode: `{}`\n- Gate: `{}`\n- Pass rate: `{:.1}%`\n- Assertions: {} pass, {} fail, {} error\n\n",
-        report.suite_name,
-        report.mode,
-        report.gate_status,
-        report.pass_rate * 100.0,
-        report.pass_count,
-        report.fail_count,
-        report.error_count
-    );
+    let mut out = render_eval_card_markdown(&report.eval_card);
+    out.push_str("\n## Assertion Details\n\n");
     for case in &report.cases {
-        let _ = writeln!(out, "## {}\n", case.id);
+        let _ = writeln!(out, "### {}\n", case.id);
         for assertion in &case.assertions {
             let _ = writeln!(
                 out,
@@ -2977,6 +3350,75 @@ fn render_markdown(report: &EvalReport) -> String {
             );
         }
         out.push('\n');
+    }
+    out
+}
+
+fn render_eval_card_markdown(card: &EvalCard) -> String {
+    let mut out = format!(
+        "# Nova Eval Card\n\n- Suite: `{}`\n- Version: `{}`\n- Mode: `{}`\n- Purpose: {}\n- Run status: `{}`\n- Pass rate: `{:.1}%` ({} pass, {} fail, {} error / {} assertions)\n- Gate status: `{}`\n- Telemetry: `{}`\n- Output: `{}`\n",
+        card.suite_name,
+        card.version,
+        card.mode,
+        card.purpose,
+        card.run_status,
+        card.pass_rate * 100.0,
+        card.pass_count,
+        card.fail_count,
+        card.error_count,
+        card.assertion_count,
+        card.gate.status,
+        card.telemetry.status,
+        card.output_dir
+    );
+    if let Some(persona) = card.persona.as_ref() {
+        let _ = writeln!(out, "- Persona: `{persona}`");
+    }
+    if let Some(path) = card.suite_path.as_ref() {
+        let _ = writeln!(out, "- Suite path: `{path}`");
+    }
+    let _ = writeln!(
+        out,
+        "- Cases: {} bridge, {} agent, {} run",
+        card.bridge_case_count, card.agent_case_count, card.run_case_count
+    );
+    let _ = writeln!(out, "- Manifest scope: {}", card.manifest_scope.declared);
+    if let Some(source) = card.manifest_scope.manifest_source.as_ref() {
+        let _ = writeln!(out, "- Manifest source: `{source}`");
+    }
+    if let Some(hash) = card.manifest_scope.manifest_hash.as_ref() {
+        let _ = writeln!(out, "- Manifest hash: `{hash}`");
+    }
+    if let Some(threshold) = card.gate.threshold {
+        let _ = writeln!(out, "- Gate threshold: `{threshold:.3}`");
+    }
+    let _ = writeln!(out, "- Gate message: {}", card.gate.message);
+    if let Some(timestamp) = card.telemetry.timestamp.as_ref() {
+        let _ = writeln!(out, "- Telemetry timestamp: `{timestamp}`");
+    }
+    if let Some(run_id) = card.telemetry.run_id.as_ref() {
+        let _ = writeln!(out, "- Telemetry run: `{run_id}`");
+    }
+    let _ = writeln!(out, "- Telemetry rows: {}", card.telemetry.row_count);
+    let _ = writeln!(out, "- Telemetry message: {}", card.telemetry.message);
+    if let Some(provider) = card.provider.as_ref() {
+        let _ = writeln!(out, "- Provider: `{}`", provider.provider);
+        let _ = writeln!(
+            out,
+            "- Provider command preset: `{}`",
+            provider.command_preset
+        );
+        if let Some(model) = provider.model.as_ref() {
+            let _ = writeln!(out, "- Provider model: `{model}`");
+        }
+    }
+    out.push_str("- Known gaps:\n");
+    if card.known_gaps.is_empty() {
+        out.push_str("  - None declared.\n");
+    } else {
+        for gap in &card.known_gaps {
+            let _ = writeln!(out, "  - {gap}");
+        }
     }
     out
 }

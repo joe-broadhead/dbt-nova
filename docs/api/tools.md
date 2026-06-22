@@ -827,6 +827,11 @@ This local execution capability is disabled unless
 `DBT_NOVA_MCP_ENABLE_EVAL_RUN=1` is set. Unlike the CLI, MCP `run_eval` uses the
 manifest already loaded by the server.
 
+The response `data` is the same eval report contract written to CLI
+`results.json` and includes `eval_card` (`eval_card.v1`) with suite purpose,
+scope, case counts, pass rate, gate evidence, telemetry status, and known gaps.
+CLI runs also write `card.md` and prepend the same card to `report.md`.
+
 ```json
 {"name":"run_eval","arguments":{"suite":"evals/analyst-smoke.yml","telemetry":true,"fail_under":1.0}}
 ```
@@ -865,6 +870,9 @@ Optional:
 This provider execution capability is disabled unless
 `DBT_NOVA_MCP_ENABLE_AGENT_EVAL=1` is set. Custom provider commands and
 arguments also require `DBT_NOVA_MCP_ENABLE_CUSTOM_AGENT_PROVIDER=1`.
+
+The response `data.eval_card` includes provider metadata when available,
+including provider preset, command preset, and provider model.
 
 ```json
 {"name":"run_agent_eval","arguments":{"suite":"evals/analyst-smoke.yml","provider":"opencode","case_ids":["metric_lookup_flow"]}}

@@ -48,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dbt-nova eval gate <NAME> --json` reads the latest full-suite telemetry and
   reports allowed/blocked status, pass rate, and failed case/assertion ids,
   blocking stale suite-file telemetry before allowing configured gates.
+- Eval bridge and agent runs now emit an `eval_card.v1` summary in
+  `results.json`, write a PR-ready `card.md`, and prepend the same card to
+  `report.md`, including suite purpose, scope, case counts, pass rate, gate
+  evidence, telemetry status, provider metadata, and known gaps.
 - Added `dbt-nova trace inspect`, `trace summarize`, and `trace redact`, plus
   MCP/CLI `tool call` parity through `inspect_tool_trace`,
   `summarize_tool_trace`, and `redact_tool_trace`, for inspecting sanitized

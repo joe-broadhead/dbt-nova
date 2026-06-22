@@ -1,5 +1,9 @@
 version: 1
 name: nova-analyst-smoke
+purpose: Prove that analyst discovery can find the canonical governed metric, model, and context for the target workflow.
+manifest_scope: target/manifest.json for the analytics project
+known_gaps:
+  - Replace this with any workflow, domain, freshness, or provider behavior not covered by the suite.
 defaults:
   persona: analyst
   top_k: 5

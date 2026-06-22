@@ -1,5 +1,10 @@
 version: 1
 name: agent-tokenomics-bridge
+purpose: Prove that compact Nova tool responses preserve enough ecommerce tokenomics evidence for deterministic bridge evals.
+manifest_scope: tests/fixtures/tokenomics_manifest.json synthetic ecommerce tokenomics manifest
+known_gaps:
+  - Does not run a provider-backed agent.
+  - Does not execute live warehouse SQL.
 gate:
   threshold: 1.0
 defaults:

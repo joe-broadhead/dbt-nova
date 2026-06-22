@@ -30,6 +30,10 @@ The suite format is YAML or JSON. A minimal bridge suite looks like this:
 ```yaml
 version: 1
 name: analyst-smoke
+purpose: Prove that analyst discovery can find the canonical orders model and context.
+manifest_scope: target/manifest.json for the analytics project
+known_gaps:
+  - Does not execute warehouse SQL.
 defaults:
   persona: analyst
   top_k: 5
@@ -105,8 +109,18 @@ Outputs are written to `.nova/eval-runs/<timestamp>-<suite>-bridge/` by default:
 
 - `results.json` for machine-readable CI output.
 - `results.tsv` for spreadsheet review.
+- `card.md` for a compact PR-ready eval card.
 - `report.md` for human review.
 - `suite.yml` as the exact suite copy used for the run.
+
+`results.json` includes an `eval_card` object with schema
+`eval_card.v1`. The card summarizes the suite name/version, optional suite
+`purpose`, default persona, declared `manifest_scope`, bridge and agent case
+counts, latest run status, pass rate, configured gate evidence when telemetry is
+available, telemetry timestamp or explicit missing-telemetry status, provider
+metadata for agent runs, and declared `known_gaps`. `report.md` starts with the
+same card before listing assertion-level details, so `card.md` can be pasted
+directly into PR descriptions.
 
 Bridge assertions currently support:
 
