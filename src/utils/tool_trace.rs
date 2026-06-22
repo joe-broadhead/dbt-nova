@@ -1038,7 +1038,28 @@ fn summarize_params(params: &Value) -> Value {
             summary.insert(key.to_string(), value);
         }
     }
+    insert_statement_structure_summary(&mut summary, map.get("statement").and_then(Value::as_str));
     Value::Object(summary)
+}
+
+fn insert_statement_structure_summary(
+    summary: &mut serde_json::Map<String, Value>,
+    statement: Option<&str>,
+) {
+    let Some(statement) = statement.map(str::trim).filter(|value| !value.is_empty()) else {
+        return;
+    };
+    match crate::utils::sql_structure::sql_structure_summary_json(statement) {
+        Ok(structure) => {
+            summary.insert("statement_structure".to_string(), structure);
+        }
+        Err(_error) => {
+            summary.insert(
+                "statement_structure_error".to_string(),
+                Value::String("failed to parse SQL structure summary".to_string()),
+            );
+        }
+    }
 }
 
 fn summarize_safe_value(value: &Value) -> Option<Value> {
@@ -1257,6 +1278,26 @@ mod tests {
             "resource_types": ["model", {"token": "secret"}]
         }));
         assert_eq!(summary["resource_types"], json!(["model"]));
+    }
+
+    #[test]
+    fn summarize_params_records_statement_structure_without_raw_sql() {
+        let summary = summarize_params(&json!({
+            "statement": "select country from analytics.orders where order_date = '2026-03-01'",
+            "row_limit": 10
+        }));
+
+        assert_eq!(summary["row_limit"], 10);
+        assert_eq!(
+            summary["statement_structure"]["tables"],
+            json!(["analytics.orders"])
+        );
+        assert_eq!(
+            summary["statement_structure"]["filters"],
+            json!(["order_date = ?"])
+        );
+        assert!(summary.get("statement").is_none());
+        assert!(!summary.to_string().contains("2026-03-01"));
     }
 
     #[test]

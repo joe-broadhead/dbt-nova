@@ -4,6 +4,7 @@ pub mod glob;
 pub mod id;
 pub mod metrics;
 pub mod persona;
+pub mod sql_structure;
 pub mod storage;
 pub mod string;
 pub mod tool_trace;

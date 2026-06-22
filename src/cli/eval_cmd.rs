@@ -25,6 +25,10 @@ use crate::params::{
     RunEvalParams, ValidateEvalSuiteParams,
 };
 use crate::responses::SuccessResponse;
+use crate::utils::sql_structure::{
+    SqlStructureSignature, compare_sql_structure, compare_sql_structure_signatures,
+    sql_structure_signature,
+};
 use crate::utils::tool_trace::{normalize_tool_trace_indices, read_tool_trace_file};
 
 const DEFAULT_TOP_K: usize = 5;
@@ -247,6 +251,10 @@ enum EvalAssertion {
         #[serde(default)]
         must_not_contain_paths: Vec<String>,
     },
+    SqlStructure {
+        actual_sql: String,
+        expected_sql: String,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -273,6 +281,8 @@ struct AgentExpected {
     selected_entity_ranks: Vec<AgentEntityRank>,
     #[serde(default)]
     called_with: Vec<AgentCalledWith>,
+    #[serde(default)]
+    sql_structures: Vec<AgentSqlStructureExpected>,
     #[serde(default)]
     final_answer: Option<FinalAnswerExpected>,
     #[serde(default)]
@@ -308,6 +318,13 @@ struct AgentCalledWith {
     params: BTreeMap<String, JsonValue>,
     #[serde(default)]
     contains: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentSqlStructureExpected {
+    #[serde(default = "default_sql_structure_tool")]
+    tool: String,
+    expected_sql: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1231,6 +1248,10 @@ async fn evaluate_bridge_assertion(
                 AssertionResult::error(format!("tool_response_budget:{tool}"), error.to_string())
             }
         },
+        EvalAssertion::SqlStructure {
+            actual_sql,
+            expected_sql,
+        } => sql_structure_assertion("sql_structure", actual_sql, expected_sql),
     }
 }
 
@@ -1455,6 +1476,9 @@ fn score_agent_expectations(
     for called_with in &expected.called_with {
         assertions.push(called_with_assertion(trace, called_with));
     }
+    for sql_structure in &expected.sql_structures {
+        assertions.push(agent_sql_structure_assertion(trace, sql_structure));
+    }
     if let Some(max_tool_calls) = expected.max_tool_calls {
         assertions.push(max_tool_calls_assertion(trace, max_tool_calls));
     }
@@ -1476,6 +1500,122 @@ fn score_agent_expectations(
         assertions.extend(score_final_answer(final_answer, final_answer_text));
     }
     assertions
+}
+
+fn sql_structure_assertion(
+    name: impl Into<String>,
+    actual_sql: &str,
+    expected_sql: &str,
+) -> AssertionResult {
+    let name = name.into();
+    match compare_sql_structure(actual_sql, expected_sql) {
+        Ok(comparison) => sql_structure_comparison_assertion(name, &comparison),
+        Err(error) => AssertionResult::error(name, error),
+    }
+}
+
+fn sql_structure_comparison_assertion(
+    name: impl Into<String>,
+    comparison: &crate::utils::sql_structure::SqlStructureComparison,
+) -> AssertionResult {
+    let clauses = comparison.diff.changed_clauses();
+    if comparison.matches {
+        AssertionResult::pass(
+            name,
+            "SQL structure matched expected SELECT, FROM/JOIN, WHERE, and GROUP BY clauses",
+            sql_structure_evidence(comparison),
+        )
+    } else {
+        let clause_text = if clauses.is_empty() {
+            "unknown".to_string()
+        } else {
+            clauses.join(", ")
+        };
+        AssertionResult::fail(
+            name,
+            format!("SQL structure differed in clauses: {clause_text}"),
+            sql_structure_evidence(comparison),
+        )
+    }
+}
+
+fn sql_structure_evidence(
+    comparison: &crate::utils::sql_structure::SqlStructureComparison,
+) -> JsonValue {
+    json!({
+        "grade_mode": "query_structure",
+        "changed_clauses": comparison.diff.changed_clauses(),
+        "expected": &comparison.expected,
+        "actual": &comparison.actual,
+        "diff": &comparison.diff,
+    })
+}
+
+fn agent_sql_structure_assertion(
+    trace: &[JsonValue],
+    expected: &AgentSqlStructureExpected,
+) -> AssertionResult {
+    let name = format!("sql_structure:{}", expected.tool);
+    let expected_signature = match sql_structure_signature(&expected.expected_sql) {
+        Ok(signature) => signature,
+        Err(error) => return AssertionResult::error(name, error),
+    };
+    let matching_rows = trace
+        .iter()
+        .filter(|row| row.get("tool").and_then(JsonValue::as_str) == Some(expected.tool.as_str()))
+        .collect::<Vec<_>>();
+    let mut first_comparison = None;
+    let mut observed_errors = Vec::new();
+    let mut observed_structure_count = 0usize;
+
+    for row in &matching_rows {
+        let Some(summary) = row.get("params_summary") else {
+            continue;
+        };
+        if let Some(error) = summary
+            .get("statement_structure_error")
+            .and_then(JsonValue::as_str)
+        {
+            observed_errors.push(error.to_string());
+        }
+        let Some(structure) = summary.get("statement_structure") else {
+            continue;
+        };
+        observed_structure_count += 1;
+        let actual_signature =
+            match serde_json::from_value::<SqlStructureSignature>(structure.clone()) {
+                Ok(signature) => signature,
+                Err(error) => {
+                    observed_errors.push(format!("invalid statement_structure summary: {error}"));
+                    continue;
+                }
+            };
+        let comparison =
+            compare_sql_structure_signatures(actual_signature, expected_signature.clone());
+        if comparison.matches {
+            return sql_structure_comparison_assertion(name, &comparison);
+        }
+        if first_comparison.is_none() {
+            first_comparison = Some(comparison);
+        }
+    }
+
+    if let Some(comparison) = first_comparison {
+        return sql_structure_comparison_assertion(name, &comparison);
+    }
+
+    AssertionResult::fail(
+        name,
+        "no observed tool call included a matching SQL structure summary",
+        json!({
+            "grade_mode": "query_structure",
+            "tool": expected.tool,
+            "matching_tool_calls": matching_rows.len(),
+            "statement_structure_count": observed_structure_count,
+            "statement_structure_errors": observed_errors,
+            "observed": observed_params_for_tool(trace, &expected.tool),
+        }),
+    )
 }
 
 fn max_tool_calls_assertion(trace: &[JsonValue], max_tool_calls: usize) -> AssertionResult {
@@ -3112,7 +3252,7 @@ fn write_eval_telemetry(
             row.insert("status".to_string(), json!(assertion.status));
             row.insert(
                 "grade_mode".to_string(),
-                json!(telemetry_grade_mode(report.mode)),
+                json!(telemetry_grade_mode(report.mode, &assertion.name)),
             );
             row.insert("duration_ms".to_string(), json!(context.duration_ms));
             row.insert("output_dir".to_string(), json!(&report.output_dir));
@@ -3278,7 +3418,10 @@ fn validate_telemetry_suite_name(
     Ok(())
 }
 
-fn telemetry_grade_mode(mode: &str) -> &'static str {
+fn telemetry_grade_mode(mode: &str, assertion_name: &str) -> &'static str {
+    if assertion_type(assertion_name) == "sql_structure" {
+        return "query_structure";
+    }
     match mode {
         "agent" => "provider_trace",
         _ => "deterministic",
@@ -3461,10 +3604,60 @@ fn render_markdown(report: &EvalReport) -> String {
                 "- `{}` `{}`: {}",
                 assertion.status, assertion.name, assertion.message
             );
+            if assertion_type(&assertion.name) == "sql_structure" {
+                for line in sql_structure_markdown_evidence(&assertion.evidence) {
+                    let _ = writeln!(out, "  - {line}");
+                }
+            }
         }
         out.push('\n');
     }
     out
+}
+
+fn sql_structure_markdown_evidence(evidence: &JsonValue) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(changed) = evidence
+        .get("changed_clauses")
+        .and_then(JsonValue::as_array)
+        .map(|values| json_string_values(values))
+        .filter(|values| !values.is_empty())
+    {
+        lines.push(format!("Changed clauses: {}", changed.join(", ")));
+    }
+    let Some(diff) = evidence.get("diff") else {
+        return lines;
+    };
+    for (label, key) in [
+        ("Missing SELECT", "missing_select"),
+        ("Unexpected SELECT", "unexpected_select"),
+        ("Missing FROM", "missing_tables"),
+        ("Unexpected FROM", "unexpected_tables"),
+        ("Missing JOIN", "missing_joins"),
+        ("Unexpected JOIN", "unexpected_joins"),
+        ("Missing WHERE", "missing_filters"),
+        ("Unexpected WHERE", "unexpected_filters"),
+        ("Missing GROUP BY", "missing_group_by"),
+        ("Unexpected GROUP BY", "unexpected_group_by"),
+    ] {
+        if let Some(values) = diff
+            .get(key)
+            .and_then(JsonValue::as_array)
+            .map(|values| json_string_values(values))
+            .filter(|values| !values.is_empty())
+        {
+            lines.push(format!("{label}: {}", values.join("; ")));
+        }
+    }
+    lines
+}
+
+fn json_string_values(values: &[JsonValue]) -> Vec<String> {
+    values
+        .iter()
+        .filter_map(JsonValue::as_str)
+        .map(ToString::to_string)
+        .collect()
 }
 
 fn render_eval_card_markdown(card: &EvalCard) -> String {
@@ -3669,6 +3862,7 @@ impl AgentExpected {
             || !self.selected_entities.is_empty()
             || !self.selected_entity_ranks.is_empty()
             || !self.called_with.is_empty()
+            || !self.sql_structures.is_empty()
             || self.max_tool_calls.is_some()
             || self.max_distinct_tools.is_some()
             || self.max_total_response_bytes.is_some()
@@ -4210,9 +4404,29 @@ fn validate_assertion(assertion: &EvalAssertion, case_id: &str) -> crate::error:
                 )));
             }
         }
+        EvalAssertion::SqlStructure {
+            actual_sql,
+            expected_sql,
+        } => {
+            validate_sql_structure_field(actual_sql, case_id, "actual_sql")?;
+            validate_sql_structure_field(expected_sql, case_id, "expected_sql")?;
+        }
         _ => {}
     }
     Ok(())
+}
+
+fn validate_sql_structure_field(sql: &str, case_id: &str, field: &str) -> crate::error::Result<()> {
+    if sql.trim().is_empty() {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "sql_structure assertion in case '{case_id}' must include non-empty {field}"
+        )));
+    }
+    sql_structure_signature(sql).map(|_| ()).map_err(|error| {
+        DbtNovaError::InvalidParams(format!(
+            "sql_structure assertion in case '{case_id}' has invalid {field}: {error}"
+        ))
+    })
 }
 
 fn validate_agent_expected(expected: &AgentExpected, case_id: &str) -> crate::error::Result<()> {
@@ -4271,6 +4485,23 @@ fn validate_agent_expected(expected: &AgentExpected, case_id: &str) -> crate::er
                 "called_with params expectations in agent case '{case_id}' must use scalar values or arrays of scalar values"
             )));
         }
+    }
+    for sql_structure in &expected.sql_structures {
+        if sql_structure.tool.trim().is_empty() {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "sql_structures expectations in agent case '{case_id}' must include non-empty tool values"
+            )));
+        }
+        if sql_structure.expected_sql.trim().is_empty() {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "sql_structures expectations in agent case '{case_id}' must include non-empty expected_sql"
+            )));
+        }
+        sql_structure_signature(&sql_structure.expected_sql).map_err(|error| {
+            DbtNovaError::InvalidParams(format!(
+                "sql_structures expectation in agent case '{case_id}' has invalid expected_sql: {error}"
+            ))
+        })?;
     }
     if expected.max_tool_calls == Some(0)
         || expected.max_distinct_tools == Some(0)
@@ -4488,6 +4719,10 @@ agent_cases:
 
 fn empty_object() -> JsonValue {
     json!({})
+}
+
+fn default_sql_structure_tool() -> String {
+    "execute_sql".to_string()
 }
 
 fn default_top_k() -> usize {

@@ -194,6 +194,7 @@ Bridge assertions currently support:
 - `lineage_contains`
 - `tool_success`
 - `tool_response_budget`
+- `sql_structure`
 
 `context_has` checks that field paths are present and non-null.
 `context_field_equals` compares a field path to an exact JSON value.
@@ -235,6 +236,62 @@ assertions:
       - parent_groups.1
       - data.0.explain
 ```
+
+## Query Structure Grading
+
+Use query structure grading when the important question is whether SQL used the
+right logic, not whether a live warehouse returned a stable value. This is
+especially useful for date-bounded evals where source rows can change over time.
+Use value assertions or normal tool assertions when the expected output is
+deterministic and should match exactly.
+
+Bridge suites can compare two SQL strings directly with `sql_structure`:
+
+```yaml
+assertions:
+  - type: sql_structure
+    actual_sql: |
+      select country, sum(amount) as revenue
+      from analytics.orders
+      where order_date between '2026-03-01' and '2026-03-31'
+        and country = 'US'
+      group by country
+    expected_sql: |
+      select country, sum(amount) as revenue
+      from analytics.orders
+      where order_date between '2024-01-01' and '2024-01-31'
+        and country = 'GB'
+      group by country
+```
+
+Agent suites can grade generated SQL from an observed `execute_sql` call:
+
+```yaml
+agent_cases:
+  - id: revenue_sql_shape
+    task: Query March revenue by country.
+    expected:
+      must_call:
+        - execute_sql
+      sql_structures:
+        - expected_sql: |
+            select country, sum(amount) as revenue
+            from analytics.orders
+            where order_date between '2024-01-01' and '2024-01-31'
+              and country = 'GB'
+            group by country
+```
+
+The grader parses SQL and compares referenced tables, joins, selected
+columns/expressions, filters, and groupings. String, date, and numeric literals
+are masked before comparison, so equivalent queries with different dates or
+threshold values can still pass. It does not prove full semantic SQL
+equivalence, optimizer equivalence, or fact-table correctness.
+
+When a comparison fails, the assertion message names the changed clause such as
+`FROM`, `JOIN`, `WHERE`, `SELECT`, or `GROUP BY`. `results.json` includes a
+structured `diff` with missing and unexpected clause entries, and `report.md`
+prints the same diff in compact form.
 
 ## MCP Tool Parity
 
@@ -315,6 +372,9 @@ sanitized parameter values exactly where possible, while `called_with.contains`
 checks case-insensitive substring matches against sanitized parameter summaries.
 `called_with.params` supports only scalar values or arrays of scalar values
 because trace rows intentionally drop nested objects.
+`sql_structures` compares generated SQL from sanitized `execute_sql` trace
+summaries. The trace stores a parsed `statement_structure` with literals masked;
+it does not store the raw SQL statement.
 Budget expectations score the sanitized trace:
 
 - `max_tool_calls` caps total observed Nova calls.
@@ -406,7 +466,10 @@ count, distinct tool count, response bytes, and token counts when a provider
 trace exposes them. When a suite or case declares date anchors, each assertion
 row also includes the effective `snapshot_date`, `date_range_start`,
 `date_range_end`, `date_field`, and nested `date_anchor` object. Telemetry does
-not store raw SQL parameter maps, provider stdout/stderr, or credentials.
+not store raw SQL parameter maps, provider stdout/stderr, or credentials. Query
+structure assertions write `grade_mode=query_structure`; ordinary bridge rows
+write `grade_mode=deterministic`, and ordinary agent rows write
+`grade_mode=provider_trace`.
 
 Use `eval history` for a thin date filter over the JSONL file:
 
@@ -463,6 +526,8 @@ rows for CLI, MCP, and eval tool calls. Rows include:
 - `duration_ms`
 - safe parameter summaries such as `query`, `persona`, `id_or_name`, and
   `resource_types`
+- masked `statement_structure` summaries for `execute_sql` statements when SQL
+  can be parsed
 - `response_bytes`
 - `response_truncated`
 - `result_count`
