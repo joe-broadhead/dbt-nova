@@ -47,6 +47,8 @@ struct EvalSuite {
     known_gaps: Vec<String>,
     #[serde(default)]
     gate: Option<EvalGateConfig>,
+    #[serde(flatten)]
+    date_anchor: DateAnchor,
     #[serde(default)]
     defaults: EvalDefaults,
     #[serde(default)]
@@ -58,6 +60,75 @@ struct EvalSuite {
 #[derive(Debug, Clone, Copy, Deserialize)]
 struct EvalGateConfig {
     threshold: f64,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+struct DateAnchor {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    snapshot_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    date_range_start: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    date_range_end: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    date_field: Option<String>,
+}
+
+impl DateAnchor {
+    fn normalized(&self) -> Option<Self> {
+        let anchor = Self {
+            snapshot_date: normalized_string(self.snapshot_date.as_ref()),
+            date_range_start: normalized_string(self.date_range_start.as_ref()),
+            date_range_end: normalized_string(self.date_range_end.as_ref()),
+            date_field: normalized_string(self.date_field.as_ref()),
+        };
+        (!anchor.is_empty()).then_some(anchor)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.snapshot_date
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+            && self
+                .date_range_start
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            && self
+                .date_range_end
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            && self
+                .date_field
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+    }
+
+    fn prompt_lines(&self) -> Vec<String> {
+        self.markdown_lines()
+            .into_iter()
+            .map(|line| line.replace('`', ""))
+            .collect()
+    }
+
+    fn markdown_lines(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        if let Some(value) = self.snapshot_date.as_deref() {
+            lines.push(format!("snapshot_date: `{value}`"));
+        }
+        match (
+            self.date_range_start.as_deref(),
+            self.date_range_end.as_deref(),
+        ) {
+            (Some(start), Some(end)) => lines.push(format!("date_range: `{start}` to `{end}`")),
+            (Some(start), None) => lines.push(format!("date_range_start: `{start}`")),
+            (None, Some(end)) => lines.push(format!("date_range_end: `{end}`")),
+            (None, None) => {}
+        }
+        if let Some(value) = self.date_field.as_deref() {
+            lines.push(format!("date_field: `{value}`"));
+        }
+        lines
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -75,6 +146,8 @@ struct EvalCase {
     question: Option<String>,
     #[serde(default)]
     persona: Option<String>,
+    #[serde(flatten)]
+    date_anchor: DateAnchor,
     assertions: Vec<EvalAssertion>,
 }
 
@@ -180,6 +253,8 @@ enum EvalAssertion {
 struct AgentCase {
     id: String,
     task: String,
+    #[serde(flatten)]
+    date_anchor: DateAnchor,
     #[serde(default)]
     expected: AgentExpected,
 }
@@ -286,6 +361,8 @@ struct EvalCard {
     gate: EvalCardGate,
     telemetry: EvalCardTelemetry,
     #[serde(skip_serializing_if = "Option::is_none")]
+    date_anchor: Option<DateAnchor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     provider: Option<EvalCardProvider>,
     known_gaps: Vec<String>,
 }
@@ -343,6 +420,8 @@ struct EvalCaseReport {
     fail_count: usize,
     error_count: usize,
     assertions: Vec<AssertionResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    date_anchor: Option<DateAnchor>,
     #[serde(skip_serializing_if = "Option::is_none")]
     artifacts: Option<AgentArtifacts>,
     #[serde(skip)]
@@ -889,7 +968,7 @@ async fn execute_agent_eval_from_args(args: &EvalAgentRunArgs) -> crate::error::
 
     let mut cases = Vec::with_capacity(selected_cases.len());
     for case in selected_cases {
-        cases.push(run_agent_case(case, args, &output_dir).await);
+        cases.push(run_agent_case(case, &suite, args, &output_dir).await);
     }
     let mut report = build_report(
         &suite,
@@ -946,6 +1025,7 @@ async fn evaluate_bridge_case(
         assertions.push(evaluate_bridge_assertion(assertion, case, suite, search).await);
     }
     EvalCaseReport::new(case.id.clone(), case.question.clone(), assertions, None)
+        .with_date_anchor(effective_date_anchor(&suite.date_anchor, &case.date_anchor))
 }
 
 async fn evaluate_bridge_assertion(
@@ -1184,9 +1264,11 @@ async fn call_tool(
 
 async fn run_agent_case(
     case: &AgentCase,
+    suite: &EvalSuite,
     args: &EvalAgentRunArgs,
     output_dir: &Path,
 ) -> EvalCaseReport {
+    let date_anchor = effective_date_anchor(&suite.date_anchor, &case.date_anchor);
     let case_dir = output_dir.join(safe_path_segment(&case.id));
     if let Err(error) = fs::create_dir_all(&case_dir) {
         return EvalCaseReport::new(
@@ -1197,7 +1279,8 @@ async fn run_agent_case(
                 format!("failed to create case artifact directory: {error}"),
             )],
             None,
-        );
+        )
+        .with_date_anchor(date_anchor);
     }
     let trace_path = output_dir
         .join("tool-calls")
@@ -1211,9 +1294,10 @@ async fn run_agent_case(
                 format!("failed to reset tool trace file: {error}"),
             )],
             None,
-        );
+        )
+        .with_date_anchor(date_anchor);
     }
-    let prompt = agent_prompt(case);
+    let prompt = agent_prompt(case, date_anchor.as_ref());
     let invocation = match provider::provider_invocation(args, &prompt, &trace_path) {
         Ok(invocation) => invocation,
         Err(error) => {
@@ -1225,7 +1309,8 @@ async fn run_agent_case(
                     error.to_string(),
                 )],
                 None,
-            );
+            )
+            .with_date_anchor(date_anchor);
         }
     };
 
@@ -1306,6 +1391,7 @@ async fn run_agent_case(
             tool_trace: trace_path.display().to_string(),
         }),
     )
+    .with_date_anchor(date_anchor)
     .with_telemetry(telemetry)
 }
 
@@ -2456,6 +2542,7 @@ fn build_eval_card(
         run_status: summary.gate_status,
         gate: evidence.gate,
         telemetry: evidence.telemetry,
+        date_anchor: suite.date_anchor.normalized(),
         provider: context.provider.clone(),
         known_gaps: suite
             .known_gaps
@@ -3064,6 +3151,9 @@ fn write_eval_telemetry(
                     }
                 }
             }
+            if let Some(date_anchor) = case.date_anchor.as_ref() {
+                insert_date_anchor_telemetry(&mut row, date_anchor);
+            }
             let line = serde_json::to_string(&JsonValue::Object(row))
                 .map_err(|error| server_error(error.to_string()))?;
             file.write_all(line.as_bytes())
@@ -3108,6 +3198,22 @@ fn stable_telemetry_hash(value: &str) -> u64 {
         hash = hash.wrapping_mul(0x0000_0001_0000_01b3);
     }
     hash
+}
+
+fn insert_date_anchor_telemetry(row: &mut serde_json::Map<String, JsonValue>, anchor: &DateAnchor) {
+    if let Some(value) = anchor.snapshot_date.as_ref() {
+        row.insert("snapshot_date".to_string(), json!(value));
+    }
+    if let Some(value) = anchor.date_range_start.as_ref() {
+        row.insert("date_range_start".to_string(), json!(value));
+    }
+    if let Some(value) = anchor.date_range_end.as_ref() {
+        row.insert("date_range_end".to_string(), json!(value));
+    }
+    if let Some(value) = anchor.date_field.as_ref() {
+        row.insert("date_field".to_string(), json!(value));
+    }
+    row.insert("date_anchor".to_string(), json!(anchor));
 }
 
 fn telemetry_row_matches_since(row: &JsonValue, since_boundary: &str) -> bool {
@@ -3342,6 +3448,13 @@ fn render_markdown(report: &EvalReport) -> String {
     out.push_str("\n## Assertion Details\n\n");
     for case in &report.cases {
         let _ = writeln!(out, "### {}\n", case.id);
+        if let Some(date_anchor) = case.date_anchor.as_ref() {
+            out.push_str("Date anchor:\n");
+            for line in date_anchor.markdown_lines() {
+                let _ = writeln!(out, "- {line}");
+            }
+            out.push('\n');
+        }
         for assertion in &case.assertions {
             let _ = writeln!(
                 out,
@@ -3401,6 +3514,12 @@ fn render_eval_card_markdown(card: &EvalCard) -> String {
     }
     let _ = writeln!(out, "- Telemetry rows: {}", card.telemetry.row_count);
     let _ = writeln!(out, "- Telemetry message: {}", card.telemetry.message);
+    if let Some(date_anchor) = card.date_anchor.as_ref() {
+        out.push_str("- Suite date anchor:\n");
+        for line in date_anchor.markdown_lines() {
+            let _ = writeln!(out, "  - {line}");
+        }
+    }
     if let Some(provider) = card.provider.as_ref() {
         let _ = writeln!(out, "- Provider: `{}`", provider.provider);
         let _ = writeln!(
@@ -3496,9 +3615,15 @@ impl EvalCaseReport {
             fail_count,
             error_count,
             assertions,
+            date_anchor: None,
             artifacts,
             telemetry: None,
         }
+    }
+
+    fn with_date_anchor(mut self, date_anchor: Option<DateAnchor>) -> Self {
+        self.date_anchor = date_anchor;
+        self
     }
 
     fn with_telemetry(mut self, telemetry: EvalCaseTelemetry) -> Self {
@@ -3553,11 +3678,23 @@ impl AgentExpected {
 
 fn build_eval_validate_payload(path: &str) -> crate::error::Result<JsonValue> {
     let suite = load_suite(path)?;
+    let date_anchor_case_count = suite
+        .cases
+        .iter()
+        .filter(|case| effective_date_anchor(&suite.date_anchor, &case.date_anchor).is_some())
+        .count()
+        + suite
+            .agent_cases
+            .iter()
+            .filter(|case| effective_date_anchor(&suite.date_anchor, &case.date_anchor).is_some())
+            .count();
     Ok(json!({
         "valid": true,
         "path": path,
         "suite_name": suite.name.as_deref().unwrap_or("suite"),
         "version": suite.version,
+        "date_anchor": suite.date_anchor.normalized(),
+        "date_anchor_case_count": date_anchor_case_count,
         "bridge_case_count": suite.cases.len(),
         "agent_case_count": suite.agent_cases.len(),
     }))
@@ -3566,6 +3703,127 @@ fn build_eval_validate_payload(path: &str) -> crate::error::Result<JsonValue> {
 fn build_eval_gate_report_for_suite(suite_name: &str) -> crate::error::Result<EvalGateReport> {
     let rows = read_telemetry_rows_for_suite(suite_name)?;
     build_eval_gate_report(suite_name, &rows)
+}
+
+fn normalized_string(value: Option<&String>) -> Option<String> {
+    value
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn effective_date_anchor(suite: &DateAnchor, case: &DateAnchor) -> Option<DateAnchor> {
+    let anchor = DateAnchor {
+        snapshot_date: normalized_string(case.snapshot_date.as_ref())
+            .or_else(|| normalized_string(suite.snapshot_date.as_ref())),
+        date_range_start: normalized_string(case.date_range_start.as_ref())
+            .or_else(|| normalized_string(suite.date_range_start.as_ref())),
+        date_range_end: normalized_string(case.date_range_end.as_ref())
+            .or_else(|| normalized_string(suite.date_range_end.as_ref())),
+        date_field: normalized_string(case.date_field.as_ref())
+            .or_else(|| normalized_string(suite.date_field.as_ref())),
+    };
+    (!anchor.is_empty()).then_some(anchor)
+}
+
+fn validate_date_anchor(anchor: &DateAnchor, location: &str) -> crate::error::Result<()> {
+    validate_optional_date(anchor.snapshot_date.as_deref(), location, "snapshot_date")?;
+    validate_optional_date(
+        anchor.date_range_start.as_deref(),
+        location,
+        "date_range_start",
+    )?;
+    validate_optional_date(anchor.date_range_end.as_deref(), location, "date_range_end")?;
+    if let Some(field) = anchor.date_field.as_deref()
+        && field.trim().is_empty()
+    {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "{location} date_field must be non-empty when set"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_complete_date_anchor(anchor: &DateAnchor, location: &str) -> crate::error::Result<()> {
+    let snapshot_date =
+        validate_optional_date(anchor.snapshot_date.as_deref(), location, "snapshot_date")?;
+    let date_range_start = validate_optional_date(
+        anchor.date_range_start.as_deref(),
+        location,
+        "date_range_start",
+    )?;
+    let date_range_end =
+        validate_optional_date(anchor.date_range_end.as_deref(), location, "date_range_end")?;
+    if date_range_start.is_some() != date_range_end.is_some() {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "{location} must include both date_range_start and date_range_end when either date range field is set"
+        )));
+    }
+    if let (Some(start), Some(end)) = (date_range_start, date_range_end)
+        && start > end
+    {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "{location} date_range_start must be on or before date_range_end"
+        )));
+    }
+    if snapshot_date.is_none()
+        && date_range_start.is_none()
+        && anchor
+            .date_field
+            .as_deref()
+            .is_some_and(|field| !field.trim().is_empty())
+    {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "{location} date_field requires snapshot_date or date_range_start/date_range_end"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_optional_date(
+    value: Option<&str>,
+    location: &str,
+    field: &str,
+) -> crate::error::Result<Option<(i32, u32, u32)>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(DbtNovaError::InvalidParams(format!(
+            "{location} {field} must be a non-empty YYYY-MM-DD date"
+        )));
+    }
+    parse_iso_date(trimmed).map(Some).ok_or_else(|| {
+        DbtNovaError::InvalidParams(format!(
+            "{location} {field} must use YYYY-MM-DD with a valid calendar date"
+        ))
+    })
+}
+
+fn parse_iso_date(value: &str) -> Option<(i32, u32, u32)> {
+    let bytes = value.as_bytes();
+    if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
+        return None;
+    }
+    let year = i32::try_from(parse_date_part(&value[0..4])?).ok()?;
+    let month = parse_date_part(&value[5..7])?;
+    let day = parse_date_part(&value[8..10])?;
+    let max_day = days_in_month(year, month);
+    if max_day == 0 || day == 0 || day > max_day {
+        return None;
+    }
+    Some((year, month, day))
+}
+
+fn parse_date_part(value: &str) -> Option<u32> {
+    value
+        .as_bytes()
+        .iter()
+        .all(u8::is_ascii_digit)
+        .then(|| value.parse::<u32>().ok())
+        .flatten()
 }
 
 fn eval_history_rows(
@@ -3838,12 +4096,26 @@ fn validate_suite(suite: &EvalSuite) -> crate::error::Result<()> {
             "eval suite gate.threshold must be between 0.0 and 1.0".to_string(),
         ));
     }
+    validate_date_anchor(&suite.date_anchor, "eval suite")?;
+    if suite.cases.is_empty()
+        && suite.agent_cases.is_empty()
+        && let Some(date_anchor) = suite.date_anchor.normalized()
+    {
+        validate_complete_date_anchor(&date_anchor, "eval suite")?;
+    }
     validate_case_ids(suite.cases.iter().map(|case| case.id.as_str()), "cases")?;
     validate_case_ids(
         suite.agent_cases.iter().map(|case| case.id.as_str()),
         "agent_cases",
     )?;
     for case in &suite.cases {
+        validate_date_anchor(&case.date_anchor, &format!("eval case '{}'", case.id))?;
+        if let Some(date_anchor) = effective_date_anchor(&suite.date_anchor, &case.date_anchor) {
+            validate_complete_date_anchor(
+                &date_anchor,
+                &format!("effective date anchor for eval case '{}'", case.id),
+            )?;
+        }
         if case.assertions.is_empty() {
             return Err(DbtNovaError::InvalidParams(format!(
                 "eval case '{}' must include at least one assertion",
@@ -3855,6 +4127,13 @@ fn validate_suite(suite: &EvalSuite) -> crate::error::Result<()> {
         }
     }
     for case in &suite.agent_cases {
+        validate_date_anchor(&case.date_anchor, &format!("agent case '{}'", case.id))?;
+        if let Some(date_anchor) = effective_date_anchor(&suite.date_anchor, &case.date_anchor) {
+            validate_complete_date_anchor(
+                &date_anchor,
+                &format!("effective date anchor for agent case '{}'", case.id),
+            )?;
+        }
         if case.task.trim().is_empty() {
             return Err(DbtNovaError::InvalidParams(format!(
                 "agent case '{}' must include a non-empty task",
@@ -4154,10 +4433,18 @@ fn validate_selected_cases<'a>(
     )))
 }
 
-fn agent_prompt(case: &AgentCase) -> String {
+fn agent_prompt(case: &AgentCase, date_anchor: Option<&DateAnchor>) -> String {
+    let date_anchor_section = date_anchor.map_or_else(String::new, |anchor| {
+        let mut section = String::from("\nDate anchor:\n");
+        for line in anchor.prompt_lines() {
+            let _ = writeln!(section, "- {line}");
+        }
+        section.push_str("- Treat these dates as ground truth for relative time phrases in the task. Do not reinterpret them using today's date.\n");
+        section
+    });
     format!(
-        "You are running a dbt-nova analytics-agent eval.\n\nTask:\n{}\n\nRules:\n- Use Nova discovery and execution tools directly. Do not inspect repository files, source code, fixtures, or Rust params unless a Nova command fails and you cannot recover from the error message.\n- For KPI, metric, conversion, funnel, checkout, or business-concept questions, start with search_indicator using compact results: detail=\"compact\", group_mode=\"top\", include_support_signals=true, limit=3, persona=\"analyst\".\n- For rate, conversion, or funnel questions, include the requested metric names literally in the query and set indicator_types=[\"metric\"] unless you are explicitly searching for raw measures.\n- When a metric row returns an expression, copy that expression exactly into SQL; do not substitute similarly named measures or invent a numerator/denominator.\n- Use support_signals, grain dimensions, and relation_name from search_indicator to apply every requested filter before SQL. Do not aggregate across a grain dimension named in the task, such as country, market, channel, segment, or device.\n- Treat relation_name, grain, and expression fields returned by search_indicator as the execution contract. Do not run schema inspection SQL such as DESCRIBE or information_schema when those fields are present.\n- Use execute_sql only after Nova discovery identifies the canonical execution entity or relation. Use one aggregate SQL statement for current and comparison periods when possible. Skip get_entity when search_indicator already returns the relation, grain, measures, and metric expressions you need; otherwise use get_entity with id_or_name and detail=\"compact\".\n- Keep Nova calls to the minimum needed: usually search_indicator plus one execute_sql for calculations, and only search_indicator for model or metric lookup tasks. Avoid get_context, get_lineage, get_sql, and full-detail responses unless blocked.\n- If using the CLI, assume $DBT_NOVA_EVAL_BIN is set. For search/get calls, use --params-json. For execute_sql with quotes or newlines, write a JSON params file like {{\"statement\":\"select ...\",\"row_limit\":50}} and call $DBT_NOVA_EVAL_BIN tool call execute_sql --params-file <file> --json; do not inline multiline SQL in --params-json. Parameter reminders: get_entity uses id_or_name; execute_sql uses statement. Do not run echo, grep, read, or source inspection for normal tool usage.\n\nFinish with a concise answer that cites the Nova evidence, the SQL result, and the explicit filter values used.",
-        case.task
+        "You are running a dbt-nova analytics-agent eval.\n\nTask:\n{}\n{}\nRules:\n- Use Nova discovery and execution tools directly. Do not inspect repository files, source code, fixtures, or Rust params unless a Nova command fails and you cannot recover from the error message.\n- For KPI, metric, conversion, funnel, checkout, or business-concept questions, start with search_indicator using compact results: detail=\"compact\", group_mode=\"top\", include_support_signals=true, limit=3, persona=\"analyst\".\n- For rate, conversion, or funnel questions, include the requested metric names literally in the query and set indicator_types=[\"metric\"] unless you are explicitly searching for raw measures.\n- When a metric row returns an expression, copy that expression exactly into SQL; do not substitute similarly named measures or invent a numerator/denominator.\n- Use support_signals, grain dimensions, and relation_name from search_indicator to apply every requested filter before SQL. Do not aggregate across a grain dimension named in the task, such as country, market, channel, segment, or device.\n- Treat relation_name, grain, and expression fields returned by search_indicator as the execution contract. Do not run schema inspection SQL such as DESCRIBE or information_schema when those fields are present.\n- Use execute_sql only after Nova discovery identifies the canonical execution entity or relation. Use one aggregate SQL statement for current and comparison periods when possible. Skip get_entity when search_indicator already returns the relation, grain, measures, and metric expressions you need; otherwise use get_entity with id_or_name and detail=\"compact\".\n- Keep Nova calls to the minimum needed: usually search_indicator plus one execute_sql for calculations, and only search_indicator for model or metric lookup tasks. Avoid get_context, get_lineage, get_sql, and full-detail responses unless blocked.\n- If using the CLI, assume $DBT_NOVA_EVAL_BIN is set. For search/get calls, use --params-json. For execute_sql with quotes or newlines, write a JSON params file like {{\"statement\":\"select ...\",\"row_limit\":50}} and call $DBT_NOVA_EVAL_BIN tool call execute_sql --params-file <file> --json; do not inline multiline SQL in --params-json. Parameter reminders: get_entity uses id_or_name; execute_sql uses statement. Do not run echo, grep, read, or source inspection for normal tool usage.\n\nFinish with a concise answer that cites the Nova evidence, the SQL result, and the explicit filter values used.",
+        case.task, date_anchor_section
     )
 }
 

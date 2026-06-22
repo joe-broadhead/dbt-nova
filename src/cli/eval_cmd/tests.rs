@@ -5,19 +5,20 @@ use serde_json::json;
 use tempfile::{NamedTempFile, TempDir};
 
 use super::{
-    AgentCalledWith, AgentEntityRank, AgentExpected, AgentOrder, AssertionResult, EvalCardProvider,
-    EvalCardRunContext, EvalCaseReport, EvalDefaults, EvalRunArgs, EvalSuite, EvalValidateArgs,
-    FinalAnswerExpected, apply_telemetry_retention, build_agent_eval_tool_response,
-    build_eval_gate_report, build_eval_gate_tool_response, build_eval_history_tool_response,
-    build_eval_init_tool_response, build_eval_validate_tool_response, build_report,
-    contains_rank_assertion, context_contains_assertion, context_field_equals_assertion,
-    eval_case_telemetry_from_trace, format_utc_timestamp_millis, json_has_field_path,
-    metadata_score_max_assertion, metadata_score_min_assertion, read_tool_trace,
-    recipe_rank_assertion, refresh_eval_card, render_eval_card_markdown, resolve_mcp_writable_path,
-    run_eval_command, run_validate_command, safe_path_segment, score_agent_expectations,
-    selected_agent_cases, selected_bridge_cases, suite_file_hash, telemetry_path_for_suite,
-    telemetry_row_matches_since, tool_response_budget_assertion, tool_success_assertion,
-    validate_since_date, validate_suite, validate_telemetry_suite_name,
+    AgentCalledWith, AgentEntityRank, AgentExpected, AgentOrder, AssertionResult, DateAnchor,
+    EvalCardProvider, EvalCardRunContext, EvalCaseReport, EvalDefaults, EvalRunArgs, EvalSuite,
+    EvalValidateArgs, FinalAnswerExpected, agent_prompt, apply_telemetry_retention,
+    build_agent_eval_tool_response, build_eval_gate_report, build_eval_gate_tool_response,
+    build_eval_history_tool_response, build_eval_init_tool_response, build_eval_validate_payload,
+    build_eval_validate_tool_response, build_report, contains_rank_assertion,
+    context_contains_assertion, context_field_equals_assertion, eval_case_telemetry_from_trace,
+    format_utc_timestamp_millis, json_has_field_path, metadata_score_max_assertion,
+    metadata_score_min_assertion, read_tool_trace, recipe_rank_assertion, refresh_eval_card,
+    render_eval_card_markdown, resolve_mcp_writable_path, run_eval_command, run_validate_command,
+    safe_path_segment, score_agent_expectations, selected_agent_cases, selected_bridge_cases,
+    suite_file_hash, telemetry_path_for_suite, telemetry_row_matches_since,
+    tool_response_budget_assertion, tool_success_assertion, validate_since_date, validate_suite,
+    validate_telemetry_suite_name,
 };
 use crate::params::{
     GetEvalGateParams, GetEvalHistoryParams, InitEvalSuiteParams, RunAgentEvalParams,
@@ -661,6 +662,7 @@ fn telemetry_requires_named_suite() {
         manifest_scope: None,
         known_gaps: Vec::new(),
         gate: None,
+        date_anchor: DateAnchor::default(),
         defaults: EvalDefaults::default(),
         cases: Vec::new(),
         agent_cases: Vec::new(),
@@ -1024,12 +1026,154 @@ fn validate_suite_rejects_invalid_gate_threshold() {
         manifest_scope: None,
         known_gaps: Vec::new(),
         gate: Some(super::EvalGateConfig { threshold: 1.1 }),
+        date_anchor: DateAnchor::default(),
         defaults: EvalDefaults::default(),
         cases: Vec::new(),
         agent_cases: Vec::new(),
     };
     let error = validate_suite(&suite).expect_err("invalid gate threshold should fail");
     assert!(error.to_string().contains("gate.threshold"));
+}
+
+#[test]
+fn eval_validate_accepts_snapshot_date_anchor_fields() {
+    let suite = NamedTempFile::new().expect("suite file");
+    std::fs::write(
+        suite.path(),
+        r#"
+version: 1
+name: date-anchor-smoke
+snapshot_date: "2026-03-31"
+date_field: order_date
+cases:
+  - id: anchored-bridge
+    date_range_start: "2026-03-01"
+    date_range_end: "2026-03-31"
+    assertions:
+      - type: tool_success
+        tool: search
+        params: {}
+agent_cases:
+  - id: anchored-agent
+    task: Compare revenue last month.
+    expected: {}
+"#,
+    )
+    .expect("write suite");
+
+    let payload =
+        build_eval_validate_payload(&suite.path().display().to_string()).expect("valid suite");
+    assert_eq!(payload["date_anchor"]["snapshot_date"], json!("2026-03-31"));
+    assert_eq!(payload["date_anchor"]["date_field"], json!("order_date"));
+    assert_eq!(payload["date_anchor_case_count"], json!(2));
+}
+
+#[test]
+fn eval_validate_accepts_inherited_date_anchor_fields() {
+    let suite = NamedTempFile::new().expect("suite file");
+    std::fs::write(
+        suite.path(),
+        r#"
+version: 1
+name: inherited-date-anchor-smoke
+date_range_start: "2026-03-01"
+date_range_end: "2026-03-31"
+date_field: order_date
+cases:
+  - id: inherited-range-end
+    date_range_start: "2026-03-15"
+    assertions:
+      - type: tool_success
+        tool: search
+        params: {}
+agent_cases:
+  - id: inherited-field
+    task: Compare revenue last month.
+    snapshot_date: "2026-03-31"
+    expected: {}
+"#,
+    )
+    .expect("write suite");
+
+    let payload =
+        build_eval_validate_payload(&suite.path().display().to_string()).expect("valid suite");
+    assert_eq!(payload["date_anchor_case_count"], json!(2));
+}
+
+#[test]
+fn eval_validate_rejects_invalid_snapshot_date_anchor() {
+    let suite = NamedTempFile::new().expect("suite file");
+    std::fs::write(
+        suite.path(),
+        r#"
+version: 1
+name: bad-date-anchor
+snapshot_date: "2026-02-30"
+cases: []
+agent_cases: []
+"#,
+    )
+    .expect("write suite");
+
+    let error = build_eval_validate_payload(&suite.path().display().to_string())
+        .expect_err("invalid date should fail");
+    let error = error.to_string();
+    assert!(error.contains("snapshot_date"));
+    assert!(error.contains("YYYY-MM-DD"));
+}
+
+#[test]
+fn eval_validate_rejects_incomplete_date_range_anchor() {
+    let suite = EvalSuite {
+        version: 1,
+        name: None,
+        purpose: None,
+        manifest_scope: None,
+        known_gaps: Vec::new(),
+        gate: None,
+        date_anchor: DateAnchor::default(),
+        defaults: EvalDefaults::default(),
+        cases: vec![super::EvalCase {
+            id: "range".to_string(),
+            question: None,
+            persona: None,
+            date_anchor: DateAnchor {
+                date_range_start: Some("2026-03-01".to_string()),
+                ..DateAnchor::default()
+            },
+            assertions: vec![super::EvalAssertion::ToolSuccess {
+                tool: "search".to_string(),
+                params: json!({}),
+            }],
+        }],
+        agent_cases: Vec::new(),
+    };
+
+    let error = validate_suite(&suite).expect_err("incomplete date range should fail");
+    assert!(error.to_string().contains("date_range_end"));
+}
+
+#[test]
+fn agent_prompt_includes_date_anchor_section() {
+    let case = super::AgentCase {
+        id: "agent".to_string(),
+        task: "Compare gross revenue last month.".to_string(),
+        date_anchor: DateAnchor::default(),
+        expected: AgentExpected::default(),
+    };
+    let anchor = DateAnchor {
+        snapshot_date: Some("2026-03-31".to_string()),
+        date_range_start: Some("2026-03-01".to_string()),
+        date_range_end: Some("2026-03-31".to_string()),
+        date_field: Some("order_date".to_string()),
+    };
+
+    let prompt = agent_prompt(&case, Some(&anchor));
+    assert!(prompt.contains("Date anchor:"));
+    assert!(prompt.contains("snapshot_date: 2026-03-31"));
+    assert!(prompt.contains("date_range: 2026-03-01 to 2026-03-31"));
+    assert!(prompt.contains("date_field: order_date"));
+    assert!(prompt.contains("Do not reinterpret them using today's date"));
 }
 
 #[test]
@@ -1041,17 +1185,20 @@ fn validate_suite_rejects_duplicate_agent_case_ids() {
         manifest_scope: None,
         known_gaps: Vec::new(),
         gate: None,
+        date_anchor: DateAnchor::default(),
         defaults: EvalDefaults::default(),
         cases: Vec::new(),
         agent_cases: vec![
             super::AgentCase {
                 id: "same".to_string(),
                 task: "one".to_string(),
+                date_anchor: DateAnchor::default(),
                 expected: AgentExpected::default(),
             },
             super::AgentCase {
                 id: "same".to_string(),
                 task: "two".to_string(),
+                date_anchor: DateAnchor::default(),
                 expected: AgentExpected::default(),
             },
         ],
@@ -1069,17 +1216,20 @@ fn validate_suite_rejects_duplicate_artifact_segments() {
         manifest_scope: None,
         known_gaps: Vec::new(),
         gate: None,
+        date_anchor: DateAnchor::default(),
         defaults: EvalDefaults::default(),
         cases: Vec::new(),
         agent_cases: vec![
             super::AgentCase {
                 id: "a/b".to_string(),
                 task: "one".to_string(),
+                date_anchor: DateAnchor::default(),
                 expected: AgentExpected::default(),
             },
             super::AgentCase {
                 id: "a b".to_string(),
                 task: "two".to_string(),
+                date_anchor: DateAnchor::default(),
                 expected: AgentExpected::default(),
             },
         ],
@@ -1097,17 +1247,20 @@ fn validate_suite_rejects_case_insensitive_artifact_segment_collisions() {
         manifest_scope: None,
         known_gaps: Vec::new(),
         gate: None,
+        date_anchor: DateAnchor::default(),
         defaults: EvalDefaults::default(),
         cases: Vec::new(),
         agent_cases: vec![
             super::AgentCase {
                 id: "RevenueFlow".to_string(),
                 task: "one".to_string(),
+                date_anchor: DateAnchor::default(),
                 expected: AgentExpected::default(),
             },
             super::AgentCase {
                 id: "revenueflow".to_string(),
                 task: "two".to_string(),
+                date_anchor: DateAnchor::default(),
                 expected: AgentExpected::default(),
             },
         ],
@@ -1125,11 +1278,13 @@ fn validate_suite_rejects_vacuous_search_columns_rank_assertion() {
         manifest_scope: None,
         known_gaps: Vec::new(),
         gate: None,
+        date_anchor: DateAnchor::default(),
         defaults: EvalDefaults::default(),
         cases: vec![super::EvalCase {
             id: "columns".to_string(),
             question: None,
             persona: None,
+            date_anchor: DateAnchor::default(),
             assertions: vec![super::EvalAssertion::SearchColumnsRank {
                 query: "revenue".to_string(),
                 expected_column: None,
@@ -1152,11 +1307,13 @@ fn validate_suite_rejects_unmatchable_called_with_param_values() {
         manifest_scope: None,
         known_gaps: Vec::new(),
         gate: None,
+        date_anchor: DateAnchor::default(),
         defaults: EvalDefaults::default(),
         cases: Vec::new(),
         agent_cases: vec![super::AgentCase {
             id: "agent".to_string(),
             task: "use nova".to_string(),
+            date_anchor: DateAnchor::default(),
             expected: AgentExpected {
                 called_with: vec![AgentCalledWith {
                     tool: "search".to_string(),
@@ -1177,6 +1334,7 @@ fn selected_case_filters_reject_missing_ids() {
         id: "one".to_string(),
         question: None,
         persona: None,
+        date_anchor: DateAnchor::default(),
         assertions: vec![super::EvalAssertion::ToolSuccess {
             tool: "search".to_string(),
             params: json!({}),
@@ -1193,11 +1351,13 @@ fn selected_agent_case_filters_return_requested_cases() {
         super::AgentCase {
             id: "one".to_string(),
             task: "task one".to_string(),
+            date_anchor: DateAnchor::default(),
             expected: AgentExpected::default(),
         },
         super::AgentCase {
             id: "two".to_string(),
             task: "task two".to_string(),
+            date_anchor: DateAnchor::default(),
             expected: AgentExpected::default(),
         },
     ];
@@ -1462,17 +1622,21 @@ async fn bridge_eval_writes_result_artifacts() {
     let suite_path = temp_dir.path().join("suite.yml");
     std::fs::write(
         &suite_path,
-        r"
+        r#"
 version: 1
-name: bridge-smoke
+name: bridge-date-anchor-smoke
+snapshot_date: "2026-03-31"
+date_field: order_date
 cases:
   - id: orders-search
+    date_range_start: "2026-03-01"
+    date_range_end: "2026-03-31"
     assertions:
       - type: search_rank
         query: orders
         expected_unique_id: model.nova_test.fct__orders
         max_rank: 5
-",
+"#,
     )
     .expect("write suite");
     let output_dir = temp_dir.path().join("out");
@@ -1485,6 +1649,7 @@ cases:
         ),
         output_dir: Some(output_dir.display().to_string()),
         fail_under: Some(1.0),
+        telemetry: true,
         json: true,
         ..EvalRunArgs::default()
     })
@@ -1508,6 +1673,39 @@ cases:
         json!("eval_card.v1")
     );
     assert_eq!(results["eval_card"]["mode"], json!("bridge"));
+    assert_eq!(
+        results["eval_card"]["date_anchor"]["snapshot_date"],
+        json!("2026-03-31")
+    );
+    assert_eq!(
+        results["cases"][0]["date_anchor"]["snapshot_date"],
+        json!("2026-03-31")
+    );
+    assert_eq!(
+        results["cases"][0]["date_anchor"]["date_range_start"],
+        json!("2026-03-01")
+    );
+    assert_eq!(
+        results["cases"][0]["date_anchor"]["date_range_end"],
+        json!("2026-03-31")
+    );
+    assert_eq!(
+        results["cases"][0]["date_anchor"]["date_field"],
+        json!("order_date")
+    );
+    let report_md = std::fs::read_to_string(output_dir.join("report.md")).expect("report md");
+    assert!(report_md.contains("Suite date anchor"));
+    assert!(report_md.contains("date_range: `2026-03-01` to `2026-03-31`"));
+
+    let telemetry_path = telemetry_path_for_suite("bridge-date-anchor-smoke");
+    let telemetry = std::fs::read_to_string(&telemetry_path).expect("telemetry jsonl");
+    let latest = telemetry.lines().last().expect("telemetry line");
+    let latest: serde_json::Value = serde_json::from_str(latest).expect("telemetry json");
+    assert_eq!(latest["snapshot_date"], json!("2026-03-31"));
+    assert_eq!(latest["date_range_start"], json!("2026-03-01"));
+    assert_eq!(latest["date_range_end"], json!("2026-03-31"));
+    assert_eq!(latest["date_field"], json!("order_date"));
+    std::fs::remove_file(telemetry_path).expect("remove telemetry");
 }
 
 #[test]
@@ -1533,6 +1731,7 @@ fn eval_card_suite(name: &str, threshold: Option<f64>, include_agent_case: bool)
         manifest_scope: Some("synthetic starter manifest".to_string()),
         known_gaps: vec!["does not cover live warehouse freshness".to_string()],
         gate: threshold.map(|threshold| super::EvalGateConfig { threshold }),
+        date_anchor: DateAnchor::default(),
         defaults: EvalDefaults {
             persona: Some("analyst".to_string()),
             top_k: 5,
@@ -1544,6 +1743,7 @@ fn eval_card_suite(name: &str, threshold: Option<f64>, include_agent_case: bool)
                 id: "bridge_case".to_string(),
                 question: Some("Find canonical orders".to_string()),
                 persona: None,
+                date_anchor: DateAnchor::default(),
                 assertions: vec![super::EvalAssertion::ToolSuccess {
                     tool: "search".to_string(),
                     params: json!({}),
@@ -1554,6 +1754,7 @@ fn eval_card_suite(name: &str, threshold: Option<f64>, include_agent_case: bool)
             vec![super::AgentCase {
                 id: "agent_case".to_string(),
                 task: "Use Nova to answer the task".to_string(),
+                date_anchor: DateAnchor::default(),
                 expected: AgentExpected::default(),
             }]
         } else {

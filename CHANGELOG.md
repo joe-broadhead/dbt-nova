@@ -52,6 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `results.json`, write a PR-ready `card.md`, and prepend the same card to
   `report.md`, including suite purpose, scope, case counts, pass rate, gate
   evidence, telemetry status, provider metadata, and known gaps.
+- Eval suites can now declare `snapshot_date`, `date_range_start`,
+  `date_range_end`, and `date_field` anchors at suite or case level; Nova
+  validates anchor dates, injects effective anchors into agent prompts, and
+  includes them in reports and eval telemetry.
 - Documented bridge and provider-backed eval CI templates with GitHub Actions
   examples for manifest generation, telemetry retention, eval gates, artifact
   upload, private OpenCode provider runs, and redacted trace handling.
