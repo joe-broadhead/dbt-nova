@@ -166,6 +166,7 @@ pub enum TraceCommand {
     Inspect(TraceInspectArgs),
     Summarize(TraceSummarizeArgs),
     Redact(TraceRedactArgs),
+    Replay(TraceReplayArgs),
 }
 
 #[derive(Debug, Clone, Args, Default)]
@@ -192,6 +193,24 @@ pub struct TraceRedactArgs {
     pub path: String,
     #[arg(long, value_name = "PATH")]
     pub out: String,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct TraceReplayArgs {
+    #[arg(long, value_name = "PATH")]
+    pub path: String,
+    #[arg(long, value_name = "PATH", conflicts_with = "manifest_uri")]
+    pub manifest_path: Option<String>,
+    #[arg(long, value_name = "URI", conflicts_with = "manifest_path")]
+    pub manifest_uri: Option<String>,
+    #[arg(long, value_name = "INSTANCE_ID")]
+    pub storage_instance_id: Option<String>,
+    #[arg(long, default_value_t = false)]
+    pub cleanup_storage_on_start: bool,
+    #[arg(long, default_value_t = false)]
+    pub read_only: bool,
     #[arg(long, default_value_t = false)]
     pub json: bool,
 }
@@ -1050,6 +1069,33 @@ mod tests {
                 };
                 assert_eq!(args.path, "tool-calls.jsonl");
                 assert_eq!(args.out, "tool-calls.redacted.jsonl");
+                assert!(args.json);
+            }
+            _ => panic!("expected trace command"),
+        }
+
+        let replay = Cli::parse_from([
+            "dbt-nova",
+            "trace",
+            "replay",
+            "--path",
+            "tool-calls.redacted.jsonl",
+            "--manifest-path",
+            "target/manifest.json",
+            "--storage-instance-id",
+            "trace-replay",
+            "--read-only",
+            "--json",
+        ]);
+        match replay.command.expect("command") {
+            Command::Trace(trace) => {
+                let TraceCommand::Replay(args) = trace.command else {
+                    panic!("expected trace replay command");
+                };
+                assert_eq!(args.path, "tool-calls.redacted.jsonl");
+                assert_eq!(args.manifest_path.as_deref(), Some("target/manifest.json"));
+                assert_eq!(args.storage_instance_id.as_deref(), Some("trace-replay"));
+                assert!(args.read_only);
                 assert!(args.json);
             }
             _ => panic!("expected trace command"),

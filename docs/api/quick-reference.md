@@ -1,6 +1,6 @@
 # Tools Quick Reference
 
-One-page cheatsheet for all 51 dbt-nova MCP tools.
+One-page cheatsheet for all 52 dbt-nova MCP tools.
 
 ## Discovery
 
@@ -79,6 +79,7 @@ One-page cheatsheet for all 51 dbt-nova MCP tools.
 | `inspect_tool_trace` | Inspect tool-call trace JSONL rows and parse warnings | `path` |
 | `summarize_tool_trace` | Summarize trace order, budgets, errors, IDs, and semantic-first signal | `path`, `report_md_path` |
 | `redact_tool_trace` | Redact trace JSONL for safe sharing | `path`, `out` |
+| `replay_tool_trace` | Replay supported deterministic trace rows against the loaded manifest | `path` |
 
 ## Metadata Inventory
 

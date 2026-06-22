@@ -27,7 +27,7 @@ flowchart TD
 
 ## Architecture Overview (Detailed)
 
-### Tool Map (51 MCP tools)
+### Tool Map (52 MCP tools)
 
 <div class="diagram-large diagram-vertical" markdown>
 
@@ -93,6 +93,7 @@ flowchart LR
     TR --> T_inspect_tool_trace["inspect_tool_trace"]
     TR --> T_summarize_tool_trace["summarize_tool_trace"]
     TR --> T_redact_tool_trace["redact_tool_trace"]
+    TR --> T_replay_tool_trace["replay_tool_trace"]
     TR --> T_metadata_score["get_metadata_score"]
     TR --> T_metadata_audit["get_metadata_audit"]
     TR --> T_agent_readiness["get_agent_readiness"]

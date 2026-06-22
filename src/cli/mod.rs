@@ -89,6 +89,9 @@ pub async fn dispatch(command: args::Command) -> DispatchResult {
                 trace_cmd::run_summarize_command(&summarize_args)
             }
             args::TraceCommand::Redact(redact_args) => trace_cmd::run_redact_command(&redact_args),
+            args::TraceCommand::Replay(replay_args) => {
+                trace_cmd::run_replay_command(&replay_args).await
+            }
         },
         args::Command::Health(health_args) => match health_args.command {
             args::HealthCommand::Check(check_args) => {

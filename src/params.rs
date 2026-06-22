@@ -874,6 +874,13 @@ pub struct TraceRedactParams {
     pub out: String,
 }
 
+/// Parameters for the replay_tool_trace tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct TraceReplayParams {
+    /// JSONL tool trace path under the server working directory.
+    pub path: String,
+}
+
 /// Parameters for the show_config tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
 pub struct ConfigShowParams {
