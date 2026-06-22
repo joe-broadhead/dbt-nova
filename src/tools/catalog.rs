@@ -1,5 +1,5 @@
 /// Canonical MCP tool names exposed by dbt-nova.
-pub const MCP_TOOL_NAMES: [&str; 52] = [
+pub const MCP_TOOL_NAMES: [&str; 53] = [
     "search",
     "search_indicator",
     "indicator_inventory",
@@ -20,6 +20,7 @@ pub const MCP_TOOL_NAMES: [&str; 52] = [
     "validate_eval_suite",
     "get_eval_gate",
     "get_eval_history",
+    "compare_eval_runs",
     "run_eval",
     "init_eval_suite",
     "run_agent_eval",
@@ -90,7 +91,7 @@ pub struct CliMcpParityEntry {
 /// Keep this matrix in sync with `docs/getting-started/cli.md` and
 /// `docs/api/mcp-cli-parity.md`. Product capabilities should trend from `Gap`
 /// to `Equivalent`; process lifecycle commands may remain `LifecycleException`.
-pub const CLI_MCP_PARITY_MATRIX: [CliMcpParityEntry; 24] = [
+pub const CLI_MCP_PARITY_MATRIX: [CliMcpParityEntry; 25] = [
     CliMcpParityEntry {
         cli_command: "server start",
         mcp_tool: None,
@@ -223,6 +224,13 @@ pub const CLI_MCP_PARITY_MATRIX: [CliMcpParityEntry; 24] = [
         status: CliMcpParityStatus::Equivalent,
         issue: None,
         notes: "MCP returns filtered eval telemetry rows in a standard envelope",
+    },
+    CliMcpParityEntry {
+        cli_command: "eval compare",
+        mcp_tool: Some("compare_eval_runs"),
+        status: CliMcpParityStatus::Equivalent,
+        issue: None,
+        notes: "MCP returns the same local results.json comparison and PR-ready Markdown while scoping local paths under the server working directory",
     },
     CliMcpParityEntry {
         cli_command: "trace inspect",

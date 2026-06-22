@@ -37,9 +37,10 @@ outside the selected project, but callers still control which in-scope project
 files are scanned.
 
 Eval MCP tools also use the server filesystem. `validate_eval_suite`,
-`get_eval_gate`, and `get_eval_history` are read/reporting tools. `run_eval`,
-`init_eval_suite`, and `run_agent_eval` are disabled by default and return
-structured invalid-parameter errors until the operator opts in:
+`get_eval_gate`, `get_eval_history`, and `compare_eval_runs` are read/reporting
+tools. `run_eval`, `init_eval_suite`, and `run_agent_eval` are disabled by
+default and return structured invalid-parameter errors until the operator opts
+in:
 
 - `DBT_NOVA_MCP_ENABLE_EVAL_RUN=1` for bridge eval execution.
 - `DBT_NOVA_MCP_ENABLE_EVAL_WRITES=1` for starter suite file writes.

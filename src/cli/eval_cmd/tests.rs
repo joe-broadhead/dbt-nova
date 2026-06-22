@@ -8,22 +8,22 @@ use super::{
     AgentCalledWith, AgentEntityRank, AgentExpected, AgentOrder, AgentSqlStructureExpected,
     AssertionResult, DateAnchor, EvalCardProvider, EvalCardRunContext, EvalCaseReport,
     EvalDefaults, EvalRunArgs, EvalSuite, EvalValidateArgs, FinalAnswerExpected, agent_prompt,
-    apply_telemetry_retention, build_agent_eval_tool_response, build_eval_gate_report,
-    build_eval_gate_tool_response, build_eval_history_tool_response, build_eval_init_tool_response,
-    build_eval_validate_payload, build_eval_validate_tool_response, build_report,
-    contains_rank_assertion, context_contains_assertion, context_field_equals_assertion,
-    eval_case_telemetry_from_trace, format_utc_timestamp_millis, json_has_field_path,
-    metadata_score_max_assertion, metadata_score_min_assertion, read_tool_trace,
-    recipe_rank_assertion, refresh_eval_card, render_eval_card_markdown, resolve_mcp_writable_path,
-    run_eval_command, run_validate_command, safe_path_segment, score_agent_expectations,
-    selected_agent_cases, selected_bridge_cases, sql_structure_assertion, suite_file_hash,
-    telemetry_grade_mode, telemetry_path_for_suite, telemetry_row_matches_since,
-    tool_response_budget_assertion, tool_success_assertion, validate_since_date, validate_suite,
-    validate_telemetry_suite_name,
+    apply_telemetry_retention, build_agent_eval_tool_response, build_eval_compare_tool_response,
+    build_eval_comparison_report, build_eval_gate_report, build_eval_gate_tool_response,
+    build_eval_history_tool_response, build_eval_init_tool_response, build_eval_validate_payload,
+    build_eval_validate_tool_response, build_report, contains_rank_assertion,
+    context_contains_assertion, context_field_equals_assertion, eval_case_telemetry_from_trace,
+    format_utc_timestamp_millis, json_has_field_path, metadata_score_max_assertion,
+    metadata_score_min_assertion, read_tool_trace, recipe_rank_assertion, refresh_eval_card,
+    render_eval_card_markdown, resolve_mcp_writable_path, run_eval_command, run_validate_command,
+    safe_path_segment, score_agent_expectations, selected_agent_cases, selected_bridge_cases,
+    sql_structure_assertion, suite_file_hash, telemetry_grade_mode, telemetry_path_for_suite,
+    telemetry_row_matches_since, tool_response_budget_assertion, tool_success_assertion,
+    validate_since_date, validate_suite, validate_telemetry_suite_name,
 };
 use crate::params::{
-    GetEvalGateParams, GetEvalHistoryParams, InitEvalSuiteParams, RunAgentEvalParams,
-    ValidateEvalSuiteParams,
+    CompareEvalRunsParams, GetEvalGateParams, GetEvalHistoryParams, InitEvalSuiteParams,
+    RunAgentEvalParams, ValidateEvalSuiteParams,
 };
 
 #[test]
@@ -1833,6 +1833,167 @@ cases:
 }
 
 #[test]
+fn eval_comparison_reports_before_after_case_deltas() {
+    let temp_dir = TempDir::new().expect("comparison dir");
+    let before_dir = temp_dir.path().join("before");
+    let after_dir = temp_dir.path().join("after");
+    write_eval_results(
+        &before_dir,
+        &json!({
+            "suite_name": "ablation-smoke",
+            "version": 1,
+            "mode": "bridge",
+            "output_dir": before_dir.display().to_string(),
+            "assertion_count": 2,
+            "pass_count": 1,
+            "fail_count": 1,
+            "error_count": 0,
+            "pass_rate": 0.5,
+            "gate_status": "fail",
+            "cases": [
+                {"id": "kept_pass", "pass_count": 1, "fail_count": 0, "error_count": 0, "assertions": [{"name": "search_rank", "status": "pass"}]},
+                {"id": "fixed_case", "pass_count": 0, "fail_count": 1, "error_count": 0, "assertions": [{"name": "context_contains", "status": "fail"}]}
+            ]
+        }),
+    );
+    write_eval_results(
+        &after_dir,
+        &json!({
+            "suite_name": "ablation-smoke",
+            "version": 1,
+            "mode": "bridge",
+            "output_dir": after_dir.display().to_string(),
+            "assertion_count": 3,
+            "pass_count": 2,
+            "fail_count": 1,
+            "error_count": 0,
+            "pass_rate": 0.666_666_666_7,
+            "gate_status": "fail",
+            "cases": [
+                {"id": "kept_pass", "pass_count": 1, "fail_count": 0, "error_count": 0, "assertions": [{"name": "search_rank", "status": "pass"}]},
+                {"id": "fixed_case", "pass_count": 1, "fail_count": 0, "error_count": 0, "assertions": [{"name": "context_contains", "status": "pass"}]},
+                {"id": "new_failure", "pass_count": 0, "fail_count": 1, "error_count": 0, "assertions": [{"name": "tool_success", "status": "fail"}]}
+            ]
+        }),
+    );
+
+    let report = build_eval_comparison_report(
+        &before_dir.join("results.json"),
+        &after_dir.join("results.json"),
+        None,
+    )
+    .expect("comparison report");
+
+    assert_eq!(
+        report.delta.newly_passing_cases,
+        vec!["fixed_case".to_string()]
+    );
+    assert_eq!(
+        report.delta.newly_failing_cases,
+        vec!["new_failure".to_string()]
+    );
+    assert_eq!(report.delta.assertion_count, 1);
+    assert!(
+        report
+            .markdown
+            .contains("| Pass rate | 50.0% | 66.7% | +16.7 pp |")
+    );
+    assert!(report.markdown.contains("`fixed_case`"));
+    assert!(report.markdown.contains("`new_failure`"));
+}
+
+#[test]
+fn eval_comparison_includes_agent_trace_metric_deltas_when_available() {
+    let temp_dir = TempDir::new().expect("comparison dir");
+    let before_dir = temp_dir.path().join("before-agent");
+    let after_dir = temp_dir.path().join("after-agent");
+    write_agent_results_with_trace(&before_dir, 2);
+    write_agent_results_with_trace(&after_dir, 3);
+
+    let report = build_eval_comparison_report(
+        &before_dir.join("results.json"),
+        &after_dir.join("results.json"),
+        None,
+    )
+    .expect("comparison report");
+
+    assert_eq!(report.before.metrics.tool_call_count, Some(2));
+    assert_eq!(report.after.metrics.tool_call_count, Some(3));
+    assert_eq!(report.delta.metrics.tool_call_count, Some(1));
+    assert_eq!(report.before.metrics.duration_ms, Some(30));
+    assert_eq!(report.after.metrics.duration_ms, Some(35));
+    assert_eq!(report.delta.metrics.total_tokens, Some(55));
+    assert!(report.markdown.contains("| Tool calls | 2 | 3 | +1 |"));
+    assert!(
+        report
+            .markdown
+            .contains("| Total tokens | 180 | 235 | +55 |")
+    );
+}
+
+#[test]
+fn eval_compare_tool_response_returns_markdown_and_safety_policy() {
+    let root = std::env::current_dir().expect("cwd");
+    let temp_dir = TempDir::new_in(&root).expect("comparison dir under root");
+    let before_dir = temp_dir.path().join("before");
+    let after_dir = temp_dir.path().join("after");
+    write_eval_results(
+        &before_dir,
+        &json!({
+            "suite_name": "mcp-compare",
+            "version": 1,
+            "mode": "bridge",
+            "output_dir": before_dir.display().to_string(),
+            "assertion_count": 1,
+            "pass_count": 1,
+            "fail_count": 0,
+            "error_count": 0,
+            "pass_rate": 1.0,
+            "gate_status": "pass",
+            "cases": [{"id": "case", "pass_count": 1, "fail_count": 0, "error_count": 0}]
+        }),
+    );
+    write_eval_results(
+        &after_dir,
+        &json!({
+            "suite_name": "mcp-compare",
+            "version": 1,
+            "mode": "bridge",
+            "output_dir": after_dir.display().to_string(),
+            "assertion_count": 1,
+            "pass_count": 1,
+            "fail_count": 0,
+            "error_count": 0,
+            "pass_rate": 1.0,
+            "gate_status": "pass",
+            "cases": [{"id": "case", "pass_count": 1, "fail_count": 0, "error_count": 0}]
+        }),
+    );
+
+    let response = build_eval_compare_tool_response(&CompareEvalRunsParams {
+        before: before_dir.display().to_string(),
+        after: after_dir.display().to_string(),
+    })
+    .expect("tool response");
+
+    assert_eq!(response["success"], json!(true));
+    assert_eq!(
+        response["data"]["schema_version"],
+        json!("eval_comparison.v1")
+    );
+    assert!(
+        response["data"]["markdown"]
+            .as_str()
+            .expect("markdown")
+            .contains("No pass-rate or case-status change was observed")
+    );
+    assert_eq!(
+        response["data"]["safety_policy"]["local_paths_must_stay_under_filesystem_root"],
+        json!(true)
+    );
+}
+
+#[test]
 fn safe_path_segment_blocks_dot_segments_and_caps_length() {
     assert_eq!(safe_path_segment("."), "eval");
     assert_eq!(safe_path_segment(".."), "eval");
@@ -1845,6 +2006,98 @@ fn fixture_manifest_path(name: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(name)
+}
+
+fn write_eval_results(dir: &Path, value: &serde_json::Value) {
+    std::fs::create_dir_all(dir).expect("create result dir");
+    std::fs::write(
+        dir.join("results.json"),
+        serde_json::to_string_pretty(&value).expect("serialize results"),
+    )
+    .expect("write results");
+}
+
+fn write_agent_results_with_trace(dir: &Path, tool_calls: usize) {
+    std::fs::create_dir_all(dir.join("tool-calls")).expect("create trace dir");
+    let rows = match tool_calls {
+        2 => vec![
+            json!({
+                "tool": "search_indicator",
+                "duration_ms": 10,
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "total_tokens": 120,
+                "response_bytes": 500
+            }),
+            json!({
+                "tool": "get_context",
+                "duration_ms": 20,
+                "usage": {"input_tokens": 50, "output_tokens": 10, "total_tokens": 60},
+                "response_bytes": 250
+            }),
+        ],
+        3 => vec![
+            json!({
+                "tool": "search_indicator",
+                "duration_ms": 10,
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "total_tokens": 120,
+                "response_bytes": 500
+            }),
+            json!({
+                "tool": "get_context",
+                "duration_ms": 20,
+                "usage": {"input_tokens": 50, "output_tokens": 10, "total_tokens": 60},
+                "response_bytes": 250
+            }),
+            json!({
+                "tool": "execute_sql",
+                "duration_ms": 5,
+                "usage": {"input_tokens": 40, "output_tokens": 15, "total_tokens": 55},
+                "response_bytes": 100
+            }),
+        ],
+        _ => panic!("unexpected trace size"),
+    };
+    let trace = rows
+        .into_iter()
+        .map(|row| row.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(
+        dir.join("tool-calls/agent_case.jsonl"),
+        format!("{trace}\n"),
+    )
+    .expect("write trace");
+    write_eval_results(
+        dir,
+        &json!({
+            "suite_name": "agent-ablation",
+            "version": 1,
+            "mode": "agent",
+            "output_dir": dir.display().to_string(),
+            "assertion_count": 1,
+            "pass_count": 1,
+            "fail_count": 0,
+            "error_count": 0,
+            "pass_rate": 1.0,
+            "gate_status": "pass",
+            "cases": [{
+                "id": "agent_case",
+                "question": "Find governed revenue",
+                "pass_count": 1,
+                "fail_count": 0,
+                "error_count": 0,
+                "assertions": [{"name": "must_call:search_indicator", "status": "pass"}],
+                "artifacts": {
+                    "stdout": "stdout.log",
+                    "stderr": "stderr.log",
+                    "tool_trace": "tool-calls/agent_case.jsonl"
+                }
+            }]
+        }),
+    );
 }
 
 fn eval_card_suite(name: &str, threshold: Option<f64>, include_agent_case: bool) -> EvalSuite {

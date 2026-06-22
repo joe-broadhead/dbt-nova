@@ -106,6 +106,9 @@ pub async fn dispatch(command: args::Command) -> DispatchResult {
                     eval_cmd::run_agent_eval_command(&run_args).await
                 }
             },
+            args::EvalCommand::Compare(compare_args) => {
+                eval_cmd::run_compare_command(&compare_args)
+            }
             args::EvalCommand::Gate(gate_args) => eval_cmd::run_gate_command(&gate_args),
             args::EvalCommand::History(history_args) => {
                 eval_cmd::run_history_command(&history_args)

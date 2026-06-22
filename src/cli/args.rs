@@ -440,6 +440,8 @@ pub enum EvalCommand {
     Run(EvalRunArgs),
     /// Run provider-backed agent evals and score observed Nova tool use.
     Agent(EvalAgentArgs),
+    /// Compare two eval result directories or results.json files.
+    Compare(EvalCompareArgs),
     /// Report readiness from the latest eval telemetry for a suite.
     Gate(EvalGateArgs),
     /// Print filtered JSONL eval telemetry history.
@@ -640,6 +642,24 @@ pub struct EvalAgentRunArgs {
 }
 
 #[derive(Debug, Clone, Args, Default)]
+pub struct EvalCompareArgs {
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Before eval result directory or results.json path"
+    )]
+    pub before: String,
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "After eval result directory or results.json path"
+    )]
+    pub after: String,
+    #[arg(long, default_value_t = false, help = "Emit a JSON CLI envelope")]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
 pub struct EvalHistoryArgs {
     #[arg(
         long,
@@ -817,6 +837,31 @@ mod tests {
                     }
                 },
                 _ => panic!("expected eval agent run"),
+            },
+            _ => panic!("expected eval command"),
+        }
+    }
+
+    #[test]
+    fn eval_compare_parses_result_paths_and_json() {
+        let cli = Cli::parse_from([
+            "dbt-nova",
+            "eval",
+            "compare",
+            "--before",
+            ".nova/eval-runs/before",
+            "--after",
+            ".nova/eval-runs/after/results.json",
+            "--json",
+        ]);
+        match cli.command.expect("command") {
+            Command::Eval(eval) => match eval.command {
+                EvalCommand::Compare(args) => {
+                    assert_eq!(args.before, ".nova/eval-runs/before");
+                    assert_eq!(args.after, ".nova/eval-runs/after/results.json");
+                    assert!(args.json);
+                }
+                _ => panic!("expected eval compare"),
             },
             _ => panic!("expected eval command"),
         }

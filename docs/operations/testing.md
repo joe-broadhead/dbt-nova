@@ -54,6 +54,12 @@ rows when comparing whether metadata or prompt changes improved a suite over
 time. Add `--telemetry-retention <ROWS>` to keep only the newest rows for that
 suite after each run.
 
+For PR evidence on ranking, skill, or metadata changes, run the same suite into
+two output directories and compare them with
+`dbt-nova eval compare --before <DIR> --after <DIR>`. The comparison prints
+Markdown with pass-rate movement, newly passing/failing cases, and agent
+tool-call or token deltas when trace artifacts are available.
+
 When a suite declares `gate.threshold`, run the full suite with `--telemetry`
 and then run `dbt-nova eval gate <NAME> --json`. Configured gates reject latest
 telemetry from stale suite files, filtered `--case-id` runs, or row-retention
