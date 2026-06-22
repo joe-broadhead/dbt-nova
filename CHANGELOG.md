@@ -52,6 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `results.json`, write a PR-ready `card.md`, and prepend the same card to
   `report.md`, including suite purpose, scope, case counts, pass rate, gate
   evidence, telemetry status, provider metadata, and known gaps.
+- Documented bridge and provider-backed eval CI templates with GitHub Actions
+  examples for manifest generation, telemetry retention, eval gates, artifact
+  upload, private OpenCode provider runs, and redacted trace handling.
 - Added `dbt-nova trace inspect`, `trace summarize`, and `trace redact`, plus
   MCP/CLI `tool call` parity through `inspect_tool_trace`,
   `summarize_tool_trace`, and `redact_tool_trace`, for inspecting sanitized
