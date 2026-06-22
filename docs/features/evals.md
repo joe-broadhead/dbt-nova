@@ -293,6 +293,82 @@ When a comparison fails, the assertion message names the changed clause such as
 structured `diff` with missing and unexpected clause entries, and `report.md`
 prints the same diff in compact form.
 
+## Ablation Comparisons
+
+Use ablation comparisons when changing ranking, metadata scoring, packaged
+skills, prompts, provider settings, or trace-budget expectations. The workflow
+is deliberately file-based so it works in local PR review and CI artifacts:
+
+1. Run the unchanged baseline suite into a stable output directory.
+2. Apply the ranking, skill, or metadata change.
+3. Run the same suite into a second output directory.
+4. Compare the two result directories and paste the Markdown into the PR.
+
+Bridge example:
+
+```bash
+dbt-nova eval run \
+  --suite evals/analyst-smoke.yml \
+  --manifest-path target/manifest.json \
+  --output-dir out/evals/before \
+  --json
+
+dbt-nova eval run \
+  --suite evals/analyst-smoke.yml \
+  --manifest-path target/manifest.json \
+  --output-dir out/evals/after \
+  --json
+
+dbt-nova eval compare \
+  --before out/evals/before \
+  --after out/evals/after
+```
+
+Agent example:
+
+```bash
+dbt-nova eval agent run \
+  --suite evals/analyst-agent.yml \
+  --provider opencode \
+  --manifest-path target/manifest.json \
+  --output-dir out/agent-evals/before \
+  --json
+
+dbt-nova eval agent run \
+  --suite evals/analyst-agent.yml \
+  --provider opencode \
+  --manifest-path target/manifest.json \
+  --output-dir out/agent-evals/after \
+  --json
+
+dbt-nova eval compare \
+  --before out/agent-evals/before/results.json \
+  --after out/agent-evals/after/results.json
+```
+
+The comparison emits PR-ready Markdown by default. Pass `--json` to return a
+CLI envelope containing the same `eval_comparison.v1` data plus the rendered
+Markdown:
+
+```bash
+dbt-nova eval compare \
+  --before out/evals/before \
+  --after out/evals/after \
+  --json
+```
+
+The delta includes pass-rate movement, assertion count changes, newly passing
+cases, newly failing cases, still-failing cases, added/removed cases, and
+status changes. For agent evals, Nova reads the trace artifact paths recorded in
+`results.json` and includes tool-call counts, duration, response bytes, and
+token counters when the traces contain them. Missing or moved trace artifacts
+produce warnings in the comparison instead of failing the whole comparison.
+
+Regressions, no-change results, and negative deltas are successful comparison
+outputs. Treat them as evidence for the PR decision. When an experiment does
+not improve accuracy, latency, maintainability, or agent behavior, record the
+lesson in the [negative-results log](../development/negative-results.md).
+
 ## MCP Tool Parity
 
 Eval workflows are available through MCP and `dbt-nova tool call` with the same
@@ -303,6 +379,7 @@ report contracts used by the CLI:
 | `eval validate` | `validate_eval_suite` | Reads suite files under the server working directory. |
 | `eval gate` | `get_eval_gate` | Reads eval telemetry and returns gate report JSON. |
 | `eval history` | `get_eval_history` | Reads eval telemetry and returns filtered rows. |
+| `eval compare` | `compare_eval_runs` | Reads two local result directories or `results.json` files and returns the same comparison Markdown and JSON data. |
 | `eval run` | `run_eval` | Disabled unless `DBT_NOVA_MCP_ENABLE_EVAL_RUN=1`. |
 | `eval init` | `init_eval_suite` | Disabled unless `DBT_NOVA_MCP_ENABLE_EVAL_WRITES=1`. |
 | `eval agent run` | `run_agent_eval` | Disabled unless `DBT_NOVA_MCP_ENABLE_AGENT_EVAL=1`; custom provider commands also require `DBT_NOVA_MCP_ENABLE_CUSTOM_AGENT_PROVIDER=1`. |

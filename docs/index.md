@@ -105,8 +105,8 @@ dbt-nova
 
 | Feature | Description |
 |---------|-------------|
-| **52 MCP Tools** | Server-exposed MCP surface for search, lineage, coverage, scoring, SQL execution, reports, evals, trace review, cache warming, config, storage, and recipes |
-| **24 CLI Leaf Commands** | One-shot commands for server startup, manifest lifecycle, audits, config, storage, evals, trace review, health, and tool calls |
+| **53 MCP Tools** | Server-exposed MCP surface for search, lineage, coverage, scoring, SQL execution, reports, evals, trace review, cache warming, config, storage, and recipes |
+| **25 CLI Leaf Commands** | One-shot commands for server startup, manifest lifecycle, audits, config, storage, evals, trace review, health, and tool calls |
 | **Hybrid Search** | Tantivy BM25 + vector + sparse + reranking |
 | **Multi-Source** | Local files, HTTP, S3, GCS, DBFS |
 | **Personas** | Analyst, Engineer, Governance profiles |

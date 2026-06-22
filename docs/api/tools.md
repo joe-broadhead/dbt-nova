@@ -1,6 +1,6 @@
 # Tools Reference
 
-This reference lists all 52 MCP tools exposed by dbt‑nova, grouped by category.
+This reference lists all 53 MCP tools exposed by dbt‑nova, grouped by category.
 All tools return the standard envelope described in [Response Format](response-format.md).
 For CLI equivalents and known parity gaps, see
 [MCP/CLI Parity](mcp-cli-parity.md).
@@ -808,6 +808,29 @@ The response `data` includes `suite_name`, the normalized `since` boundary,
 
 ```json
 {"name":"get_eval_history","arguments":{"suite":"analyst-smoke","since":"2026-06-01"}}
+```
+
+### `compare_eval_runs`
+Compare two local eval result directories or `results.json` files and return
+the same before/after data used by `dbt-nova eval compare`.
+
+Required:
+- `before`: baseline result directory or `results.json` path under the MCP
+  server working directory
+- `after`: candidate result directory or `results.json` path under the MCP
+  server working directory
+
+The response `data` uses `eval_comparison.v1` and includes `before`, `after`,
+`delta`, and `markdown`. The Markdown is suitable for PR descriptions. The delta
+includes pass-rate movement, assertion count changes, newly passing/failing
+cases, still-failing cases, added/removed cases, and status changes. For agent
+evals, Nova reads trace artifact paths from each `results.json` and includes
+tool-call counts, duration, response bytes, and token counters when the traces
+exist and contain those fields. Missing trace artifacts are returned as warnings
+instead of tool errors.
+
+```json
+{"name":"compare_eval_runs","arguments":{"before":"out/evals/before","after":"out/evals/after/results.json"}}
 ```
 
 ### `run_eval`

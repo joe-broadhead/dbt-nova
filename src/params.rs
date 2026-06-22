@@ -761,6 +761,15 @@ pub struct GetEvalHistoryParams {
     pub since: String,
 }
 
+/// Parameters for the compare_eval_runs tool.
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+pub struct CompareEvalRunsParams {
+    /// Before eval result directory or results.json path under the server working directory.
+    pub before: String,
+    /// After eval result directory or results.json path under the server working directory.
+    pub after: String,
+}
+
 /// Parameters for the run_eval tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
 pub struct RunEvalParams {

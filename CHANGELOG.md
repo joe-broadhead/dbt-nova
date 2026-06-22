@@ -60,6 +60,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   agent `expected.sql_structures`, comparing tables, joins, projections,
   filters, and groupings while masking string/date/numeric literals and
   reporting structured clause diffs.
+- Added `dbt-nova eval compare` and MCP/CLI `tool call` parity through
+  `compare_eval_runs` for PR-ready before/after eval deltas, including pass-rate
+  movement, newly passing/failing cases, and agent trace counters when available.
+- Added a development negative-results log for ranking, retrieval, skill, and
+  eval experiments that do not improve accuracy, latency, maintainability, or
+  agent behavior.
+- Updated `memmap2` to `0.9.11` to resolve `RUSTSEC-2026-0186`.
 - Documented bridge and provider-backed eval CI templates with GitHub Actions
   examples for manifest generation, telemetry retention, eval gates, artifact
   upload, private OpenCode provider runs, and redacted trace handling.
@@ -97,10 +104,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the `validate_nova_meta` MCP tool and CLI `tool call` bridge support
   for nova-meta schema/semantic validation with scoped local path access.
 - Added MCP and CLI `tool call` parity for eval workflows:
-  `validate_eval_suite`, `get_eval_gate`, `get_eval_history`, `run_eval`,
-  `init_eval_suite`, and `run_agent_eval`, with explicit opt-in environment
-  gates for local writes, bridge eval execution, provider-backed agent evals,
-  and custom provider commands.
+  `validate_eval_suite`, `get_eval_gate`, `get_eval_history`,
+  `compare_eval_runs`, `run_eval`, `init_eval_suite`, and `run_agent_eval`, with
+  explicit opt-in environment gates for local writes, bridge eval execution,
+  provider-backed agent evals, and custom provider commands.
 - Added safety-gated `warm_manifest` MCP and CLI `tool call` parity for
   semantic cache warmup, using the current manifest source and requiring
   `DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1`.

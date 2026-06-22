@@ -183,6 +183,12 @@ mkdocs build --strict
 cargo deny check advisories licenses sources
 ```
 
+For ranking, retrieval, skill, or eval experiments, include before/after eval
+evidence where possible. If the change does not improve accuracy, latency,
+maintainability, or agent behavior, record the decision in the
+[Negative Results Log](negative-results.md) instead of letting the lesson vanish
+inside a closed PR.
+
 ## Release Flow Diagram
 
 ```mermaid

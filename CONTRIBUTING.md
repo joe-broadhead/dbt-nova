@@ -99,6 +99,9 @@ Nova metadata is defined in `schemas/nova/v0.json`. If you add or change fields:
 
 All new behavior should be covered with tests. Avoid `unwrap_or(false)` or
 implicit assertions. Prefer explicit checks and descriptive failure messages.
+For ranking, retrieval, skill, or eval experiments that do not improve the
+project, add a short entry to `docs/development/negative-results.md` so future
+work can learn from the result.
 
 Recommended commands:
 

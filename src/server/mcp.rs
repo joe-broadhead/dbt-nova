@@ -20,9 +20,9 @@ use crate::cli::config_cmd::{
     build_config_show_tool_response, build_config_validate_tool_response,
 };
 use crate::cli::eval_cmd::{
-    build_agent_eval_tool_response, build_eval_gate_tool_response,
-    build_eval_history_tool_response, build_eval_init_tool_response, build_eval_run_tool_response,
-    build_eval_validate_tool_response,
+    build_agent_eval_tool_response, build_eval_compare_tool_response,
+    build_eval_gate_tool_response, build_eval_history_tool_response, build_eval_init_tool_response,
+    build_eval_run_tool_response, build_eval_validate_tool_response,
 };
 use crate::cli::manifest::build_manifest_warm_tool_response;
 use crate::cli::nova_meta_cmd::build_nova_meta_tool_response;
@@ -38,8 +38,8 @@ use crate::config::DbtNovaConfig;
 use crate::error::DbtNovaError;
 use crate::manifest::search::{ManifestSearch, ManifestSearchHandle};
 use crate::params::{
-    BatchGetParams, ColumnInventoryParams, CompareGrainsParams, ConfigShowParams,
-    ConfigValidateParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams,
+    BatchGetParams, ColumnInventoryParams, CompareEvalRunsParams, CompareGrainsParams,
+    ConfigShowParams, ConfigValidateParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams,
     FindEntityOverlapParams, GetAgentReadinessParams, GetColumnLineageParams, GetColumnsParams,
     GetContextParams, GetEntityParams, GetEvalGateParams, GetEvalHistoryParams, GetImpactParams,
     GetLineageParams, GetMetadataAuditParams, GetMetadataScoreParams, GetRecipeParams,
@@ -1717,6 +1717,19 @@ impl DbtNovaServer {
         .await
     }
 
+    /// Compare two eval result directories or results.json files.
+    #[tool(
+        name = "compare_eval_runs",
+        description = "Compare two local eval result directories or results.json files and return PR-ready Markdown plus structured pass-rate, case, and trace-counter deltas. Paths are scoped under the server working directory."
+    )]
+    #[instrument(level = "info", skip(self, params))]
+    async fn compare_eval_runs(&self, params: Parameters<CompareEvalRunsParams>) -> String {
+        self.handle_async("compare_eval_runs", None, |_searcher| async move {
+            build_eval_compare_tool_response(&params.0)
+        })
+        .await
+    }
+
     /// Run deterministic bridge evals against the loaded MCP manifest.
     #[tool(
         name = "run_eval",
@@ -2306,6 +2319,36 @@ mod tests {
         config.search.enable_sparse_search = false;
         config.search.enable_reranker = false;
         config
+    }
+
+    fn write_test_eval_results(dir: &Path, status: &str, pass_rate: f64) {
+        let pass_count = usize::from(status == "pass");
+        let fail_count = usize::from(status == "fail");
+        std::fs::create_dir_all(dir).expect("create eval results dir");
+        let payload = serde_json::json!({
+            "suite_name": "mcp-compare-smoke",
+            "version": 1,
+            "mode": "bridge",
+            "output_dir": dir.display().to_string(),
+            "assertion_count": 1,
+            "pass_count": pass_count,
+            "fail_count": fail_count,
+            "error_count": 0,
+            "pass_rate": pass_rate,
+            "gate_status": status,
+            "cases": [{
+                "id": "case",
+                "pass_count": pass_count,
+                "fail_count": fail_count,
+                "error_count": 0,
+                "assertions": [{"name": "tool_success", "status": status}]
+            }]
+        });
+        std::fs::write(
+            dir.join("results.json"),
+            serde_json::to_string_pretty(&payload).expect("serialize eval results"),
+        )
+        .expect("write eval results");
     }
 
     async fn spawn_ready_server(storage_root: &Path) -> DbtNovaServer {
@@ -3224,6 +3267,51 @@ cases:
             serde_json::json!("mcp-eval-smoke")
         );
         assert!(response["data"]["safety_policy"].is_object());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn compare_eval_runs_returns_markdown_contract() {
+        let root = std::env::current_dir()
+            .expect("cwd")
+            .canonicalize()
+            .expect("canonical cwd");
+        let comparison_dir = TempDir::new_in(&root).expect("temp comparison dir");
+        let before_dir = comparison_dir.path().join("before");
+        let after_dir = comparison_dir.path().join("after");
+        write_test_eval_results(&before_dir, "pass", 1.0);
+        write_test_eval_results(&after_dir, "fail", 0.0);
+
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path());
+        config.mcp_max_response_bytes = 0;
+        let handle = ManifestSearchHandle::spawn(config);
+        handle
+            .wait_ready()
+            .await
+            .expect("fixture manifest should load");
+        let server = DbtNovaServer::new(handle);
+
+        let response: serde_json::Value = serde_json::from_str(
+            &server
+                .compare_eval_runs(Parameters(CompareEvalRunsParams {
+                    before: before_dir.display().to_string(),
+                    after: after_dir.display().to_string(),
+                }))
+                .await,
+        )
+        .expect("eval comparison response JSON");
+
+        assert_eq!(response["success"], serde_json::json!(true));
+        assert_eq!(
+            response["data"]["schema_version"],
+            serde_json::json!("eval_comparison.v1")
+        );
+        assert!(
+            response["data"]["markdown"]
+                .as_str()
+                .expect("markdown")
+                .contains("Newly failing")
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

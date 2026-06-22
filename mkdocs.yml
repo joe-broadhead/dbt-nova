@@ -148,6 +148,7 @@ nav:
     - Testing: operations/testing.md
   - Development:
     - Architecture: development/architecture.md
+    - Negative Results Log: development/negative-results.md
     - Agent Tokenomics Plan: development/agent-tokenomics-plan.md
     - CI & Automation: development/ci.md
     - Release: development/release.md

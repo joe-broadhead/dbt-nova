@@ -27,7 +27,7 @@ flowchart TD
 
 ## Architecture Overview (Detailed)
 
-### Tool Map (52 MCP tools)
+### Tool Map (53 MCP tools)
 
 <div class="diagram-large diagram-vertical" markdown>
 
@@ -87,6 +87,7 @@ flowchart LR
     TR --> T_validate_eval_suite["validate_eval_suite"]
     TR --> T_get_eval_gate["get_eval_gate"]
     TR --> T_get_eval_history["get_eval_history"]
+    TR --> T_compare_eval_runs["compare_eval_runs"]
     TR --> T_run_eval["run_eval"]
     TR --> T_init_eval_suite["init_eval_suite"]
     TR --> T_run_agent_eval["run_agent_eval"]
@@ -194,6 +195,7 @@ Implementation note:
 | `validate_eval_suite` | Eval suite validator + local path policy |
 | `get_eval_gate` | Eval telemetry + gate logic |
 | `get_eval_history` | Eval telemetry |
+| `compare_eval_runs` | Eval results comparison + Markdown renderer |
 | `run_eval` | Eval harness + loaded ManifestSearch |
 | `init_eval_suite` | Eval suite starter writer |
 | `run_agent_eval` | Eval harness + provider process |

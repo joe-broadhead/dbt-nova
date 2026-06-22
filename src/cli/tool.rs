@@ -13,9 +13,9 @@ use crate::cli::config_cmd::{
     build_config_show_tool_response, build_config_validate_tool_response,
 };
 use crate::cli::eval_cmd::{
-    build_agent_eval_tool_response, build_eval_gate_tool_response,
-    build_eval_history_tool_response, build_eval_init_tool_response, build_eval_run_tool_response,
-    build_eval_validate_tool_response,
+    build_agent_eval_tool_response, build_eval_compare_tool_response,
+    build_eval_gate_tool_response, build_eval_history_tool_response, build_eval_init_tool_response,
+    build_eval_run_tool_response, build_eval_validate_tool_response,
 };
 use crate::cli::health_cmd::build_cli_health_payload;
 use crate::cli::manifest::{
@@ -35,8 +35,8 @@ use crate::cli::trace_cmd::{
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::search::ManifestSearch;
 use crate::params::{
-    BatchGetParams, ColumnInventoryParams, CompareGrainsParams, ConfigShowParams,
-    ConfigValidateParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams,
+    BatchGetParams, ColumnInventoryParams, CompareEvalRunsParams, CompareGrainsParams,
+    ConfigShowParams, ConfigValidateParams, DiffEntitiesParams, ExecuteSqlParams, FindByPathParams,
     FindEntityOverlapParams, GetAgentReadinessParams, GetColumnLineageParams, GetColumnsParams,
     GetContextParams, GetEntityParams, GetEvalGateParams, GetEvalHistoryParams, GetImpactParams,
     GetLineageParams, GetMetadataAuditParams, GetMetadataScoreParams, GetRecipeParams,
@@ -61,7 +61,7 @@ struct ToolRegistryEntry {
     dispatch: ToolDispatchFn,
 }
 
-const TOOL_REGISTRY: [ToolRegistryEntry; 52] = [
+const TOOL_REGISTRY: [ToolRegistryEntry; 53] = [
     ToolRegistryEntry {
         name: "search",
         dispatch: dispatch_search,
@@ -141,6 +141,10 @@ const TOOL_REGISTRY: [ToolRegistryEntry; 52] = [
     ToolRegistryEntry {
         name: "get_eval_history",
         dispatch: dispatch_get_eval_history,
+    },
+    ToolRegistryEntry {
+        name: "compare_eval_runs",
+        dispatch: dispatch_compare_eval_runs,
     },
     ToolRegistryEntry {
         name: "run_eval",
@@ -773,6 +777,13 @@ fn dispatch_get_eval_history(_searcher: &ManifestSearch, params: JsonValue) -> T
     Box::pin(async move {
         let decoded: GetEvalHistoryParams = decode_tool_params("get_eval_history", params)?;
         build_eval_history_tool_response(&decoded)
+    })
+}
+
+fn dispatch_compare_eval_runs(_searcher: &ManifestSearch, params: JsonValue) -> ToolFuture<'_> {
+    Box::pin(async move {
+        let decoded: CompareEvalRunsParams = decode_tool_params("compare_eval_runs", params)?;
+        build_eval_compare_tool_response(&decoded)
     })
 }
 
