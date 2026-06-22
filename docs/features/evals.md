@@ -438,3 +438,9 @@ dbt-nova eval run \
 Run agent evals on a schedule, before major metadata changes, or when updating
 agent skills. They are intentionally slower and depend on the configured agent
 provider.
+
+For copyable GitHub Actions examples, see
+[Eval CI Templates](../operations/eval-ci-templates.md). The templates show
+manifest generation, `eval validate`, bridge `eval run --telemetry`, advisory
+and blocking `eval gate` checks, provider-backed OpenCode evals, telemetry
+retention, artifact upload, and redacted trace handling.

@@ -65,6 +65,12 @@ For release or PR evidence that combines metadata scores, readiness bands,
 blocker categories, optional eval gate output, and JSON/Markdown artifacts, see
 [Agent Readiness Audit](../features/agent-readiness.md).
 
+For production GitHub Actions snippets that run bridge evals as PR gates and
+provider-backed OpenCode evals as private or scheduled advisory checks, see
+[Eval CI Templates](eval-ci-templates.md). Those templates include manifest
+generation, telemetry retention, explicit `eval gate` failure checks, artifact
+upload paths, and redacted trace handling.
+
 ## Test Storage Cleanup
 
 Tests use temporary storage under `target/dbt-nova-tests` and clean up automatically.
