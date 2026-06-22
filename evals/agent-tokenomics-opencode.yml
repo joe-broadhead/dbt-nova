@@ -1,5 +1,10 @@
 version: 1
 name: agent-tokenomics-opencode
+purpose: Prove that a provider-backed analyst agent can discover ecommerce tokenomics metrics through Nova and use DuckDB execution evidence correctly.
+manifest_scope: tests/fixtures/tokenomics_manifest.json with DuckDB fixture data
+known_gaps:
+  - Requires a configured OpenCode-compatible provider.
+  - Covers a narrow synthetic ecommerce question set.
 defaults:
   persona: analyst
   top_k: 5

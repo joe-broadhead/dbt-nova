@@ -1,5 +1,10 @@
 version: 1
 name: starter
+purpose: Prove that the packaged synthetic manifest supports core Nova discovery, context, lineage, recipe, metadata-score, and agent tool-use flows.
+manifest_scope: tests/fixtures/starter_eval_manifest.json synthetic commerce manifest
+known_gaps:
+  - Does not execute warehouse SQL.
+  - Uses synthetic metadata and should not be interpreted as production domain coverage.
 defaults:
   persona: analyst
   top_k: 5

@@ -5,18 +5,19 @@ use serde_json::json;
 use tempfile::{NamedTempFile, TempDir};
 
 use super::{
-    AgentCalledWith, AgentEntityRank, AgentExpected, AgentOrder, AssertionResult, EvalCaseReport,
-    EvalDefaults, EvalRunArgs, EvalSuite, EvalValidateArgs, FinalAnswerExpected,
-    apply_telemetry_retention, build_agent_eval_tool_response, build_eval_gate_report,
-    build_eval_gate_tool_response, build_eval_history_tool_response, build_eval_init_tool_response,
-    build_eval_validate_tool_response, contains_rank_assertion, context_contains_assertion,
-    context_field_equals_assertion, eval_case_telemetry_from_trace, format_utc_timestamp_millis,
-    json_has_field_path, metadata_score_max_assertion, metadata_score_min_assertion,
-    read_tool_trace, recipe_rank_assertion, resolve_mcp_writable_path, run_eval_command,
-    run_validate_command, safe_path_segment, score_agent_expectations, selected_agent_cases,
-    selected_bridge_cases, suite_file_hash, telemetry_path_for_suite, telemetry_row_matches_since,
-    tool_response_budget_assertion, tool_success_assertion, validate_since_date, validate_suite,
-    validate_telemetry_suite_name,
+    AgentCalledWith, AgentEntityRank, AgentExpected, AgentOrder, AssertionResult, EvalCardProvider,
+    EvalCardRunContext, EvalCaseReport, EvalDefaults, EvalRunArgs, EvalSuite, EvalValidateArgs,
+    FinalAnswerExpected, apply_telemetry_retention, build_agent_eval_tool_response,
+    build_eval_gate_report, build_eval_gate_tool_response, build_eval_history_tool_response,
+    build_eval_init_tool_response, build_eval_validate_tool_response, build_report,
+    contains_rank_assertion, context_contains_assertion, context_field_equals_assertion,
+    eval_case_telemetry_from_trace, format_utc_timestamp_millis, json_has_field_path,
+    metadata_score_max_assertion, metadata_score_min_assertion, read_tool_trace,
+    recipe_rank_assertion, refresh_eval_card, render_eval_card_markdown, resolve_mcp_writable_path,
+    run_eval_command, run_validate_command, safe_path_segment, score_agent_expectations,
+    selected_agent_cases, selected_bridge_cases, suite_file_hash, telemetry_path_for_suite,
+    telemetry_row_matches_since, tool_response_budget_assertion, tool_success_assertion,
+    validate_since_date, validate_suite, validate_telemetry_suite_name,
 };
 use crate::params::{
     GetEvalGateParams, GetEvalHistoryParams, InitEvalSuiteParams, RunAgentEvalParams,
@@ -294,6 +295,244 @@ fn case_report_counts_statuses() {
 }
 
 #[test]
+fn eval_card_summarizes_bridge_report_with_missing_telemetry() {
+    let suite = eval_card_suite("card-bridge", Some(0.9), false);
+    let report = build_report(
+        &suite,
+        "bridge",
+        "out/eval-card".to_string(),
+        0.9,
+        vec![EvalCaseReport::new(
+            "bridge_case".to_string(),
+            Some("Find canonical orders".to_string()),
+            vec![AssertionResult::pass(
+                "search_rank",
+                "ranked first",
+                json!({}),
+            )],
+            None,
+        )],
+    );
+
+    assert_eq!(report.eval_card.schema_version, "eval_card.v1");
+    assert_eq!(report.eval_card.suite_name, "card-bridge");
+    assert_eq!(report.eval_card.mode, "bridge");
+    assert_eq!(report.eval_card.bridge_case_count, 1);
+    assert_eq!(report.eval_card.agent_case_count, 0);
+    assert_eq!(report.eval_card.run_status, "pass");
+    assert!((report.eval_card.pass_rate - 1.0).abs() < f64::EPSILON);
+    assert_eq!(report.eval_card.telemetry.status, "missing");
+    assert_eq!(report.eval_card.gate.status, "missing_telemetry");
+    assert_eq!(
+        report.eval_card.manifest_scope.declared,
+        "synthetic starter manifest"
+    );
+    assert_eq!(
+        report.eval_card.known_gaps,
+        vec!["does not cover live warehouse freshness".to_string()]
+    );
+}
+
+#[test]
+fn eval_card_includes_agent_provider_metadata() {
+    let suite = eval_card_suite("card-agent", None, true);
+    let mut report = build_report(
+        &suite,
+        "agent",
+        "out/agent-card".to_string(),
+        1.0,
+        vec![EvalCaseReport::new(
+            "agent_case".to_string(),
+            Some("Use Nova to answer the task".to_string()),
+            vec![AssertionResult::pass(
+                "must_call:search_indicator",
+                "required tool was called",
+                json!({}),
+            )],
+            None,
+        )],
+    );
+    refresh_eval_card(
+        &mut report,
+        &suite,
+        &EvalCardRunContext {
+            manifest_source: Some("tests/fixtures/starter_eval_manifest.json".to_string()),
+            provider: Some(EvalCardProvider {
+                provider: "opencode".to_string(),
+                command_preset: "opencode".to_string(),
+                model: Some("opencode/deepseek-v4-flash-free".to_string()),
+            }),
+            ..EvalCardRunContext::default()
+        },
+    );
+
+    let provider = report
+        .eval_card
+        .provider
+        .as_ref()
+        .expect("provider metadata");
+    assert_eq!(provider.provider, "opencode");
+    assert_eq!(provider.command_preset, "opencode");
+    assert_eq!(
+        provider.model.as_deref(),
+        Some("opencode/deepseek-v4-flash-free")
+    );
+    assert_eq!(
+        report.eval_card.manifest_scope.manifest_source.as_deref(),
+        Some("tests/fixtures/starter_eval_manifest.json")
+    );
+}
+
+#[test]
+fn eval_card_uses_latest_telemetry_gate_when_available() {
+    let suite_name = "card-gated";
+    let suite = gate_suite_file(Some(1.0));
+    let suite_hash = suite_file_hash(&suite.path().display().to_string()).expect("suite hash");
+    let telemetry_path = telemetry_path_for_suite(suite_name);
+    if let Some(parent) = telemetry_path.parent() {
+        std::fs::create_dir_all(parent).expect("telemetry dir");
+    }
+    let rows = [
+        telemetry_row_with_suite_hash(
+            suite_name,
+            &suite.path().display().to_string(),
+            &suite_hash,
+            "latest",
+            2,
+            "case_a",
+            "assertion_a",
+            "pass",
+        ),
+        telemetry_row_with_suite_hash(
+            suite_name,
+            &suite.path().display().to_string(),
+            &suite_hash,
+            "latest",
+            2,
+            "case_b",
+            "assertion_b",
+            "fail",
+        ),
+    ];
+    let mut body = rows
+        .iter()
+        .map(serde_json::to_string)
+        .collect::<Result<Vec<_>, _>>()
+        .expect("serialize telemetry")
+        .join("\n");
+    body.push('\n');
+    std::fs::write(&telemetry_path, body).expect("write telemetry");
+
+    let suite = eval_card_suite(suite_name, Some(1.0), false);
+    let mut report = build_report(
+        &suite,
+        "bridge",
+        "out/card-gated".to_string(),
+        1.0,
+        vec![EvalCaseReport::new(
+            "case_a".to_string(),
+            None,
+            vec![AssertionResult::pass("assertion_a", "ok", json!({}))],
+            None,
+        )],
+    );
+    refresh_eval_card(
+        &mut report,
+        &suite,
+        &EvalCardRunContext {
+            telemetry_requested: true,
+            ..EvalCardRunContext::default()
+        },
+    );
+
+    assert_eq!(report.eval_card.telemetry.status, "latest");
+    assert_eq!(report.eval_card.telemetry.row_count, 2);
+    assert_eq!(report.eval_card.gate.status, "fail");
+    assert!(report.eval_card.gate.configured);
+    assert_eq!(report.eval_card.gate.threshold, Some(1.0));
+    assert_eq!(report.eval_card.gate.total_evals, Some(2));
+    assert_eq!(report.eval_card.gate.failed_evals, Some(1));
+
+    std::fs::remove_file(telemetry_path).expect("remove telemetry");
+}
+
+#[test]
+fn eval_card_represents_no_gate_with_latest_telemetry() {
+    let suite = gate_suite_file(None);
+    let suite_name = "card-no-gate";
+    let suite_hash = suite_file_hash(&suite.path().display().to_string()).expect("suite hash");
+    let telemetry_path = telemetry_path_for_suite(suite_name);
+    if let Some(parent) = telemetry_path.parent() {
+        std::fs::create_dir_all(parent).expect("telemetry dir");
+    }
+    let row = telemetry_row_with_suite_hash(
+        suite_name,
+        &suite.path().display().to_string(),
+        &suite_hash,
+        "latest",
+        1,
+        "case_a",
+        "assertion_a",
+        "pass",
+    );
+    std::fs::write(
+        &telemetry_path,
+        format!("{}\n", serde_json::to_string(&row).expect("row JSON")),
+    )
+    .expect("write telemetry");
+
+    let suite = eval_card_suite(suite_name, None, false);
+    let report = build_report(
+        &suite,
+        "bridge",
+        "out/card-no-gate".to_string(),
+        1.0,
+        vec![EvalCaseReport::new(
+            "case_a".to_string(),
+            None,
+            vec![AssertionResult::pass("assertion_a", "ok", json!({}))],
+            None,
+        )],
+    );
+
+    assert_eq!(report.eval_card.telemetry.status, "latest");
+    assert_eq!(report.eval_card.gate.status, "not_configured");
+    assert!(!report.eval_card.gate.configured);
+    assert!(report.eval_card.gate.message.contains("allowed by default"));
+
+    std::fs::remove_file(telemetry_path).expect("remove telemetry");
+}
+
+#[test]
+fn eval_card_markdown_is_pr_ready() {
+    let suite = eval_card_suite("card-markdown", None, false);
+    let report = build_report(
+        &suite,
+        "bridge",
+        "out/card-markdown".to_string(),
+        1.0,
+        vec![EvalCaseReport::new(
+            "case".to_string(),
+            None,
+            vec![AssertionResult::pass(
+                "tool_success:search",
+                "ok",
+                json!({}),
+            )],
+            None,
+        )],
+    );
+
+    let markdown = render_eval_card_markdown(&report.eval_card);
+
+    assert!(markdown.starts_with("# Nova Eval Card"));
+    assert!(markdown.contains("Pass rate: `100.0%`"));
+    assert!(markdown.contains("Gate status: `missing_telemetry`"));
+    assert!(markdown.contains("Known gaps:"));
+    assert!(markdown.contains("does not cover live warehouse freshness"));
+}
+
+#[test]
 fn read_tool_trace_reports_parse_errors() {
     let file = NamedTempFile::new().expect("temp file");
     std::fs::write(
@@ -418,6 +657,9 @@ fn telemetry_requires_named_suite() {
     let suite = EvalSuite {
         version: 1,
         name: None,
+        purpose: None,
+        manifest_scope: None,
+        known_gaps: Vec::new(),
         gate: None,
         defaults: EvalDefaults::default(),
         cases: Vec::new(),
@@ -778,6 +1020,9 @@ fn validate_suite_rejects_invalid_gate_threshold() {
     let suite = EvalSuite {
         version: 1,
         name: None,
+        purpose: None,
+        manifest_scope: None,
+        known_gaps: Vec::new(),
         gate: Some(super::EvalGateConfig { threshold: 1.1 }),
         defaults: EvalDefaults::default(),
         cases: Vec::new(),
@@ -792,6 +1037,9 @@ fn validate_suite_rejects_duplicate_agent_case_ids() {
     let suite = EvalSuite {
         version: 1,
         name: None,
+        purpose: None,
+        manifest_scope: None,
+        known_gaps: Vec::new(),
         gate: None,
         defaults: EvalDefaults::default(),
         cases: Vec::new(),
@@ -817,6 +1065,9 @@ fn validate_suite_rejects_duplicate_artifact_segments() {
     let suite = EvalSuite {
         version: 1,
         name: None,
+        purpose: None,
+        manifest_scope: None,
+        known_gaps: Vec::new(),
         gate: None,
         defaults: EvalDefaults::default(),
         cases: Vec::new(),
@@ -842,6 +1093,9 @@ fn validate_suite_rejects_case_insensitive_artifact_segment_collisions() {
     let suite = EvalSuite {
         version: 1,
         name: None,
+        purpose: None,
+        manifest_scope: None,
+        known_gaps: Vec::new(),
         gate: None,
         defaults: EvalDefaults::default(),
         cases: Vec::new(),
@@ -867,6 +1121,9 @@ fn validate_suite_rejects_vacuous_search_columns_rank_assertion() {
     let suite = EvalSuite {
         version: 1,
         name: None,
+        purpose: None,
+        manifest_scope: None,
+        known_gaps: Vec::new(),
         gate: None,
         defaults: EvalDefaults::default(),
         cases: vec![super::EvalCase {
@@ -891,6 +1148,9 @@ fn validate_suite_rejects_unmatchable_called_with_param_values() {
     let suite = EvalSuite {
         version: 1,
         name: None,
+        purpose: None,
+        manifest_scope: None,
+        known_gaps: Vec::new(),
         gate: None,
         defaults: EvalDefaults::default(),
         cases: Vec::new(),
@@ -1238,8 +1498,16 @@ cases:
     );
     assert!(output_dir.join("results.json").exists());
     assert!(output_dir.join("results.tsv").exists());
+    assert!(output_dir.join("card.md").exists());
     assert!(output_dir.join("report.md").exists());
     assert!(output_dir.join("suite.yml").exists());
+    let results = std::fs::read_to_string(output_dir.join("results.json")).expect("results json");
+    let results: serde_json::Value = serde_json::from_str(&results).expect("parse results");
+    assert_eq!(
+        results["eval_card"]["schema_version"],
+        json!("eval_card.v1")
+    );
+    assert_eq!(results["eval_card"]["mode"], json!("bridge"));
 }
 
 #[test]
@@ -1255,6 +1523,43 @@ fn fixture_manifest_path(name: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(name)
+}
+
+fn eval_card_suite(name: &str, threshold: Option<f64>, include_agent_case: bool) -> EvalSuite {
+    EvalSuite {
+        version: 1,
+        name: Some(name.to_string()),
+        purpose: Some("Proves that Nova can answer the core eval question.".to_string()),
+        manifest_scope: Some("synthetic starter manifest".to_string()),
+        known_gaps: vec!["does not cover live warehouse freshness".to_string()],
+        gate: threshold.map(|threshold| super::EvalGateConfig { threshold }),
+        defaults: EvalDefaults {
+            persona: Some("analyst".to_string()),
+            top_k: 5,
+        },
+        cases: if include_agent_case {
+            Vec::new()
+        } else {
+            vec![super::EvalCase {
+                id: "bridge_case".to_string(),
+                question: Some("Find canonical orders".to_string()),
+                persona: None,
+                assertions: vec![super::EvalAssertion::ToolSuccess {
+                    tool: "search".to_string(),
+                    params: json!({}),
+                }],
+            }]
+        },
+        agent_cases: if include_agent_case {
+            vec![super::AgentCase {
+                id: "agent_case".to_string(),
+                task: "Use Nova to answer the task".to_string(),
+                expected: AgentExpected::default(),
+            }]
+        } else {
+            Vec::new()
+        },
+    }
 }
 
 fn gate_suite_file(threshold: Option<f64>) -> NamedTempFile {
@@ -1431,6 +1736,35 @@ fn telemetry_row_with_run_id_and_counts(
         && let Some(object) = row.as_object_mut()
     {
         object.insert("suite_hash".to_string(), json!(hash));
+    }
+    row
+}
+
+#[allow(clippy::too_many_arguments)]
+fn telemetry_row_with_suite_hash(
+    suite_name: &str,
+    suite_path: &str,
+    suite_hash: &str,
+    output_dir: &str,
+    timestamp_ms: u64,
+    case_id: &str,
+    assertion_name: &str,
+    status: &str,
+) -> serde_json::Value {
+    let mut row = telemetry_row_with_assertion_count(
+        suite_name,
+        suite_path,
+        output_dir,
+        timestamp_ms,
+        case_id,
+        assertion_name,
+        status,
+        2,
+    );
+    if let Some(object) = row.as_object_mut() {
+        object.insert("suite_hash".to_string(), json!(suite_hash));
+        object.insert("suite_case_count".to_string(), json!(2));
+        object.insert("run_case_count".to_string(), json!(2));
     }
     row
 }
