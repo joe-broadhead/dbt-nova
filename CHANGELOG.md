@@ -66,6 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a development negative-results log for ranking, retrieval, skill, and
   eval experiments that do not improve accuracy, latency, maintainability, or
   agent behavior.
+- Updated `memmap2` to `0.9.11` to resolve `RUSTSEC-2026-0186`.
 - Documented bridge and provider-backed eval CI templates with GitHub Actions
   examples for manifest generation, telemetry retention, eval gates, artifact
   upload, private OpenCode provider runs, and redacted trace handling.
