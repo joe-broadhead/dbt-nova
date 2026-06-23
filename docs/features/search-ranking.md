@@ -44,9 +44,47 @@ Each allowlisted field maps a dbt metadata path to a search alias:
 | `columns.*.meta.semantic_group` | `semantic_group` | `meta.semantic_group` | Column metadata collected deterministically by column name |
 
 Unconfigured metadata is not searchable. Configured values are capped at
-indexing time with `extended_meta.max_values_per_field` and
-`extended_meta.max_bytes_per_value`, and sensitive key paths are rejected during
-configuration validation.
+indexing and summary-rendering time with
+`extended_meta.max_values_per_field` and `extended_meta.max_bytes_per_value`,
+and sensitive key paths are rejected during configuration validation.
+
+Set `summary: true` on fields that should appear in search payloads. Standard
+and full search results then include `extended_meta_summary` with the alias,
+source path, fielded search name, mode, retained values, and column names for
+`columns.*.meta.*` fields:
+
+```json
+{
+  "extended_meta_summary": {
+    "fields": [
+      {
+        "alias": "owner",
+        "path": "meta.owner",
+        "search_field": "meta.owner",
+        "mode": "keyword",
+        "values": ["analytics_reporting"]
+      },
+      {
+        "alias": "semantic_group",
+        "path": "columns.*.meta.semantic_group",
+        "search_field": "meta.semantic_group",
+        "mode": "string_array",
+        "values": ["acquisition", "lifecycle"],
+        "columns": [
+          {"name": "channel", "values": ["acquisition"]},
+          {"name": "status", "values": ["lifecycle"]}
+        ]
+      }
+    ]
+  }
+}
+```
+
+`extended_meta_summary` is intentionally a bridge for existing conventions.
+The complete raw `meta` and `columns.*.meta` payload remains available in
+`detail=full`, while `meta.nova` remains Nova's first-class semantic contract.
+If summary caps apply, the field sets `truncated: true` and includes
+`dropped_values` and/or `byte_truncated_values` counts.
 
 ## Default Boosts (Config)
 

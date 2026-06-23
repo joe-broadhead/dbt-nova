@@ -252,7 +252,8 @@ Each field object accepts:
 - `alias` – lowercase ASCII field alias exposed as `meta.<alias>` for fielded search
 - `mode` – one of `keyword`, `text`, `string_array`, or `bool`
 - `boost` – non-negative ranking boost (default: `1.0`)
-- `summary` – whether the field is eligible for future summaries (default: `false`)
+- `summary` – whether standard/full search rows include the field in
+  `extended_meta_summary` (default: `false`)
 
 Example:
 
@@ -271,13 +272,35 @@ meta.owner:alice
 meta.semantic_group:lifecycle
 ```
 
+Because `meta.owner` has `summary: true`, matching standard/full search rows can
+also include a compact summary:
+
+```json
+{
+  "extended_meta_summary": {
+    "fields": [
+      {
+        "alias": "owner",
+        "path": "meta.owner",
+        "search_field": "meta.owner",
+        "mode": "keyword",
+        "values": ["alice"]
+      }
+    ]
+  }
+}
+```
+
 Guardrails:
 - No fields preserves current behavior and produces no search-index fingerprint.
 - `meta.nova` paths are rejected because Nova metadata is already indexed.
 - Sensitive key segments are rejected before indexing: `token`, `secret`, `password`, `credential`, `private_key`, and `api_key`.
 - `*` is only accepted in `columns.*.meta.` paths; runtime schema discovery is not performed.
 - Values are capped deterministically by `max_values_per_field` and
-  `max_bytes_per_value`; excess values are dropped during indexing.
+  `max_bytes_per_value`; excess values are dropped during indexing and summary
+  rendering. Summary fields set `truncated: true` when values were dropped or
+  byte-truncated, with `dropped_values` and `byte_truncated_values` counts when
+  applicable.
 - Changing extended metadata config changes the manifest-scoped search index identity.
 
 ## Embeddings (Dense + Sparse)

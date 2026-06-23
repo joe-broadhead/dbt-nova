@@ -17,11 +17,12 @@ use tantivy::tokenizer::{
 };
 use tantivy::{Index, IndexReader, IndexWriter, Term};
 
-use crate::config::{ExtendedMetaFieldConfig, ExtendedMetaFieldMode, SearchConfig};
+use crate::config::{ExtendedMetaFieldMode, SearchConfig};
 use crate::error::{DbtNovaError, Result};
-use crate::manifest::entity::{
-    column_nova_meta_json, entity_nova_meta_json, normalized_column_meta_json,
-    normalized_entity_meta_json,
+use crate::manifest::entity::{column_nova_meta_json, entity_nova_meta_json};
+use crate::manifest::extended_meta::{
+    ExtendedMetaPath, collect_capped_extended_meta_values, extended_meta_field_name,
+    sorted_extended_meta_fields,
 };
 use crate::manifest::store::EntityStore;
 use crate::utils::{SearchPersona, has_query_syntax, tokenize_alnum_lowercase};
@@ -68,12 +69,6 @@ struct ExtendedMetaFieldHandle {
     field: Field,
     mode: ExtendedMetaFieldMode,
     boost: f32,
-}
-
-#[derive(Clone)]
-enum ExtendedMetaPath {
-    Entity { segments: Vec<String> },
-    ColumnWildcard { segments: Vec<String> },
 }
 
 /// Search hit with score and optional highlights.
@@ -1198,33 +1193,6 @@ impl TantivySearcher {
     }
 }
 
-impl ExtendedMetaPath {
-    fn from_config_path(path: &str) -> Self {
-        let segments = path.trim().split('.').collect::<Vec<_>>();
-        if segments.len() >= 4
-            && segments.first() == Some(&"columns")
-            && segments.get(1) == Some(&"*")
-            && segments.get(2) == Some(&"meta")
-        {
-            return Self::ColumnWildcard {
-                segments: segments[3..]
-                    .iter()
-                    .map(|segment| (*segment).to_string())
-                    .collect(),
-            };
-        }
-
-        Self::Entity {
-            segments: segments
-                .get(1..)
-                .unwrap_or_default()
-                .iter()
-                .map(|segment| (*segment).to_string())
-                .collect(),
-        }
-    }
-}
-
 impl TantivySearcher {
     fn add_extended_meta_fields(
         doc: &mut tantivy::TantivyDocument,
@@ -1238,49 +1206,33 @@ impl TantivySearcher {
         }
 
         for field in fields {
-            let values = collect_extended_meta_values(entity_json, field);
-            if values.is_empty() {
+            let values = collect_capped_extended_meta_values(
+                entity_json,
+                &field.path,
+                field.mode,
+                config.extended_meta.max_values_per_field,
+                config.extended_meta.max_bytes_per_value,
+            );
+            if values.values.is_empty() {
                 continue;
             }
 
-            let mut retained = 0usize;
-            let mut dropped_for_cap = 0usize;
-            for value in values {
-                if retained >= config.extended_meta.max_values_per_field {
-                    dropped_for_cap += 1;
-                    continue;
-                }
-                let Some(value) =
-                    capped_non_empty_value(&value, config.extended_meta.max_bytes_per_value)
-                else {
-                    continue;
-                };
-                doc.add_text(field.field, &value);
-                retained += 1;
+            for value in &values.values {
+                doc.add_text(field.field, &value.value);
             }
 
-            if dropped_for_cap > 0 {
+            if values.dropped_values > 0 {
                 warn!(
                     unique_id,
                     alias = %field.alias,
-                    retained_values = retained,
-                    dropped_values = dropped_for_cap,
+                    retained_values = values.values.len(),
+                    dropped_values = values.dropped_values,
                     max_values_per_field = config.extended_meta.max_values_per_field,
                     "extended metadata value cap exceeded; dropping excess values"
                 );
             }
         }
     }
-}
-
-fn sorted_extended_meta_fields(config: &SearchConfig) -> Vec<&ExtendedMetaFieldConfig> {
-    let mut fields = config.extended_meta.fields.iter().collect::<Vec<_>>();
-    fields.sort_by(|left, right| {
-        left.alias
-            .cmp(&right.alias)
-            .then_with(|| left.path.cmp(&right.path))
-    });
-    fields
 }
 
 fn add_extended_meta_schema_fields(
@@ -1315,103 +1267,6 @@ fn add_extended_meta_schema_fields(
         });
     }
     extended_meta_fields
-}
-
-fn extended_meta_field_name(alias: &str) -> String {
-    format!("meta.{}", alias.trim())
-}
-
-fn collect_extended_meta_values(
-    entity_json: &JsonValue,
-    field: &ExtendedMetaFieldHandle,
-) -> Vec<String> {
-    match &field.path {
-        ExtendedMetaPath::Entity { segments } => normalized_entity_meta_json(entity_json)
-            .as_ref()
-            .and_then(|meta| value_at_path(meta, segments))
-            .map(|value| values_for_mode(value, field.mode))
-            .unwrap_or_default(),
-        ExtendedMetaPath::ColumnWildcard { segments } => {
-            let Some(columns) = entity_json.get("columns").and_then(JsonValue::as_object) else {
-                return Vec::new();
-            };
-            let mut column_names = columns.keys().collect::<Vec<_>>();
-            column_names.sort();
-
-            let mut out = Vec::new();
-            for column_name in column_names {
-                let Some(column) = columns.get(column_name) else {
-                    continue;
-                };
-                let Some(meta) = normalized_column_meta_json(column) else {
-                    continue;
-                };
-                let Some(value) = value_at_path(&meta, segments) else {
-                    continue;
-                };
-                out.extend(values_for_mode(value, field.mode));
-            }
-            out
-        }
-    }
-}
-
-fn values_for_mode(value: &JsonValue, mode: ExtendedMetaFieldMode) -> Vec<String> {
-    match mode {
-        ExtendedMetaFieldMode::Keyword | ExtendedMetaFieldMode::Text => match value {
-            JsonValue::String(value) => vec![value.clone()],
-            JsonValue::Number(value) => vec![value.to_string()],
-            _ => Vec::new(),
-        },
-        ExtendedMetaFieldMode::StringArray => value
-            .as_array()
-            .map(|values| {
-                values
-                    .iter()
-                    .filter_map(JsonValue::as_str)
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default(),
-        ExtendedMetaFieldMode::Bool => value
-            .as_bool()
-            .map(|value| value.to_string())
-            .into_iter()
-            .collect(),
-    }
-}
-
-fn capped_non_empty_value(value: &str, max_bytes: usize) -> Option<String> {
-    if max_bytes == 0 {
-        return None;
-    }
-
-    let value = value.trim();
-    if value.is_empty() {
-        return None;
-    }
-
-    let mut end = value.len().min(max_bytes);
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    value
-        .get(..end)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-}
-
-fn value_at_path<'a>(root: &'a JsonValue, segments: &[String]) -> Option<&'a JsonValue> {
-    let mut current = root;
-    for segment in segments {
-        current = current.get(segment)?;
-    }
-    if current.is_null() {
-        None
-    } else {
-        Some(current)
-    }
 }
 
 fn format_highlight(snippet: &Snippet, format: &str) -> String {

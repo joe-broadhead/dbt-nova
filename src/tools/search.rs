@@ -315,9 +315,13 @@ impl ManifestSearch {
                         entity,
                         &entity_json,
                     );
+                    let extended_meta_summary = self.extended_meta_summary(&entity_json);
                     if let Some(obj) = entity_json.as_object_mut() {
                         obj.insert("score".to_string(), JsonValue::from(candidate.score));
                         obj.insert("provenance".to_string(), provenance);
+                        if let Some(summary) = extended_meta_summary {
+                            obj.insert("extended_meta_summary".to_string(), summary);
+                        }
                         if let Some(highlights) = highlight_value {
                             obj.insert("highlights".to_string(), highlights);
                         }

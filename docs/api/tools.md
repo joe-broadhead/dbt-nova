@@ -44,6 +44,17 @@ Common:
       "description": "Customer dimension with lifecycle attributes...",
       "columns_total": 18,
       "primary_key_columns": ["customer_id"],
+      "extended_meta_summary": {
+        "fields": [
+          {
+            "alias": "owner",
+            "path": "meta.owner",
+            "search_field": "meta.owner",
+            "mode": "keyword",
+            "values": ["analytics_reporting"]
+          }
+        ]
+      },
       "persona_payload": {
         "focus": "business_discovery",
         "business_definition": "Customer dimension with lifecycle attributes...",
@@ -100,6 +111,16 @@ Common:
 When omitted, `detail` uses the active result profile: `standard` for CLI/tool
 calls by default and `compact` for MCP by default. Explicit `detail` values
 override the profile.
+
+When `search.extended_meta.fields` contains fields with `summary: true`,
+`standard` and `full` search rows include `extended_meta_summary`. The summary is
+bounded by `extended_meta.max_values_per_field` and
+`extended_meta.max_bytes_per_value`, contains only configured summary fields,
+and uses aliases such as `meta.owner` for fielded search. A field sets
+`truncated: true` when summary caps drop values or trim bytes, with
+`dropped_values` and `byte_truncated_values` counts when applicable. Full rows
+still include the complete raw dbt `meta` and `columns.*.meta` payload for
+inspection.
 
 Search result rows include an additive `provenance` object for `compact`,
 `standard`, and `full` detail. `provenance.tier` is `semantic_layer` when

@@ -28,19 +28,19 @@ pub enum ExtendedMetaFieldMode {
     Bool,
 }
 
-/// One allowlisted non-Nova dbt metadata path for future extended-meta indexing.
+/// One allowlisted non-Nova dbt metadata path for extended-meta search.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct ExtendedMetaFieldConfig {
     /// Logical dbt metadata path, such as `meta.owner` or `columns.*.meta.semantic_group`.
     pub path: String,
-    /// Stable search alias used for future fielded search and summaries.
+    /// Stable search alias used for fielded search and optional summaries.
     pub alias: String,
     /// Value mode for this path.
     pub mode: ExtendedMetaFieldMode,
-    /// Optional ranking boost applied by later indexing work.
+    /// Optional ranking boost applied to this field in search.
     pub boost: f32,
-    /// Whether this field is eligible for future summary payloads.
+    /// Whether this field is included in `extended_meta_summary` payloads.
     pub summary: bool,
 }
 
