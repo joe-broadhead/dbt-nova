@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added an OpenCode reference pack design covering the target `.opencode`
+  layout, role-to-tool permission model, local and remote MCP examples, smoke
+  eval expectations, and portability boundaries for later Codex/Claude work.
 - Added default-off extended metadata search config for allowlisted non-Nova
   dbt `meta.*` paths, including value modes, caps, sensitive-key guardrails,
   docs/reference output, and manifest-scoped search index identity.
