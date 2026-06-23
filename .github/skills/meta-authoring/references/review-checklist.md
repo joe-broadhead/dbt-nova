@@ -16,6 +16,9 @@ Use this before final handoff.
 - Sources and staging resources stay sparse but include governance when sensitivity or PII is present.
 - Column annotations are limited to identifiers, time fields, high-signal dimensions, measures, and genuine disambiguation.
 - Synonyms are concise and business-facing.
+- Domain references keep narrative guidance out of `meta.nova` while still
+  linking back to `domains`, `use_cases`, `grain`, `measures`, `metric(s)`, and
+  `governance`.
 
 ## Canonicality And Reuse
 
@@ -46,3 +49,5 @@ Use this before final handoff.
 - `search_indicator` or `search` returns the expected canonical result for key terms.
 - `get_entity`, `get_context`, or `get_columns` confirms the final contract.
 - `get_metadata_score` improves or any non-score tradeoff is explained.
+- Domain reference changes were validated with skill installation and docs build
+  when the packaged template or docs changed.

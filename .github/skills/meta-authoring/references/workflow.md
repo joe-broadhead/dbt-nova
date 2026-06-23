@@ -8,10 +8,12 @@ Use this sequence for both authoring and review. The main failure mode is adding
 2. Classify the target entity.
 3. Inventory repeated concepts before adding new canonical metadata.
 4. Choose the smallest correct Nova surface.
-5. Validate local edits with schema/audit tooling when available.
-6. Rebuild or refresh the manifest through the project workflow.
-7. Verify search, grain, and score behavior against the refreshed manifest.
-8. Widen scope only after the narrow target is clean.
+5. If authoring a domain reference, separate stable metadata facts from
+   narrative guidance before writing the reference.
+6. Validate local edits with schema/audit tooling when available.
+7. Rebuild or refresh the manifest through the project workflow.
+8. Verify search, grain, and score behavior against the refreshed manifest.
+9. Widen scope only after the narrow target is clean.
 
 ## Classification
 
@@ -45,6 +47,27 @@ Use:
 - `search.candidates` for audience-specific de-ranking only
 
 Prefer fewer high-signal fields over exhaustive metadata.
+
+## Domain References
+
+Use `references/domain-reference-template.md` when a team needs curated
+business guidance alongside dbt models or docs. Domain references are the right
+surface for:
+- business context and supported decisions
+- scope and exclusions
+- standard hygiene filters and value validation notes
+- canonical-entity rationale
+- gotchas and anti-patterns
+- cross-domain handoffs
+- maintenance triggers
+
+Keep canonical definitions in `meta.nova`. A domain reference may explain why a
+model or metric is canonical, but it should point to `meta.nova.domains`,
+`use_cases`, `grain`, `measures`, `metric(s)`, and `governance` rather than
+duplicating divergent formulas or free-text metadata.
+
+Do not treat a raw query corpus, dashboard, or notebook as authoritative. Use
+those only as supporting evidence after the governed metadata surface is clear.
 
 ## Verification
 

@@ -45,6 +45,23 @@ Use this prompt when needed:
 
 Do not skip filter-value validation when the question includes geography, market, segment, or channel constraints.
 
+## Domain reference rule
+
+Domain references are curated guides for durable domains or recurring workflow
+families. Use them after semantic discovery when they can clarify canonical
+entities, grain, standard hygiene filters, gotchas, or cross-domain handoffs.
+
+Do not use domain references as raw query corpora or as replacements for
+current Nova tool evidence. If a reference conflicts with `meta.nova`, lineage,
+tests, or freshness evidence, prefer the current manifest evidence and report
+the reference as stale or ambiguous.
+
+When a domain reference materially changes the answer, capture:
+- reference path or title
+- canonical entity and grain it recommends
+- required filters or exclusions it adds
+- gotcha, caveat, or handoff rule applied
+
 ## Semantic-first gate
 
 For KPI-shaped asks, broad model search is allowed only after semantic

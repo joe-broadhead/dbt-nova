@@ -32,6 +32,11 @@ The repo also ships deterministic helper scripts for architecture and cleanup wo
 
 These scripts call Nova CLI tools directly and keep their outputs aligned with the tool contracts rather than introducing a second reporting schema.
 
+The `meta-authoring` skill also ships a reusable domain reference template and
+synthetic example. Domain references are curated Markdown guides for business
+context, grain, standard filters, canonical entities, gotchas, and cross-domain
+handoffs; see [Domain References](../features/domain-references.md).
+
 ## Install in common tools
 
 Use the standalone persona skill directly when you want one workflow.
