@@ -6,7 +6,7 @@ allowed-tools: "Bash Read Write mcp__nova__show_metadata mcp__nova__health mcp__
 metadata:
   owner: "dbt-nova"
   persona: "analyst"
-  version: "0.0.4"
+  version: "0.0.5"
 ---
 
 # Analyst Skill (dbt-nova)
@@ -42,6 +42,30 @@ A question is not ready for final SQL until you can name:
 - the exact validated filter value(s)
 - the comparison basis when the ask is period-based
 
+## Semantic-first KPI contract (required)
+
+For KPI, metric, measure, rate, funnel, and conversion questions, semantic
+discovery is the default path. Use Nova indicator discovery before broad model
+search, context loading, raw SQL inspection, or warehouse execution.
+
+Required order:
+1. Search governed indicators with `search_indicator` using compact defaults.
+2. Prefer returned metrics/measures and their parent execution entities.
+3. Use compact entity or column checks only after selecting a semantic parent.
+4. Execute SQL or recipes only after the semantic definition, grain, time field,
+   and filter fields are known.
+
+Raw model search is fallback, not a parallel first step. Use it only after you
+can state one of these evidence-backed reasons:
+- `search_indicator` returned no relevant measure or metric.
+- The relevant indicator has no credible execution parent for the ask.
+- The ask is not KPI-shaped after decomposition.
+- A recipe fully covers the recurring deliverable and provides the semantic
+  contract itself.
+
+When you fall back to raw model search, say what semantic discovery you tried
+and why it was insufficient.
+
 ## Transport selection (required)
 
 Choose transport before loading transport-specific references:
@@ -55,18 +79,23 @@ Do not mix transports in one answer unless you are explicitly debugging transpor
 
 ## Deterministic flow
 
-1. Decide whether the ask is recurring or ad hoc.
-2. Resolve requested indicators one at a time.
-3. Choose one credible execution entity.
-4. Verify fields only after choosing the entity.
-5. Validate non-trivial filter values before aggregation.
-6. Escalate trust checks only when useful.
-7. Execute.
-8. Report with explicit evidence.
+1. Decide whether the ask is recurring, KPI-shaped, or ad hoc.
+2. Use recipes first only when the user asks for a recurring deliverable.
+3. For KPI-shaped asks, resolve requested indicators one at a time before broad
+   model search.
+4. Choose one credible execution entity from semantic parent evidence.
+5. Verify fields only after choosing the entity.
+6. Validate non-trivial filter values before aggregation.
+7. Escalate trust checks only when useful.
+8. Execute.
+9. Report with explicit evidence.
 
 Rules:
 - Prefer a common parent across requested indicators.
 - If no credible shared parent exists, do not force one query. Either answer in separate entity sections or ask for clarification.
+- Do not call broad `search`, `get_context`, `get_sql`, or `execute_sql` before
+  `search_indicator` for metric/KPI questions unless you have documented a
+  fallback reason.
 - Do not assume friendly labels map directly to raw warehouse values without validation.
 - Keep validation probes close to the target slice. Do not scan a year-plus range just to confirm one filter member.
 - Do not front-load every trust tool by default. Escalate only when the answer is high-stakes or the entity choice is ambiguous.
@@ -98,6 +127,8 @@ Every final answer must include:
 - selected filter field(s) and explicit validated value(s), including coded values such as `country_code = 'GB'`
 - comparison basis and exact prior period when a comparison is included
 - recipe id/query names when a recipe was used, or a concise calculation-method summary when direct execution was used
+- fallback evidence when a raw model path was used instead of a governed
+  measure or metric
 - any trust caveat that materially affects interpretation
 
 Default output behavior:

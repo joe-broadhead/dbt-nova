@@ -26,6 +26,13 @@ Use this reference when the client exposes `mcp__nova__*` tools directly.
      provide enough evidence and no filter-value mapping is needed
 3. `indicator_inventory` when comparing KPI families
 4. `search` for supporting entity discovery when the ask is not yet KPI-shaped
+   or semantic discovery produced an explicit fallback reason.
+
+For KPI, metric, measure, rate, funnel, or conversion questions, this order is
+mandatory. Do not call broad `search`, `get_context`, `get_sql`, or
+`execute_sql` before `search_indicator` unless the ask is not KPI-shaped or a
+recipe already answers the deliverable. When fallback is needed, preserve the
+`search_indicator` query and rejection reason as final-answer evidence.
 
 ## Entity selection
 

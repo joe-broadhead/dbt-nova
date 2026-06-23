@@ -21,6 +21,8 @@
 - Geo/segment column:
 - Validated filter values:
 - Metric definition source:
+- Semantic discovery:
+- Raw-search fallback reason:
 - Execution method:
 
 ## Assumptions

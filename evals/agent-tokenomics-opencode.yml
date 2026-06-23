@@ -22,6 +22,7 @@ agent_cases:
         - search_indicator
         - execute_sql
       must_not_call:
+        - search
         - get_context
         - get_lineage
         - get_sql
@@ -78,6 +79,7 @@ agent_cases:
       must_call:
         - search_indicator
       must_not_call:
+        - search
         - execute_sql
         - get_context
         - get_lineage
@@ -109,6 +111,7 @@ agent_cases:
       must_call:
         - search_indicator
       must_not_call:
+        - search
         - execute_sql
         - get_context
         - get_lineage

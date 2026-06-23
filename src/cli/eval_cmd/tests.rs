@@ -105,6 +105,42 @@ fn agent_expectations_score_tool_trace() {
 }
 
 #[test]
+fn agent_order_fails_when_sql_precedes_semantic_discovery() {
+    let expected = AgentExpected {
+        must_call: vec!["search_indicator".to_string(), "execute_sql".to_string()],
+        ordered: vec![AgentOrder {
+            before: "execute_sql".to_string(),
+            must_have_called: vec!["search_indicator".to_string()],
+        }],
+        ..AgentExpected::default()
+    };
+    let trace = vec![
+        json!({"tool": "execute_sql"}),
+        json!({"tool": "search_indicator"}),
+    ];
+
+    let results = score_agent_expectations(&expected, &trace, "");
+
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| result.name.starts_with("must_call:"))
+            .filter(|result| result.status == "pass")
+            .count(),
+        2
+    );
+    let order_result = results
+        .iter()
+        .find(|result| result.name == "order:execute_sql")
+        .expect("order assertion");
+    assert_eq!(order_result.status, "fail");
+    assert_eq!(
+        order_result.evidence["observed_tools"],
+        json!(["execute_sql", "search_indicator"])
+    );
+}
+
+#[test]
 fn sql_structure_assertion_passes_when_only_literals_differ() {
     let result = sql_structure_assertion(
         "sql_structure",

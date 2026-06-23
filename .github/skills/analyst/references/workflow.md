@@ -31,7 +31,9 @@ Use this prompt when needed:
    - dimensional lookup
    - provenance or trust audit
 2. Look for a recipe first only when the request is for the recurring deliverable itself.
-3. Resolve indicators directly, one requested indicator at a time.
+3. For KPI, metric, measure, rate, funnel, or conversion questions, resolve
+   indicators directly before broad model search, one requested indicator at a
+   time.
    - Use domain-specific query terms and compact indicator search defaults.
 4. Choose one execution entity from the top shared parent, not isolated indicator rows.
    - If the requested indicators do not share a credible parent, do not force a synthetic combined query.
@@ -42,6 +44,28 @@ Use this prompt when needed:
 9. Report the answer with explicit evidence.
 
 Do not skip filter-value validation when the question includes geography, market, segment, or channel constraints.
+
+## Semantic-first gate
+
+For KPI-shaped asks, broad model search is allowed only after semantic
+discovery is exhausted or shown to be irrelevant. Do not call broad `search`,
+`get_context`, `get_sql`, or `execute_sql` before `search_indicator` unless the
+ask is not KPI-shaped or a recipe already answers the recurring deliverable.
+
+Semantic discovery evidence must include:
+- the `search_indicator` query terms used
+- whether you searched metrics, measures, or both
+- the top relevant indicator names and parent entities when present
+- why the top semantic result was accepted or rejected
+
+Fallback to raw model search only when one of these is true:
+- no relevant indicator is returned
+- relevant indicators lack a credible execution parent for the ask
+- requested outputs are dimensional, provenance, or entity-comparison work, not
+  KPI work
+- a recipe covers the deliverable and supplies the contract
+
+If fallback is used, carry the fallback reason into the final evidence block.
 
 ## Recipe-first rule
 
@@ -77,7 +101,8 @@ Prefer the candidate that satisfies the most checks:
 If two candidates tie, prefer the one with clearer definitions and fewer assumptions.
 
 Use direct KPI resolution first.
-Use supporting discovery only when the ask is not yet KPI-shaped.
+Use supporting discovery only when the ask is not yet KPI-shaped or semantic
+discovery produced an explicit fallback reason.
 
 Low-token KPI discovery defaults:
 - `search_indicator` with `limit: 3`

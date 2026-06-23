@@ -1,6 +1,6 @@
 version: 1
 name: starter
-purpose: Prove that the packaged synthetic manifest supports core Nova discovery, context, lineage, recipe, metadata-score, and agent tool-use flows.
+purpose: Prove that the packaged synthetic manifest supports core Nova discovery, semantic-first analyst context, lineage, recipe, metadata-score, and agent tool-use flows.
 manifest_scope: tests/fixtures/starter_eval_manifest.json synthetic commerce manifest
 known_gaps:
   - Does not execute warehouse SQL.
@@ -90,12 +90,13 @@ cases:
 
 agent_cases:
   - id: analyst_revenue_lookup_flow
-    task: Which canonical model and measure should an analyst use for gross revenue? Do not execute SQL.
+    task: Which canonical model and measure should an analyst use for gross revenue? Use semantic indicator discovery before context, do not use broad model search, and do not execute SQL.
     expected:
       must_call:
         - search_indicator
         - get_context
       must_not_call:
+        - search
         - execute_sql
         - get_lineage
       ordered:
@@ -110,6 +111,50 @@ agent_cases:
           max_rank: 3
       called_with:
         - tool: search_indicator
+          params:
+            detail: compact
+            group_mode: top
+            limit: 3
+          contains:
+            query: gross revenue
+      max_tool_calls: 4
+      max_distinct_tools: 3
+      max_total_response_bytes: 65536
+      max_response_bytes_by_tool:
+        search_indicator: 12000
+        get_context: 24000
+      final_answer:
+        must_contain:
+          - fct_orders
+          - gross_revenue
+
+  - id: semantic_first_revenue_context_flow
+    task: Resolve the governed gross revenue semantic definition, then fetch supporting context for the chosen execution entity. Do not execute SQL and do not use broad model search unless semantic discovery returns no relevant indicator.
+    expected:
+      must_call:
+        - search_indicator
+        - get_context
+      must_not_call:
+        - search
+        - execute_sql
+        - get_sql
+        - get_lineage
+      ordered:
+        - before: get_context
+          must_have_called:
+            - search_indicator
+      selected_entities:
+        - model.starter_eval.fct_orders
+      selected_entity_ranks:
+        - unique_id: model.starter_eval.fct_orders
+          tool: search_indicator
+          max_rank: 3
+      called_with:
+        - tool: search_indicator
+          params:
+            detail: compact
+            group_mode: top
+            limit: 3
           contains:
             query: gross revenue
       max_tool_calls: 4

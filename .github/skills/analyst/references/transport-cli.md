@@ -25,6 +25,13 @@ Common mappings:
 - trust checks: `dbt-nova tool call get_context`, `get_lineage`, `get_test_coverage`, `get_metadata_score`
 - SQL execution: `dbt-nova tool call execute_sql`
 
+For KPI, metric, measure, rate, funnel, or conversion questions, run
+`search_indicator` before broad `search`, `get_context`, `get_sql`, or
+`execute_sql`. Raw model search is fallback only after the CLI response shows
+no relevant governed indicator or no credible semantic parent. Keep the
+`search_indicator` command and rejection reason as final-answer evidence when
+fallback is used.
+
 ## CLI guardrails
 
 - Use `tool call` for tool-surface parity first.

@@ -16,6 +16,63 @@ safe scalar or scalar-array values such as `query`, `id_or_name`, `persona`,
 `execute_sql`, nested `parameters` and raw SQL are intentionally not exposed;
 check presence through the `keys` summary instead of asserting query text.
 
+## Semantic-First KPI Pattern
+
+For metric/KPI tasks with known semantic coverage, assert that semantic
+discovery happens before context or execution. Also forbid broad `search` when
+the fixture has a governed indicator that should answer the question.
+
+Definition/context task:
+
+```yaml
+agent_cases:
+  - id: semantic_metric_context_flow
+    task: Which governed model and metric should be used for gross merchandise value? Do not execute SQL.
+    expected:
+      must_call:
+        - search_indicator
+        - get_context
+      must_not_call:
+        - search
+        - execute_sql
+      ordered:
+        - before: get_context
+          must_have_called:
+            - search_indicator
+      selected_entity_ranks:
+        - unique_id: model.pkg.orders
+          tool: search_indicator
+          max_rank: 3
+```
+
+Execution task:
+
+```yaml
+agent_cases:
+  - id: semantic_metric_execution_flow
+    task: Compute gross merchandise value for March 2026 from the governed metric.
+    expected:
+      must_call:
+        - search_indicator
+        - execute_sql
+      must_not_call:
+        - search
+        - get_sql
+      ordered:
+        - before: execute_sql
+          must_have_called:
+            - search_indicator
+      called_with:
+        - tool: search_indicator
+          contains:
+            query: gross merchandise
+```
+
+Fallback cases should be separate. They should still require a
+`search_indicator` attempt, then allow broad `search` only when the prompt and
+expected final answer capture why no governed indicator or semantic parent was
+usable.
+
 ## Useful Expectations
 
 ```yaml
@@ -27,6 +84,7 @@ agent_cases:
         - search_indicator
         - get_context
       must_not_call:
+        - search
         - execute_sql
       ordered:
         - before: get_context
