@@ -1,6 +1,10 @@
 use serde_json::Value as JsonValue;
 
 use crate::manifest::entity::ArchivedEntity;
+use crate::manifest::extended_meta::{
+    ExtendedMetaPath, ExtendedMetaValue, collect_capped_extended_meta_values,
+    extended_meta_field_name, extended_meta_mode_name, sorted_extended_meta_fields,
+};
 use crate::utils::SearchPersona;
 
 use super::core::ManifestSearch;
@@ -45,6 +49,7 @@ struct SummaryProfile {
     include_has_nova_meta: bool,
     include_semantic_preview: bool,
     include_persona_payload: bool,
+    include_extended_meta_summary: bool,
 }
 
 impl SummaryProfile {
@@ -84,6 +89,7 @@ impl SummaryProfile {
             include_has_nova_meta: false,
             include_semantic_preview: false,
             include_persona_payload: false,
+            include_extended_meta_summary: false,
         }
     }
 
@@ -113,6 +119,7 @@ impl SummaryProfile {
             include_nova_metrics: false,
             include_semantic_preview: true,
             include_persona_payload: true,
+            include_extended_meta_summary: true,
             ..Self::empty()
         }
     }
@@ -133,6 +140,7 @@ impl SummaryProfile {
             include_nova_search_candidates: true,
             include_semantic_preview: true,
             include_persona_payload: true,
+            include_extended_meta_summary: true,
             ..Self::empty()
         }
     }
@@ -153,6 +161,7 @@ impl SummaryProfile {
             include_has_nova_meta: true,
             include_semantic_preview: true,
             include_persona_payload: true,
+            include_extended_meta_summary: true,
             ..Self::empty()
         }
     }
@@ -167,6 +176,7 @@ impl SummaryProfile {
             description_limit: 120,
             include_nova_search_candidates: true,
             include_semantic_preview: true,
+            include_extended_meta_summary: true,
             ..Self::empty()
         }
     }
@@ -183,6 +193,7 @@ impl SummaryProfile {
             include_nova_search_candidates: true,
             include_nova_summary: true,
             include_semantic_preview: true,
+            include_extended_meta_summary: true,
             ..Self::empty()
         }
     }
@@ -482,6 +493,12 @@ impl ManifestSearch {
         {
             obj.insert("persona_payload".to_string(), payload);
         }
+        if profile.include_extended_meta_summary {
+            let entity_json = entity_json_cache.get_or_insert_with(|| entity.to_json_value());
+            if let Some(summary) = self.extended_meta_summary(entity_json) {
+                obj.insert("extended_meta_summary".to_string(), summary);
+            }
+        }
         compact_json_object(&mut obj);
         JsonValue::Object(obj)
     }
@@ -643,6 +660,81 @@ impl ManifestSearch {
         JsonValue::Object(obj)
     }
 
+    pub(crate) fn extended_meta_summary(&self, entity_json: &JsonValue) -> Option<JsonValue> {
+        let fields = sorted_extended_meta_fields(&self.config.search);
+        if fields.is_empty() {
+            return None;
+        }
+
+        let mut field_summaries = Vec::new();
+        for field in fields {
+            if !field.summary {
+                continue;
+            }
+            let path = ExtendedMetaPath::from_config_path(&field.path);
+            let values = collect_capped_extended_meta_values(
+                entity_json,
+                &path,
+                field.mode,
+                self.config.search.extended_meta.max_values_per_field,
+                self.config.search.extended_meta.max_bytes_per_value,
+            );
+            if values.values.is_empty() {
+                continue;
+            }
+
+            let mut obj = serde_json::Map::new();
+            obj.insert("alias".to_string(), JsonValue::String(field.alias.clone()));
+            obj.insert("path".to_string(), JsonValue::String(field.path.clone()));
+            obj.insert(
+                "search_field".to_string(),
+                JsonValue::String(extended_meta_field_name(&field.alias)),
+            );
+            obj.insert(
+                "mode".to_string(),
+                JsonValue::String(extended_meta_mode_name(field.mode).to_string()),
+            );
+            obj.insert(
+                "values".to_string(),
+                JsonValue::Array(
+                    values
+                        .values
+                        .iter()
+                        .map(|value| JsonValue::String(value.value.clone()))
+                        .collect(),
+                ),
+            );
+
+            let columns = extended_meta_column_summary(&values.values);
+            if !columns.is_empty() {
+                obj.insert("columns".to_string(), JsonValue::Array(columns));
+            }
+            if values.dropped_values > 0 || values.byte_truncated_values > 0 {
+                obj.insert("truncated".to_string(), JsonValue::from(true));
+            }
+            if values.dropped_values > 0 {
+                obj.insert(
+                    "dropped_values".to_string(),
+                    JsonValue::from(values.dropped_values as u64),
+                );
+            }
+            if values.byte_truncated_values > 0 {
+                obj.insert(
+                    "byte_truncated_values".to_string(),
+                    JsonValue::from(values.byte_truncated_values as u64),
+                );
+            }
+
+            field_summaries.push(JsonValue::Object(obj));
+        }
+
+        if field_summaries.is_empty() {
+            None
+        } else {
+            Some(serde_json::json!({ "fields": field_summaries }))
+        }
+    }
+
     fn documentation_status(entity: &ArchivedEntity) -> JsonValue {
         let has_desc = entity
             .description_str()
@@ -702,6 +794,33 @@ impl ManifestSearch {
             "missing": true,
         })
     }
+}
+
+fn extended_meta_column_summary(values: &[ExtendedMetaValue]) -> Vec<JsonValue> {
+    let mut columns: Vec<(String, Vec<String>)> = Vec::new();
+    for value in values {
+        let Some(column_name) = value.column_name.as_ref() else {
+            continue;
+        };
+        if let Some((_, existing_values)) = columns
+            .last_mut()
+            .filter(|(name, _)| name.as_str() == column_name.as_str())
+        {
+            existing_values.push(value.value.clone());
+        } else {
+            columns.push((column_name.clone(), vec![value.value.clone()]));
+        }
+    }
+
+    columns
+        .into_iter()
+        .map(|(name, values)| {
+            serde_json::json!({
+                "name": name,
+                "values": values,
+            })
+        })
+        .collect()
 }
 
 fn json_string_or_null(value: Option<&str>) -> JsonValue {

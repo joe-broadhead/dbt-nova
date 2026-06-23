@@ -110,7 +110,9 @@ Extended metadata indexing is default-off. Configure
 `search.extended_meta.fields` only for selected non-Nova dbt metadata paths that
 should become searchable in the extended metadata bridge. Configured fields are
 indexed into dedicated `meta.<alias>` search fields, so both normal keyword
-search and fielded queries such as `meta.owner:alice` can match them.
+search and fielded queries such as `meta.owner:alice` can match them. Fields
+with `summary: true` are also returned in standard/full search rows under
+`extended_meta_summary`.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -125,7 +127,9 @@ Paths must start with `meta.` or `columns.*.meta.`, must not target
 `credential`, `private_key`, and `api_key` are rejected during config
 validation. At indexing time, Nova keeps values in deterministic path/column
 order and drops any values beyond `extended_meta.max_values_per_field` after
-truncating each retained value to `extended_meta.max_bytes_per_value`.
+truncating each retained value to `extended_meta.max_bytes_per_value`. The same
+caps apply to `extended_meta_summary`; use `detail=full` when an agent needs the
+complete raw dbt metadata object.
 
 ### Hybrid Search
 

@@ -1,5 +1,6 @@
 pub mod bootstrap;
 pub mod entity;
+pub(crate) mod extended_meta;
 pub(crate) mod lineage_sql;
 pub mod loader;
 pub mod prebuilt_assets;

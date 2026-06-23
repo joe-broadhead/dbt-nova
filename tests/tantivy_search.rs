@@ -5,6 +5,7 @@ use dbt_nova::config::{
 use dbt_nova::params::PaginationParams;
 use dbt_nova::params::{DetailLevel, SearchParams};
 use dbt_nova::{DbtNovaConfig, ManifestSearch};
+use serde_json::Value as JsonValue;
 use serde_json::json;
 use std::io::Write;
 #[path = "support/config.rs"]
@@ -238,11 +239,23 @@ fn extended_meta_search_config() -> SearchConfig {
 }
 
 async fn search_unique_ids(searcher: &ManifestSearch, query: &str) -> Vec<String> {
+    search_rows(searcher, query, DetailLevel::Standard)
+        .await
+        .iter()
+        .filter_map(|row| row["unique_id"].as_str().map(str::to_string))
+        .collect()
+}
+
+async fn search_rows(
+    searcher: &ManifestSearch,
+    query: &str,
+    detail: DetailLevel,
+) -> Vec<JsonValue> {
     let params = SearchParams {
         query: query.to_string(),
         resource_types: vec!["model".to_string()],
         persona: None,
-        detail: Some(DetailLevel::Standard),
+        detail: Some(detail),
         min_score: None,
         fuzzy: false,
         include_highlights: false,
@@ -255,12 +268,24 @@ async fn search_unique_ids(searcher: &ManifestSearch, query: &str) -> Vec<String
     };
 
     let result = searcher.search(&params).await.unwrap();
-    result["data"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|row| row["unique_id"].as_str().map(str::to_string))
-        .collect()
+    result["data"].as_array().unwrap().clone()
+}
+
+fn row_for_id<'a>(rows: &'a [JsonValue], expected: &str) -> &'a JsonValue {
+    rows.iter()
+        .find(|row| row["unique_id"].as_str() == Some(expected))
+        .unwrap_or_else(|| panic!("expected row for {expected}, got {rows:?}"))
+}
+
+fn extended_meta_field<'a>(row: &'a JsonValue, alias: &str) -> Option<&'a JsonValue> {
+    row.get("extended_meta_summary")
+        .and_then(|summary| summary.get("fields"))
+        .and_then(JsonValue::as_array)
+        .and_then(|fields| {
+            fields
+                .iter()
+                .find(|field| field["alias"].as_str() == Some(alias))
+        })
 }
 
 fn assert_has_id(ids: &[String], expected: &str) {
@@ -370,6 +395,131 @@ async fn extended_meta_enforces_value_caps_deterministically() {
 
     let truncated_suffix_ids = search_unique_ids(&searcher, "meta.long_code:abcdef").await;
     assert_missing_id(&truncated_suffix_ids, "model.test.orders");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn extended_meta_summary_appears_in_standard_and_full_search_rows() {
+    let manifest_file = create_extended_meta_manifest();
+    let (searcher, _guard) =
+        create_searcher_with_config(&manifest_file, extended_meta_search_config());
+
+    let rows = search_rows(&searcher, "retention narrative", DetailLevel::Standard).await;
+    let orders = row_for_id(&rows, "model.test.orders");
+    let owner = extended_meta_field(orders, "owner").expect("owner summary field");
+    assert_eq!(owner["path"].as_str(), Some("meta.business_owner"));
+    assert_eq!(owner["search_field"].as_str(), Some("meta.owner"));
+    assert_eq!(owner["mode"].as_str(), Some("text"));
+    assert_eq!(owner["values"], json!(["retention narrative steward"]));
+    assert!(extended_meta_field(orders, "team").is_none());
+    assert!(extended_meta_field(orders, "semantic_group").is_none());
+    assert!(extended_meta_field(orders, "unconfigured_probe").is_none());
+
+    let full_rows = search_rows(&searcher, "retention narrative", DetailLevel::Full).await;
+    let full_orders = row_for_id(&full_rows, "model.test.orders");
+    assert_eq!(
+        full_orders["meta"]["unconfigured_probe"].as_str(),
+        Some("hiddenneedle")
+    );
+    assert!(extended_meta_field(full_orders, "owner").is_some());
+    assert!(extended_meta_field(full_orders, "team").is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn extended_meta_summary_handles_column_wildcards() {
+    let manifest_file = create_extended_meta_manifest();
+    let mut search = support_config::test_search_config();
+    search.enable_rrf = false;
+    search.extended_meta = ExtendedMetaSearchConfig {
+        fields: vec![ExtendedMetaFieldConfig {
+            path: "columns.*.meta.semantic_group".to_string(),
+            alias: "semantic_group".to_string(),
+            mode: ExtendedMetaFieldMode::StringArray,
+            boost: 2.0,
+            summary: true,
+        }],
+        ..Default::default()
+    };
+    let (searcher, _guard) = create_searcher_with_config(&manifest_file, search);
+
+    let rows = search_rows(&searcher, "lifecycle", DetailLevel::Standard).await;
+    let orders = row_for_id(&rows, "model.test.orders");
+    let semantic_group =
+        extended_meta_field(orders, "semantic_group").expect("semantic group summary field");
+    assert_eq!(
+        semantic_group["values"],
+        json!(["acquisition", "lifecycle", "fulfillment"])
+    );
+    assert_eq!(
+        semantic_group["columns"],
+        json!([
+            {"name": "channel", "values": ["acquisition"]},
+            {"name": "status", "values": ["lifecycle", "fulfillment"]}
+        ])
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn extended_meta_summary_respects_caps_and_truncation_metadata() {
+    let manifest_file = create_extended_meta_manifest();
+    let mut search = support_config::test_search_config();
+    search.enable_rrf = false;
+    search.extended_meta = ExtendedMetaSearchConfig {
+        fields: vec![
+            ExtendedMetaFieldConfig {
+                path: "meta.overflow_tags".to_string(),
+                alias: "overflow_tag".to_string(),
+                mode: ExtendedMetaFieldMode::StringArray,
+                boost: 1.0,
+                summary: true,
+            },
+            ExtendedMetaFieldConfig {
+                path: "meta.long_code".to_string(),
+                alias: "long_code".to_string(),
+                mode: ExtendedMetaFieldMode::Keyword,
+                boost: 1.0,
+                summary: true,
+            },
+        ],
+        max_values_per_field: 2,
+        max_bytes_per_value: 3,
+        ..Default::default()
+    };
+    let (searcher, _guard) = create_searcher_with_config(&manifest_file, search);
+
+    let rows = search_rows(&searcher, "meta.overflow_tag:one", DetailLevel::Standard).await;
+    let orders = row_for_id(&rows, "model.test.orders");
+    let overflow = extended_meta_field(orders, "overflow_tag").expect("overflow summary field");
+    assert_eq!(overflow["values"], json!(["one", "two"]));
+    assert_eq!(overflow["truncated"].as_bool(), Some(true));
+    assert_eq!(overflow["dropped_values"].as_u64(), Some(1));
+
+    let long_code = extended_meta_field(orders, "long_code").expect("long code summary field");
+    assert_eq!(long_code["values"], json!(["abc"]));
+    assert_eq!(long_code["truncated"].as_bool(), Some(true));
+    assert_eq!(long_code["byte_truncated_values"].as_u64(), Some(1));
+    assert!(long_code.get("dropped_values").is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn extended_meta_summary_is_omitted_without_summary_fields() {
+    let manifest_file = create_extended_meta_manifest();
+    let mut search = support_config::test_search_config();
+    search.enable_rrf = false;
+    search.extended_meta = ExtendedMetaSearchConfig {
+        fields: vec![ExtendedMetaFieldConfig {
+            path: "meta.team".to_string(),
+            alias: "team".to_string(),
+            mode: ExtendedMetaFieldMode::Keyword,
+            boost: 1.0,
+            summary: false,
+        }],
+        ..Default::default()
+    };
+    let (searcher, _guard) = create_searcher_with_config(&manifest_file, search);
+
+    let rows = search_rows(&searcher, "meta.team:revenue", DetailLevel::Standard).await;
+    let orders = row_for_id(&rows, "model.test.orders");
+    assert!(orders.get("extended_meta_summary").is_none());
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Extended metadata search now indexes configured entity-level and column-level
   allowlisted fields into dedicated `meta.<alias>` Tantivy fields, including
   fielded alias queries and deterministic extraction-time caps.
+- Search results now expose `extended_meta_summary` for configured extended
+  metadata fields with `summary: true`, while full detail retains the complete
+  raw dbt metadata payload.
 - Hardened CI workflows by caching reusable semantic model snapshots during
   model artifact builds and upgrading maintained GitHub Actions to Node
   24-compatible pinned releases.
