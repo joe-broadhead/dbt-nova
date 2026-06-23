@@ -170,13 +170,82 @@ bash scripts/install_skills.sh --all --skills-dir /tmp/dbt-nova-skills-test
 uv run mkdocs build --strict
 ```
 
-For downstream projects, add project-specific checks around the chosen reference
-location. A future maintenance check can warn when dbt model or metadata changes
-arrive without a matching skill, reference, or eval update.
+For downstream projects, use the maintenance check to warn when dbt model or
+metadata changes arrive without a matching skill, reference, or eval update:
+
+```bash
+git diff --name-only "$BASE_SHA" "$HEAD_SHA" > changed-files.txt
+scripts/check_skill_reference_maintenance.sh \
+  --changed-files-file changed-files.txt \
+  --mode advisory
+```
+
+Use `--mode required` when the check should fail CI. The default dbt-change
+convention treats `models/**/*.sql`, `models/**/*.yml`, and
+`models/**/*.yaml` as model or schema changes. The default maintenance evidence
+is any changed path under `.github/skills/**`, `evals/**`,
+`docs/domain-references/**`, `docs/domains/**`, or
+`docs/features/domain-references.md`.
+
+Use this alongside [Metadata Audit](metadata-audit.md): metadata audit scores
+the changed dbt entities, while the maintenance check verifies the PR also
+touches the companion agent context when model logic or metadata changes.
+
+For custom dbt model paths or reference locations, add project-specific globs:
+
+```bash
+scripts/check_skill_reference_maintenance.sh \
+  --changed-files-file changed-files.txt \
+  --model-glob "analytics/**/*.sql" \
+  --maintenance-glob "agent-references/**" \
+  --mode required
+```
+
+To suppress deliberate false positives, keep an explicit allowlist file with
+one glob per line:
+
+```text
+# .nova/skill-reference-allowlist
+models/experiments/**
+models/legacy/no_agent_surface.yml
+```
+
+Then pass it to the check:
+
+```bash
+scripts/check_skill_reference_maintenance.sh \
+  --changed-files-file changed-files.txt \
+  --allowlist-file .nova/skill-reference-allowlist \
+  --mode required
+```
+
+Minimal GitHub Actions pattern:
+
+```yaml
+jobs:
+  skill_reference_maintenance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Resolve changed files
+        run: |
+          git diff --name-only \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}" \
+            > changed-files.txt
+      - name: Check skill/reference maintenance
+        run: |
+          scripts/check_skill_reference_maintenance.sh \
+            --changed-files-file changed-files.txt \
+            --mode advisory
+```
 
 ## Related Guides
 
 - [Nova Meta Overview](nova-meta-overview.md)
 - [Nova Meta (Models)](nova-meta-models.md)
 - [Nova Meta (Metrics)](nova-meta-metrics.md)
+- [Metadata Audit](metadata-audit.md)
 - [Agent Skills](../getting-started/skills.md)
