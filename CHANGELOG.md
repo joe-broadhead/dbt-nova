@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Tightened the analyst skill around semantic-first KPI discovery, added
+  eval-author guidance and starter eval expectations for `search_indicator`
+  before context or SQL execution, and added scorer coverage for rejecting SQL
+  before semantic discovery.
 - Added an OpenCode reference pack design covering the target `.opencode`
   layout, role-to-tool permission model, local and remote MCP examples, smoke
   eval expectations, and portability boundaries for later Codex/Claude work.

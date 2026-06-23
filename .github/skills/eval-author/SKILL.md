@@ -6,7 +6,7 @@ allowed-tools: "Bash Read Write mcp__nova__show_metadata mcp__nova__health mcp__
 metadata:
   owner: "dbt-nova"
   persona: "eval-author"
-  version: "0.0.4"
+  version: "0.0.5"
 ---
 
 # Eval Author Skill (dbt-nova)
@@ -60,6 +60,11 @@ Eval execution is CLI-only. MCP is for discovering ground truth and debugging ex
 - Prefer stable identifiers such as `unique_id`, `parent_unique_id`, recipe id, and column name.
 - Use bridge evals for search rank, indicator rank, column rank, context fields, lineage edges, metadata score, recipe discovery, and generic tool success.
 - Use agent evals for required tool calls, forbidden tools, ordering, selected entities, ranked entity evidence, safe parameter checks, and final-answer text.
+- For KPI or metric workflows, assert semantic-first behavior explicitly:
+  `search_indicator` before `get_context` for definition/context tasks, and
+  `search_indicator` before `execute_sql` for execution tasks.
+- When semantic coverage exists in the fixture, forbid broad `search` unless
+  the case is intentionally testing fallback.
 - Do not use agent evals to compensate for weak metadata. Fix bridge failures first.
 - Do not assert every possible tool call. Assert the minimum behavior that proves the workflow.
 - Avoid brittle prose checks. Use `final_answer.must_contain` only for short, durable business terms.
@@ -76,6 +81,7 @@ When handing off an eval suite or eval fix, include:
 - declared manifest scope and known gaps
 - bridge cases and what each proves
 - agent cases and what each proves
+- semantic-first or fallback behavior each agent case proves
 - gate threshold and intended run cadence
 - command lines to validate and run
 - expected artifacts and how to debug failures

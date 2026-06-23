@@ -16,6 +16,8 @@
 - Validated filter values:
 
 - Indicator definition source:
+- Semantic discovery:
+- Raw-search fallback reason:
 - Execution method:
 - Recipe id / query names:
 

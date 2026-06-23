@@ -119,8 +119,8 @@ a SQL-structure grader.
 dbt-nova ships `evals/starter.yml` plus a synthetic manifest fixture at
 `tests/fixtures/starter_eval_manifest.json`. The suite is intentionally small
 and strict: it checks canonical model search, indicator discovery, context,
-lineage, recipe discovery, metadata scoring, and one provider-backed agent
-tool-use flow.
+lineage, recipe discovery, metadata scoring, and provider-backed agent tool-use
+flows.
 
 Validate the starter suite:
 
@@ -458,6 +458,42 @@ Budget expectations score the sanitized trace:
 - `max_distinct_tools` caps tool-surface breadth.
 - `max_total_response_bytes` caps summed serialized response bytes.
 - `max_response_bytes_by_tool` caps the largest response for named tools.
+
+For KPI or metric workflows, encode semantic-first behavior directly in agent
+expectations. Definition tasks should require `search_indicator` before
+`get_context`; execution tasks should require `search_indicator` before
+`execute_sql`. When the fixture has a governed indicator for the question, add
+`search` to `must_not_call` so broad model search fails unless the case is
+explicitly testing fallback.
+
+```yaml
+agent_cases:
+  - id: semantic_metric_execution_flow
+    task: Compute conversion rate from the governed metric for a bounded period.
+    expected:
+      must_call:
+        - search_indicator
+        - execute_sql
+      must_not_call:
+        - search
+        - get_sql
+      ordered:
+        - before: execute_sql
+          must_have_called:
+            - search_indicator
+      called_with:
+        - tool: search_indicator
+          params:
+            detail: compact
+            group_mode: top
+          contains:
+            query: conversion
+```
+
+Fallback evals should be separate cases. They should still require a
+`search_indicator` attempt, then allow broad `search` only when the expected
+answer or trace evidence explains why no governed indicator or semantic parent
+could cover the ask.
 
 Run against the default `opencode` adapter:
 
