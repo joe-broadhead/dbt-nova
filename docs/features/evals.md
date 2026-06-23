@@ -495,6 +495,36 @@ Fallback evals should be separate cases. They should still require a
 answer or trace evidence explains why no governed indicator or semantic parent
 could cover the ask.
 
+### Reviewer Agent Evals
+
+Reviewer evals test answer-review behavior rather than fresh analysis. Set
+`defaults.persona: reviewer` and give the task a self-contained review packet:
+user question, draft answer, selected entity/source, semantic discovery or
+fallback evidence, provenance/freshness blocks, and SQL or recipe summary when
+available.
+
+The packaged `evals/reviewer.yml` suite covers two reviewer failure modes:
+semantic-layer bypass and missing stale/unknown freshness caveats.
+
+```bash
+dbt-nova eval validate --suite evals/reviewer.yml
+```
+
+When a provider is configured:
+
+```bash
+dbt-nova eval agent run \
+  --suite evals/reviewer.yml \
+  --provider opencode \
+  --case-id reviewer_flags_semantic_layer_bypass \
+  --fail-under 1.0
+```
+
+Prefer durable `final_answer.must_contain` verdict terms such as
+`fix_required`, `semantic-layer bypass`, `freshness`, `unknown`, and `caveat`.
+Use tool-trace expectations only when the provider reliably emits trace rows for
+reviewer evidence gathering.
+
 Run against the default `opencode` adapter:
 
 ```bash

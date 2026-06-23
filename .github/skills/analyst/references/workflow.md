@@ -41,7 +41,10 @@ Use this prompt when needed:
 6. Verify execution fields only after the winning entity is chosen.
 7. Validate filter values with bounded execution before aggregation.
 8. Run the final SQL or recipe.
-9. Report the answer with explicit evidence.
+9. For high-stakes, leadership-bound, launch-readiness, customer-facing, or
+   recurring production answers, build a reviewer packet and run the `reviewer`
+   skill when available.
+10. Report the answer with explicit evidence.
 
 Do not skip filter-value validation when the question includes geography, market, segment, or channel constraints.
 
@@ -198,6 +201,22 @@ Use trust and provenance tools proportionally:
 - metadata score when documenting caveats or choosing between similar entities
 
 Do not front-load every trust tool by default. Escalate only when the answer is high-stakes or the entity choice is ambiguous.
+
+## Reviewer handoff rule
+
+For high-stakes answers, prepare a reviewer packet before the final response:
+
+- user question
+- answer draft
+- selected entity/source and relation
+- selected indicator, metric, measure, recipe, or fallback reason
+- SQL summary or recipe query summary
+- semantic discovery evidence
+- provenance tier and freshness status for evidence used in the answer
+
+If the `reviewer` skill returns `fix_required` or `needs_evidence`, do not ship
+the draft unchanged. Fix the route/caveat, gather the missing evidence, or state
+the blocker clearly in the final answer.
 
 ## Output requirement
 

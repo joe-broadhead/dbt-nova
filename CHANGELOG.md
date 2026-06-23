@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a reusable domain reference template and synthetic starter commerce
   example to the meta-authoring skill, plus analyst guidance and docs for using
   curated domain references as stable context rather than raw query dumps.
+- Added an adversarial `reviewer` skill and provider-backed reviewer eval
+  coverage for semantic-layer bypass and stale/unknown freshness caveats, plus
+  analyst and eval-author guidance for high-stakes answer review.
 - Tightened the analyst skill around semantic-first KPI discovery, added
   eval-author guidance and starter eval expectations for `search_indicator`
   before context or SQL execution, and added scorer coverage for rejecting SQL

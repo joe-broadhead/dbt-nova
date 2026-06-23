@@ -88,7 +88,10 @@ Do not mix transports in one answer unless you are explicitly debugging transpor
 6. Validate non-trivial filter values before aggregation.
 7. Escalate trust checks only when useful.
 8. Execute.
-9. Report with explicit evidence.
+9. For high-stakes, leadership-bound, launch-readiness, customer-facing, or
+   recurring production answers, prepare a review packet and run the `reviewer`
+   skill before finalizing when it is available.
+10. Report with explicit evidence.
 
 Rules:
 - Prefer a common parent across requested indicators.
@@ -103,6 +106,14 @@ Rules:
 - Keep validation probes close to the target slice. Do not scan a year-plus range just to confirm one filter member.
 - Do not front-load every trust tool by default. Escalate only when the answer is high-stakes or the entity choice is ambiguous.
 - For high-stakes, launch-readiness, or recurring production workflows, check the relevant eval suite gate with `dbt-nova eval gate <suite_name> --json` when CLI access and suite ownership are known. Treat blocked gates as advisory warnings to surface before final analysis, not as permission to hide the answer.
+- For high-stakes, leadership-bound, launch-readiness, customer-facing, or
+  recurring production answers, pass a draft through the `reviewer` skill before
+  finalizing when the skill is available. Include the user question, draft
+  answer, selected entity/source, semantic discovery or fallback evidence, SQL
+  or recipe summary, and provenance/freshness blocks.
+- If the reviewer returns `fix_required` or `needs_evidence`, resolve that
+  finding or surface it as a final-answer blocker/caveat rather than silently
+  shipping the draft unchanged.
 
 ## Analysis discipline
 

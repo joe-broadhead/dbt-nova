@@ -1450,7 +1450,11 @@ async fn run_agent_case(
         )
         .with_date_anchor(date_anchor);
     }
-    let prompt = agent_prompt(case, date_anchor.as_ref());
+    let prompt = agent_prompt(
+        case,
+        date_anchor.as_ref(),
+        suite.defaults.persona.as_deref(),
+    );
     let invocation = match provider::provider_invocation(args, &prompt, &trace_path) {
         Ok(invocation) => invocation,
         Err(error) => {
@@ -5544,7 +5548,11 @@ fn validate_selected_cases<'a>(
     )))
 }
 
-fn agent_prompt(case: &AgentCase, date_anchor: Option<&DateAnchor>) -> String {
+fn agent_prompt(
+    case: &AgentCase,
+    date_anchor: Option<&DateAnchor>,
+    persona: Option<&str>,
+) -> String {
     let date_anchor_section = date_anchor.map_or_else(String::new, |anchor| {
         let mut section = String::from("\nDate anchor:\n");
         for line in anchor.prompt_lines() {
@@ -5553,6 +5561,15 @@ fn agent_prompt(case: &AgentCase, date_anchor: Option<&DateAnchor>) -> String {
         section.push_str("- Treat these dates as ground truth for relative time phrases in the task. Do not reinterpret them using today's date.\n");
         section
     });
+    if persona
+        .map(str::trim)
+        .is_some_and(|value| value.eq_ignore_ascii_case("reviewer"))
+    {
+        return format!(
+            "You are running a dbt-nova reviewer-agent eval.\n\nTask:\n{}\n{}\nRules:\n- Review the supplied draft answer and evidence packet. Do not execute SQL, mutate files, inspect repository source, or invent missing evidence.\n- Use only evidence from the task packet or read-only Nova provenance/search/context evidence explicitly requested by the task.\n- If the packet lacks evidence needed for the review, return verdict `needs_evidence` and name the missing evidence.\n- Challenge semantic-layer bypass: if a governed Nova metric, measure, or semantic parent is available but the draft relies on raw/source table evidence without an evidence-backed fallback reason, require a fix.\n- Challenge stale or unknown freshness: if the draft uses stale or unknown-freshness evidence without an explicit caveat, require a fix.\n- Output a concise review with `verdict`, `findings`, `severity`, `evidence`, and `suggested_fix`.\n- Valid verdicts are `pass`, `fix_required`, and `needs_evidence`. Use `fix_required` for any semantic-layer bypass or missing freshness caveat that could change the answer.\n\nFinish with the review only; do not answer the original analytics question.",
+            case.task, date_anchor_section
+        );
+    }
     format!(
         "You are running a dbt-nova analytics-agent eval.\n\nTask:\n{}\n{}\nRules:\n- Use Nova discovery and execution tools directly. Do not inspect repository files, source code, fixtures, or Rust params unless a Nova command fails and you cannot recover from the error message.\n- For KPI, metric, conversion, funnel, checkout, or business-concept questions, start with search_indicator using compact results: detail=\"compact\", group_mode=\"top\", include_support_signals=true, limit=3, persona=\"analyst\".\n- For rate, conversion, or funnel questions, include the requested metric names literally in the query and set indicator_types=[\"metric\"] unless you are explicitly searching for raw measures.\n- When a metric row returns an expression, copy that expression exactly into SQL; do not substitute similarly named measures or invent a numerator/denominator.\n- Use support_signals, grain dimensions, and relation_name from search_indicator to apply every requested filter before SQL. Do not aggregate across a grain dimension named in the task, such as country, market, channel, segment, or device.\n- Treat relation_name, grain, and expression fields returned by search_indicator as the execution contract. Do not run schema inspection SQL such as DESCRIBE or information_schema when those fields are present.\n- Use execute_sql only after Nova discovery identifies the canonical execution entity or relation. Use one aggregate SQL statement for current and comparison periods when possible. Skip get_entity when search_indicator already returns the relation, grain, measures, and metric expressions you need; otherwise use get_entity with id_or_name and detail=\"compact\".\n- Keep Nova calls to the minimum needed: usually search_indicator plus one execute_sql for calculations, and only search_indicator for model or metric lookup tasks. Avoid get_context, get_lineage, get_sql, and full-detail responses unless blocked.\n- If using the CLI, assume $DBT_NOVA_EVAL_BIN is set. For search/get calls, use --params-json. For execute_sql with quotes or newlines, write a JSON params file like {{\"statement\":\"select ...\",\"row_limit\":50}} and call $DBT_NOVA_EVAL_BIN tool call execute_sql --params-file <file> --json; do not inline multiline SQL in --params-json. Parameter reminders: get_entity uses id_or_name; execute_sql uses statement. Do not run echo, grep, read, or source inspection for normal tool usage.\n\nFinish with a concise answer that cites the Nova evidence, the SQL result, and the explicit filter values used.",
         case.task, date_anchor_section

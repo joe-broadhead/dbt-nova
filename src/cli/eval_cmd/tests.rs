@@ -1328,12 +1328,31 @@ fn agent_prompt_includes_date_anchor_section() {
         date_field: Some("order_date".to_string()),
     };
 
-    let prompt = agent_prompt(&case, Some(&anchor));
+    let prompt = agent_prompt(&case, Some(&anchor), None);
     assert!(prompt.contains("Date anchor:"));
     assert!(prompt.contains("snapshot_date: 2026-03-31"));
     assert!(prompt.contains("date_range: 2026-03-01 to 2026-03-31"));
     assert!(prompt.contains("date_field: order_date"));
     assert!(prompt.contains("Do not reinterpret them using today's date"));
+}
+
+#[test]
+fn reviewer_agent_prompt_uses_review_contract() {
+    let case = super::AgentCase {
+        id: "reviewer".to_string(),
+        task: "Review this draft for semantic bypass.".to_string(),
+        date_anchor: DateAnchor::default(),
+        expected: AgentExpected::default(),
+    };
+
+    let prompt = agent_prompt(&case, None, Some("reviewer"));
+
+    assert!(prompt.contains("dbt-nova reviewer-agent eval"));
+    assert!(prompt.contains("Do not execute SQL"));
+    assert!(prompt.contains("semantic-layer bypass"));
+    assert!(prompt.contains("stale or unknown freshness"));
+    assert!(prompt.contains("verdict"));
+    assert!(!prompt.contains("Use Nova discovery and execution tools directly"));
 }
 
 #[test]

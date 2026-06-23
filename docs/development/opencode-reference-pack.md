@@ -70,6 +70,7 @@ The shared skill packages in `.github/skills/` remain canonical:
 - `meta-authoring`
 - `model-architect`
 - `project-cleanup`
+- `reviewer`
 
 The OpenCode pack should copy those directories into `.opencode/skills/` during
 installation. The copied skill folders are generated artifacts from Nova's
@@ -112,6 +113,7 @@ opencode.json
     meta-authoring/
     model-architect/
     project-cleanup/
+    reviewer/
 ```
 
 Ownership:
@@ -125,6 +127,7 @@ Ownership:
 | `evals/starter.yml` | repo eval suite | Nova evals | Baseline bridge and agent smoke coverage. |
 | `evals/agent-tokenomics-opencode.yml` | repo eval suite | Nova evals | Provider-backed OpenCode agent smoke coverage. |
 | `evals/agent-tokenomics-bridge.yml` | repo eval suite | Nova evals | Deterministic bridge coverage for compact tool contracts. |
+| `evals/reviewer.yml` | repo eval suite | Nova evals | Provider-backed reviewer coverage for semantic bypass and freshness caveat checks. |
 
 ## MCP Config Examples
 
@@ -231,7 +234,8 @@ The generated global config should start from:
       "kpi-debugger": "allow",
       "meta-authoring": "allow",
       "model-architect": "allow",
-      "project-cleanup": "allow"
+      "project-cleanup": "allow",
+      "reviewer": "allow"
     }
   }
 }
@@ -269,8 +273,8 @@ expose deployment posture. Roles may allow them explicitly when needed.
 | `nova-metadata-steward` | `primary` | `meta-authoring`, `model-architect`, `governance` | `discovery`, `metadata-audit`, `structure` | `edit`; `bash` for dbt compile/test and Nova validation; `nova_reload_manifest` after local manifest rebuild | `execution` by default, `eval-write`, `trace-write`, storage pruning/cleanup; all unlisted `nova_*` | `dbt-nova audit nova-meta` against fixture metadata; `evals/starter.yml` metadata score cases; planned `.opencode` pack validator in JOE-28 |
 | `nova-eval-author` | `primary` | `eval-author` | `discovery`, `eval-read`, selected `metadata-audit` (`nova_get_metadata_score`, `nova_get_test_coverage`) | `edit`; `bash`; `eval-write`; `trace-write`; `execution` only when an eval case explicitly requires SQL | `admin-mutation` except config validation; all unrelated `nova_*` | `dbt-nova eval validate --suite evals/starter.yml`; `dbt-nova eval validate --suite evals/agent-tokenomics-opencode.yml`; provider smoke for one OpenCode case when credentials are available |
 | `nova-source-scout` | `subagent` | `analyst` | read-only subset of `discovery`: `nova_health`, `nova_show_metadata`, `nova_search`, `nova_search_indicator`, `nova_indicator_inventory`, `nova_search_columns`, `nova_column_inventory`, `nova_get_entity`, `nova_list_entities`, `nova_find_by_path`, `nova_get_columns`, `nova_get_context` | none | `structure` that reveals SQL, `execution`, `metadata-audit`, `eval-write`, `trace-write`, `admin-mutation`, `edit`, `bash`; all unlisted `nova_*` | `evals/starter.yml` cases `canonical_revenue_discovery`, `recipe_discovery` without executing recipes |
-| `nova-sql-reviewer` | `subagent` | `engineer`, `kpi-debugger` | selected `discovery`; selected `structure` (`nova_get_sql`, `nova_get_lineage`, `nova_get_column_lineage`, `nova_compare_grains`, `nova_get_test_coverage`, `nova_validate_dag`) | `bash` only for read-only local inspection if the primary agent requests it | `execution`, `eval-write`, `trace-write`, `admin-mutation`, `edit`; all unlisted `nova_*` | `evals/starter.yml` case `column_context_and_lineage`; planned adversarial reviewer suite from JOE-15 |
-| `nova-provenance-reviewer` | `subagent` | `governance`, planned reviewer skill from JOE-15 | `discovery`, `metadata-audit`, `eval-read`, selected `structure` (`nova_get_lineage`, `nova_get_column_lineage`, `nova_get_impact`) | `trace-write` only when producing redacted artifacts; `bash` only for local artifact inspection | `execution`, `eval-write`, storage pruning/cleanup, `edit`; all unlisted `nova_*` | `evals/agent-tokenomics-bridge.yml` trace/budget cases; planned JOE-15 stale-source and semantic-bypass reviewer suite |
+| `nova-sql-reviewer` | `subagent` | `engineer`, `kpi-debugger` | selected `discovery`; selected `structure` (`nova_get_sql`, `nova_get_lineage`, `nova_get_column_lineage`, `nova_compare_grains`, `nova_get_test_coverage`, `nova_validate_dag`) | `bash` only for read-only local inspection if the primary agent requests it | `execution`, `eval-write`, `trace-write`, `admin-mutation`, `edit`; all unlisted `nova_*` | `evals/starter.yml` case `column_context_and_lineage`; `evals/reviewer.yml` semantic-bypass case when delegated to the reviewer workflow |
+| `nova-provenance-reviewer` | `subagent` | `governance`, `reviewer` | `discovery`, `metadata-audit`, `eval-read`, selected `structure` (`nova_get_lineage`, `nova_get_column_lineage`, `nova_get_impact`) | `trace-write` only when producing redacted artifacts; `bash` only for local artifact inspection | `execution`, `eval-write`, storage pruning/cleanup, `edit`; all unlisted `nova_*` | `evals/agent-tokenomics-bridge.yml` trace/budget cases; `evals/reviewer.yml` stale-source and semantic-bypass reviewer cases |
 
 ## Agent Template Pattern
 
@@ -331,6 +335,7 @@ uv run mkdocs build --strict
 dbt-nova eval validate --suite evals/starter.yml
 dbt-nova eval validate --suite evals/agent-tokenomics-bridge.yml
 dbt-nova eval validate --suite evals/agent-tokenomics-opencode.yml
+dbt-nova eval validate --suite evals/reviewer.yml
 ```
 
 Bridge smoke for deterministic tool contracts:
@@ -371,6 +376,8 @@ Manual pack checklist:
 - SQL execution remains approval-gated.
 - File edits and eval/provider runs remain approval-gated.
 - Generated `.opencode/skills/*` directories match `.github/skills/*`.
+- Reviewer agents can load the `reviewer` skill and validate
+  `evals/reviewer.yml`.
 - No secrets, manifest URIs with credentials, or local customer paths are
   committed.
 
@@ -419,7 +426,5 @@ directly into those clients.
   workflow.
 - JOE-27: add a domain reference skeleton that the OpenCode pack can point to
   without embedding customer-specific context.
-- JOE-15: implement the adversarial reviewer skill and stale-source checks used
-  by `nova-provenance-reviewer`.
 - JOE-28: add generated-skill/reference maintenance checks for `.opencode`
   outputs and dbt model changes.

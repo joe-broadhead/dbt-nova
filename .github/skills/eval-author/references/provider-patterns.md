@@ -73,6 +73,68 @@ Fallback cases should be separate. They should still require a
 expected final answer capture why no governed indicator or semantic parent was
 usable.
 
+## Reviewer Agent Eval Pattern
+
+Use reviewer agent evals when the behavior under test is adversarial review of
+a draft answer, not fresh analysis. Set `defaults.persona: reviewer` so the
+provider prompt uses the reviewer contract. Give the task a self-contained
+review packet with the user question, draft answer, selected entity/source,
+semantic discovery evidence, provenance/freshness blocks, and SQL or recipe
+summary when available.
+
+Keep reviewer eval assertions durable. Prefer final-answer verdict terms over
+tool-trace expectations unless the provider reliably emits trace rows for
+no-tool reviews.
+
+Semantic-layer bypass case:
+
+```yaml
+version: 1
+name: reviewer-smoke
+defaults:
+  persona: reviewer
+agent_cases:
+  - id: flags_semantic_layer_bypass
+    task: |
+      Review packet:
+      - user question: What was gross revenue last week?
+      - governed semantic evidence: search_indicator returned measure
+        gross_revenue on model.pkg.orders with provenance.tier semantic_layer.
+      - draft route: draft answer used source.pkg.raw_orders as primary
+        evidence and gave no fallback reason.
+      - draft answer: Gross revenue was 42,000 from raw_orders.
+      Return the reviewer output contract.
+    expected:
+      final_answer:
+        must_contain:
+          - fix_required
+          - semantic-layer bypass
+          - gross_revenue
+          - model.pkg.orders
+```
+
+Stale or unknown freshness case:
+
+```yaml
+agent_cases:
+  - id: flags_unknown_freshness_without_caveat
+    task: |
+      Review packet:
+      - user question: What was gross revenue last week?
+      - selected entity: model.pkg.orders
+      - provenance.freshness.status: unknown
+      - provenance.freshness.reason: no_freshness_timestamp
+      - draft answer: Gross revenue was 42,000.
+      Return the reviewer output contract.
+    expected:
+      final_answer:
+        must_contain:
+          - fix_required
+          - freshness
+          - unknown
+          - caveat
+```
+
 ## Useful Expectations
 
 ```yaml
