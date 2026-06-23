@@ -122,6 +122,14 @@ Gemini CLI can also install skills directly from a repo or local path:
 gemini skills install /path/to/skill --scope workspace
 ```
 
+### OpenCode (planned reference pack)
+
+OpenCode can discover project skills from `.opencode/skills/<name>/SKILL.md`
+and can load them through its `skill` tool. dbt-nova does not yet ship generated
+`.opencode` pack files. The target layout, role permissions, MCP examples, and
+smoke eval expectations are defined in the
+[OpenCode reference pack design](../development/opencode-reference-pack.md).
+
 ## Validation (optional)
 
 Use the reference tooling from the Agent Skills project to validate your skills:
@@ -144,3 +152,4 @@ skills-ref validate .github/skills/project-cleanup
 - Codex skills docs: https://developers.openai.com/codex/skills
 - Claude Skills help center: https://support.claude.com/en/articles/12512180-using-skills-in-claude
 - Gemini CLI skills docs: https://geminicli.com/docs/cli/skills/
+- OpenCode Agent Skills docs: https://opencode.ai/docs/skills/
