@@ -126,6 +126,9 @@ If you use `pii` as a list, prefer explicit classes (`["email", "phone"]`).
 - **Metadata scoring**: evaluates coverage and quality of key Nova fields.
 - **Governance filters**: enables queries like “show restricted” or “pii”.
 - **Agent workflows**: persona skills rely on Nova meta for reliable outputs.
+- **Domain references**: curated Markdown guides can add stable business
+  context, gotchas, hygiene filters, and cross-domain handoffs while pointing
+  back to the canonical `meta.nova` fields.
 
 `search.candidates` is a ranking hint:
 - Missing keys default to `true`
@@ -201,4 +204,5 @@ behind the same authentication posture used for the rest of the MCP surface.
 
 - [Nova Meta (Models)](nova-meta-models.md)
 - [Nova Meta (Metrics)](nova-meta-metrics.md)
+- [Domain References](domain-references.md)
 - [Search Ranking](search-ranking.md)

@@ -135,6 +135,7 @@ nav:
     - Nova Meta Overview: features/nova-meta-overview.md
     - Nova Meta (Models): features/nova-meta-models.md
     - Nova Meta (Metrics): features/nova-meta-metrics.md
+    - Domain References: features/domain-references.md
   - Operations:
     - Ops & Troubleshooting: operations/ops.md
     - Hosted Deployment: operations/hosted-deployment.md

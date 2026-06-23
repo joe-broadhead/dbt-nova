@@ -6,7 +6,7 @@ allowed-tools: "Bash Read Write mcp__nova__show_metadata mcp__nova__health mcp__
 metadata:
   owner: "dbt-nova"
   persona: "analyst"
-  version: "0.0.5"
+  version: "0.0.6"
 ---
 
 # Analyst Skill (dbt-nova)
@@ -93,6 +93,9 @@ Do not mix transports in one answer unless you are explicitly debugging transpor
 Rules:
 - Prefer a common parent across requested indicators.
 - If no credible shared parent exists, do not force one query. Either answer in separate entity sections or ask for clarification.
+- When a curated domain reference exists for the ask, use it after semantic
+  discovery to confirm canonical entity choice, grain, required hygiene filters,
+  gotchas, and cross-domain handoff boundaries.
 - Do not call broad `search`, `get_context`, `get_sql`, or `execute_sql` before
   `search_indicator` for metric/KPI questions unless you have documented a
   fallback reason.
@@ -142,4 +145,7 @@ Default output behavior:
 - Read exactly one transport file:
   - `references/transport-mcp.md`
   - `references/transport-cli.md`
+- Load `references/domain-references.md` only when a curated domain reference
+  is relevant to source selection, gotchas, required filters, or cross-domain
+  handoff.
 - Load the assets only when writing the final answer.
