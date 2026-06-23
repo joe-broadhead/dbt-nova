@@ -322,6 +322,25 @@ pub fn entity_nova_meta_json(value: &JsonValue) -> Option<Cow<'_, JsonValue>> {
 }
 
 #[must_use]
+pub fn normalized_entity_meta_json(value: &JsonValue) -> Option<JsonValue> {
+    let legacy = value.get("meta").filter(|meta| !meta.is_null());
+    let config = value
+        .get("config")
+        .and_then(|config| config.get("meta"))
+        .filter(|meta| !meta.is_null());
+
+    match (legacy, config) {
+        (Some(JsonValue::Object(legacy_obj)), Some(JsonValue::Object(config_obj))) => {
+            let mut merged = JsonValue::Object(config_obj.clone());
+            merge_json_value(&mut merged, &JsonValue::Object(legacy_obj.clone()));
+            Some(merged)
+        }
+        (Some(value), _) | (None, Some(value)) => Some(value.clone()),
+        (None, None) => None,
+    }
+}
+
+#[must_use]
 pub fn column_meta_json(column: &JsonValue) -> Option<&JsonValue> {
     column
         .get("meta")
@@ -1053,6 +1072,31 @@ mod tests {
 
         let nova = entity_nova_meta_json(&entity).expect("expected nova metadata");
         assert_eq!(nova["role"].as_str(), Some("dimension"));
+    }
+
+    #[test]
+    fn normalized_entity_meta_merges_partial_legacy_and_config_objects() {
+        let entity = serde_json::json!({
+            "meta": {
+                "owner": "analytics_reporting",
+                "business": {
+                    "domain": null
+                }
+            },
+            "config": {
+                "meta": {
+                    "business": {
+                        "domain": "orders",
+                        "steward": "data_platform"
+                    }
+                }
+            }
+        });
+
+        let meta = normalized_entity_meta_json(&entity).expect("expected merged meta");
+        assert_eq!(meta["owner"].as_str(), Some("analytics_reporting"));
+        assert_eq!(meta["business"]["domain"].as_str(), Some("orders"));
+        assert_eq!(meta["business"]["steward"].as_str(), Some("data_platform"));
     }
 
     #[test]

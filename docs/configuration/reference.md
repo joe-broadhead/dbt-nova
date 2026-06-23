@@ -239,8 +239,8 @@ Note: `DBT_NOVA_MAX_LINEAGE_RESULTS` applies to **column lineage** (`get_column_
 ## Extended Metadata Search
 
 Extended metadata search config is default-off. It only describes an explicit
-allowlist for later indexing; extraction and summary output are not enabled when
-`fields` is empty.
+allowlist of non-Nova dbt metadata paths that Nova extracts into dedicated
+search fields. No extended metadata is indexed when `fields` is empty.
 
 - `DBT_NOVA_SEARCH_EXTENDED_META_FIELDS_JSON` – JSON array of allowlisted non-Nova dbt metadata fields (default: `[]`)
 - `DBT_NOVA_SEARCH_EXTENDED_META_MAX_FIELDS` – max configured fields (default: `32`, hard cap: `128`)
@@ -249,7 +249,7 @@ allowlist for later indexing; extraction and summary output are not enabled when
 
 Each field object accepts:
 - `path` – logical dbt metadata path beginning with `meta.` or `columns.*.meta.`
-- `alias` – lowercase ASCII field alias for future fielded search
+- `alias` – lowercase ASCII field alias exposed as `meta.<alias>` for fielded search
 - `mode` – one of `keyword`, `text`, `string_array`, or `bool`
 - `boost` – non-negative ranking boost (default: `1.0`)
 - `summary` – whether the field is eligible for future summaries (default: `false`)
@@ -263,11 +263,21 @@ export DBT_NOVA_SEARCH_EXTENDED_META_FIELDS_JSON='[
 ]'
 ```
 
+With that config, unfielded searches can match allowlisted values, and fielded
+queries can target the configured aliases:
+
+```text
+meta.owner:alice
+meta.semantic_group:lifecycle
+```
+
 Guardrails:
 - No fields preserves current behavior and produces no search-index fingerprint.
 - `meta.nova` paths are rejected because Nova metadata is already indexed.
 - Sensitive key segments are rejected before indexing: `token`, `secret`, `password`, `credential`, `private_key`, and `api_key`.
 - `*` is only accepted in `columns.*.meta.` paths; runtime schema discovery is not performed.
+- Values are capped deterministically by `max_values_per_field` and
+  `max_bytes_per_value`; excess values are dropped during indexing.
 - Changing extended metadata config changes the manifest-scoped search index identity.
 
 ## Embeddings (Dense + Sparse)
