@@ -15,6 +15,7 @@ The repo now uses one standalone, persona-first skill package per workflow:
 - `meta-authoring`
 - `model-architect`
 - `project-cleanup`
+- `reviewer`
 
 Each skill now has:
 - one canonical skill name
@@ -50,6 +51,7 @@ For one skill:
 bash scripts/install_skills.sh --skill analyst --skills-dir "$HOME/.agents/skills"
 bash scripts/install_skills.sh --skill engineer --skills-dir "$HOME/.agents/skills"
 bash scripts/install_skills.sh --skill eval-author --skills-dir "$HOME/.agents/skills"
+bash scripts/install_skills.sh --skill reviewer --skills-dir "$HOME/.agents/skills"
 ```
 
 For all dbt-nova skills:
@@ -74,6 +76,7 @@ Codex supports Agent Skills for both the CLI and IDE extensions. You can install
 bash scripts/install_skills.sh --skill analyst --skills-dir .codex/skills
 bash scripts/install_skills.sh --skill engineer --skills-dir .codex/skills
 bash scripts/install_skills.sh --skill eval-author --skills-dir .codex/skills
+bash scripts/install_skills.sh --skill reviewer --skills-dir .codex/skills
 ```
 
 If you already use another generic persona skill in a user-level directory, prefer repo scope so this skill overrides it only for the current project.
@@ -100,6 +103,7 @@ zip -r engineer.skill.zip engineer
 bash /path/to/repo/scripts/install_skills.sh --skill analyst --skills-dir "$HOME/.claude/skills"
 bash /path/to/repo/scripts/install_skills.sh --skill engineer --skills-dir "$HOME/.claude/skills"
 bash /path/to/repo/scripts/install_skills.sh --skill eval-author --skills-dir "$HOME/.claude/skills"
+bash /path/to/repo/scripts/install_skills.sh --skill reviewer --skills-dir "$HOME/.claude/skills"
 ```
 
 ### Gemini CLI
@@ -112,6 +116,7 @@ Gemini CLI discovers skills from three tiers: workspace (`.gemini/skills/`), use
 bash scripts/install_skills.sh --skill analyst --skills-dir .gemini/skills
 bash scripts/install_skills.sh --skill engineer --skills-dir .gemini/skills
 bash scripts/install_skills.sh --skill eval-author --skills-dir .gemini/skills
+bash scripts/install_skills.sh --skill reviewer --skills-dir .gemini/skills
 ```
 
 Then reload skills:
@@ -149,6 +154,7 @@ skills-ref validate .github/skills/kpi-debugger
 skills-ref validate .github/skills/meta-authoring
 skills-ref validate .github/skills/model-architect
 skills-ref validate .github/skills/project-cleanup
+skills-ref validate .github/skills/reviewer
 ```
 
 ## Further reading

@@ -1,0 +1,104 @@
+version: 1
+name: reviewer
+purpose: Prove that a provider-backed reviewer agent challenges draft answers for semantic-layer bypass and missing stale/unknown freshness caveats using supplied Nova evidence.
+manifest_scope: Synthetic reviewer packets based on dbt-nova provenance contracts; no live warehouse SQL.
+known_gaps:
+  - Provider-backed suite; validate checks shape, while a configured provider is required to score reviewer behavior.
+  - Uses synthetic review packets and should be paired with bridge evals for real manifest metadata health.
+defaults:
+  persona: reviewer
+  top_k: 5
+
+agent_cases:
+  - id: reviewer_flags_semantic_layer_bypass
+    task: |
+      Review packet:
+
+      User question:
+      - What was gross revenue for completed orders last week?
+
+      Governed semantic evidence:
+      - `search_indicator` returned measure `gross_revenue`.
+      - Parent execution entity: `model.starter_eval.fct_orders`.
+      - Parent relation: `analytics_reporting.fct_orders`.
+      - Parent provenance.tier: `semantic_layer`.
+      - Parent freshness.status: `fresh`.
+
+      Draft route:
+      - The draft answer used `source.starter_eval.raw.orders` as the primary
+        evidence source.
+      - The draft did not state that semantic discovery failed.
+      - The draft did not give a fallback reason for ignoring
+        `model.starter_eval.fct_orders`.
+
+      Draft final answer:
+      - Gross revenue was 42,000 from `source.starter_eval.raw.orders`.
+
+      Return the reviewer output contract.
+    expected:
+      final_answer:
+        must_contain:
+          - fix_required
+          - semantic-layer bypass
+          - source.starter_eval.raw.orders
+          - model.starter_eval.fct_orders
+          - gross_revenue
+
+  - id: reviewer_flags_unknown_freshness_without_caveat
+    task: |
+      Review packet:
+
+      User question:
+      - What was gross revenue for completed orders last week?
+
+      Selected evidence:
+      - Selected entity: `model.starter_eval.fct_orders`.
+      - Selected measure: `gross_revenue`.
+      - provenance.tier: `semantic_layer`.
+      - provenance.freshness.status: `unknown`.
+      - provenance.freshness.reason: `no_freshness_timestamp`.
+
+      Draft final answer:
+      - Gross revenue was 42,000. The answer presents the figure as ready to
+        share and does not mention freshness.
+
+      Return the reviewer output contract.
+    expected:
+      final_answer:
+        must_contain:
+          - fix_required
+          - freshness
+          - unknown
+          - caveat
+          - model.starter_eval.fct_orders
+
+  - id: reviewer_flags_stale_freshness_without_caveat
+    task: |
+      Review packet:
+
+      User question:
+      - What was gross revenue for completed orders last week?
+
+      Selected evidence:
+      - Selected entity: `model.starter_eval.fct_orders`.
+      - Selected measure: `gross_revenue`.
+      - provenance.tier: `semantic_layer`.
+      - provenance.freshness.status: `stale`.
+      - provenance.freshness.source: `source_freshness`.
+      - provenance.freshness.timestamp: `2026-04-01T00:00:00Z`.
+      - provenance.freshness.age_days: `83`.
+      - provenance.freshness.stale_after_days: `30`.
+
+      Draft final answer:
+      - Gross revenue was 42,000. The answer presents the figure as ready to
+        share and does not mention freshness.
+
+      Return the reviewer output contract.
+    expected:
+      final_answer:
+        must_contain:
+          - fix_required
+          - freshness
+          - stale
+          - caveat
+          - source_freshness
