@@ -25,6 +25,7 @@ use crate::params::{
     RunAgentEvalParams, RunEvalParams, ValidateEvalSuiteParams,
 };
 use crate::responses::SuccessResponse;
+use crate::utils::redact_sensitive_text;
 use crate::utils::sql_structure::{
     SqlStructureSignature, compare_sql_structure, compare_sql_structure_signatures,
     sql_structure_signature,
@@ -35,6 +36,7 @@ const DEFAULT_TOP_K: usize = 5;
 const DEFAULT_FAIL_UNDER: f64 = 1.0;
 const MAX_SAFE_PATH_SEGMENT_CHARS: usize = 120;
 const DEFAULT_TELEMETRY_DIR: &str = ".nova/eval-runs/telemetry";
+const RAW_PROVIDER_LOGS_ENV: &str = "DBT_NOVA_EVAL_UNSAFE_WRITE_RAW_PROVIDER_LOGS";
 
 mod provider;
 
@@ -526,6 +528,8 @@ struct EvalMcpSafetyPolicy {
     eval_writes_enabled_env: &'static str,
     agent_eval_enabled_env: &'static str,
     custom_agent_provider_enabled_env: &'static str,
+    raw_provider_logs_enabled_env: &'static str,
+    provider_logs_redacted_by_default: bool,
     local_paths_must_stay_under_filesystem_root: bool,
 }
 
@@ -817,7 +821,7 @@ pub fn build_eval_gate_tool_response(
     params: &GetEvalGateParams,
 ) -> crate::error::Result<JsonValue> {
     let rows = read_telemetry_rows_for_suite(&params.suite)?;
-    ensure_mcp_telemetry_suite_paths_under_root(&rows)?;
+    ensure_mcp_latest_telemetry_suite_paths_under_root(&rows)?;
     let report = build_eval_gate_report(&params.suite, &rows)?;
     let payload = with_eval_safety_policy(serde_json::to_value(report).map_err(|error| {
         DbtNovaError::ServerError(format!("failed to serialize eval gate report: {error}"))
@@ -833,6 +837,7 @@ pub fn build_eval_history_tool_response(
     params: &GetEvalHistoryParams,
 ) -> crate::error::Result<JsonValue> {
     let (since_boundary, rows) = eval_history_rows(&params.suite, &params.since)?;
+    ensure_mcp_telemetry_suite_paths_under_root(rows.iter())?;
     let row_count = rows.len();
     let payload = EvalHistoryPayload {
         suite_name: params.suite.clone(),
@@ -1474,10 +1479,16 @@ async fn run_agent_case(
     let output = provider::run_provider_command(&invocation, args, &trace_path, &case_dir).await;
     let (stdout, _stderr, assertions) = match output {
         Ok(output) => {
-            if let Err(error) = fs::write(case_dir.join("stdout.log"), &output.stdout) {
+            if let Err(error) = fs::write(
+                case_dir.join("stdout.log"),
+                provider_output_for_artifact(&output.stdout),
+            ) {
                 tracing::warn!(error = %error, case_id = %case.id, "failed to write eval stdout");
             }
-            if let Err(error) = fs::write(case_dir.join("stderr.log"), &output.stderr) {
+            if let Err(error) = fs::write(
+                case_dir.join("stderr.log"),
+                provider_output_for_artifact(&output.stderr),
+            ) {
                 tracing::warn!(error = %error, case_id = %case.id, "failed to write eval stderr");
             }
             let mut assertions = Vec::new();
@@ -1485,17 +1496,13 @@ async fn run_agent_case(
                 assertions.push(AssertionResult::pass(
                     "provider_exit_success",
                     "provider command exited successfully",
-                    json!({"command": invocation.command, "args": invocation.args}),
+                    provider_invocation_evidence(&invocation),
                 ));
             } else {
                 assertions.push(AssertionResult::fail(
                     "provider_exit_success",
                     "provider command exited with a non-zero status",
-                    json!({
-                        "command": invocation.command,
-                        "args": invocation.args,
-                        "stderr": truncate(&output.stderr, 4000),
-                    }),
+                    provider_failure_evidence(&invocation, &output.stderr),
                 ));
             }
             (output.stdout, output.stderr, assertions)
@@ -1931,7 +1938,7 @@ fn score_final_answer(
             assertions.push(AssertionResult::fail(
                 format!("final_answer_contains:{needle}"),
                 "final answer did not contain expected text",
-                json!({"final_answer": truncate(final_answer_text, 4000)}),
+                json!({"final_answer": truncate(&redact_provider_output_text(final_answer_text), 4000)}),
             ));
         }
     }
@@ -1940,7 +1947,7 @@ fn score_final_answer(
             assertions.push(AssertionResult::fail(
                 format!("final_answer_excludes:{needle}"),
                 "final answer contained forbidden text",
-                json!({"final_answer": truncate(final_answer_text, 4000)}),
+                json!({"final_answer": truncate(&redact_provider_output_text(final_answer_text), 4000)}),
             ));
         } else {
             assertions.push(AssertionResult::pass(
@@ -4916,8 +4923,16 @@ fn eval_history_rows(
     Ok((since_boundary, rows))
 }
 
-fn ensure_mcp_telemetry_suite_paths_under_root(rows: &[JsonValue]) -> crate::error::Result<()> {
-    for row in latest_telemetry_rows(rows) {
+fn ensure_mcp_latest_telemetry_suite_paths_under_root(
+    rows: &[JsonValue],
+) -> crate::error::Result<()> {
+    ensure_mcp_telemetry_suite_paths_under_root(latest_telemetry_rows(rows))
+}
+
+fn ensure_mcp_telemetry_suite_paths_under_root<'a>(
+    rows: impl IntoIterator<Item = &'a JsonValue>,
+) -> crate::error::Result<()> {
+    for row in rows {
         let Some(path) = row
             .get("suite_path")
             .and_then(JsonValue::as_str)
@@ -4947,6 +4962,49 @@ fn ensure_mcp_telemetry_suite_paths_under_root(rows: &[JsonValue]) -> crate::err
     Ok(())
 }
 
+fn provider_output_for_artifact(output: &str) -> String {
+    if raw_provider_logs_enabled() {
+        output.to_string()
+    } else {
+        redact_provider_output_text(output)
+    }
+}
+
+fn provider_failure_evidence(invocation: &provider::ProviderInvocation, stderr: &str) -> JsonValue {
+    let mut evidence = provider_invocation_evidence(invocation);
+    if let JsonValue::Object(object) = &mut evidence {
+        object.insert(
+            "stderr".to_string(),
+            JsonValue::String(truncate(&redact_provider_output_text(stderr), 4000)),
+        );
+    }
+    evidence
+}
+
+fn provider_invocation_evidence(invocation: &provider::ProviderInvocation) -> JsonValue {
+    json!({
+        "command": redact_provider_output_text(&invocation.command),
+        "args": invocation
+            .args
+            .iter()
+            .map(|arg| redact_provider_output_text(arg))
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn redact_provider_output_text(output: &str) -> String {
+    redact_sensitive_text(output)
+}
+
+fn raw_provider_logs_enabled() -> bool {
+    std::env::var(RAW_PROVIDER_LOGS_ENV).is_ok_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
 fn success_value<T: Serialize>(payload: T, count: usize) -> crate::error::Result<JsonValue> {
     serde_json::to_value(SuccessResponse::new(payload, count))
         .map_err(|error| DbtNovaError::ServerError(error.to_string()))
@@ -4971,6 +5029,8 @@ fn eval_mcp_safety_policy() -> crate::error::Result<EvalMcpSafetyPolicy> {
         eval_writes_enabled_env: MCP_ENABLE_EVAL_WRITES_ENV,
         agent_eval_enabled_env: MCP_ENABLE_AGENT_EVAL_ENV,
         custom_agent_provider_enabled_env: MCP_ENABLE_CUSTOM_AGENT_PROVIDER_ENV,
+        raw_provider_logs_enabled_env: RAW_PROVIDER_LOGS_ENV,
+        provider_logs_redacted_by_default: true,
         local_paths_must_stay_under_filesystem_root: true,
     })
 }

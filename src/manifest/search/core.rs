@@ -18,8 +18,7 @@ use crate::manifest::store::EntityStore;
 use crate::manifest::tantivy_search::TantivySearcher;
 use crate::manifest::vector_search::{Reranker, SparseSearcher, VectorSearcher};
 use crate::params::DetailLevel;
-use crate::utils::CircuitBreaker;
-use crate::utils::SearchPersona;
+use crate::utils::{CircuitBreaker, SearchPersona, sanitize_uri};
 
 use super::cache::EntityCache;
 
@@ -893,14 +892,7 @@ impl ManifestSearchHandle {
             }
         };
 
-        let response = serde_json::json!({
-            "status": "refreshing",
-            "manifest_path": next.manifest_path,
-            "manifest_uri": next.manifest_uri,
-            "manifest_refresh_secs": next.manifest_refresh_secs,
-            "storage_instance_id": next.storage_instance_id,
-            "bootstrap": bootstrap_resolution.status,
-        });
+        let response = reload_manifest_response(&next, &bootstrap_resolution.status);
         let build_config = next.clone();
         let state_clone = self.state.clone();
         let notify_clone = self.notify.clone();
@@ -1159,6 +1151,17 @@ fn bootstrap_reload_fetch_policy(config: &DbtNovaConfig) -> ArtifactFetchPolicy 
     }
 }
 
+fn reload_manifest_response(config: &DbtNovaConfig, bootstrap_status: &JsonValue) -> JsonValue {
+    serde_json::json!({
+        "status": "refreshing",
+        "manifest_path": sanitize_uri(&config.manifest_path),
+        "manifest_uri": sanitize_uri(&config.manifest_uri),
+        "manifest_refresh_secs": config.manifest_refresh_secs,
+        "storage_instance_id": &config.storage_instance_id,
+        "bootstrap": bootstrap_status,
+    })
+}
+
 fn prepare_runtime_config_for_reload(
     config: &mut DbtNovaConfig,
 ) -> Result<crate::manifest::bootstrap::BootstrapResolution> {
@@ -1209,7 +1212,10 @@ fn reset_bootstrap_applied_fields_for_reload(
 mod tests {
     use serde_json::json;
 
-    use super::{bootstrap_reload_fetch_policy, reset_bootstrap_applied_fields_for_reload};
+    use super::{
+        bootstrap_reload_fetch_policy, reload_manifest_response,
+        reset_bootstrap_applied_fields_for_reload,
+    };
     use crate::config::{ArtifactFetchPolicy, DbtNovaConfig};
 
     #[test]
@@ -1295,6 +1301,31 @@ mod tests {
         assert_eq!(
             bootstrap_reload_fetch_policy(&config),
             ArtifactFetchPolicy::Never
+        );
+    }
+
+    #[test]
+    fn reload_response_redacts_manifest_locations() {
+        let config = DbtNovaConfig {
+            manifest_path: "/tmp/token/raw-local-secret/manifest.json".to_string(),
+            manifest_uri: "https://user:pass@example.com/manifest.json?token=raw-token".to_string(),
+            ..DbtNovaConfig::default()
+        };
+
+        let bootstrap_status = json!({"enabled": false, "uri": ""});
+        let response = reload_manifest_response(&config, &bootstrap_status);
+        let serialized = response.to_string();
+
+        assert!(!serialized.contains("raw-local-secret"));
+        assert!(!serialized.contains("raw-token"));
+        assert!(!serialized.contains("user:pass"));
+        assert_eq!(
+            response["manifest_path"],
+            json!("/tmp/token/[REDACTED]/manifest.json")
+        );
+        assert_eq!(
+            response["manifest_uri"],
+            json!("https://[REDACTED]@example.com/manifest.json?[REDACTED]")
         );
     }
 }
