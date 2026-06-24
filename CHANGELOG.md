@@ -142,6 +142,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Redacted secret-bearing config, reload, eval artifact, and eval evidence
   outputs by default, with an explicit unsafe local opt-in for raw provider
   logs.
+- Fixed `audit nova-meta` and `validate_nova_meta` so dbt 1.11+
+  `config.meta.nova` is validated with the same legacy/config merge semantics
+  used by runtime search and scoring.
 - Fixed release OCI publishing to build images from native Linux release binaries
   instead of compiling Rust inside the ARM64 Docker/QEMU path.
 - Fixed the Monthly workflow by refreshing advisory/dependency-watchlist review

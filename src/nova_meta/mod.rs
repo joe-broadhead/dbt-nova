@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 use jsonschema::{Validator, draft202012};
 use serde::Serialize;
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
-use serde_yaml::Value as YamlValue;
+use serde_yaml::{Mapping as YamlMapping, Value as YamlValue};
 
 use crate::error::{DbtNovaError, Result};
 
@@ -396,7 +396,7 @@ fn scan_sources(
             continue;
         };
         let source_line = find_named_line(lines, None, &source_name);
-        let source_meta = nova_meta_from_mapping(mapping.get(YamlValue::from("meta")));
+        let source_meta = nova_meta_from_mapping(mapping);
         let source_definition = ResourceDefinition {
             file_path: file_path.to_string(),
             resource_kind: NovaMetaResourceKind::Source,
@@ -451,7 +451,7 @@ fn scan_entities(
         let entity_line = find_named_line(lines, parent_name, &resource_name);
         let declared_columns = collect_declared_columns(mapping.get(YamlValue::from("columns")));
         let column_roles = collect_column_roles(mapping.get(YamlValue::from("columns")));
-        let entity_meta = nova_meta_from_mapping(mapping.get(YamlValue::from("meta")));
+        let entity_meta = nova_meta_from_mapping(mapping);
 
         let definition = ResourceDefinition {
             file_path: file_path.to_string(),
@@ -511,7 +511,7 @@ fn scan_columns(
             continue;
         };
         let column_line = find_named_line_after(lines, resource_line, &column_name);
-        let column_meta = nova_meta_from_mapping(mapping.get(YamlValue::from("meta")));
+        let column_meta = nova_meta_from_mapping(mapping);
         let definition = ResourceDefinition {
             file_path: file_path.to_string(),
             resource_kind: kind,
@@ -556,30 +556,73 @@ fn collect_column_roles(columns: Option<&YamlValue>) -> BTreeMap<String, String>
         let Some(column_name) = yaml_string(mapping.get(YamlValue::from("name"))) else {
             continue;
         };
-        let Some(meta) = mapping
-            .get(YamlValue::from("meta"))
-            .and_then(YamlValue::as_mapping)
-        else {
+        let Some(nova) = nova_meta_from_mapping(mapping) else {
             continue;
         };
-        let Some(nova) = meta
-            .get(YamlValue::from("nova"))
-            .and_then(YamlValue::as_mapping)
-        else {
+        let Some(nova) = nova.as_object() else {
             continue;
         };
-        if let Some(role) = yaml_string(nova.get(YamlValue::from("role"))) {
-            roles.insert(column_name, role);
+        if let Some(role) = nova.get("role").and_then(JsonValue::as_str) {
+            roles.insert(column_name, role.to_string());
         }
     }
 
     roles
 }
 
-fn nova_meta_from_mapping(meta: Option<&YamlValue>) -> Option<JsonValue> {
+fn nova_meta_from_mapping(mapping: &YamlMapping) -> Option<JsonValue> {
+    let legacy = nova_meta_from_meta_value(mapping.get(YamlValue::from("meta")));
+    let config = nova_meta_from_meta_value(config_meta_from_mapping(mapping));
+    merged_meta_value_json(legacy, config)
+}
+
+fn config_meta_from_mapping(mapping: &YamlMapping) -> Option<&YamlValue> {
+    mapping
+        .get(YamlValue::from("config"))
+        .and_then(YamlValue::as_mapping)
+        .and_then(|config| config.get(YamlValue::from("meta")))
+}
+
+fn nova_meta_from_meta_value(meta: Option<&YamlValue>) -> Option<JsonValue> {
     let meta = meta.and_then(YamlValue::as_mapping)?;
     let nova = meta.get(YamlValue::from("nova"))?;
     serde_json::to_value(nova).ok()
+}
+
+fn merged_meta_value_json(
+    legacy: Option<JsonValue>,
+    config: Option<JsonValue>,
+) -> Option<JsonValue> {
+    let legacy = legacy.filter(|value| !value.is_null());
+    let config = config.filter(|value| !value.is_null());
+    match (legacy, config) {
+        (Some(JsonValue::Object(legacy_obj)), Some(JsonValue::Object(config_obj))) => {
+            let mut merged = JsonValue::Object(config_obj);
+            merge_json_value(&mut merged, &JsonValue::Object(legacy_obj));
+            Some(merged)
+        }
+        (Some(value), _) | (None, Some(value)) => Some(value),
+        (None, None) => None,
+    }
+}
+
+fn merge_json_value(target: &mut JsonValue, overlay: &JsonValue) {
+    if overlay.is_null() {
+        return;
+    }
+    match (target, overlay) {
+        (JsonValue::Object(target_obj), JsonValue::Object(overlay_obj)) => {
+            for (key, overlay_value) in overlay_obj {
+                match target_obj.get_mut(key) {
+                    Some(target_value) => merge_json_value(target_value, overlay_value),
+                    None => {
+                        target_obj.insert(key.clone(), overlay_value.clone());
+                    }
+                }
+            }
+        }
+        (target_value, overlay_value) => *target_value = overlay_value.clone(),
+    }
 }
 
 fn yaml_string(value: Option<&YamlValue>) -> Option<String> {
@@ -1563,12 +1606,14 @@ fn line_name(line: &str) -> Option<String> {
 mod tests {
     use std::fs;
 
+    use serde_json::Value as JsonValue;
     use tempfile::TempDir;
 
     use super::{
         NovaMetaFindingSeverity, NovaMetaResourceKind, NovaMetaTargetSelector,
-        NovaMetaValidationOptions, validate_nova_meta,
+        NovaMetaValidationOptions, nova_meta_from_mapping, validate_nova_meta,
     };
+    use serde_yaml::Value as YamlValue;
 
     fn write_fixture(
         temp_dir: &TempDir,
@@ -1630,6 +1675,210 @@ models:
 
         assert_eq!(report.error_count, 0);
         assert_eq!(report.target_count, 4);
+    }
+
+    #[test]
+    fn nova_meta_from_mapping_merges_legacy_over_config_meta() {
+        let yaml = serde_yaml::from_str::<YamlValue>(
+            r#"
+name: fct_orders
+config:
+  meta:
+    nova:
+      role: measure
+      semantic_type: order
+      governance:
+        pii: false
+        compliance: ["soc2"]
+meta:
+  nova:
+    role: dimension
+    semantic_type: null
+    governance:
+      sensitivity: restricted
+"#,
+        )
+        .expect("YAML");
+        let mapping = yaml.as_mapping().expect("mapping");
+
+        let nova = nova_meta_from_mapping(mapping).expect("nova meta");
+
+        assert_eq!(nova["role"].as_str(), Some("dimension"));
+        assert_eq!(nova["semantic_type"].as_str(), Some("order"));
+        assert_eq!(nova["governance"]["pii"].as_bool(), Some(false));
+        assert_eq!(
+            nova["governance"]["sensitivity"].as_str(),
+            Some("restricted")
+        );
+        assert_eq!(
+            nova["governance"]["compliance"]
+                .as_array()
+                .and_then(|values| values.first())
+                .and_then(JsonValue::as_str),
+            Some("soc2")
+        );
+    }
+
+    #[test]
+    fn nova_meta_from_mapping_falls_back_when_legacy_nova_is_null() {
+        let yaml = serde_yaml::from_str::<YamlValue>(
+            r"
+name: fct_orders
+meta:
+  nova: null
+config:
+  meta:
+    nova:
+      role: dimension
+",
+        )
+        .expect("YAML");
+        let mapping = yaml.as_mapping().expect("mapping");
+
+        let nova = nova_meta_from_mapping(mapping).expect("nova meta");
+
+        assert_eq!(nova["role"].as_str(), Some("dimension"));
+    }
+
+    #[test]
+    fn validate_nova_meta_accepts_config_meta_only_resources_and_columns() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        write_fixture(
+            &temp_dir,
+            "models/config-meta.yml",
+            r#"
+version: 2
+sources:
+  - name: raw_app
+    config:
+      meta:
+        nova:
+          canonical: true
+    tables:
+      - name: orders
+        config:
+          meta:
+            nova:
+              grain:
+                primary_key: ["order_id"]
+                time_field: order_date
+        columns:
+          - name: order_id
+            config:
+              meta:
+                nova:
+                  role: identifier
+          - name: order_date
+            config:
+              meta:
+                nova:
+                  role: time
+models:
+  - name: fct_customers
+    config:
+      meta:
+        nova:
+          grain:
+            primary_key: ["customer_id"]
+            time_field: signup_date
+    columns:
+      - name: customer_id
+        config:
+          meta:
+            nova:
+              role: identifier
+      - name: signup_date
+        config:
+          meta:
+            nova:
+              role: time
+metrics:
+  - name: customer_count
+    config:
+      meta:
+        nova:
+          metric:
+            name: customer_count
+            expression: "count(distinct customer_id)"
+"#,
+        );
+
+        let report = validate_nova_meta(&NovaMetaValidationOptions {
+            project_dir: temp_dir.path().to_path_buf(),
+            paths: Vec::new(),
+            selector: NovaMetaTargetSelector::default(),
+        });
+
+        assert_eq!(report.error_count, 0);
+        assert_eq!(report.target_count, 8);
+    }
+
+    #[test]
+    fn validate_nova_meta_selected_column_matches_config_meta_only_target() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let path = write_fixture(
+            &temp_dir,
+            "models/orders.yml",
+            r"
+version: 2
+models:
+  - name: fct_orders
+    columns:
+      - name: order_id
+        config:
+          meta:
+            nova:
+              role: identifier
+",
+        );
+
+        let report = validate_nova_meta(&NovaMetaValidationOptions {
+            project_dir: temp_dir.path().to_path_buf(),
+            paths: vec![path],
+            selector: NovaMetaTargetSelector {
+                resource_kind: Some(NovaMetaResourceKind::Model),
+                resource_name: Some("fct_orders".to_string()),
+                column: Some("order_id".to_string()),
+            },
+        });
+
+        assert_eq!(report.target_count, 1);
+        assert_eq!(report.error_count, 0);
+    }
+
+    #[test]
+    fn validate_nova_meta_runs_semantic_checks_for_config_meta_only_target() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        write_fixture(
+            &temp_dir,
+            "models/orders.yml",
+            r#"
+version: 2
+models:
+  - name: fct_orders
+    config:
+      meta:
+        nova:
+          grain:
+            primary_key: ["missing_id"]
+    columns:
+      - name: order_id
+"#,
+        );
+
+        let report = validate_nova_meta(&NovaMetaValidationOptions {
+            project_dir: temp_dir.path().to_path_buf(),
+            paths: Vec::new(),
+            selector: NovaMetaTargetSelector::default(),
+        });
+
+        assert_eq!(report.target_count, 1);
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.code == "missing_referenced_field")
+        );
     }
 
     #[test]
