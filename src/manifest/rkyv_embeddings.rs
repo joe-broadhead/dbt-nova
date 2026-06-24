@@ -24,6 +24,8 @@ pub enum EmbeddingsCacheFailure {
     SchemaVersion { expected: u32, actual: u32 },
     ModelName { expected: String, actual: String },
     ManifestHash { expected: String, actual: String },
+    EntryShape { ids: usize, embeddings: usize },
+    EntryCount { expected: usize, actual: usize },
 }
 
 impl EmbeddingsCacheFailure {
@@ -39,6 +41,12 @@ impl EmbeddingsCacheFailure {
             }
             Self::ManifestHash { expected, actual } => {
                 format!("cache manifest hash mismatch (expected {expected}, got {actual})")
+            }
+            Self::EntryShape { ids, embeddings } => {
+                format!("cache entry shape mismatch (entity ids: {ids}, embeddings: {embeddings})")
+            }
+            Self::EntryCount { expected, actual } => {
+                format!("cache entry count mismatch (expected {expected}, got {actual})")
             }
         }
     }
@@ -63,6 +71,7 @@ pub fn load_embeddings(
     config: &SearchConfig,
     expected_model: &str,
     expected_hash: &str,
+    expected_entries: Option<usize>,
     max_decompressed_bytes: u64,
 ) -> EmbeddingsCacheLoad {
     let paths = semantic_cache::cache_paths(
@@ -75,19 +84,23 @@ pub fn load_embeddings(
 
     let mut first_failure = None;
     match load_rkyv_file_zst(&paths.compressed_path, max_decompressed_bytes) {
-        Ok(cache) => match validate_cache(&cache, expected_model, expected_hash) {
-            Ok(()) => return EmbeddingsCacheLoad::Hit { cache, paths },
-            Err(failure) => first_failure = Some(failure),
-        },
+        Ok(cache) => {
+            match validate_cache(&cache, expected_model, expected_hash, expected_entries) {
+                Ok(()) => return EmbeddingsCacheLoad::Hit { cache, paths },
+                Err(failure) => first_failure = Some(failure),
+            }
+        }
         Err(CacheLoadFailure::Missing { .. }) => {}
         Err(failure) => first_failure = Some(EmbeddingsCacheFailure::Load(failure)),
     }
 
     match load_rkyv_file_limited(&paths.raw_path, max_decompressed_bytes) {
-        Ok(cache) => match validate_cache(&cache, expected_model, expected_hash) {
-            Ok(()) => EmbeddingsCacheLoad::Hit { cache, paths },
-            Err(failure) => EmbeddingsCacheLoad::Miss { paths, failure },
-        },
+        Ok(cache) => {
+            match validate_cache(&cache, expected_model, expected_hash, expected_entries) {
+                Ok(()) => EmbeddingsCacheLoad::Hit { cache, paths },
+                Err(failure) => EmbeddingsCacheLoad::Miss { paths, failure },
+            }
+        }
         Err(CacheLoadFailure::Missing { .. }) => EmbeddingsCacheLoad::Miss {
             paths,
             failure: first_failure.unwrap_or_else(|| {
@@ -113,6 +126,7 @@ fn validate_cache(
     cache: &CachedEmbeddings,
     expected_model: &str,
     expected_hash: &str,
+    expected_entries: Option<usize>,
 ) -> std::result::Result<(), EmbeddingsCacheFailure> {
     if cache.schema_version != RKYV_SCHEMA_VERSION {
         return Err(EmbeddingsCacheFailure::SchemaVersion {
@@ -130,6 +144,20 @@ fn validate_cache(
         return Err(EmbeddingsCacheFailure::ManifestHash {
             expected: expected_hash.to_string(),
             actual: cache.manifest_hash.clone(),
+        });
+    }
+    if cache.entity_ids.len() != cache.dense_embeddings.len() {
+        return Err(EmbeddingsCacheFailure::EntryShape {
+            ids: cache.entity_ids.len(),
+            embeddings: cache.dense_embeddings.len(),
+        });
+    }
+    if let Some(expected) = expected_entries
+        && cache.entity_ids.len() != expected
+    {
+        return Err(EmbeddingsCacheFailure::EntryCount {
+            expected,
+            actual: cache.entity_ids.len(),
         });
     }
     Ok(())

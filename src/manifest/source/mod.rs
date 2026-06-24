@@ -359,18 +359,14 @@ fn fetch_http_manifest(url: &str, config: &DbtNovaConfig) -> Result<ManifestReso
         .and_then(|v| v.to_str().ok())
         .map(str::to_string);
 
-    let bytes = if max_bytes > 0 {
-        let mut buffer = Vec::new();
-        let mut reader = response.take(max_bytes.saturating_add(1));
-        reader
-            .read_to_end(&mut buffer)
-            .map_err(|e| DbtNovaError::ServerError(format!("Manifest fetch failed: {e}")))?;
-        if buffer.len() as u64 > max_bytes {
+    match write_limited_reader_atomic(&cache_path, response, max_bytes) {
+        Ok(_) => {}
+        Err(LimitedWriteError::LimitExceeded { observed, max }) => {
             if cache_path.exists() {
                 record_cache_hit();
                 warn!(
-                    size = buffer.len(),
-                    max_bytes = max_bytes,
+                    size = observed,
+                    max_bytes = max,
                     "manifest fetch exceeded size limit; falling back to cached copy"
                 );
                 return Ok(ManifestResolution {
@@ -381,18 +377,28 @@ fn fetch_http_manifest(url: &str, config: &DbtNovaConfig) -> Result<ManifestReso
             }
             record_cache_miss();
             return Err(DbtNovaError::ServerError(format!(
-                "Manifest fetch exceeded size limit (> {max_bytes} bytes)",
+                "Manifest fetch exceeded size limit (> {max} bytes)",
             )));
         }
-        buffer
-    } else {
-        response
-            .bytes()
-            .map_err(|e| DbtNovaError::ServerError(format!("Manifest fetch failed: {e}")))?
-            .to_vec()
-    };
-
-    write_atomic(&cache_path, bytes.as_ref())?;
+        Err(LimitedWriteError::Io(error)) => {
+            if cache_path.exists() {
+                record_cache_hit();
+                warn!(
+                    error = %error,
+                    "manifest fetch failed while writing response; falling back to cached copy"
+                );
+                return Ok(ManifestResolution {
+                    local_path: cache_path,
+                    source_uri: url.to_string(),
+                    cached: true,
+                });
+            }
+            record_cache_miss();
+            return Err(DbtNovaError::ServerError(format!(
+                "Manifest fetch failed: {error}"
+            )));
+        }
+    }
 
     meta.source_uri = url.to_string();
     meta.fetched_at_ms = now_ms();
@@ -753,6 +759,55 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     file.sync_all()?;
     fs::rename(tmp, path)?;
     Ok(())
+}
+
+#[derive(Debug)]
+enum LimitedWriteError {
+    Io(std::io::Error),
+    LimitExceeded { observed: u64, max: u64 },
+}
+
+fn write_limited_reader_atomic<R: Read>(
+    path: &Path,
+    mut reader: R,
+    max_bytes: u64,
+) -> std::result::Result<u64, LimitedWriteError> {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("manifest.cache");
+    let tmp = path.with_file_name(format!("{file_name}.{}.tmp", unique_suffix()));
+    let result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .map_err(LimitedWriteError::Io)?;
+        let mut written = 0u64;
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            let read = reader.read(&mut buf).map_err(LimitedWriteError::Io)?;
+            if read == 0 {
+                break;
+            }
+            written = written.saturating_add(read as u64);
+            if max_bytes > 0 && written > max_bytes {
+                return Err(LimitedWriteError::LimitExceeded {
+                    observed: written,
+                    max: max_bytes,
+                });
+            }
+            file.write_all(&buf[..read])
+                .map_err(LimitedWriteError::Io)?;
+        }
+        file.sync_all().map_err(LimitedWriteError::Io)?;
+        fs::rename(&tmp, path).map_err(LimitedWriteError::Io)?;
+        Ok(written)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
 }
 
 fn hash_file(path: &Path) -> Result<String> {

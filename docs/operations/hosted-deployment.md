@@ -18,7 +18,10 @@ the service is isolated and access controlled.
 
 Recommended hosted posture:
 
-- Use `DBT_NOVA_TOOL_DENYLIST=show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest` for general-purpose agent endpoints.
+- Use `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest` for general-purpose hosted agent endpoints.
+- Keep `execute_sql` and `run_recipe` denied for discovery-only endpoints.
+  Published container images set the full general-purpose hosted denylist by
+  default.
 - Leave `DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN` unset unless a trusted operator is
   intentionally pruning or cleaning storage.
 - Leave `DBT_NOVA_MCP_ENABLE_MANIFEST_WARM` unset unless a trusted operator is
@@ -26,7 +29,18 @@ Recommended hosted posture:
 - Set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when the reverse proxy or
   platform auth layer is actually enforcing authentication.
 
-## Hosted Profile
+## Local HTTP Profile
+
+For local MCP-over-HTTP testing, keep Nova bound to loopback:
+
+```bash
+DBT_NOVA_SERVER_TRANSPORT=streamable_http \
+dbt-nova server start --http-host 127.0.0.1 --http-port 8080 --http-path /mcp
+```
+
+The hosted acknowledgement is not needed for loopback binds.
+
+## Hosted Discovery-Only Profile
 
 Recommended runtime env:
 
@@ -35,6 +49,7 @@ export DBT_NOVA_SERVER_TRANSPORT=streamable_http
 export PORT=8080
 export DBT_NOVA_HTTP_PATH=/mcp
 export DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true
+export DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest
 export DBT_NOVA_STORAGE_DIR=/tmp/dbt-nova
 export DBT_NOVA_EMBEDDINGS_CACHE_DIR=/tmp/dbt-nova/models
 export DBT_NOVA_BOOTSTRAP_URI='https://example.invalid/bootstrap.json'
@@ -51,10 +66,28 @@ Why these defaults matter:
 
 - `PORT` lets Nova bind correctly on Cloud Run-style platforms.
 - `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` is required for non-loopback hosted binds and documents that an authenticating reverse proxy is in front of Nova.
+- `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest`
+  keeps a hosted endpoint discovery-only and hides operator inspection tools
+  unless those capabilities are intentionally enabled.
 - `DBT_NOVA_STORAGE_DIR=/tmp/dbt-nova` gives artifact hydration a writable local filesystem.
 - `DBT_NOVA_EMBEDDINGS_CACHE_DIR=/tmp/dbt-nova/models` keeps model cache resolution deterministic.
 - `DBT_NOVA_BOOTSTRAP_URI` should point at the stable bootstrap alias published by the reusable asset workflow.
 - First start should **not** use strict read-only mode. Nova may need to materialize prebuilt assets locally before it can serve traffic.
+
+## Hosted SQL-Enabled Profile
+
+Start from the discovery-only profile, then intentionally clear or customize
+`DBT_NOVA_TOOL_DENYLIST` and provide SQL provider credentials:
+
+```bash
+export DBT_NOVA_TOOL_DENYLIST=
+export DBT_NOVA_SQL_PROVIDER=duckdb
+# Set the provider-specific warehouse/catalog credentials needed by your target.
+```
+
+Use least-privilege warehouse credentials, keep row/byte/poll limits bounded, and
+serve the endpoint only through the same authenticating proxy requirement as the
+discovery-only profile.
 
 Storage note:
 
@@ -100,24 +133,27 @@ docker pull ghcr.io/joe-broadhead/dbt-nova:v<version>
 Release images are published as a multi-arch manifest for `linux/amd64` and
 `linux/arm64`.
 
-Run it locally:
+Run a local container probe smoke without publishing the service port:
 
 ```bash
-docker run --rm -p 8080:8080 \
-  -e DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true \
+docker run -d --rm --name dbt-nova-local-smoke \
+  -e PORT= \
+  -e DBT_NOVA_HTTP_HOST=127.0.0.1 \
+  -e DBT_NOVA_HTTP_PORT=8080 \
   -e DBT_NOVA_BOOTSTRAP_URI='https://example.invalid/bootstrap.json' \
   -e DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing \
   dbt-nova:latest
 ```
 
-Then verify:
+Then verify liveness from inside the container:
 
 ```bash
-curl -fsS http://127.0.0.1:8080/healthz
-curl -fsS http://127.0.0.1:8080/readyz
+docker exec dbt-nova-local-smoke curl -fsS http://127.0.0.1:8080/healthz
+docker rm -f dbt-nova-local-smoke
 ```
 
-The MCP endpoint remains mounted at `DBT_NOVA_HTTP_PATH`:
+With a real manifest/bootstrap configured, readiness is available at
+`/readyz`. The MCP endpoint remains mounted at `DBT_NOVA_HTTP_PATH`:
 
 ```text
 http://127.0.0.1:8080/mcp
@@ -159,6 +195,7 @@ If bootstrap omits `models_artifact_uri`, you must do one of these:
 1. Publish prebuilt assets and a stable bootstrap alias.
 2. Set `DBT_NOVA_BOOTSTRAP_URI` to that stable alias.
 3. Put dbt-nova behind an authenticating reverse proxy and set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true`.
-4. Keep `DBT_NOVA_STORAGE_DIR` and `DBT_NOVA_EMBEDDINGS_CACHE_DIR` writable.
-5. Use `/healthz` for liveness and `/readyz` for readiness.
-6. Do not enable strict read-only mode until local artifacts already exist.
+4. Keep `execute_sql` and `run_recipe` denied unless this is an intentional SQL-enabled endpoint.
+5. Keep `DBT_NOVA_STORAGE_DIR` and `DBT_NOVA_EMBEDDINGS_CACHE_DIR` writable.
+6. Use `/healthz` for liveness and `/readyz` for readiness.
+7. Do not enable strict read-only mode until local artifacts already exist.

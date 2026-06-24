@@ -80,7 +80,7 @@ fn embeddings_cache_respects_decompression_limit() {
     rkyv_embeddings::save_embeddings(&cache, &search).expect("save embeddings");
 
     assert!(matches!(
-        rkyv_embeddings::load_embeddings(&search, "test-model", "test-hash", 1),
+        rkyv_embeddings::load_embeddings(&search, "test-model", "test-hash", Some(1), 1),
         rkyv_embeddings::EmbeddingsCacheLoad::Miss { .. }
     ));
 }
@@ -104,7 +104,13 @@ fn sparse_embeddings_cache_respects_decompression_limit() {
         .expect("save sparse embeddings");
 
     assert!(matches!(
-        rkyv_sparse_embeddings::load_sparse_embeddings(&search, "sparse-model", "sparse-hash", 1),
+        rkyv_sparse_embeddings::load_sparse_embeddings(
+            &search,
+            "sparse-model",
+            "sparse-hash",
+            Some(1),
+            1
+        ),
         rkyv_sparse_embeddings::SparseEmbeddingsCacheLoad::Miss { .. }
     ));
 }
@@ -137,7 +143,7 @@ fn raw_embeddings_cache_respects_size_limit() {
     );
     save_rkyv(&cache, &paths.raw_path).expect("save raw embeddings");
 
-    match rkyv_embeddings::load_embeddings(&search, "raw-model", "raw-hash", 1) {
+    match rkyv_embeddings::load_embeddings(&search, "raw-model", "raw-hash", Some(1), 1) {
         rkyv_embeddings::EmbeddingsCacheLoad::Miss { failure, .. } => {
             assert!(matches!(
                 failure,
@@ -179,6 +185,7 @@ fn raw_sparse_embeddings_cache_respects_size_limit() {
         &search,
         "raw-sparse-model",
         "raw-sparse-hash",
+        Some(1),
         1,
     ) {
         rkyv_sparse_embeddings::SparseEmbeddingsCacheLoad::Miss { failure, .. } => {
@@ -194,5 +201,81 @@ fn raw_sparse_embeddings_cache_respects_size_limit() {
             ));
         }
         other => panic!("expected size-limited miss, got {other:?}"),
+    }
+}
+
+#[test]
+fn embeddings_cache_rejects_incomplete_manifest_payload() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let search = SearchConfig {
+        embedding_cache_dir: temp_dir.path().to_string_lossy().to_string(),
+        ..SearchConfig::default()
+    };
+    let cache = CachedEmbeddings {
+        schema_version: RKYV_SCHEMA_VERSION,
+        model_name: "test-model".to_string(),
+        manifest_hash: "test-hash".to_string(),
+        entity_ids: vec!["id-1".to_string()],
+        dense_embeddings: vec![vec![0.0_f32; 4]],
+        is_quantized: false,
+        sparse_indices: None,
+        sparse_values: None,
+        ann_hyperplanes: None,
+        ann_bucket_keys: None,
+        ann_bucket_values: None,
+    };
+    rkyv_embeddings::save_embeddings(&cache, &search).expect("save embeddings");
+
+    match rkyv_embeddings::load_embeddings(&search, "test-model", "test-hash", Some(2), 1024) {
+        rkyv_embeddings::EmbeddingsCacheLoad::Miss { failure, .. } => {
+            assert!(matches!(
+                failure,
+                rkyv_embeddings::EmbeddingsCacheFailure::EntryCount {
+                    expected: 2,
+                    actual: 1,
+                }
+            ));
+            assert!(failure.summary().contains("expected 2, got 1"));
+        }
+        other => panic!("expected incomplete cache miss, got {other:?}"),
+    }
+}
+
+#[test]
+fn sparse_embeddings_cache_rejects_incomplete_manifest_payload() {
+    let temp_dir = tempfile::tempdir().expect("temp dir");
+    let search = SearchConfig {
+        embedding_cache_dir: temp_dir.path().to_string_lossy().to_string(),
+        ..SearchConfig::default()
+    };
+    let cache = CachedSparseEmbeddings {
+        schema_version: RKYV_SCHEMA_VERSION,
+        model_name: "sparse-model".to_string(),
+        manifest_hash: "sparse-hash".to_string(),
+        entity_ids: vec!["id-1".to_string()],
+        sparse_indices: vec![vec![1, 2]],
+        sparse_values: vec![vec![0.1_f32, 0.2_f32]],
+    };
+    rkyv_sparse_embeddings::save_sparse_embeddings(&cache, &search)
+        .expect("save sparse embeddings");
+
+    match rkyv_sparse_embeddings::load_sparse_embeddings(
+        &search,
+        "sparse-model",
+        "sparse-hash",
+        Some(2),
+        1024,
+    ) {
+        rkyv_sparse_embeddings::SparseEmbeddingsCacheLoad::Miss { failure, .. } => {
+            assert!(matches!(
+                failure,
+                rkyv_sparse_embeddings::SparseEmbeddingsCacheFailure::EntryCount {
+                    expected: 2,
+                    actual: 1,
+                }
+            ));
+            assert!(failure.summary().contains("expected 2, got 1"));
+        }
+        other => panic!("expected incomplete sparse cache miss, got {other:?}"),
     }
 }

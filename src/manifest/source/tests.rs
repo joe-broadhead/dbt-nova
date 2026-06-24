@@ -1,7 +1,6 @@
 use super::*;
 #[cfg(any(feature = "s3", feature = "gcs"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
-#[cfg(any(feature = "s3", feature = "gcs"))]
 use tempfile::TempDir;
 
 #[cfg(any(feature = "s3", feature = "gcs"))]
@@ -22,6 +21,18 @@ fn dbfs_read_field_helpers_use_present_values() {
     });
     assert_eq!(dbfs_read_data_field(&body, 0), "YWJj");
     assert_eq!(dbfs_read_bytes_read_field(&body, 0), 3);
+}
+
+#[test]
+fn limited_reader_atomic_rejects_oversized_stream_without_partial_cache() {
+    let cache_dir = TempDir::new().expect("temp dir");
+    let path = cache_dir.path().join("artifact.cache");
+
+    let err = write_limited_reader_atomic(&path, std::io::Cursor::new(vec![1u8; 32]), 16)
+        .expect_err("oversized stream should fail");
+
+    assert!(matches!(err, LimitedWriteError::LimitExceeded { .. }));
+    assert!(!path.exists(), "partial cache file should not be committed");
 }
 
 #[cfg(any(feature = "s3", feature = "gcs"))]

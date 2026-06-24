@@ -727,7 +727,7 @@ fn build_search_backends_for_manifest(
     )
 }
 
-fn scoped_manifest_hash(signature: &ManifestSignature) -> String {
+pub(crate) fn scoped_manifest_hash(signature: &ManifestSignature) -> String {
     if signature.prune_fingerprint.is_empty() && signature.search_index_fingerprint.is_empty() {
         signature.content_hash.clone()
     } else {
@@ -950,6 +950,9 @@ fn build_artifact_consumer_status(
         "fetch_policy": artifact_fetch_policy_label(config.artifact_fetch_policy),
         "allow_http": config.artifact_allow_http,
         "timeout_secs": config.artifact_timeout_secs,
+        "max_bytes": config.artifact_max_bytes,
+        "archive_max_entries": config.artifact_archive_max_entries,
+        "archive_max_uncompressed_bytes": config.artifact_archive_max_uncompressed_bytes,
         "cache_dir": config
             .artifacts_cache_dir()
             .ok()

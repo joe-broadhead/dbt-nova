@@ -10,6 +10,7 @@ use crate::error::{DbtNovaError, Result};
 use crate::manifest::bootstrap::prepare_runtime_config;
 use crate::params::{ConfigShowParams, ConfigValidateParams};
 use crate::responses::SuccessResponse;
+use crate::utils::sanitize_uri;
 
 use super::{DispatchError, DispatchResult};
 
@@ -33,6 +34,7 @@ pub fn build_config_show_tool_response(
     } else {
         active_config.clone()
     };
+    let config = redacted_config_show_value(&config)?;
     serde_json::to_value(SuccessResponse::new(config, 1))
         .map_err(|error| DbtNovaError::ServerError(error.to_string()))
 }
@@ -62,6 +64,10 @@ pub fn build_config_validate_tool_response(
 pub fn run_show_command(args: &ConfigShowArgs) -> DispatchResult {
     let started = Instant::now();
     let config = config_for_show(args);
+    let config = redacted_config_show_value(&config).map_err(|error| DispatchError {
+        error,
+        rendered: false,
+    })?;
 
     if args.json {
         let envelope = CliEnvelope::success("config show", &config, started.elapsed().as_millis());
@@ -142,6 +148,63 @@ fn config_for_show(args: &ConfigShowArgs) -> DbtNovaConfig {
     }
 }
 
+fn redacted_config_show_value(config: &DbtNovaConfig) -> Result<JsonValue> {
+    let mut value = serde_json::to_value(config)
+        .map_err(|error| DbtNovaError::ServerError(error.to_string()))?;
+    redact_config_value(&mut value, None);
+    Ok(value)
+}
+
+fn redact_config_value(value: &mut JsonValue, key: Option<&str>) {
+    match value {
+        JsonValue::String(raw) => {
+            if key.is_some_and(is_sensitive_config_key) {
+                *raw = "[REDACTED]".to_string();
+            } else if key.is_some_and(is_location_config_key) {
+                *raw = sanitize_uri(raw);
+            }
+        }
+        JsonValue::Array(values) => {
+            for value in values {
+                redact_config_value(value, key);
+            }
+        }
+        JsonValue::Object(map) => {
+            for (child_key, child_value) in map {
+                redact_config_value(child_value, Some(child_key));
+            }
+        }
+        JsonValue::Null | JsonValue::Bool(_) | JsonValue::Number(_) => {}
+    }
+}
+
+fn is_sensitive_config_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    [
+        "token",
+        "secret",
+        "password",
+        "passwd",
+        "pwd",
+        "credential",
+        "authorization",
+        "private_key",
+        "api_key",
+        "apikey",
+    ]
+    .iter()
+    .any(|sensitive| key.contains(sensitive))
+}
+
+fn is_location_config_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    key.contains("uri")
+        || key.contains("path")
+        || key.contains("dir")
+        || key == "source"
+        || key.ends_with("_source")
+}
+
 fn validate_runtime_config(mut config: DbtNovaConfig) -> crate::error::Result<DbtNovaConfig> {
     let _bootstrap_resolution = prepare_runtime_config(&mut config)?;
     // Mirror runtime storage-path safety checks used by manifest-loading paths so
@@ -202,6 +265,68 @@ mod tests {
             response["data"]["manifest_path"],
             serde_json::json!(DbtNovaConfig::default().manifest_path)
         );
+    }
+
+    #[test]
+    fn config_show_response_redacts_secret_bearing_locations() {
+        let active_config = DbtNovaConfig {
+            manifest_path: "/tmp/token/raw-manifest/manifest.json".to_string(),
+            manifest_uri: "https://user:pass@example.com/manifest.json?token=raw-token".to_string(),
+            storage_artifact_uri:
+                "s3://bucket/path/secret/raw-storage/storage.tar.gz?X-Amz-Signature=raw-signature"
+                    .to_string(),
+            metadata_artifact_uri:
+                "https://example.com/metadata.json?access_token=raw-access-token".to_string(),
+            models_artifact_uri: "gs://bucket/password/raw-models/models.tar.gz".to_string(),
+            bootstrap_uri: "https://example.com/bootstrap.json?api_key=raw-api-key".to_string(),
+            search: crate::config::SearchConfig {
+                embedding_cache_dir: "/tmp/password/raw-cache/models".to_string(),
+                ..crate::config::SearchConfig::default()
+            },
+            ..DbtNovaConfig::default()
+        };
+
+        let response =
+            build_config_show_tool_response(&active_config, &ConfigShowParams { defaults: false })
+                .expect("config show response");
+        let serialized = response.to_string();
+
+        assert!(!serialized.contains("raw-token"));
+        assert!(!serialized.contains("raw-signature"));
+        assert!(!serialized.contains("raw-access-token"));
+        assert!(!serialized.contains("raw-api-key"));
+        assert!(!serialized.contains("raw-cache"));
+        assert!(!serialized.contains("user:pass"));
+        assert!(serialized.contains("[REDACTED]"));
+        assert_eq!(
+            response["data"]["manifest_uri"],
+            serde_json::json!("https://[REDACTED]@example.com/manifest.json?[REDACTED]")
+        );
+    }
+
+    #[test]
+    fn config_redaction_masks_future_sensitive_keys() {
+        let mut value = serde_json::json!({
+            "credentials": {
+                "api_token": "raw-token",
+                "safe": "orders"
+            },
+            "artifact_uri": "https://example.com/artifact.tar.gz?sig=raw-signature"
+        });
+
+        super::redact_config_value(&mut value, None);
+
+        assert_eq!(
+            value["credentials"]["api_token"],
+            serde_json::json!("[REDACTED]")
+        );
+        assert_eq!(value["credentials"]["safe"], serde_json::json!("orders"));
+        assert_eq!(
+            value["artifact_uri"],
+            serde_json::json!("https://example.com/artifact.tar.gz?[REDACTED]")
+        );
+        assert!(!value.to_string().contains("raw-token"));
+        assert!(!value.to_string().contains("raw-signature"));
     }
 
     #[test]

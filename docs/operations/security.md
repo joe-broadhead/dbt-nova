@@ -31,6 +31,11 @@ See [Configuration](../configuration/reference.md) for full limits.
 warehouse-backed `execute_sql` capability. dbt-nova does **not** provide built-in
 authentication or authorization for this transport.
 
+Published container images default to discovery-only, non-admin MCP exposure with
+`DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest`.
+Clear or customize that denylist only for a SQL-enabled or operator endpoint
+that is isolated, authenticated, and backed by least-privilege credentials.
+
 Some tools read from the server filesystem. `validate_nova_meta` validates dbt
 YAML under the server working directory and rejects absolute or traversal paths
 outside the selected project, but callers still control which in-scope project
@@ -87,6 +92,8 @@ metadata in the `reason` field. CI enforces that review dates are not expired vi
 - `RUSTSEC-2025-0119`: `number_prefix` via `fastembed` -> `hf-hub` -> `indicatif`
 - `RUSTSEC-2025-0134`: `rustls-pemfile` via `google-cloud-storage` -> `reqwest 0.11`
 - `RUSTSEC-2026-0002`: `lru 0.12` via `tantivy`
+- `RUSTSEC-2026-0097`: `rand` via `fastembed`/`tokenizers`, `tantivy`/`rand_distr`,
+  `rmcp`, and `proptest`
 
 ## Dependency Watchlist
 

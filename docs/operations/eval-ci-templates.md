@@ -38,7 +38,8 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     env:
-      DBT_NOVA_INSTALL_REF: master
+      DBT_NOVA_INSTALL_REF: v0.0.6
+      DBT_NOVA_VERSION: v0.0.6
       NOVA_EVAL_SUITE: evals/analyst-smoke.yml
       NOVA_EVAL_NAME: analyst-smoke
       NOVA_EVAL_OUTPUT: out/nova-bridge-evals
@@ -62,7 +63,7 @@ jobs:
       - name: Install dbt-nova
         run: |
           curl -fsSL "https://raw.githubusercontent.com/joe-broadhead/dbt-nova/${DBT_NOVA_INSTALL_REF}/scripts/install.sh" | \
-            bash -s -- --slim --non-interactive
+            DBT_NOVA_VERSION="${DBT_NOVA_VERSION}" bash -s -- --slim --non-interactive
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Validate eval suite
@@ -108,8 +109,9 @@ jobs:
 Replace dependency installation and manifest generation with your normal dbt
 CI setup. `master` tracks the current docs. For production, pin
 `DBT_NOVA_INSTALL_REF` to a release tag or immutable commit that includes the
-eval commands you use, and keep dbt warehouse credentials in GitHub secrets or
-your usual dbt profile mechanism.
+eval commands you use, pin `DBT_NOVA_VERSION` to the release asset tag you want
+installed, and keep dbt warehouse credentials in GitHub secrets or your usual
+dbt profile mechanism.
 
 Run the full suite before `eval gate`. A filtered `--case-id` run, stale suite
 file, missing suite hash, or telemetry retention value that trims the latest
@@ -150,7 +152,8 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     env:
-      DBT_NOVA_INSTALL_REF: master
+      DBT_NOVA_INSTALL_REF: v0.0.6
+      DBT_NOVA_VERSION: v0.0.6
       NOVA_AGENT_SUITE: evals/analyst-agent.yml
       NOVA_AGENT_NAME: analyst-agent-smoke
       NOVA_AGENT_OUTPUT: out/nova-agent-evals
@@ -175,7 +178,7 @@ jobs:
       - name: Install dbt-nova
         run: |
           curl -fsSL "https://raw.githubusercontent.com/joe-broadhead/dbt-nova/${DBT_NOVA_INSTALL_REF}/scripts/install.sh" | \
-            bash -s -- --slim --non-interactive
+            DBT_NOVA_VERSION="${DBT_NOVA_VERSION}" bash -s -- --slim --non-interactive
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Validate agent eval suite

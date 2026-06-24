@@ -229,6 +229,12 @@ pub struct DbtNovaConfig {
     pub artifact_fetch_policy: ArtifactFetchPolicy,
     /// Timeout in seconds for artifact fetch operations (0 = no timeout)
     pub artifact_timeout_secs: u64,
+    /// Maximum compressed bytes allowed for remote prebuilt artifact downloads (0 = unlimited)
+    pub artifact_max_bytes: u64,
+    /// Maximum entries allowed while extracting a prebuilt artifact archive (0 = unlimited)
+    pub artifact_archive_max_entries: usize,
+    /// Maximum decompressed bytes allowed while extracting a prebuilt artifact archive (0 = unlimited)
+    pub artifact_archive_max_uncompressed_bytes: u64,
     /// Allow non-TLS remote artifact URIs (`http://`)
     pub artifact_allow_http: bool,
     /// Server transport mode (`stdio` or `streamable_http`)
@@ -348,6 +354,9 @@ impl Default for DbtNovaConfig {
             bootstrap_uri: String::new(),
             artifact_fetch_policy: ArtifactFetchPolicy::IfMissing,
             artifact_timeout_secs: 300,
+            artifact_max_bytes: 3 * 1024 * 1024 * 1024, // 3 GiB
+            artifact_archive_max_entries: 200_000,
+            artifact_archive_max_uncompressed_bytes: 10 * 1024 * 1024 * 1024, // 10 GiB
             artifact_allow_http: false,
             server_transport: ServerTransport::Stdio,
             http_host: "127.0.0.1".to_string(),
@@ -737,7 +746,7 @@ impl DbtNovaConfig {
             }
             if self.http_transport_binds_non_loopback() && !self.http_expect_auth_proxy {
                 return Err(DbtNovaError::InvalidParams(
-                    "streamable HTTP transport has no built-in authentication and is configured to listen on a non-loopback host. Bind to 127.0.0.1/::1 for local-only use, or set DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true only when an authenticating reverse proxy is enforcing access in front of dbt-nova; the published container image sets this acknowledgement explicitly for hosted deployments.".to_string(),
+                    "streamable HTTP transport has no built-in authentication and is configured to listen on a non-loopback host. Bind to 127.0.0.1/::1 for local-only use, or set DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true only when an authenticating reverse proxy is enforcing access in front of dbt-nova; published container images do not set this acknowledgement by default.".to_string(),
                 ));
             }
         }
@@ -964,6 +973,15 @@ impl DbtNovaConfig {
         }
         if let Some(v) = parse_u64("DBT_NOVA_ARTIFACT_TIMEOUT_SECS") {
             self.artifact_timeout_secs = v;
+        }
+        if let Some(v) = parse_u64("DBT_NOVA_ARTIFACT_MAX_BYTES") {
+            self.artifact_max_bytes = v;
+        }
+        if let Some(v) = parse_usize("DBT_NOVA_ARTIFACT_ARCHIVE_MAX_ENTRIES") {
+            self.artifact_archive_max_entries = v;
+        }
+        if let Some(v) = parse_u64("DBT_NOVA_ARTIFACT_ARCHIVE_MAX_UNCOMPRESSED_BYTES") {
+            self.artifact_archive_max_uncompressed_bytes = v;
         }
         if let Some(value) = parse_bool("DBT_NOVA_ARTIFACT_ALLOW_HTTP") {
             self.artifact_allow_http = value;
@@ -1684,6 +1702,7 @@ mod tests {
             ("DBT_NOVA_SERVER_TRANSPORT", Some("streamable_http")),
             ("DBT_NOVA_HTTP_HOST", None),
             ("DBT_NOVA_HTTP_PORT", None),
+            ("DBT_NOVA_HTTP_EXPECT_AUTH_PROXY", None),
             ("PORT", Some("9090")),
         ];
         let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
@@ -1718,6 +1737,67 @@ mod tests {
         assert_eq!(config.server_transport, ServerTransport::StreamableHttp);
         assert_eq!(config.http_port, 9090);
         assert_eq!(config.http_host, "0.0.0.0");
+        let error = config
+            .validate()
+            .expect_err("platform PORT fallback exposes HTTP and should need auth proxy ack");
+        assert!(
+            error
+                .to_string()
+                .contains("DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true")
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("published container images do not set this acknowledgement by default")
+        );
+    }
+
+    #[test]
+    fn from_env_platform_port_validates_with_auth_proxy_ack() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [
+            ("DBT_NOVA_SERVER_TRANSPORT", Some("streamable_http")),
+            ("DBT_NOVA_HTTP_HOST", None),
+            ("DBT_NOVA_HTTP_PORT", None),
+            ("DBT_NOVA_HTTP_EXPECT_AUTH_PROXY", Some("true")),
+            ("PORT", Some("9090")),
+        ];
+        let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let config = DbtNovaConfig::from_env();
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        assert_eq!(config.server_transport, ServerTransport::StreamableHttp);
+        assert_eq!(config.http_port, 9090);
+        assert_eq!(config.http_host, "0.0.0.0");
+        assert!(config.http_expect_auth_proxy);
+        config
+            .validate()
+            .expect("platform PORT fallback should validate with explicit auth proxy ack");
     }
 
     #[test]

@@ -21,9 +21,27 @@ pub enum SparseEmbeddingsCacheLoad {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SparseEmbeddingsCacheFailure {
     Load(CacheLoadFailure),
-    SchemaVersion { expected: u32, actual: u32 },
-    ModelName { expected: String, actual: String },
-    ManifestHash { expected: String, actual: String },
+    SchemaVersion {
+        expected: u32,
+        actual: u32,
+    },
+    ModelName {
+        expected: String,
+        actual: String,
+    },
+    ManifestHash {
+        expected: String,
+        actual: String,
+    },
+    EntryShape {
+        ids: usize,
+        indices: usize,
+        values: usize,
+    },
+    EntryCount {
+        expected: usize,
+        actual: usize,
+    },
 }
 
 impl SparseEmbeddingsCacheFailure {
@@ -39,6 +57,18 @@ impl SparseEmbeddingsCacheFailure {
             }
             Self::ManifestHash { expected, actual } => {
                 format!("cache manifest hash mismatch (expected {expected}, got {actual})")
+            }
+            Self::EntryShape {
+                ids,
+                indices,
+                values,
+            } => {
+                format!(
+                    "cache entry shape mismatch (entity ids: {ids}, sparse indices: {indices}, sparse values: {values})"
+                )
+            }
+            Self::EntryCount { expected, actual } => {
+                format!("cache entry count mismatch (expected {expected}, got {actual})")
             }
         }
     }
@@ -63,6 +93,7 @@ pub fn load_sparse_embeddings(
     config: &SearchConfig,
     expected_model: &str,
     expected_hash: &str,
+    expected_entries: Option<usize>,
     max_decompressed_bytes: u64,
 ) -> SparseEmbeddingsCacheLoad {
     let paths = semantic_cache::cache_paths(
@@ -75,19 +106,23 @@ pub fn load_sparse_embeddings(
 
     let mut first_failure = None;
     match load_rkyv_file_zst(&paths.compressed_path, max_decompressed_bytes) {
-        Ok(cache) => match validate_cache(&cache, expected_model, expected_hash) {
-            Ok(()) => return SparseEmbeddingsCacheLoad::Hit { cache, paths },
-            Err(failure) => first_failure = Some(failure),
-        },
+        Ok(cache) => {
+            match validate_cache(&cache, expected_model, expected_hash, expected_entries) {
+                Ok(()) => return SparseEmbeddingsCacheLoad::Hit { cache, paths },
+                Err(failure) => first_failure = Some(failure),
+            }
+        }
         Err(CacheLoadFailure::Missing { .. }) => {}
         Err(failure) => first_failure = Some(SparseEmbeddingsCacheFailure::Load(failure)),
     }
 
     match load_rkyv_file_limited(&paths.raw_path, max_decompressed_bytes) {
-        Ok(cache) => match validate_cache(&cache, expected_model, expected_hash) {
-            Ok(()) => SparseEmbeddingsCacheLoad::Hit { cache, paths },
-            Err(failure) => SparseEmbeddingsCacheLoad::Miss { paths, failure },
-        },
+        Ok(cache) => {
+            match validate_cache(&cache, expected_model, expected_hash, expected_entries) {
+                Ok(()) => SparseEmbeddingsCacheLoad::Hit { cache, paths },
+                Err(failure) => SparseEmbeddingsCacheLoad::Miss { paths, failure },
+            }
+        }
         Err(CacheLoadFailure::Missing { .. }) => SparseEmbeddingsCacheLoad::Miss {
             paths,
             failure: first_failure.unwrap_or_else(|| {
@@ -113,6 +148,7 @@ fn validate_cache(
     cache: &CachedSparseEmbeddings,
     expected_model: &str,
     expected_hash: &str,
+    expected_entries: Option<usize>,
 ) -> std::result::Result<(), SparseEmbeddingsCacheFailure> {
     if cache.schema_version != RKYV_SCHEMA_VERSION {
         return Err(SparseEmbeddingsCacheFailure::SchemaVersion {
@@ -130,6 +166,23 @@ fn validate_cache(
         return Err(SparseEmbeddingsCacheFailure::ManifestHash {
             expected: expected_hash.to_string(),
             actual: cache.manifest_hash.clone(),
+        });
+    }
+    if cache.entity_ids.len() != cache.sparse_indices.len()
+        || cache.entity_ids.len() != cache.sparse_values.len()
+    {
+        return Err(SparseEmbeddingsCacheFailure::EntryShape {
+            ids: cache.entity_ids.len(),
+            indices: cache.sparse_indices.len(),
+            values: cache.sparse_values.len(),
+        });
+    }
+    if let Some(expected) = expected_entries
+        && cache.entity_ids.len() != expected
+    {
+        return Err(SparseEmbeddingsCacheFailure::EntryCount {
+            expected,
+            actual: cache.entity_ids.len(),
         });
     }
     Ok(())

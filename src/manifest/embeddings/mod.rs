@@ -147,24 +147,42 @@ fn query_model_missing_files_warning(component_label: &str, disable_env: &str) -
     )
 }
 
-fn disable_on_total_batch_failure<T>(
+fn embeddable_entity_count(store: &EntityStore, config: &SearchConfig) -> Result<usize> {
+    let mut count = 0usize;
+    for unique_id in store.ids() {
+        if let Some(entity) = store.get_archived(unique_id)?
+            && !embedding_text_from_archived(entity, config).is_empty()
+        {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+fn refuse_incomplete_cache_build<T>(
     component_label: &str,
     disable_env: &str,
-    attempted_batches: usize,
+    expected_items: usize,
     produced_items: usize,
     last_failure: Option<&str>,
-) -> Option<SearchComponentBuild<T>> {
-    if attempted_batches == 0 || produced_items > 0 {
-        return None;
+    policy: SearchColdStartPolicy,
+) -> Result<Option<SearchComponentBuild<T>>> {
+    if produced_items == expected_items {
+        return Ok(None);
     }
-    let last_failure = last_failure?;
-    Some(SearchComponentBuild::disabled(component_init_warning(
+    let last_failure = last_failure.unwrap_or("unknown batch failure");
+    let warning = component_init_warning(
         component_label,
         disable_env,
         &format!(
-            "startup embedding generation failed for all batches. Last failure: {last_failure}"
+            "startup embedding generation produced an incomplete manifest-scoped cache payload; expected {expected_items} entries, produced {produced_items}. Last failure: {last_failure}"
         ),
-    )))
+    );
+    if matches!(policy, SearchColdStartPolicy::Degrade) {
+        Ok(Some(SearchComponentBuild::disabled(warning)))
+    } else {
+        Err(DbtNovaError::ServerError(warning))
+    }
 }
 
 fn cache_startup_warning(
@@ -640,8 +658,22 @@ impl AnnIndex {
         }
 
         let bits = config.vector_ann_bits.clamp(4, 63);
-        let seed = random_hyperplane_seed();
+        let seed = deterministic_hyperplane_seed(bits, dim);
         let hyperplanes = generate_hyperplanes(bits, dim, seed);
+        Self::build_f32_with_hyperplanes(embeddings, config, hyperplanes)
+    }
+
+    fn build_f32_with_hyperplanes(
+        embeddings: &[(String, Vec<f32>)],
+        config: &SearchConfig,
+        hyperplanes: Vec<Vec<f32>>,
+    ) -> Option<Self> {
+        if !config.enable_vector_ann || embeddings.is_empty() {
+            return None;
+        }
+        let bits = config.vector_ann_bits.clamp(4, 63);
+        let dim = embeddings.first().map_or(0, |(_, v)| v.len());
+        let hyperplanes = validate_hyperplanes(hyperplanes, bits, dim)?;
         let mut buckets: HashMap<u64, Vec<usize>> = HashMap::new();
 
         for (idx, (_, vec)) in embeddings.iter().enumerate() {
@@ -670,8 +702,22 @@ impl AnnIndex {
         }
 
         let bits = config.vector_ann_bits.clamp(4, 63);
-        let seed = random_hyperplane_seed();
+        let seed = deterministic_hyperplane_seed(bits, dim);
         let hyperplanes = generate_hyperplanes(bits, dim, seed);
+        Self::build_quantized_with_hyperplanes(embeddings, config, hyperplanes)
+    }
+
+    fn build_quantized_with_hyperplanes(
+        embeddings: &[QuantizedEmbedding],
+        config: &SearchConfig,
+        hyperplanes: Vec<Vec<f32>>,
+    ) -> Option<Self> {
+        if !config.enable_vector_ann || embeddings.is_empty() {
+            return None;
+        }
+        let bits = config.vector_ann_bits.clamp(4, 63);
+        let dim = embeddings.first().map_or(0, |e| e.values.len());
+        let hyperplanes = validate_hyperplanes(hyperplanes, bits, dim)?;
         let mut buckets: HashMap<u64, Vec<usize>> = HashMap::new();
 
         for (idx, embedding) in embeddings.iter().enumerate() {
@@ -687,6 +733,16 @@ impl AnnIndex {
             min_candidates: config.vector_ann_min_candidates,
             hamming: config.vector_ann_hamming.min(bits),
         })
+    }
+
+    fn cache_bucket_parts(&self) -> (Vec<u64>, Vec<Vec<usize>>) {
+        let mut entries = self
+            .buckets
+            .iter()
+            .map(|(key, values)| (*key, values.clone()))
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|(key, _)| *key);
+        entries.into_iter().unzip()
     }
 
     fn candidates_f32(&self, query_vec: &[f32], top_k: usize) -> Option<Vec<usize>> {
@@ -845,6 +901,7 @@ impl VectorSearcher {
             "starting vector semantic cache build"
         );
         let mut cached_embeddings = None;
+        let expected_entries = embeddable_entity_count(store, config)?;
         let model = LazyVectorQueryModel::new(
             resolve_embedding_model(&model_name),
             cache_dir.clone(),
@@ -856,6 +913,7 @@ impl VectorSearcher {
                 config,
                 &model_name,
                 manifest_hash,
+                Some(expected_entries),
                 config.embeddings_max_decompressed_bytes,
             ) {
                 rkyv_embeddings::EmbeddingsCacheLoad::Hit { cache, .. } => {
@@ -885,6 +943,7 @@ impl VectorSearcher {
         let batch_size = config.embedding_batch_size.max(1);
         let use_quant = config.enable_vector_quantization;
         if let Some(cached) = cached_embeddings {
+            let cached_hyperplanes = cached.ann_hyperplanes.clone();
             let embeddings = if cached.is_quantized {
                 let quantized = cached
                     .entity_ids
@@ -907,8 +966,17 @@ impl VectorSearcher {
             };
 
             let ann = match &embeddings {
-                DenseEmbeddings::Float(values) => AnnIndex::build_f32(values, config),
-                DenseEmbeddings::Quantized(values) => AnnIndex::build_quantized(values, config),
+                DenseEmbeddings::Float(values) => cached_hyperplanes
+                    .clone()
+                    .and_then(|hyperplanes| {
+                        AnnIndex::build_f32_with_hyperplanes(values, config, hyperplanes)
+                    })
+                    .or_else(|| AnnIndex::build_f32(values, config)),
+                DenseEmbeddings::Quantized(values) => cached_hyperplanes
+                    .and_then(|hyperplanes| {
+                        AnnIndex::build_quantized_with_hyperplanes(values, config, hyperplanes)
+                    })
+                    .or_else(|| AnnIndex::build_quantized(values, config)),
             };
             let query_model_files_present = model.local_files_present();
             info!(
@@ -1060,13 +1128,14 @@ impl VectorSearcher {
             elapsed_ms = build_started.elapsed().as_millis(),
             "vector embedding generation finished"
         );
-        if let Some(disabled) = disable_on_total_batch_failure(
+        if let Some(disabled) = refuse_incomplete_cache_build(
             "vector search",
             "DBT_NOVA_SEARCH_ENABLE_VECTOR",
-            attempted_batches,
+            expected_entries,
             produced_items,
             last_batch_failure.as_deref(),
-        ) {
+            config.cold_start_policy,
+        )? {
             if let Some(warning) = disabled.warning.as_ref() {
                 warn!(warning = %warning, "Vector search unavailable during startup");
             }
@@ -1127,6 +1196,12 @@ impl VectorSearcher {
             }
         }
 
+        let (ann_hyperplanes, ann_bucket_keys, ann_bucket_values) =
+            ann.as_ref().map_or((None, None, None), |ann| {
+                let (keys, values) = ann.cache_bucket_parts();
+                (Some(ann.hyperplanes.clone()), Some(keys), Some(values))
+            });
+
         let cache = CachedEmbeddings {
             schema_version: crate::manifest::rkyv_types::RKYV_SCHEMA_VERSION,
             model_name: model_name.clone(),
@@ -1136,9 +1211,9 @@ impl VectorSearcher {
             is_quantized,
             sparse_indices: None,
             sparse_values: None,
-            ann_hyperplanes: None,
-            ann_bucket_keys: None,
-            ann_bucket_values: None,
+            ann_hyperplanes,
+            ann_bucket_keys,
+            ann_bucket_values,
         };
         info!(
             manifest_hash,
@@ -1322,12 +1397,14 @@ impl SparseSearcher {
         );
         let mut cached_embeddings = None;
         let model = LazySparseQueryModel::new(cache_dir.clone(), config.onnx_threads);
+        let expected_entries = embeddable_entity_count(store, config)?;
 
         if !config.force_rebuild_semantic_caches {
             match rkyv_sparse_embeddings::load_sparse_embeddings(
                 config,
                 &sparse_model_name,
                 manifest_hash,
+                Some(expected_entries),
                 config.embeddings_max_decompressed_bytes,
             ) {
                 rkyv_sparse_embeddings::SparseEmbeddingsCacheLoad::Hit { cache, .. } => {
@@ -1492,13 +1569,14 @@ impl SparseSearcher {
             "sparse embedding generation finished"
         );
 
-        if let Some(disabled) = disable_on_total_batch_failure(
+        if let Some(disabled) = refuse_incomplete_cache_build(
             "sparse search",
             "DBT_NOVA_SEARCH_ENABLE_SPARSE",
-            attempted_batches,
+            expected_entries,
             embeddings.len(),
             last_batch_failure.as_deref(),
-        ) {
+            config.cold_start_policy,
+        )? {
             if let Some(warning) = disabled.warning.as_ref() {
                 warn!(warning = %warning, "Sparse search unavailable during startup");
             }
@@ -1796,14 +1874,29 @@ fn normalize_vector(vec: &mut [f32]) {
     }
 }
 
-fn random_hyperplane_seed() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0x9E37_79B9_7F4A_7C15, |d| {
-            d.as_secs()
-                ^ u64::from(d.subsec_nanos())
-                ^ u64::from(std::process::id()).rotate_left(13)
-        })
+fn deterministic_hyperplane_seed(bits: usize, dim: usize) -> u64 {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"dbt-nova/vector-ann/v1");
+    hasher.update(&bits.to_le_bytes());
+    hasher.update(&dim.to_le_bytes());
+    let hash = hasher.finalize();
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&hash.as_bytes()[..8]);
+    u64::from_le_bytes(bytes)
+}
+
+fn validate_hyperplanes(
+    hyperplanes: Vec<Vec<f32>>,
+    bits: usize,
+    dim: usize,
+) -> Option<Vec<Vec<f32>>> {
+    if hyperplanes.len() != bits {
+        return None;
+    }
+    if hyperplanes.iter().any(|plane| plane.len() != dim) {
+        return None;
+    }
+    Some(hyperplanes)
 }
 
 fn generate_hyperplanes(bits: usize, dim: usize, seed: u64) -> Vec<Vec<f32>> {
@@ -2047,10 +2140,11 @@ mod tests {
     use std::sync::{LazyLock, Mutex};
 
     use super::{
-        DeferredInit, build_optional_component, disable_on_total_batch_failure, model_repo_dir,
-        run_component_operation, snapshot_dir_from_repo_dir, validate_local_model_files,
-        validate_proxy_env_vars,
+        AnnIndex, DeferredInit, build_optional_component, model_repo_dir,
+        refuse_incomplete_cache_build, run_component_operation, snapshot_dir_from_repo_dir,
+        validate_local_model_files, validate_proxy_env_vars,
     };
+    use crate::config::{SearchColdStartPolicy, SearchConfig};
     use tempfile::TempDir;
 
     static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -2138,32 +2232,61 @@ mod tests {
     }
 
     #[test]
-    fn disable_on_total_batch_failure_returns_warning_when_all_batches_fail() {
-        let disabled = disable_on_total_batch_failure::<()>(
+    fn refuse_incomplete_cache_build_degrades_when_batches_fail() {
+        let disabled = refuse_incomplete_cache_build::<()>(
             "vector search",
             "DBT_NOVA_SEARCH_ENABLE_VECTOR",
             2,
             0,
             Some("missing onnx/model.onnx"),
+            SearchColdStartPolicy::Degrade,
         )
+        .expect("degrade policy should not error")
         .expect("all failed batches should disable component");
         let (component, warning) = disabled.into_parts();
         assert!(component.is_none());
         let warning = warning.expect("warning");
-        assert!(warning.contains("startup embedding generation failed for all batches"));
+        assert!(warning.contains("incomplete manifest-scoped cache payload"));
+        assert!(warning.contains("expected 2 entries, produced 0"));
         assert!(warning.contains("missing onnx/model.onnx"));
     }
 
     #[test]
-    fn disable_on_total_batch_failure_keeps_component_ready_after_partial_success() {
-        let disabled = disable_on_total_batch_failure::<()>(
+    fn refuse_incomplete_cache_build_errors_in_build_policy() {
+        let error = refuse_incomplete_cache_build::<()>(
             "sparse search",
             "DBT_NOVA_SEARCH_ENABLE_SPARSE",
             2,
             1,
             Some("failed to retrieve model.onnx"),
-        );
-        assert!(disabled.is_none());
+            SearchColdStartPolicy::Build,
+        )
+        .expect_err("build policy should fail incomplete cache payloads");
+        let message = error.to_string();
+        assert!(message.contains("incomplete manifest-scoped cache payload"));
+        assert!(message.contains("expected 2 entries, produced 1"));
+        assert!(message.contains("failed to retrieve model.onnx"));
+    }
+
+    #[test]
+    fn ann_index_build_is_deterministic_for_same_inputs() {
+        let config = SearchConfig {
+            enable_vector_ann: true,
+            vector_ann_bits: 8,
+            vector_ann_hamming: 1,
+            ..SearchConfig::default()
+        };
+        let embeddings = vec![
+            ("model.pkg.orders".to_string(), vec![1.0, 0.0, 0.0]),
+            ("model.pkg.customers".to_string(), vec![0.0, 1.0, 0.0]),
+            ("model.pkg.payments".to_string(), vec![0.0, 0.0, 1.0]),
+        ];
+
+        let first = AnnIndex::build_f32(&embeddings, &config).expect("first ann");
+        let second = AnnIndex::build_f32(&embeddings, &config).expect("second ann");
+
+        assert_eq!(first.hyperplanes, second.hyperplanes);
+        assert_eq!(first.buckets, second.buckets);
     }
 
     #[test]

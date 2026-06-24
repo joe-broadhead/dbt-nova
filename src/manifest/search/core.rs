@@ -14,12 +14,12 @@ use crate::error::{DbtNovaError, Result};
 use crate::manifest::bootstrap::prepare_runtime_config;
 use crate::manifest::entity::{ArchivedEntity, Entity};
 use crate::manifest::semantic_cache::{self, SemanticCacheComponent};
+use crate::manifest::source::ManifestSignature;
 use crate::manifest::store::EntityStore;
 use crate::manifest::tantivy_search::TantivySearcher;
 use crate::manifest::vector_search::{Reranker, SparseSearcher, VectorSearcher};
 use crate::params::DetailLevel;
-use crate::utils::CircuitBreaker;
-use crate::utils::SearchPersona;
+use crate::utils::{CircuitBreaker, SearchPersona, sanitize_uri};
 
 use super::cache::EntityCache;
 
@@ -893,14 +893,7 @@ impl ManifestSearchHandle {
             }
         };
 
-        let response = serde_json::json!({
-            "status": "refreshing",
-            "manifest_path": next.manifest_path,
-            "manifest_uri": next.manifest_uri,
-            "manifest_refresh_secs": next.manifest_refresh_secs,
-            "storage_instance_id": next.storage_instance_id,
-            "bootstrap": bootstrap_resolution.status,
-        });
+        let response = reload_manifest_response(&next, &bootstrap_resolution.status);
         let build_config = next.clone();
         let state_clone = self.state.clone();
         let notify_clone = self.notify.clone();
@@ -1040,7 +1033,8 @@ async fn refresh_loop(
             }
         };
 
-        if signature.content_hash == active_hash {
+        let refresh_hash = scoped_refresh_manifest_hash(signature, &config_snapshot);
+        if refresh_hash == active_hash {
             continue;
         }
 
@@ -1151,12 +1145,32 @@ fn auto_instance_id(config: &DbtNovaConfig) -> String {
     temp.storage_instance_id
 }
 
+fn scoped_refresh_manifest_hash(
+    mut signature: ManifestSignature,
+    config: &DbtNovaConfig,
+) -> String {
+    signature.prune_fingerprint = config.manifest_prune_fingerprint();
+    signature.search_index_fingerprint = config.search.index_fingerprint();
+    crate::manifest::loader::scoped_manifest_hash(&signature)
+}
+
 fn bootstrap_reload_fetch_policy(config: &DbtNovaConfig) -> ArtifactFetchPolicy {
     if config.bootstrap_uri.trim().is_empty() {
         config.artifact_fetch_policy
     } else {
         ArtifactFetchPolicy::Always
     }
+}
+
+fn reload_manifest_response(config: &DbtNovaConfig, bootstrap_status: &JsonValue) -> JsonValue {
+    serde_json::json!({
+        "status": "refreshing",
+        "manifest_path": sanitize_uri(&config.manifest_path),
+        "manifest_uri": sanitize_uri(&config.manifest_uri),
+        "manifest_refresh_secs": config.manifest_refresh_secs,
+        "storage_instance_id": &config.storage_instance_id,
+        "bootstrap": bootstrap_status,
+    })
 }
 
 fn prepare_runtime_config_for_reload(
@@ -1209,8 +1223,15 @@ fn reset_bootstrap_applied_fields_for_reload(
 mod tests {
     use serde_json::json;
 
-    use super::{bootstrap_reload_fetch_policy, reset_bootstrap_applied_fields_for_reload};
-    use crate::config::{ArtifactFetchPolicy, DbtNovaConfig};
+    use super::{
+        bootstrap_reload_fetch_policy, reload_manifest_response,
+        reset_bootstrap_applied_fields_for_reload, scoped_refresh_manifest_hash,
+    };
+    use crate::config::{
+        ArtifactFetchPolicy, DbtNovaConfig, ExtendedMetaFieldConfig, ExtendedMetaFieldMode,
+        ExtendedMetaSearchConfig,
+    };
+    use crate::manifest::source::ManifestSignature;
 
     #[test]
     fn reset_bootstrap_fields_clears_previously_applied_values() {
@@ -1295,6 +1316,64 @@ mod tests {
         assert_eq!(
             bootstrap_reload_fetch_policy(&config),
             ArtifactFetchPolicy::Never
+        );
+    }
+
+    #[test]
+    fn scoped_refresh_hash_includes_prune_and_search_fingerprints() {
+        let signature = ManifestSignature {
+            content_hash: "same-content".to_string(),
+            ..ManifestSignature::default()
+        };
+        let unscoped = DbtNovaConfig::default();
+        let pruned = DbtNovaConfig {
+            manifest_prune_allow_ids: vec!["model.pkg.orders".to_string()],
+            ..DbtNovaConfig::default()
+        };
+        let mut search_scoped = DbtNovaConfig::default();
+        search_scoped.search.extended_meta = ExtendedMetaSearchConfig {
+            fields: vec![ExtendedMetaFieldConfig {
+                path: "meta.owner".to_string(),
+                alias: "owner".to_string(),
+                mode: ExtendedMetaFieldMode::Keyword,
+                boost: 1.0,
+                summary: true,
+            }],
+            ..ExtendedMetaSearchConfig::default()
+        };
+
+        let unscoped_hash = scoped_refresh_manifest_hash(signature.clone(), &unscoped);
+        let pruned_hash = scoped_refresh_manifest_hash(signature.clone(), &pruned);
+        let search_scoped_hash = scoped_refresh_manifest_hash(signature, &search_scoped);
+
+        assert_eq!(unscoped_hash, "same-content");
+        assert_ne!(pruned_hash, unscoped_hash);
+        assert_ne!(search_scoped_hash, unscoped_hash);
+        assert_ne!(pruned_hash, search_scoped_hash);
+    }
+
+    #[test]
+    fn reload_response_redacts_manifest_locations() {
+        let config = DbtNovaConfig {
+            manifest_path: "/tmp/token/raw-local-secret/manifest.json".to_string(),
+            manifest_uri: "https://user:pass@example.com/manifest.json?token=raw-token".to_string(),
+            ..DbtNovaConfig::default()
+        };
+
+        let bootstrap_status = json!({"enabled": false, "uri": ""});
+        let response = reload_manifest_response(&config, &bootstrap_status);
+        let serialized = response.to_string();
+
+        assert!(!serialized.contains("raw-local-secret"));
+        assert!(!serialized.contains("raw-token"));
+        assert!(!serialized.contains("user:pass"));
+        assert_eq!(
+            response["manifest_path"],
+            json!("/tmp/token/[REDACTED]/manifest.json")
+        );
+        assert_eq!(
+            response["manifest_uri"],
+            json!("https://[REDACTED]@example.com/manifest.json?[REDACTED]")
         );
     }
 }

@@ -827,6 +827,10 @@ Required:
 The response `data` includes `suite_name`, the normalized `since` boundary,
 `row_count`, `rows`, and `safety_policy`.
 
+Eval agent provider logs are redacted by default when written as artifacts or
+returned as assertion evidence. The `safety_policy.raw_provider_logs_enabled_env`
+field names the explicit unsafe local opt-in for writing raw provider logs.
+
 ```json
 {"name":"get_eval_history","arguments":{"suite":"analyst-smoke","since":"2026-06-01"}}
 ```

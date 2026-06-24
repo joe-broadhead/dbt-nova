@@ -14,12 +14,13 @@ use super::{
     build_eval_validate_tool_response, build_report, contains_rank_assertion,
     context_contains_assertion, context_field_equals_assertion, eval_case_telemetry_from_trace,
     format_utc_timestamp_millis, json_has_field_path, metadata_score_max_assertion,
-    metadata_score_min_assertion, read_tool_trace, recipe_rank_assertion, refresh_eval_card,
+    metadata_score_min_assertion, provider_invocation_evidence, read_tool_trace,
+    recipe_rank_assertion, redact_provider_output_text, refresh_eval_card,
     render_eval_card_markdown, resolve_mcp_writable_path, run_eval_command, run_validate_command,
-    safe_path_segment, score_agent_expectations, selected_agent_cases, selected_bridge_cases,
-    sql_structure_assertion, suite_file_hash, telemetry_grade_mode, telemetry_path_for_suite,
-    telemetry_row_matches_since, tool_response_budget_assertion, tool_success_assertion,
-    validate_since_date, validate_suite, validate_telemetry_suite_name,
+    safe_path_segment, score_agent_expectations, score_final_answer, selected_agent_cases,
+    selected_bridge_cases, sql_structure_assertion, suite_file_hash, telemetry_grade_mode,
+    telemetry_path_for_suite, telemetry_row_matches_since, tool_response_budget_assertion,
+    tool_success_assertion, validate_since_date, validate_suite, validate_telemetry_suite_name,
 };
 use crate::params::{
     CompareEvalRunsParams, GetEvalGateParams, GetEvalHistoryParams, InitEvalSuiteParams,
@@ -58,6 +59,73 @@ fn recipe_rank_assertion_accepts_search_recipes_id_field() {
     });
     let result = recipe_rank_assertion(&response, "reference/members", Some(1));
     assert_eq!(result.status, "pass");
+}
+
+#[test]
+fn eval_provider_evidence_redacts_secret_bearing_text() {
+    let raw = "\
+stderr api_token=raw-token
+Authorization: Bearer raw-auth
+failed https://user:pass@example.com/manifest.json?token=raw-query
+stored s3://bucket/secret/raw-s3/artifact.tar.gz?X-Amz-Signature=raw-signature";
+
+    let redacted = redact_provider_output_text(raw);
+
+    assert!(!redacted.contains("raw-token"));
+    assert!(!redacted.contains("raw-auth"));
+    assert!(!redacted.contains("raw-query"));
+    assert!(!redacted.contains("raw-s3"));
+    assert!(!redacted.contains("raw-signature"));
+    assert!(!redacted.contains("user:pass"));
+    assert!(redacted.contains("[REDACTED]"));
+}
+
+#[test]
+fn final_answer_failure_evidence_redacts_secret_bearing_text() {
+    let expected = FinalAnswerExpected {
+        must_contain: vec!["missing phrase".to_string()],
+        must_not_contain: Vec::new(),
+    };
+
+    let assertions = score_final_answer(
+        &expected,
+        "answer leaked https://user:pass@example.com/path?token=raw-query and api_token=raw-token",
+    );
+    let evidence = assertions[0].evidence.to_string();
+
+    assert_eq!(assertions[0].status, "fail");
+    assert!(!evidence.contains("raw-query"));
+    assert!(!evidence.contains("raw-token"));
+    assert!(!evidence.contains("user:pass"));
+    assert!(evidence.contains("[REDACTED]"));
+}
+
+#[test]
+fn provider_invocation_evidence_redacts_secret_bearing_args() {
+    let invocation = super::provider::ProviderInvocation {
+        command: "/tmp/token/raw-provider/provider".to_string(),
+        args: vec![
+            "--api-token=raw-token".to_string(),
+            "--api-token".to_string(),
+            "raw-split-token".to_string(),
+            "--client_secret".to_string(),
+            "raw-split-secret".to_string(),
+            "https://user:pass@example.com/path?token=raw-query".to_string(),
+            "s3://bucket/secret/raw-artifact/output.json?X-Amz-Signature=raw-signature".to_string(),
+        ],
+    };
+
+    let evidence = provider_invocation_evidence(&invocation).to_string();
+
+    assert!(!evidence.contains("raw-provider"));
+    assert!(!evidence.contains("raw-token"));
+    assert!(!evidence.contains("raw-split-token"));
+    assert!(!evidence.contains("raw-split-secret"));
+    assert!(!evidence.contains("raw-query"));
+    assert!(!evidence.contains("raw-artifact"));
+    assert!(!evidence.contains("raw-signature"));
+    assert!(!evidence.contains("user:pass"));
+    assert!(evidence.contains("[REDACTED]"));
 }
 
 #[test]
@@ -1698,6 +1766,14 @@ fn eval_gate_and_history_tool_responses_return_cli_report_data() {
         history["data"]["safety_policy"]["eval_run_enabled_env"],
         json!("DBT_NOVA_MCP_ENABLE_EVAL_RUN")
     );
+    assert_eq!(
+        history["data"]["safety_policy"]["raw_provider_logs_enabled_env"],
+        json!("DBT_NOVA_EVAL_UNSAFE_WRITE_RAW_PROVIDER_LOGS")
+    );
+    assert_eq!(
+        history["data"]["safety_policy"]["provider_logs_redacted_by_default"],
+        json!(true)
+    );
 
     std::fs::remove_file(telemetry_path).expect("remove telemetry");
 }
@@ -1740,6 +1816,56 @@ fn eval_gate_tool_rejects_telemetry_suite_paths_outside_root() {
 
     let error = build_eval_gate_tool_response(&GetEvalGateParams {
         suite: suite_name.to_string(),
+    })
+    .expect_err("outside suite path should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("outside server working directory")
+    );
+
+    std::fs::remove_file(telemetry_path).expect("remove telemetry");
+}
+
+#[test]
+fn eval_history_tool_rejects_telemetry_suite_paths_outside_root() {
+    let suite_name = "mcp-history-outside-suite-path";
+    let root = std::env::current_dir()
+        .expect("cwd")
+        .canonicalize()
+        .expect("canonical cwd");
+    let outside_path = root
+        .parent()
+        .expect("repo parent")
+        .join("outside-mcp-history-suite.yml");
+    let telemetry_path = telemetry_path_for_suite(suite_name);
+    if let Some(parent) = telemetry_path.parent() {
+        std::fs::create_dir_all(parent).expect("telemetry dir");
+    }
+    let row = json!({
+        "timestamp": "2026-06-02T00:00:00.000Z",
+        "timestamp_ms": 1,
+        "suite_name": suite_name,
+        "suite_path": outside_path.display().to_string(),
+        "suite_hash": "hash",
+        "run_id": "run-outside",
+        "case_id": "case",
+        "assertion_id": "case::assertion",
+        "status": "pass",
+        "run_case_count": 1,
+        "suite_case_count": 1,
+        "run_assertion_count": 1,
+        "gate_threshold": 1.0
+    });
+    std::fs::write(
+        &telemetry_path,
+        format!("{}\n", serde_json::to_string(&row).expect("row JSON")),
+    )
+    .expect("write telemetry");
+
+    let error = build_eval_history_tool_response(&GetEvalHistoryParams {
+        suite: suite_name.to_string(),
+        since: "2026-06-01".to_string(),
     })
     .expect_err("outside suite path should fail");
     assert!(

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-06-24
+
+- Hardened hosted HTTP container defaults by removing the baked-in auth-proxy
+  acknowledgement, defaulting published images to discovery-only SQL tool
+  exposure, and documenting separate local, hosted discovery-only, and
+  SQL-enabled deployment profiles.
+- Fixed manifest refresh and semantic-cache correctness by comparing scoped
+  manifest hashes during refresh, refusing incomplete dense/sparse semantic
+  caches, making vector ANN construction deterministic, and restoring
+  no-default feature lifecycle test coverage.
+- Bounded remote artifact hydration, archive extraction, trace-file handling,
+  and semantic search work near request deadlines with configurable resource
+  limits, advisory trace file locks, and runtime health/status visibility.
 - Added a reusable domain reference template and synthetic starter commerce
   example to the meta-authoring skill, plus analyst guidance and docs for using
   curated domain references as stable context rather than raw query dumps.
@@ -139,6 +152,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added config and storage admin MCP parity with `show_config`,
   `validate_config`, `inspect_storage`, and safety-gated `prune_storage` /
   `cleanup_storage` behind `DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1`.
+- Redacted secret-bearing config, reload, eval artifact, and eval evidence
+  outputs by default, with an explicit unsafe local opt-in for raw provider
+  logs.
+- Fixed `audit nova-meta` and `validate_nova_meta` so dbt 1.11+
+  `config.meta.nova` is validated with the same legacy/config merge semantics
+  used by runtime search and scoring.
 - Fixed release OCI publishing to build images from native Linux release binaries
   instead of compiling Rust inside the ARM64 Docker/QEMU path.
 - Fixed the Monthly workflow by refreshing advisory/dependency-watchlist review

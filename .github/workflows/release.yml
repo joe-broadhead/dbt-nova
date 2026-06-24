@@ -336,10 +336,12 @@ jobs:
           trap 'docker logs dbt-nova-release-smoke || true; docker rm -f dbt-nova-release-smoke >/dev/null 2>&1 || true' EXIT
           docker run -d --rm \
             --name dbt-nova-release-smoke \
-            -p 8080:8080 \
+            -p 127.0.0.1:8080:8080 \
             -v "$PWD/tests/fixtures:/fixtures:ro" \
             -e DBT_MANIFEST_PATH=/fixtures/nova_manifest.json \
+            -e PORT=8080 \
             -e DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true \
+            -e DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest \
             -e DBT_NOVA_SEARCH_ENABLE_VECTOR=false \
             -e DBT_NOVA_SEARCH_ENABLE_SPARSE=false \
             -e DBT_NOVA_SEARCH_ENABLE_RERANKER=false \

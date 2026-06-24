@@ -32,7 +32,10 @@ fn manifest_config(workspace: &TempDir, search: SearchConfig) -> DbtNovaConfig {
     }
 }
 
-async fn fixture_manifest_hash(workspace: &TempDir, cache_root: &Path) -> String {
+async fn fixture_manifest_hash_and_entity_count(
+    workspace: &TempDir,
+    cache_root: &Path,
+) -> (String, usize) {
     let baseline = SearchConfig {
         enable_vector_search: false,
         enable_sparse_search: false,
@@ -44,11 +47,13 @@ async fn fixture_manifest_hash(workspace: &TempDir, cache_root: &Path) -> String
     let loaded = ManifestSearch::new(manifest_config(workspace, baseline))
         .expect("baseline manifest load should succeed")
         .search;
+    let entity_count = loaded.entity_count();
     let health = loaded.health_snapshot().await;
-    health["manifest"]["hash"]
+    let manifest_hash = health["manifest"]["hash"]
         .as_str()
         .expect("manifest hash should be present")
-        .to_string()
+        .to_string();
+    (manifest_hash, entity_count)
 }
 
 #[test]
@@ -134,6 +139,7 @@ fn manifest_scoped_semantic_caches_can_coexist_for_multiple_hashes() {
             &search,
             "intfloat/multilingual-e5-base",
             "hash-a",
+            Some(1),
             1024 * 1024
         ),
         EmbeddingsCacheLoad::Hit { .. }
@@ -143,16 +149,29 @@ fn manifest_scoped_semantic_caches_can_coexist_for_multiple_hashes() {
             &search,
             "intfloat/multilingual-e5-base",
             "hash-b",
+            Some(1),
             1024 * 1024
         ),
         EmbeddingsCacheLoad::Hit { .. }
     ));
     assert!(matches!(
-        load_sparse_embeddings(&search, "Qdrant/Splade_PP_en_v1", "hash-a", 1024 * 1024),
+        load_sparse_embeddings(
+            &search,
+            "Qdrant/Splade_PP_en_v1",
+            "hash-a",
+            Some(1),
+            1024 * 1024
+        ),
         SparseEmbeddingsCacheLoad::Hit { .. }
     ));
     assert!(matches!(
-        load_sparse_embeddings(&search, "Qdrant/Splade_PP_en_v1", "hash-b", 1024 * 1024),
+        load_sparse_embeddings(
+            &search,
+            "Qdrant/Splade_PP_en_v1",
+            "hash-b",
+            Some(1),
+            1024 * 1024
+        ),
         SparseEmbeddingsCacheLoad::Hit { .. }
     ));
 }
@@ -179,8 +198,16 @@ async fn manifest_load_degrades_vector_startup_when_manifest_cache_is_missing() 
     let warning = health["search"]["vector"]["warning"]
         .as_str()
         .expect("vector warning should be present");
-    assert!(warning.contains("manifest warm --vector"));
-    assert!(warning.contains("manifest-scoped cache"));
+    #[cfg(feature = "embeddings")]
+    {
+        assert!(warning.contains("manifest warm --vector"));
+        assert!(warning.contains("manifest-scoped cache"));
+    }
+    #[cfg(not(feature = "embeddings"))]
+    {
+        assert!(warning.contains("embeddings feature is disabled"));
+        assert!(warning.contains("rebuild with --features embeddings"));
+    }
     assert_eq!(
         health["search"]["vector"]["cache"]["present"],
         serde_json::json!(false)
@@ -209,8 +236,16 @@ async fn manifest_load_degrades_sparse_startup_when_manifest_cache_is_missing() 
     let warning = health["search"]["sparse"]["warning"]
         .as_str()
         .expect("sparse warning should be present");
-    assert!(warning.contains("manifest warm --sparse"));
-    assert!(warning.contains("manifest-scoped cache"));
+    #[cfg(feature = "embeddings")]
+    {
+        assert!(warning.contains("manifest warm --sparse"));
+        assert!(warning.contains("manifest-scoped cache"));
+    }
+    #[cfg(not(feature = "embeddings"))]
+    {
+        assert!(warning.contains("embeddings feature is disabled"));
+        assert!(warning.contains("rebuild with --features embeddings"));
+    }
     assert_eq!(
         health["search"]["sparse"]["cache"]["present"],
         serde_json::json!(false)
@@ -221,19 +256,23 @@ async fn manifest_load_degrades_sparse_startup_when_manifest_cache_is_missing() 
 async fn manifest_load_uses_cached_semantic_indexes_without_local_query_model_files() {
     let workspace = TempDir::new().expect("tempdir");
     let cache_root = workspace.path().join("cache");
-    let manifest_hash = fixture_manifest_hash(&workspace, &cache_root).await;
+    let (manifest_hash, entity_count) =
+        fixture_manifest_hash_and_entity_count(&workspace, &cache_root).await;
 
     let seed_search = SearchConfig {
         embedding_cache_dir: cache_root.to_string_lossy().to_string(),
         ..SearchConfig::default()
     };
+    let cached_entity_ids = (0..entity_count)
+        .map(|idx| format!("model.test.cached_{idx}"))
+        .collect::<Vec<_>>();
     save_embeddings(
         &CachedEmbeddings {
             schema_version: RKYV_SCHEMA_VERSION,
             model_name: "intfloat/multilingual-e5-base".to_string(),
             manifest_hash: manifest_hash.clone(),
-            entity_ids: vec!["model.test".to_string()],
-            dense_embeddings: vec![vec![1.0, 0.0]],
+            entity_ids: cached_entity_ids.clone(),
+            dense_embeddings: cached_entity_ids.iter().map(|_| vec![1.0, 0.0]).collect(),
             is_quantized: false,
             sparse_indices: None,
             sparse_values: None,
@@ -249,9 +288,13 @@ async fn manifest_load_uses_cached_semantic_indexes_without_local_query_model_fi
             schema_version: RKYV_SCHEMA_VERSION,
             model_name: "Qdrant/Splade_PP_en_v1".to_string(),
             manifest_hash: manifest_hash.clone(),
-            entity_ids: vec!["model.test".to_string()],
-            sparse_indices: vec![vec![1, 2]],
-            sparse_values: vec![vec![0.4, 0.6]],
+            entity_ids: cached_entity_ids.clone(),
+            sparse_indices: cached_entity_ids
+                .iter()
+                .enumerate()
+                .map(|(idx, _)| vec![idx + 1, idx + 2])
+                .collect(),
+            sparse_values: cached_entity_ids.iter().map(|_| vec![0.4, 0.6]).collect(),
         },
         &seed_search,
     )
@@ -291,7 +334,7 @@ async fn manifest_load_uses_cached_semantic_indexes_without_local_query_model_fi
         health["search"]["vector"]["warning"]
             .as_str()
             .expect("vector warning should be present")
-            .contains("not query-ready")
+            .contains(expected_semantic_unready_warning())
     );
     assert_eq!(
         health["search"]["sparse"]["ready"],
@@ -309,7 +352,7 @@ async fn manifest_load_uses_cached_semantic_indexes_without_local_query_model_fi
         health["search"]["sparse"]["warning"]
             .as_str()
             .expect("sparse warning should be present")
-            .contains("not query-ready")
+            .contains(expected_semantic_unready_warning())
     );
     assert_eq!(
         health["search"]["reranker"]["ready"],
@@ -327,6 +370,16 @@ async fn manifest_load_uses_cached_semantic_indexes_without_local_query_model_fi
         health["search"]["reranker"]["warning"]
             .as_str()
             .expect("reranker warning should be present")
-            .contains("not query-ready")
+            .contains(expected_semantic_unready_warning())
     );
+}
+
+#[cfg(feature = "embeddings")]
+fn expected_semantic_unready_warning() -> &'static str {
+    "not query-ready"
+}
+
+#[cfg(not(feature = "embeddings"))]
+fn expected_semantic_unready_warning() -> &'static str {
+    "embeddings feature is disabled"
 }

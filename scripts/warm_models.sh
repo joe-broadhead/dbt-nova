@@ -5,10 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 bin_path="${DBT_NOVA_BIN:-$repo_root/target/release/dbt-nova}"
 cache_dir="${DBT_NOVA_EMBEDDINGS_CACHE_DIR:-$HOME/.dbt-nova/.fastembed_cache}"
 mode="${1:-partial}"
-default_manifest="$repo_root/tests/fixtures/nova_manifest.json"
 manifest_path="${DBT_NOVA_WARMUP_MANIFEST_PATH:-${DBT_MANIFEST_PATH:-}}"
-timeout_secs="${DBT_NOVA_WARMUP_TIMEOUT_SECS:-480}"
-poll_secs="${DBT_NOVA_WARMUP_POLL_SECS:-2}"
 required_models="${DBT_NOVA_WARMUP_REQUIRED_MODELS:-3}"
 required_cache_files="${DBT_NOVA_WARMUP_REQUIRED_CACHE_FILES:-2}"
 log_path="${DBT_NOVA_WARMUP_LOG_PATH:-/tmp/dbt-nova-warmup.log}"
@@ -35,8 +32,6 @@ Optional env overrides:
   DBT_NOVA_BIN                         Path to dbt-nova binary
   DBT_NOVA_EMBEDDINGS_CACHE_DIR        Cache directory (default: \$HOME/.dbt-nova/.fastembed_cache)
   DBT_NOVA_WARMUP_MANIFEST_PATH        Manifest file for full mode (required)
-  DBT_NOVA_WARMUP_TIMEOUT_SECS         Timeout in seconds (default: 480)
-  DBT_NOVA_WARMUP_POLL_SECS            Poll interval in seconds (default: 2)
   DBT_NOVA_WARMUP_REQUIRED_MODELS      Required distinct model snapshot count (default: 3)
                                        Direct HF fallback seeds models in priority order
                                        (embedding -> sparse -> reranker) up to this count.
