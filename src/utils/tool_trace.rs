@@ -1538,6 +1538,8 @@ mod tests {
 
     #[test]
     fn read_tool_trace_file_reports_parse_warnings() {
+        let _env_guard = lock_env();
+        let _max_restore = EnvVarRestore::set(TRACE_MAX_BYTES_ENV, "65536");
         let trace = NamedTempFile::new().expect("trace");
         std::fs::write(
             trace.path(),
