@@ -41,7 +41,7 @@ read-only reuse after local materialization.
 
 Create a workflow in the downstream repo that calls Nova's reusable producer.
 
-The examples below pin `v0.0.14`. For production, pin either a release tag or an
+The examples below pin `v0.0.6`. For production, pin either a release tag or an
 immutable commit SHA and keep `installer_ref` aligned with the workflow ref.
 
 ```yaml
@@ -53,11 +53,11 @@ on:
 jobs:
   build_nova_assets:
     # Pin to a release tag or commit SHA
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.14
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.6
     with:
       manifest_path: target/manifest.json
       storage_instance_id: analytics-prod
-      installer_ref: v0.0.14
+      installer_ref: v0.0.6
       installer_install_mode: auto
       artifact_name_prefix: analytics-prod
       retention_days: 14
@@ -98,7 +98,7 @@ workflow works across Databricks, BigQuery, Snowflake, DuckDB, and mixed profile
 ```yaml
 jobs:
   build_nova_assets:
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.14
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.6
     with:
       dbt_generate_manifest: true
       dbt_command_args_json: >-
@@ -117,7 +117,7 @@ DBFS publish wrapper example:
 ```yaml
 jobs:
   build_nova_assets:
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.14
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.6
     with:
       dbt_generate_manifest: true
       dbt_command_args_json: >-
@@ -127,7 +127,7 @@ jobs:
       dbt_secret_env_map_json: >-
         {"DBT_ACCESS_TOKEN":"DBT_ACCESS_TOKEN","DATABRICKS_ACCESS_TOKEN":"DBT_ACCESS_TOKEN"}
       storage_instance_id: analytics-prod
-      installer_ref: v0.0.14
+      installer_ref: v0.0.6
       installer_install_mode: source
       publish_targets: dbfs
       publish_dbfs_prefix: dbfs:/FileStore/projects/my-project/nova-assets/prod
@@ -248,7 +248,7 @@ Installer mode guidance:
 
 - Keep `installer_install_mode: auto` as the default.
 - Use `installer_install_mode: release` with a release tag ref (for example
-  `installer_ref: v0.0.14` or newer) to minimize runtime on compatible runners.
+  `installer_ref: v0.0.6` or newer) to minimize runtime on compatible runners.
 - Use `installer_install_mode: source` when you need an unreleased commit SHA
   or your runner image is incompatible with the prebuilt binary (for example
   older glibc environments).

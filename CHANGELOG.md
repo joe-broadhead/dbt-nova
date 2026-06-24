@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.0.14] - 2026-06-24
+## [0.0.6] - 2026-06-24
 
 - Hardened hosted HTTP container defaults by removing the baked-in auth-proxy
   acknowledgement, defaulting published images to discovery-only SQL tool

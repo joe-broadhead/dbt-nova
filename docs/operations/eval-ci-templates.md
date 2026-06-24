@@ -38,8 +38,8 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     env:
-      DBT_NOVA_INSTALL_REF: v0.0.14
-      DBT_NOVA_VERSION: v0.0.14
+      DBT_NOVA_INSTALL_REF: v0.0.6
+      DBT_NOVA_VERSION: v0.0.6
       NOVA_EVAL_SUITE: evals/analyst-smoke.yml
       NOVA_EVAL_NAME: analyst-smoke
       NOVA_EVAL_OUTPUT: out/nova-bridge-evals
@@ -152,8 +152,8 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     env:
-      DBT_NOVA_INSTALL_REF: v0.0.14
-      DBT_NOVA_VERSION: v0.0.14
+      DBT_NOVA_INSTALL_REF: v0.0.6
+      DBT_NOVA_VERSION: v0.0.6
       NOVA_AGENT_SUITE: evals/analyst-agent.yml
       NOVA_AGENT_NAME: analyst-agent-smoke
       NOVA_AGENT_OUTPUT: out/nova-agent-evals

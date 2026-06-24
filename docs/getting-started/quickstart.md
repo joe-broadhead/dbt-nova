@@ -15,24 +15,24 @@ Get dbt-nova running in under 5 minutes.
 
 ```bash
 # Public repo (unauthenticated)
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
-  DBT_NOVA_VERSION=v0.0.14 bash -s -- --slim --non-interactive
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
+  DBT_NOVA_VERSION=v0.0.6 bash -s -- --slim --non-interactive
 
 # Private repo (authenticated)
 GH_TOKEN="$(gh auth token)"
 curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
-  https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
-  DBT_NOVA_VERSION=v0.0.14 DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --slim --non-interactive
+  https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
+  DBT_NOVA_VERSION=v0.0.6 DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --slim --non-interactive
 
 # Optional: pre-warm models during install before enabling semantic layers
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
   DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/.fastembed_cache" \
   DBT_NOVA_WARMUP_REQUIRED_MODELS=3 \
-  DBT_NOVA_VERSION=v0.0.14 bash -s -- --slim --warm-models --non-interactive
+  DBT_NOVA_VERSION=v0.0.6 bash -s -- --slim --warm-models --non-interactive
 
 # Optional: install all built-in Agent Skills into ~/.agents/skills
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
-  DBT_NOVA_VERSION=v0.0.14 bash -s -- --slim --install-skills --non-interactive
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
+  DBT_NOVA_VERSION=v0.0.6 bash -s -- --slim --install-skills --non-interactive
 ```
 
 === "macOS (Apple Silicon)"

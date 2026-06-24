@@ -1,6 +1,6 @@
 [package]
 name = "dbt-nova"
-version = "0.0.14"
+version = "0.0.6"
 rust-version = "1.93"
 edition = "2024"
 description = "High-performance MCP server for searching and analyzing dbt manifest files"
