@@ -229,6 +229,12 @@ pub struct DbtNovaConfig {
     pub artifact_fetch_policy: ArtifactFetchPolicy,
     /// Timeout in seconds for artifact fetch operations (0 = no timeout)
     pub artifact_timeout_secs: u64,
+    /// Maximum compressed bytes allowed for remote prebuilt artifact downloads (0 = unlimited)
+    pub artifact_max_bytes: u64,
+    /// Maximum entries allowed while extracting a prebuilt artifact archive (0 = unlimited)
+    pub artifact_archive_max_entries: usize,
+    /// Maximum decompressed bytes allowed while extracting a prebuilt artifact archive (0 = unlimited)
+    pub artifact_archive_max_uncompressed_bytes: u64,
     /// Allow non-TLS remote artifact URIs (`http://`)
     pub artifact_allow_http: bool,
     /// Server transport mode (`stdio` or `streamable_http`)
@@ -348,6 +354,9 @@ impl Default for DbtNovaConfig {
             bootstrap_uri: String::new(),
             artifact_fetch_policy: ArtifactFetchPolicy::IfMissing,
             artifact_timeout_secs: 300,
+            artifact_max_bytes: 2 * 1024 * 1024 * 1024, // 2 GiB
+            artifact_archive_max_entries: 200_000,
+            artifact_archive_max_uncompressed_bytes: 10 * 1024 * 1024 * 1024, // 10 GiB
             artifact_allow_http: false,
             server_transport: ServerTransport::Stdio,
             http_host: "127.0.0.1".to_string(),
@@ -964,6 +973,15 @@ impl DbtNovaConfig {
         }
         if let Some(v) = parse_u64("DBT_NOVA_ARTIFACT_TIMEOUT_SECS") {
             self.artifact_timeout_secs = v;
+        }
+        if let Some(v) = parse_u64("DBT_NOVA_ARTIFACT_MAX_BYTES") {
+            self.artifact_max_bytes = v;
+        }
+        if let Some(v) = parse_usize("DBT_NOVA_ARTIFACT_ARCHIVE_MAX_ENTRIES") {
+            self.artifact_archive_max_entries = v;
+        }
+        if let Some(v) = parse_u64("DBT_NOVA_ARTIFACT_ARCHIVE_MAX_UNCOMPRESSED_BYTES") {
+            self.artifact_archive_max_uncompressed_bytes = v;
         }
         if let Some(value) = parse_bool("DBT_NOVA_ARTIFACT_ALLOW_HTTP") {
             self.artifact_allow_http = value;

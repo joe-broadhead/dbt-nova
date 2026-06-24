@@ -43,6 +43,21 @@ struct RequiredModelLayout {
     additional_files: Vec<&'static str>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ArtifactArchiveLimits {
+    max_entries: usize,
+    max_uncompressed_bytes: u64,
+}
+
+impl ArtifactArchiveLimits {
+    fn from_config(config: &DbtNovaConfig) -> Self {
+        Self {
+            max_entries: config.artifact_archive_max_entries,
+            max_uncompressed_bytes: config.artifact_archive_max_uncompressed_bytes,
+        }
+    }
+}
+
 /// Materialize prebuilt artifacts from configured URIs.
 ///
 /// # Errors
@@ -87,60 +102,9 @@ pub fn materialize_file_artifacts(
         ));
     }
 
-    let storage_present = storage_instance_present(config)?;
-    let should_materialize_storage = should_materialize(
-        "storage artifacts",
-        config.artifact_fetch_policy,
-        storage_present,
-    )?;
-    ensure_materialization_allowed(config, should_materialize_storage, "storage artifacts")?;
-    let storage_materialized = if should_materialize_storage {
-        let storage_archive_path = resolve_artifact_uri_to_local(
-            config,
-            "DBT_NOVA_STORAGE_ARTIFACT_URI",
-            &config.storage_artifact_uri,
-        )?;
-        ensure_regular_file("DBT_NOVA_STORAGE_ARTIFACT_URI", &storage_archive_path)?;
-        extract_archive_atomically(&storage_archive_path, &storage_target)?;
-        true
-    } else {
-        info!(
-            target = %storage_target.display(),
-            "skipping storage artifact materialization"
-        );
-        false
-    };
-
-    let mut models_materialized = false;
-    if !config.models_artifact_uri.trim().is_empty() {
-        let models_presence =
-            inspect_models_cache_presence(config, &models_target, expected_manifest_hash)?;
-        let should_materialize_models = should_materialize_models(
-            config.artifact_fetch_policy,
-            &models_target,
-            &models_presence,
-        )?;
-        ensure_materialization_allowed(config, should_materialize_models, "models artifacts")?;
-        if should_materialize_models {
-            let models_archive_path = resolve_artifact_uri_to_local(
-                config,
-                "DBT_NOVA_MODELS_ARTIFACT_URI",
-                &config.models_artifact_uri,
-            )?;
-            ensure_regular_file("DBT_NOVA_MODELS_ARTIFACT_URI", &models_archive_path)?;
-            extract_archive_atomically_with_validation(
-                &models_archive_path,
-                &models_target,
-                |cache_dir| validate_models_cache_layout(config, cache_dir, expected_manifest_hash),
-            )?;
-            models_materialized = true;
-        } else {
-            info!(
-                target = %models_target.display(),
-                "skipping models artifact materialization"
-            );
-        }
-    }
+    let storage_materialized = materialize_storage_artifact(config, &storage_target)?;
+    let models_materialized =
+        materialize_models_artifact(config, &models_target, expected_manifest_hash)?;
 
     info!(
         storage_uri = %sanitize_uri(&config.storage_artifact_uri),
@@ -156,6 +120,86 @@ pub fn materialize_file_artifacts(
         storage_materialized,
         models_materialized,
     }))
+}
+
+fn materialize_storage_artifact(config: &DbtNovaConfig, storage_target: &Path) -> Result<bool> {
+    let storage_present = storage_instance_present(config)?;
+    let should_materialize_storage = should_materialize(
+        "storage artifacts",
+        config.artifact_fetch_policy,
+        storage_present,
+    )?;
+    ensure_materialization_allowed(config, should_materialize_storage, "storage artifacts")?;
+    if !should_materialize_storage {
+        info!(
+            target = %storage_target.display(),
+            "skipping storage artifact materialization"
+        );
+        return Ok(false);
+    }
+
+    let storage_archive_path = resolve_artifact_uri_to_local(
+        config,
+        "DBT_NOVA_STORAGE_ARTIFACT_URI",
+        &config.storage_artifact_uri,
+    )?;
+    ensure_regular_file("DBT_NOVA_STORAGE_ARTIFACT_URI", &storage_archive_path)?;
+    ensure_artifact_file_within_limit(
+        "DBT_NOVA_STORAGE_ARTIFACT_URI",
+        &storage_archive_path,
+        config.artifact_max_bytes,
+    )?;
+    extract_archive_atomically(
+        &storage_archive_path,
+        storage_target,
+        ArtifactArchiveLimits::from_config(config),
+    )?;
+    Ok(true)
+}
+
+fn materialize_models_artifact(
+    config: &DbtNovaConfig,
+    models_target: &Path,
+    expected_manifest_hash: &str,
+) -> Result<bool> {
+    if config.models_artifact_uri.trim().is_empty() {
+        return Ok(false);
+    }
+
+    let models_presence =
+        inspect_models_cache_presence(config, models_target, expected_manifest_hash)?;
+    let should_materialize_models = should_materialize_models(
+        config.artifact_fetch_policy,
+        models_target,
+        &models_presence,
+    )?;
+    ensure_materialization_allowed(config, should_materialize_models, "models artifacts")?;
+    if !should_materialize_models {
+        info!(
+            target = %models_target.display(),
+            "skipping models artifact materialization"
+        );
+        return Ok(false);
+    }
+
+    let models_archive_path = resolve_artifact_uri_to_local(
+        config,
+        "DBT_NOVA_MODELS_ARTIFACT_URI",
+        &config.models_artifact_uri,
+    )?;
+    ensure_regular_file("DBT_NOVA_MODELS_ARTIFACT_URI", &models_archive_path)?;
+    ensure_artifact_file_within_limit(
+        "DBT_NOVA_MODELS_ARTIFACT_URI",
+        &models_archive_path,
+        config.artifact_max_bytes,
+    )?;
+    extract_archive_atomically_with_validation(
+        &models_archive_path,
+        models_target,
+        ArtifactArchiveLimits::from_config(config),
+        |cache_dir| validate_models_cache_layout(config, cache_dir, expected_manifest_hash),
+    )?;
+    Ok(true)
 }
 
 #[derive(Debug, Clone)]
@@ -333,8 +377,7 @@ fn build_remote_artifact_fetch_config(
     fetch_config.manifest_path = String::new();
     fetch_config.manifest_uri = uri.to_string();
     fetch_config.manifest_cache_dir = cache_dir.to_string_lossy().to_string();
-    // Artifacts can exceed manifest limits; metadata size is enforced after fetch.
-    fetch_config.manifest_max_bytes = 0;
+    fetch_config.manifest_max_bytes = config.artifact_max_bytes;
     fetch_config.manifest_refresh_secs = 0;
     fetch_config.manifest_allow_http = config.artifact_allow_http;
     fetch_config.manifest_fetch_timeout_secs = config.artifact_timeout_secs;
@@ -607,13 +650,31 @@ pub(crate) fn ensure_regular_file(name: &str, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn extract_archive_atomically(archive_path: &Path, target_dir: &Path) -> Result<()> {
-    extract_archive_atomically_with_validation(archive_path, target_dir, |_| Ok(()))
+fn ensure_artifact_file_within_limit(name: &str, path: &Path, max_bytes: u64) -> Result<()> {
+    if max_bytes == 0 {
+        return Ok(());
+    }
+    let len = fs::metadata(path)?.len();
+    if len > max_bytes {
+        return Err(DbtNovaError::ServerError(format!(
+            "{name} exceeds configured artifact size limit ({len} > {max_bytes})"
+        )));
+    }
+    Ok(())
+}
+
+fn extract_archive_atomically(
+    archive_path: &Path,
+    target_dir: &Path,
+    limits: ArtifactArchiveLimits,
+) -> Result<()> {
+    extract_archive_atomically_with_validation(archive_path, target_dir, limits, |_| Ok(()))
 }
 
 fn extract_archive_atomically_with_validation<F>(
     archive_path: &Path,
     target_dir: &Path,
+    limits: ArtifactArchiveLimits,
     validate: F,
 ) -> Result<()>
 where
@@ -633,7 +694,7 @@ where
     let extracted_root = stage_root.join("extract-root");
     fs::create_dir_all(&extracted_root)?;
 
-    extract_tar_gz(archive_path, &extracted_root)?;
+    extract_tar_gz(archive_path, &extracted_root, limits)?;
     let payload_root = single_directory_child(&extracted_root)?;
     validate(&payload_root)?;
     swap_directory_atomically(&payload_root, target_dir)?;
@@ -642,13 +703,27 @@ where
     Ok(())
 }
 
-fn extract_tar_gz(archive_path: &Path, output_root: &Path) -> Result<()> {
+fn extract_tar_gz(
+    archive_path: &Path,
+    output_root: &Path,
+    limits: ArtifactArchiveLimits,
+) -> Result<()> {
     let file = File::open(archive_path)?;
     let decoder = GzDecoder::new(file);
     let mut archive = Archive::new(decoder);
+    let mut entry_count = 0usize;
+    let mut uncompressed_bytes = 0u64;
 
     for entry_result in archive.entries()? {
         let mut entry = entry_result?;
+        entry_count = entry_count.saturating_add(1);
+        if limits.max_entries > 0 && entry_count > limits.max_entries {
+            return Err(DbtNovaError::ServerError(format!(
+                "archive contains too many entries ({entry_count} > {})",
+                limits.max_entries
+            )));
+        }
+
         let entry_path = entry.path()?.into_owned();
         validate_archive_entry_path(&entry_path)?;
         let entry_type = entry.header().entry_type();
@@ -662,6 +737,18 @@ fn extract_tar_gz(archive_path: &Path, output_root: &Path) -> Result<()> {
         let out_path = output_root.join(&entry_path);
         if let Some(parent) = out_path.parent() {
             fs::create_dir_all(parent)?;
+        }
+        if entry_type.is_file() {
+            let entry_size = entry.header().size()?;
+            uncompressed_bytes = uncompressed_bytes.saturating_add(entry_size);
+            if limits.max_uncompressed_bytes > 0
+                && uncompressed_bytes > limits.max_uncompressed_bytes
+            {
+                return Err(DbtNovaError::ServerError(format!(
+                    "archive exceeds decompressed size limit ({} > {})",
+                    uncompressed_bytes, limits.max_uncompressed_bytes
+                )));
+            }
         }
         entry.unpack(&out_path)?;
     }

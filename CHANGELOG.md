@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   manifest hashes during refresh, refusing incomplete dense/sparse semantic
   caches, making vector ANN construction deterministic, and restoring
   no-default feature lifecycle test coverage.
+- Bounded remote artifact hydration, archive extraction, trace-file handling,
+  and semantic search work near request deadlines with configurable resource
+  limits, advisory trace file locks, and runtime health/status visibility.
 - Added a reusable domain reference template and synthetic starter commerce
   example to the meta-authoring skill, plus analyst guidance and docs for using
   curated domain references as stable context rather than raw query dumps.

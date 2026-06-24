@@ -98,6 +98,28 @@ fn setup_config(workspace: &TempDir) -> DbtNovaConfig {
     config
 }
 
+fn write_standard_metadata(workspace: &TempDir, artifact_name_models: &str) -> PathBuf {
+    let metadata_path = workspace.path().join("nova-build-metadata.json");
+    write_file(
+        &metadata_path,
+        format!(
+            r#"{{
+  "contract_version":"v1",
+  "manifest_hash":"manifest-hash",
+  "manifest_version":"v12",
+  "entity_count":42,
+  "storage_instance_id":"analytics-prod",
+  "dbt_nova_version":"0.0.2",
+  "build_timestamp":"2026-03-02T00:00:00Z",
+  "artifact_name_storage":"storage-asset",
+  "artifact_name_models":"{artifact_name_models}"
+}}"#
+        )
+        .as_bytes(),
+    );
+    metadata_path
+}
+
 fn create_storage_source(workspace: &TempDir) -> PathBuf {
     let storage_source = workspace.path().join("storage-source");
     let version_dir = storage_source
@@ -110,6 +132,66 @@ fn create_storage_source(workspace: &TempDir) -> PathBuf {
     write_file(&version_dir.join("entities.checksum.json"), b"{}");
     write_file(&version_dir.join("manifest.signature.json"), b"{}");
     storage_source
+}
+
+#[test]
+fn materialize_file_artifacts_rejects_oversized_compressed_archive() {
+    let workspace = TempDir::new().expect("tempdir");
+    let mut config = setup_config(&workspace);
+
+    let storage_source = create_storage_source(&workspace);
+    let storage_archive = workspace.path().join("storage.tar.gz");
+    create_archive_from_dir(&storage_source, &storage_archive);
+    let metadata_path = write_standard_metadata(&workspace, "");
+
+    config.storage_artifact_uri = to_file_uri(&storage_archive);
+    config.metadata_artifact_uri = to_file_uri(&metadata_path);
+    config.artifact_fetch_policy = ArtifactFetchPolicy::Always;
+    config.artifact_max_bytes = 16;
+
+    let err = materialize_file_artifacts(&config, "manifest-hash")
+        .expect_err("oversized compressed archive should be rejected");
+    assert!(err.to_string().contains("artifact size limit"));
+}
+
+#[test]
+fn materialize_file_artifacts_rejects_archive_entry_count_over_limit() {
+    let workspace = TempDir::new().expect("tempdir");
+    let mut config = setup_config(&workspace);
+
+    let storage_source = create_storage_source(&workspace);
+    let storage_archive = workspace.path().join("storage.tar.gz");
+    create_archive_from_dir(&storage_source, &storage_archive);
+    let metadata_path = write_standard_metadata(&workspace, "");
+
+    config.storage_artifact_uri = to_file_uri(&storage_archive);
+    config.metadata_artifact_uri = to_file_uri(&metadata_path);
+    config.artifact_fetch_policy = ArtifactFetchPolicy::Always;
+    config.artifact_archive_max_entries = 1;
+
+    let err = materialize_file_artifacts(&config, "manifest-hash")
+        .expect_err("archive with too many entries should be rejected");
+    assert!(err.to_string().contains("too many entries"));
+}
+
+#[test]
+fn materialize_file_artifacts_rejects_decompressed_archive_over_limit() {
+    let workspace = TempDir::new().expect("tempdir");
+    let mut config = setup_config(&workspace);
+
+    let storage_source = create_storage_source(&workspace);
+    let storage_archive = workspace.path().join("storage.tar.gz");
+    create_archive_from_dir(&storage_source, &storage_archive);
+    let metadata_path = write_standard_metadata(&workspace, "");
+
+    config.storage_artifact_uri = to_file_uri(&storage_archive);
+    config.metadata_artifact_uri = to_file_uri(&metadata_path);
+    config.artifact_fetch_policy = ArtifactFetchPolicy::Always;
+    config.artifact_archive_max_uncompressed_bytes = 5;
+
+    let err = materialize_file_artifacts(&config, "manifest-hash")
+        .expect_err("oversized decompressed archive should be rejected");
+    assert!(err.to_string().contains("decompressed size limit"));
 }
 
 fn write_manifest_scoped_semantic_caches(root: &Path, manifest_hash: &str) {

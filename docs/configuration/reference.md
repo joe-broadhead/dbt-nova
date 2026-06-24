@@ -30,6 +30,9 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_ARTIFACTS_CACHE_DIR` – optional cache dir for downloaded artifact archives (default: `<storage_root>/artifacts`)
 - `DBT_NOVA_ARTIFACT_FETCH_POLICY` – artifact fetch policy (`if_missing`, `always`, `never`; default: `if_missing`; use `never` with `DBT_NOVA_STORAGE_READ_ONLY=true`, use `if_missing|always` for writable first-run hydration)
 - `DBT_NOVA_ARTIFACT_TIMEOUT_SECS` – fetch timeout for remote artifact downloads (`0` = disabled, default: `300`)
+- `DBT_NOVA_ARTIFACT_MAX_BYTES` – maximum compressed bytes allowed for each remote prebuilt artifact download (`0` = unlimited, default: `2147483648`)
+- `DBT_NOVA_ARTIFACT_ARCHIVE_MAX_ENTRIES` – maximum number of entries allowed while extracting a prebuilt artifact archive (`0` = unlimited, default: `200000`)
+- `DBT_NOVA_ARTIFACT_ARCHIVE_MAX_UNCOMPRESSED_BYTES` – maximum decompressed bytes allowed while extracting a prebuilt artifact archive (`0` = unlimited, default: `10737418240`)
 - `DBT_NOVA_ARTIFACT_ALLOW_HTTP` – allow `http://` artifact URIs (`true`|`false`, default: `false`)
 - `DBT_NOVA_SERVER_TRANSPORT` – MCP server transport (`stdio` or `streamable_http`, default: `stdio`)
 - `DBT_NOVA_HTTP_HOST` – bind host for streamable HTTP mode (default: `127.0.0.1`; falls back to `0.0.0.0` when `PORT` is set and `DBT_NOVA_SERVER_TRANSPORT=streamable_http`)
@@ -99,6 +102,7 @@ Remote manifest notes:
 - To force HTTPS for public/presigned URLs, set `DBT_NOVA_S3_MODE=https` or `DBT_NOVA_GCS_MODE=https`.
 - To allow insecure `http://` manifests (not recommended), set `DBT_NOVA_MANIFEST_ALLOW_HTTP=true`.
 - To allow insecure `http://` prebuilt artifact URIs (not recommended), set `DBT_NOVA_ARTIFACT_ALLOW_HTTP=true`.
+- Remote artifact downloads and extraction are bounded by `DBT_NOVA_ARTIFACT_MAX_BYTES`, `DBT_NOVA_ARTIFACT_ARCHIVE_MAX_ENTRIES`, and `DBT_NOVA_ARTIFACT_ARCHIVE_MAX_UNCOMPRESSED_BYTES`.
 - Bootstrap precedence is deterministic: explicit env vars override bootstrap values, and bootstrap values override defaults.
 - Tool filtering precedence is deterministic: allowlist is applied first, then denylist; denylist wins when both include the same tool.
 - Tool filter names are strict and case-sensitive. Unknown names in either list fail startup validation with a hard error.

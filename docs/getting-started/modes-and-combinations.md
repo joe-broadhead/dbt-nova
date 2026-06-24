@@ -57,6 +57,9 @@ Artifact controls:
 - `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing|always|never`
 - `DBT_NOVA_ARTIFACTS_CACHE_DIR`
 - `DBT_NOVA_ARTIFACT_TIMEOUT_SECS`
+- `DBT_NOVA_ARTIFACT_MAX_BYTES`
+- `DBT_NOVA_ARTIFACT_ARCHIVE_MAX_ENTRIES`
+- `DBT_NOVA_ARTIFACT_ARCHIVE_MAX_UNCOMPRESSED_BYTES`
 - `DBT_NOVA_STORAGE_READ_ONLY=true` only after local artifacts are already materialized
 
 Rule: remote artifact mode is valid only when **both** storage + metadata artifact URIs are present.

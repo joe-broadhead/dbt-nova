@@ -1,10 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions, create_dir_all};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use fs4::FileExt;
 use serde::Serialize;
 use serde_json::{Value, json};
 use tracing::warn;
@@ -13,6 +14,8 @@ use crate::error::{DbtNovaError, Result};
 use crate::utils::sanitize_uri;
 
 pub const TRACE_ENV: &str = "DBT_NOVA_TRACE_TOOL_CALLS_PATH";
+const TRACE_MAX_BYTES_ENV: &str = "DBT_NOVA_TRACE_MAX_BYTES";
+const DEFAULT_TRACE_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_PARAM_KEYS: usize = 50;
 const MAX_ARRAY_ITEMS: usize = 20;
 const MAX_SUMMARY_STRING_CHARS: usize = 256;
@@ -221,7 +224,37 @@ pub fn record_tool_call(
         return;
     }
 
-    let row = ToolTraceRow {
+    let row = build_tool_trace_row(
+        trace_path,
+        transport,
+        tool,
+        params,
+        response,
+        success,
+        duration_ms,
+    );
+
+    let serialized = match serde_json::to_string(&row) {
+        Ok(serialized) => serialized,
+        Err(error) => {
+            warn!(error = %error, "failed to serialize tool trace row");
+            return;
+        }
+    };
+
+    append_serialized_trace_row(trace_path, &serialized);
+}
+
+fn build_tool_trace_row(
+    trace_path: &Path,
+    transport: &str,
+    tool: &str,
+    params: Option<&Value>,
+    response: Option<&Value>,
+    success: bool,
+    duration_ms: u64,
+) -> ToolTraceRow {
+    ToolTraceRow {
         timestamp_ms: timestamp_ms(),
         tool_call_index: next_tool_call_index(trace_path),
         transport: transport.to_string(),
@@ -233,51 +266,93 @@ pub fn record_tool_call(
         response_bytes: response.map_or(0, serialized_len),
         response_truncated: response.is_some_and(extract_response_truncated),
         result_count: response.and_then(|value| value.get("count").and_then(Value::as_u64)),
-        total_available: response.and_then(|value| {
-            value
-                .get("total_available")
-                .and_then(Value::as_u64)
-                .or_else(|| {
-                    value
-                        .get("_nova_result_meta")
-                        .and_then(|meta| meta.get("original_count"))
-                        .and_then(Value::as_u64)
-                })
-        }),
+        total_available: response.and_then(total_available_from_response),
         selected_unique_ids: response.map(extract_unique_ids).unwrap_or_default(),
         top_unique_ids: response.map(extract_top_unique_ids).unwrap_or_default(),
-    };
+    }
+}
 
-    let serialized = match serde_json::to_string(&row) {
-        Ok(serialized) => serialized,
-        Err(error) => {
-            warn!(error = %error, "failed to serialize tool trace row");
-            return;
-        }
-    };
+fn total_available_from_response(value: &Value) -> Option<u64> {
+    value
+        .get("total_available")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            value
+                .get("_nova_result_meta")
+                .and_then(|meta| meta.get("original_count"))
+                .and_then(Value::as_u64)
+        })
+}
 
+fn append_serialized_trace_row(trace_path: &Path, serialized: &str) {
     match OpenOptions::new()
         .create(true)
         .append(true)
+        .read(true)
         .open(trace_path)
     {
-        Ok(mut file) => {
-            if let Err(error) = writeln!(file, "{serialized}") {
-                warn!(path = %trace_path.display(), error = %error, "failed to write tool trace row");
-            }
-        }
+        Ok(mut file) => append_serialized_trace_row_locked(trace_path, &mut file, serialized),
         Err(error) => {
             warn!(path = %trace_path.display(), error = %error, "failed to open tool trace file");
         }
     }
 }
 
+fn append_serialized_trace_row_locked(trace_path: &Path, file: &mut fs::File, serialized: &str) {
+    if let Err(error) = file.lock_exclusive() {
+        warn!(path = %trace_path.display(), error = %error, "failed to lock tool trace file");
+        return;
+    }
+    if prepare_trace_file_for_append(trace_path, file, serialized).is_ok() {
+        if let Err(error) = writeln!(file, "{serialized}") {
+            warn!(path = %trace_path.display(), error = %error, "failed to write tool trace row");
+        }
+        if let Err(error) = file.sync_data() {
+            warn!(path = %trace_path.display(), error = %error, "failed to sync tool trace file");
+        }
+    }
+    unlock_trace_file(file, trace_path);
+}
+
+fn prepare_trace_file_for_append(
+    trace_path: &Path,
+    file: &mut fs::File,
+    serialized: &str,
+) -> std::result::Result<(), ()> {
+    let max_bytes = trace_max_bytes();
+    let row_bytes = serialized.len().saturating_add(1);
+    if max_bytes > 0 && row_bytes as u64 > max_bytes {
+        warn!(
+            path = %trace_path.display(),
+            row_bytes,
+            max_bytes,
+            "tool trace row exceeds configured trace size limit; skipping row"
+        );
+        return Err(());
+    }
+    let metadata = file.metadata().map_err(|error| {
+        warn!(path = %trace_path.display(), error = %error, "failed to inspect tool trace file");
+    })?;
+    if max_bytes > 0 && metadata.len().saturating_add(row_bytes as u64) > max_bytes {
+        file.set_len(0).map_err(|error| {
+            warn!(path = %trace_path.display(), error = %error, "failed to reset oversized tool trace file");
+        })?;
+        warn!(
+            path = %trace_path.display(),
+            previous_bytes = metadata.len(),
+            max_bytes,
+            "tool trace file reached configured size limit; starting a new trace file"
+        );
+    }
+    Ok(())
+}
+
 #[must_use]
 pub fn read_tool_trace_file(path: &Path) -> ToolTraceRead {
     let path_display = path.display().to_string();
-    let raw = match fs::read_to_string(path) {
-        Ok(raw) => raw,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+    let raw = match read_locked_trace_raw(path, &path_display) {
+        TraceRawRead::Raw(raw) => raw,
+        TraceRawRead::Missing => {
             return ToolTraceRead {
                 path: path_display,
                 rows: Vec::new(),
@@ -286,15 +361,13 @@ pub fn read_tool_trace_file(path: &Path) -> ToolTraceRead {
                 read_error: None,
             };
         }
-        Err(error) => {
+        TraceRawRead::Error(error) => {
             return ToolTraceRead {
                 path: path_display.clone(),
                 rows: Vec::new(),
                 parse_warnings: Vec::new(),
                 missing: false,
-                read_error: Some(format!(
-                    "failed to read tool trace '{path_display}': {error}"
-                )),
+                read_error: Some(error),
             };
         }
     };
@@ -320,6 +393,63 @@ pub fn read_tool_trace_file(path: &Path) -> ToolTraceRead {
         parse_warnings,
         missing: false,
         read_error: None,
+    }
+}
+
+enum TraceRawRead {
+    Raw(String),
+    Missing,
+    Error(String),
+}
+
+fn read_locked_trace_raw(path: &Path, path_display: &str) -> TraceRawRead {
+    let mut file = match OpenOptions::new().read(true).open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return TraceRawRead::Missing,
+        Err(error) => {
+            return TraceRawRead::Error(format!(
+                "failed to read tool trace '{path_display}': {error}"
+            ));
+        }
+    };
+
+    if let Err(error) = file.lock_shared() {
+        return TraceRawRead::Error(format!(
+            "failed to lock tool trace '{path_display}': {error}"
+        ));
+    }
+
+    let result = read_locked_trace_raw_inner(path, path_display, &mut file);
+    unlock_trace_file(&file, path);
+    result
+}
+
+fn read_locked_trace_raw_inner(
+    path: &Path,
+    path_display: &str,
+    file: &mut fs::File,
+) -> TraceRawRead {
+    let max_bytes = trace_max_bytes();
+    match file.metadata() {
+        Ok(metadata) if max_bytes > 0 && metadata.len() > max_bytes => {
+            TraceRawRead::Error(format!(
+                "tool trace '{path_display}' exceeds configured size limit ({} > {max_bytes})",
+                metadata.len()
+            ))
+        }
+        Ok(_) => {
+            let mut raw = String::new();
+            match file.read_to_string(&mut raw) {
+                Ok(_) => TraceRawRead::Raw(raw),
+                Err(error) => TraceRawRead::Error(format!(
+                    "failed to read tool trace '{path_display}': {error}"
+                )),
+            }
+        }
+        Err(error) => TraceRawRead::Error(format!(
+            "failed to inspect tool trace '{}': {error}",
+            path.display()
+        )),
     }
 }
 
@@ -995,9 +1125,24 @@ fn next_tool_call_index(trace_path: &Path) -> u64 {
 }
 
 fn existing_trace_row_count(trace_path: &Path) -> u64 {
-    fs::read_to_string(trace_path).map_or(0, |raw| {
-        raw.lines().filter(|line| !line.trim().is_empty()).count() as u64
-    })
+    let read = read_tool_trace_file(trace_path);
+    if read.read_error.is_some() || read.missing {
+        return 0;
+    }
+    u64::try_from(read.rows.len()).unwrap_or(u64::MAX)
+}
+
+fn trace_max_bytes() -> u64 {
+    std::env::var(TRACE_MAX_BYTES_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_TRACE_MAX_BYTES)
+}
+
+fn unlock_trace_file(file: &fs::File, path: &Path) {
+    if let Err(error) = file.unlock() {
+        warn!(path = %path.display(), error = %error, "failed to unlock tool trace file");
+    }
 }
 
 fn serialized_len(value: &Value) -> usize {
@@ -1245,14 +1390,51 @@ fn timestamp_ms() -> u128 {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Mutex, OnceLock};
+
     use serde_json::json;
     use tempfile::{NamedTempFile, TempDir};
 
     use super::{
-        MAX_SELECTED_UNIQUE_IDS, extract_response_truncated, extract_top_unique_ids,
-        extract_unique_ids, read_tool_trace_file, redact_tool_trace_file, summarize_params,
-        summarize_tool_trace,
+        MAX_SELECTED_UNIQUE_IDS, TRACE_ENV, TRACE_MAX_BYTES_ENV, extract_response_truncated,
+        extract_top_unique_ids, extract_unique_ids, read_tool_trace_file, record_tool_call,
+        redact_tool_trace_file, summarize_params, summarize_tool_trace,
     };
+
+    static ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+        ENV_MUTEX
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    struct EnvVarRestore {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvVarRestore {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            // SAFETY: tests serialize environment mutation with `ENV_MUTEX`.
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarRestore {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous.take() {
+                // SAFETY: tests serialize environment mutation with `ENV_MUTEX`.
+                unsafe { std::env::set_var(self.key, value) };
+            } else {
+                // SAFETY: tests serialize environment mutation with `ENV_MUTEX`.
+                unsafe { std::env::remove_var(self.key) };
+            }
+        }
+    }
 
     #[test]
     fn summarize_params_keeps_only_safe_context() {
@@ -1371,6 +1553,81 @@ mod tests {
         assert_eq!(read.parse_warnings[0].line, 2);
         assert_eq!(read.rows[0]["tool_call_index"], json!(0));
         assert_eq!(read.rows[1]["tool_call_index"], json!(1));
+    }
+
+    #[test]
+    fn read_and_redact_tool_trace_file_reject_oversized_inputs() {
+        let _env_guard = lock_env();
+        let _max_restore = EnvVarRestore::set(TRACE_MAX_BYTES_ENV, "16");
+        let trace = NamedTempFile::new().expect("trace");
+        std::fs::write(trace.path(), "{\"tool\":\"search\"}\n").expect("write trace");
+
+        let read = read_tool_trace_file(trace.path());
+
+        assert!(!read.missing);
+        assert!(read.rows.is_empty());
+        assert!(
+            read.read_error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("exceeds configured size limit")
+        );
+
+        let out = NamedTempFile::new().expect("out");
+        let err = redact_tool_trace_file(trace.path(), out.path()).expect_err("oversized trace");
+        assert!(err.to_string().contains("exceeds configured size limit"));
+    }
+
+    #[test]
+    fn record_tool_call_resets_trace_when_size_cap_is_reached() {
+        let _env_guard = lock_env();
+        let dir = TempDir::new().expect("dir");
+        let trace_path = dir.path().join("trace.jsonl");
+        std::fs::write(&trace_path, "old-row\n".repeat(200)).expect("write old trace");
+        let _path_restore = EnvVarRestore::set(TRACE_ENV, &trace_path.to_string_lossy());
+        let _max_restore = EnvVarRestore::set(TRACE_MAX_BYTES_ENV, "1024");
+
+        record_tool_call(
+            "mcp",
+            "search",
+            Some(&json!({"query": "revenue"})),
+            Some(&json!({"data": [], "count": 0})),
+            true,
+            3,
+        );
+
+        let raw = std::fs::read_to_string(&trace_path).expect("read trace");
+        assert!(!raw.contains("old-row"));
+        assert!(raw.contains("\"tool\":\"search\""));
+        assert!(raw.len() <= 1024);
+    }
+
+    #[test]
+    fn record_tool_call_serializes_concurrent_appends() {
+        let _env_guard = lock_env();
+        let dir = TempDir::new().expect("dir");
+        let trace_path = dir.path().join("trace.jsonl");
+        let _path_restore = EnvVarRestore::set(TRACE_ENV, &trace_path.to_string_lossy());
+        let _max_restore = EnvVarRestore::set(TRACE_MAX_BYTES_ENV, "65536");
+
+        std::thread::scope(|scope| {
+            for index in 0..16 {
+                scope.spawn(move || {
+                    record_tool_call(
+                        "mcp",
+                        "search",
+                        Some(&json!({"query": format!("query-{index}")})),
+                        Some(&json!({"data": [], "count": 0})),
+                        true,
+                        1,
+                    );
+                });
+            }
+        });
+
+        let read = read_tool_trace_file(&trace_path);
+        assert_eq!(read.rows.len(), 16);
+        assert!(read.parse_warnings.is_empty());
     }
 
     #[test]

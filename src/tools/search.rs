@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use rkyv::string::ArchivedString;
 use serde::Serialize;
@@ -27,6 +28,82 @@ use crate::params::{
 use crate::responses::{SearchResponse, SuccessResponse};
 use crate::utils::{SearchPersona, has_query_syntax, tokenize_alnum_lowercase};
 use tracing::{debug, instrument, warn};
+
+const SEMANTIC_TIMEOUT_RESERVE_MS: u64 = 10;
+
+#[derive(Debug, Clone, Copy)]
+struct SearchDeadline {
+    started_at: Instant,
+    timeout_ms: u64,
+}
+
+impl SearchDeadline {
+    fn from_config(config: &SearchConfig) -> Self {
+        Self {
+            started_at: Instant::now(),
+            timeout_ms: u64::try_from(config.search_timeout_ms).unwrap_or(u64::MAX),
+        }
+    }
+
+    fn semantic_remaining(self) -> Option<Duration> {
+        if self.timeout_ms == 0 {
+            return None;
+        }
+        let elapsed_ms = u64::try_from(self.started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.timeout_ms
+            .checked_sub(elapsed_ms)?
+            .checked_sub(SEMANTIC_TIMEOUT_RESERVE_MS)
+            .map(Duration::from_millis)
+            .filter(|remaining| !remaining.is_zero())
+    }
+
+    fn has_timeout(self) -> bool {
+        self.timeout_ms > 0
+    }
+}
+
+async fn run_semantic_blocking<T, F>(
+    deadline: SearchDeadline,
+    component: &'static str,
+    operation: &'static str,
+    f: F,
+) -> Result<Option<Result<T>>>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    let remaining = deadline.semantic_remaining();
+    if deadline.has_timeout() && remaining.is_none() {
+        debug!(
+            component,
+            operation, "semantic operation skipped because request deadline is exhausted"
+        );
+        return Ok(None);
+    }
+
+    let mut handle = tokio::task::spawn_blocking(f);
+    if let Some(remaining) = remaining {
+        if let Ok(joined) = tokio::time::timeout(remaining, &mut handle).await {
+            joined
+                .map(Some)
+                .map_err(|error| DbtNovaError::ServerError(error.to_string()))
+        } else {
+            handle.abort();
+            warn!(
+                component,
+                operation,
+                timeout_ms = remaining.as_millis(),
+                "semantic operation timed out before request deadline"
+            );
+            Ok(None)
+        }
+    } else {
+        handle
+            .await
+            .map(Some)
+            .map_err(|error| DbtNovaError::ServerError(error.to_string()))
+    }
+}
 
 impl ManifestSearch {
     /// Full-text search across all entities using Tantivy. Searches names, aliases, descriptions, SQL code, file paths, column names, and tags with field boosting and relevance scoring.
@@ -70,6 +147,7 @@ impl ManifestSearch {
         }
 
         let limit = self.page_limit(params.pagination.limit);
+        let deadline = SearchDeadline::from_config(&self.config.search);
 
         let detail = self.detail_level(params.detail);
         let persona = params
@@ -116,11 +194,14 @@ impl ManifestSearch {
         let fused_bundle = self
             .build_fused_hits(
                 params,
-                persona,
-                persona_weights,
-                query_has_syntax,
-                fetch_limit,
-                &primary_results,
+                FusedHitContext {
+                    persona,
+                    persona_weights,
+                    query_has_syntax,
+                    fetch_limit,
+                    primary_results: &primary_results,
+                    deadline,
+                },
             )
             .await?;
         let mut fused_hits = fused_bundle.hits;
@@ -147,13 +228,15 @@ impl ManifestSearch {
                     if !docs.is_empty() {
                         let query = params.query.clone();
                         let reranker = Arc::clone(reranker);
-                        match tokio::task::spawn_blocking(move || {
-                            reranker.rerank(&query, &docs, top_n)
-                        })
-                        .await
-                        .map_err(|e| DbtNovaError::ServerError(e.to_string()))?
+                        match run_semantic_blocking(
+                            deadline,
+                            "reranker",
+                            "document scoring",
+                            move || reranker.rerank(&query, &docs, top_n),
+                        )
+                        .await?
                         {
-                            Ok(reranked_hits) => {
+                            Some(Ok(reranked_hits)) => {
                                 self.reranker_breaker.on_success().await;
                                 let mut reordered: Vec<(String, f32)> = Vec::new();
                                 let mut seen: HashSet<String> = HashSet::new();
@@ -173,9 +256,12 @@ impl ManifestSearch {
                                 fused_hits = reordered;
                                 reranker_applied = true;
                             }
-                            Err(err) => {
+                            Some(Err(err)) => {
                                 self.reranker_breaker.on_failure().await;
                                 warn!(error = %err, "reranker failed; using fused ranking");
+                            }
+                            None => {
+                                debug!("reranker skipped because request deadline was exhausted");
                             }
                         }
                     }
@@ -444,6 +530,7 @@ impl ManifestSearch {
     /// Returns an error if the query is invalid or indicator filtering is invalid.
     #[instrument(skip(self, params), fields(tool = "search_indicator", query_len = params.query.len(), limit = ?params.pagination.limit, offset = params.pagination.offset))]
     pub async fn search_indicator(&self, params: &SearchIndicatorParams) -> Result<JsonValue> {
+        let deadline = SearchDeadline::from_config(&self.config.search);
         let (tokens, query_has_syntax, resource_filter, indicator_filter, persona) =
             self.prepare_indicator_search(params)?;
         let mut rows = self.search_indicator_rows(
@@ -453,7 +540,7 @@ impl ManifestSearch {
             params.explain,
         )?;
         rows = self
-            .rank_indicator_rows(params, query_has_syntax, persona, rows)
+            .rank_indicator_rows(params, query_has_syntax, persona, rows, deadline)
             .await?;
         self.build_indicator_search_response(params, persona, query_has_syntax, &tokens, rows)
     }
@@ -651,6 +738,7 @@ impl ManifestSearch {
         query_has_syntax: bool,
         persona: SearchPersona,
         mut rows: Vec<IndicatorSearchRow>,
+        deadline: SearchDeadline,
     ) -> Result<Vec<IndicatorSearchRow>> {
         if self.config.search.indicator_ranking.enable_parent_coherence && rows.len() > 1 {
             rows = apply_parent_coherence_bonus(rows, &self.config.search.indicator_ranking);
@@ -660,7 +748,7 @@ impl ManifestSearch {
         }
         if self.config.search.enable_rrf && rows.len() > 1 {
             rows = self
-                .fuse_indicator_rows(params, persona, query_has_syntax, rows)
+                .fuse_indicator_rows(params, persona, query_has_syntax, rows, deadline)
                 .await?;
         }
         if self.config.search.enable_reranker
@@ -676,11 +764,15 @@ impl ManifestSearch {
                         .collect();
                     let query = params.query.clone();
                     let reranker = Arc::clone(reranker);
-                    match tokio::task::spawn_blocking(move || reranker.rerank(&query, &docs, top_n))
-                        .await
-                        .map_err(|e| DbtNovaError::ServerError(e.to_string()))?
+                    match run_semantic_blocking(
+                        deadline,
+                        "reranker",
+                        "indicator scoring",
+                        move || reranker.rerank(&query, &docs, top_n),
+                    )
+                    .await?
                     {
-                        Ok(reranked_hits) => {
+                        Some(Ok(reranked_hits)) => {
                             self.reranker_breaker.on_success().await;
                             rows = reorder_indicator_rows_with_reranker(
                                 rows,
@@ -689,11 +781,16 @@ impl ManifestSearch {
                                 &self.config.search.indicator_ranking,
                             );
                         }
-                        Err(err) => {
+                        Some(Err(err)) => {
                             self.reranker_breaker.on_failure().await;
                             warn!(
                                 error = %err,
                                 "indicator reranker failed; using existing indicator ranking"
+                            );
+                        }
+                        None => {
+                            debug!(
+                                "indicator reranker skipped because request deadline was exhausted"
                             );
                         }
                     }
@@ -774,6 +871,7 @@ impl ManifestSearch {
         persona: SearchPersona,
         query_has_syntax: bool,
         mut rows: Vec<IndicatorSearchRow>,
+        deadline: SearchDeadline,
     ) -> Result<Vec<IndicatorSearchRow>> {
         let fetch_limit = rows.len().max(1);
         let search_params = SearchParams {
@@ -811,11 +909,14 @@ impl ManifestSearch {
         let parent_hits = self
             .build_fused_hits(
                 &search_params,
-                persona,
-                persona_weights,
-                query_has_syntax,
-                fetch_limit,
-                &primary_results,
+                FusedHitContext {
+                    persona,
+                    persona_weights,
+                    query_has_syntax,
+                    fetch_limit,
+                    primary_results: &primary_results,
+                    deadline,
+                },
             )
             .await?;
 
@@ -1099,12 +1200,16 @@ impl ManifestSearch {
     async fn build_fused_hits(
         &self,
         params: &SearchParams,
-        persona: SearchPersona,
-        persona_weights: PersonaWeights,
-        query_has_syntax: bool,
-        fetch_limit: usize,
-        primary_results: &[SearchHit],
+        context: FusedHitContext<'_>,
     ) -> Result<FusedHitBundle> {
+        let FusedHitContext {
+            persona,
+            persona_weights,
+            query_has_syntax,
+            fetch_limit,
+            primary_results,
+            deadline,
+        } = context;
         if !self.config.search.enable_rrf {
             let hits: Vec<(String, f32)> = primary_results
                 .iter()
@@ -1207,19 +1312,24 @@ impl ManifestSearch {
                 let vector_limit = self.config.search.vector_top_k.max(fetch_limit);
                 let query = params.query.clone();
                 let vector_search = Arc::clone(vector_search);
-                match tokio::task::spawn_blocking(move || {
-                    vector_search.search(&query, vector_limit)
-                })
-                .await
-                .map_err(|e| DbtNovaError::ServerError(e.to_string()))?
+                match run_semantic_blocking(
+                    deadline,
+                    "vector search",
+                    "query embedding",
+                    move || vector_search.search(&query, vector_limit),
+                )
+                .await?
                 {
-                    Ok(vector_hits) => {
+                    Some(Ok(vector_hits)) => {
                         self.vector_breaker.on_success().await;
                         rankings.push(("vector", scores_to_ids(&vector_hits)));
                     }
-                    Err(err) => {
+                    Some(Err(err)) => {
                         self.vector_breaker.on_failure().await;
                         warn!(error = %err, "vector search failed; skipping vector results");
+                    }
+                    None => {
+                        debug!("vector retriever skipped because request deadline was exhausted");
                     }
                 }
             } else {
@@ -1234,19 +1344,24 @@ impl ManifestSearch {
                 let sparse_limit = self.config.search.sparse_top_k.max(fetch_limit);
                 let query = params.query.clone();
                 let sparse_search = Arc::clone(sparse_search);
-                match tokio::task::spawn_blocking(move || {
-                    sparse_search.search(&query, sparse_limit)
-                })
-                .await
-                .map_err(|e| DbtNovaError::ServerError(e.to_string()))?
+                match run_semantic_blocking(
+                    deadline,
+                    "sparse search",
+                    "query embedding",
+                    move || sparse_search.search(&query, sparse_limit),
+                )
+                .await?
                 {
-                    Ok(sparse_hits) => {
+                    Some(Ok(sparse_hits)) => {
                         self.sparse_breaker.on_success().await;
                         rankings.push(("sparse", scores_to_ids(&sparse_hits)));
                     }
-                    Err(err) => {
+                    Some(Err(err)) => {
                         self.sparse_breaker.on_failure().await;
                         warn!(error = %err, "sparse search failed; skipping sparse results");
+                    }
+                    None => {
+                        debug!("sparse retriever skipped because request deadline was exhausted");
                     }
                 }
             } else {
@@ -2256,6 +2371,15 @@ struct ColumnSearchMatch<'a> {
     match_type: &'static str,
     matched_value: Option<&'a str>,
     score: f32,
+}
+
+struct FusedHitContext<'a> {
+    persona: SearchPersona,
+    persona_weights: PersonaWeights,
+    query_has_syntax: bool,
+    fetch_limit: usize,
+    primary_results: &'a [SearchHit],
+    deadline: SearchDeadline,
 }
 
 struct FusedHitBundle {
@@ -4499,8 +4623,16 @@ fn weighted_rrf_with_explain(
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
 
-    use super::{SearchCandidate, analyst_near_tie_hint, resource_type_allowed_for_search};
+    use crate::error::DbtNovaError;
+
+    use super::{
+        SearchCandidate, SearchDeadline, analyst_near_tie_hint, resource_type_allowed_for_search,
+        run_semantic_blocking,
+    };
 
     #[test]
     fn analyst_near_tie_hint_present_for_close_scores() {
@@ -4570,5 +4702,39 @@ mod tests {
         assert!(resource_type_allowed_for_search(Some("model"), None));
         assert!(resource_type_allowed_for_search(Some("doc"), None));
         assert!(resource_type_allowed_for_search(None, None));
+    }
+
+    #[test]
+    fn search_deadline_reserves_time_before_semantic_work() {
+        let deadline = SearchDeadline {
+            started_at: Instant::now()
+                .checked_sub(Duration::from_millis(95))
+                .expect("test instant subtraction should fit"),
+            timeout_ms: 100,
+        };
+
+        assert!(deadline.semantic_remaining().is_none());
+    }
+
+    #[tokio::test]
+    async fn semantic_blocking_skips_when_deadline_is_exhausted() {
+        let ran = Arc::new(AtomicBool::new(false));
+        let deadline = SearchDeadline {
+            started_at: Instant::now()
+                .checked_sub(Duration::from_millis(95))
+                .expect("test instant subtraction should fit"),
+            timeout_ms: 100,
+        };
+        let ran_in_task = Arc::clone(&ran);
+
+        let result = run_semantic_blocking(deadline, "vector search", "test", move || {
+            ran_in_task.store(true, Ordering::SeqCst);
+            Ok::<_, DbtNovaError>(())
+        })
+        .await
+        .expect("deadline helper should not fail");
+
+        assert!(result.is_none());
+        assert!(!ran.load(Ordering::SeqCst));
     }
 }
