@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Hardened hosted HTTP container defaults by removing the baked-in auth-proxy
+  acknowledgement, defaulting published images to discovery-only SQL tool
+  exposure, and documenting separate local, hosted discovery-only, and
+  SQL-enabled deployment profiles.
 - Added a reusable domain reference template and synthetic starter commerce
   example to the meta-authoring skill, plus analyst guidance and docs for using
   curated domain references as stable context rather than raw query dumps.

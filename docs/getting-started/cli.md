@@ -54,13 +54,11 @@ Equivalent explicit form:
 dbt-nova server start
 ```
 
-Hosted HTTP form:
+Local HTTP form:
 
 ```bash
-PORT=8080 \
 DBT_NOVA_SERVER_TRANSPORT=streamable_http \
-DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true \
-dbt-nova server start --http-host 0.0.0.0 --http-path /mcp
+dbt-nova server start --http-host 127.0.0.1 --http-port 8080 --http-path /mcp
 ```
 
 Hosted probe endpoints:

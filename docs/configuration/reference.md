@@ -123,7 +123,8 @@ Remote manifest notes:
     - `DBT_NOVA_TOOL_DENYLIST=execute_sql`
 - Destructive storage admin tools (`prune_storage`, `cleanup_storage`) are also
   disabled by default and require `DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1`.
-- Streamable HTTP mode has **no built-in authentication**. Keep it bound to loopback for local use, or set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when an authenticating reverse proxy is enforcing access in front of dbt-nova.
+- Published container images default to `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe` so hosted image starts are discovery-only unless an operator clears or customizes the denylist.
+- Streamable HTTP mode has **no built-in authentication**. Keep it bound to loopback for local use, or set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when an authenticating reverse proxy is enforcing access in front of dbt-nova. Published container images do not set this acknowledgement by default.
 - The MCP endpoint is mounted at `DBT_NOVA_HTTP_PATH`; plain probe endpoints are always available at `/healthz` and `/readyz`.
 
 Manifest pruning notes:
