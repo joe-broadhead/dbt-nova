@@ -145,7 +145,7 @@ CLI subcommands that use `--json` return a command envelope (different from MCP 
   "meta": {
     "elapsed_ms": 123,
     "timestamp_ms": 1772304167827,
-    "version": "0.0.5"
+    "version": "0.0.14"
   },
   "error": null
 }

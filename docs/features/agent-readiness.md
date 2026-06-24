@@ -89,7 +89,7 @@ jobs:
 
       - name: Install dbt-nova
         run: |
-          curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+          curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
             bash -s -- --slim --non-interactive
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 

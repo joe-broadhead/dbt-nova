@@ -138,17 +138,17 @@ Minimal MCP client config:
 ```bash
 # Install (recommended: slim + non-interactive)
 # Public repo (unauthenticated)
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
   bash -s -- --slim --non-interactive
 
 # Private repo (authenticated)
 GH_TOKEN="$(gh auth token)"
 curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
-  https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+  https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
   DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --slim --non-interactive
 
 # Optional: pre-warm model files during install before enabling semantic layers
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
   DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/.fastembed_cache" \
   DBT_NOVA_WARMUP_REQUIRED_MODELS=3 \
   bash -s -- --slim --warm-models --non-interactive
@@ -160,7 +160,7 @@ curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scrip
 #   bash scripts/warm_models.sh
 
 # Optional: install all built-in persona skills to ~/.agents/skills
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
   bash -s -- --slim --install-skills --non-interactive
 
 # Optional: install a single standalone skill
@@ -202,11 +202,11 @@ Producer (reusable workflow):
 jobs:
   build_nova_assets:
     # Pin to a release tag or commit SHA
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.5
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.14
     with:
       manifest_path: target/manifest.json
       storage_instance_id: analytics-prod
-      installer_ref: v0.0.5
+      installer_ref: v0.0.14
       installer_install_mode: auto
       artifact_name_prefix: analytics-prod
 ```
@@ -288,7 +288,7 @@ Legacy fallback: if you manually extract artifacts locally, you can omit
 
 - No subcommand: starts MCP server (backward compatible)
 - Subcommand: executes command and exits
-- CLI surface: `12` CLI-only leaf commands, plus `tool call` access to all `33` MCP tools
+- CLI surface: `25` CLI leaf commands, including `tool call` access to all `53` MCP tools
 
 Examples:
 

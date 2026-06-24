@@ -364,7 +364,7 @@ When `--json` is passed, CLI commands return a standard envelope:
   "meta": {
     "elapsed_ms": 42,
     "timestamp_ms": 1772304167827,
-    "version": "0.0.5"
+    "version": "0.0.14"
   },
   "error": null
 }

@@ -92,6 +92,8 @@ metadata in the `reason` field. CI enforces that review dates are not expired vi
 - `RUSTSEC-2025-0119`: `number_prefix` via `fastembed` -> `hf-hub` -> `indicatif`
 - `RUSTSEC-2025-0134`: `rustls-pemfile` via `google-cloud-storage` -> `reqwest 0.11`
 - `RUSTSEC-2026-0002`: `lru 0.12` via `tantivy`
+- `RUSTSEC-2026-0097`: `rand` via `fastembed`/`tokenizers`, `tantivy`/`rand_distr`,
+  `rmcp`, and `proptest`
 
 ## Dependency Watchlist
 

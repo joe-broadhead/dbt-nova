@@ -21,13 +21,13 @@ Use the installer script (defaults to **slim**):
 
 ```bash
 # Public repo (unauthenticated)
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
   bash -s -- --slim --non-interactive
 
 # Private repo (authenticated)
 GH_TOKEN="$(gh auth token)"
 curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
-  https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+  https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
   DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --slim --non-interactive
 ```
 
@@ -35,23 +35,23 @@ Non-interactive examples:
 
 ```bash
 # Public repo: default slim in non-interactive mode
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
   bash -s -- --non-interactive
 
 # Public repo: force slim
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
   bash -s -- --slim --non-interactive
 
 # Private repo: default slim in non-interactive mode
 GH_TOKEN="$(gh auth token)"
 curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
-  https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+  https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
   DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --non-interactive
 
 # Private repo: force slim
 GH_TOKEN="$(gh auth token)"
 curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
-  https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+  https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
   DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --slim --non-interactive
 ```
 
@@ -66,7 +66,7 @@ or remote model hydration? See [Modes & Combinations](modes-and-combinations.md)
 If you want users to enable semantic layers without a later model download, pre-warm during install:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
   DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/.fastembed_cache" \
   DBT_NOVA_WARMUP_REQUIRED_MODELS=3 \
   bash -s -- --slim --warm-models --non-interactive
@@ -80,21 +80,21 @@ client process reuses that cache.
 Install all built-in standalone persona skills:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
   bash -s -- --slim --install-skills --non-interactive
 ```
 
 Install one standalone skill:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
   bash -s -- --slim --install-skills --skill analyst --non-interactive
 ```
 
 To choose a different destination:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/master/scripts/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
   DBT_NOVA_SKILLS_DIR="$HOME/.codex/skills" \
   bash -s -- --slim --install-skills --non-interactive
 ```
@@ -308,7 +308,7 @@ by SHA-256 verification when checksum mode is enabled.
 Example (pin fallback seed to a specific release tag):
 
 ```bash
-DBT_NOVA_WARMUP_VERSION=v0.0.5 bash scripts/warm_models.sh
+DBT_NOVA_WARMUP_VERSION=v0.0.14 bash scripts/warm_models.sh
 ```
 
 ---
