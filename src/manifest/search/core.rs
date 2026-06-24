@@ -14,6 +14,7 @@ use crate::error::{DbtNovaError, Result};
 use crate::manifest::bootstrap::prepare_runtime_config;
 use crate::manifest::entity::{ArchivedEntity, Entity};
 use crate::manifest::semantic_cache::{self, SemanticCacheComponent};
+use crate::manifest::source::ManifestSignature;
 use crate::manifest::store::EntityStore;
 use crate::manifest::tantivy_search::TantivySearcher;
 use crate::manifest::vector_search::{Reranker, SparseSearcher, VectorSearcher};
@@ -1032,7 +1033,8 @@ async fn refresh_loop(
             }
         };
 
-        if signature.content_hash == active_hash {
+        let refresh_hash = scoped_refresh_manifest_hash(signature, &config_snapshot);
+        if refresh_hash == active_hash {
             continue;
         }
 
@@ -1143,6 +1145,15 @@ fn auto_instance_id(config: &DbtNovaConfig) -> String {
     temp.storage_instance_id
 }
 
+fn scoped_refresh_manifest_hash(
+    mut signature: ManifestSignature,
+    config: &DbtNovaConfig,
+) -> String {
+    signature.prune_fingerprint = config.manifest_prune_fingerprint();
+    signature.search_index_fingerprint = config.search.index_fingerprint();
+    crate::manifest::loader::scoped_manifest_hash(&signature)
+}
+
 fn bootstrap_reload_fetch_policy(config: &DbtNovaConfig) -> ArtifactFetchPolicy {
     if config.bootstrap_uri.trim().is_empty() {
         config.artifact_fetch_policy
@@ -1214,9 +1225,13 @@ mod tests {
 
     use super::{
         bootstrap_reload_fetch_policy, reload_manifest_response,
-        reset_bootstrap_applied_fields_for_reload,
+        reset_bootstrap_applied_fields_for_reload, scoped_refresh_manifest_hash,
     };
-    use crate::config::{ArtifactFetchPolicy, DbtNovaConfig};
+    use crate::config::{
+        ArtifactFetchPolicy, DbtNovaConfig, ExtendedMetaFieldConfig, ExtendedMetaFieldMode,
+        ExtendedMetaSearchConfig,
+    };
+    use crate::manifest::source::ManifestSignature;
 
     #[test]
     fn reset_bootstrap_fields_clears_previously_applied_values() {
@@ -1302,6 +1317,39 @@ mod tests {
             bootstrap_reload_fetch_policy(&config),
             ArtifactFetchPolicy::Never
         );
+    }
+
+    #[test]
+    fn scoped_refresh_hash_includes_prune_and_search_fingerprints() {
+        let signature = ManifestSignature {
+            content_hash: "same-content".to_string(),
+            ..ManifestSignature::default()
+        };
+        let unscoped = DbtNovaConfig::default();
+        let pruned = DbtNovaConfig {
+            manifest_prune_allow_ids: vec!["model.pkg.orders".to_string()],
+            ..DbtNovaConfig::default()
+        };
+        let mut search_scoped = DbtNovaConfig::default();
+        search_scoped.search.extended_meta = ExtendedMetaSearchConfig {
+            fields: vec![ExtendedMetaFieldConfig {
+                path: "meta.owner".to_string(),
+                alias: "owner".to_string(),
+                mode: ExtendedMetaFieldMode::Keyword,
+                boost: 1.0,
+                summary: true,
+            }],
+            ..ExtendedMetaSearchConfig::default()
+        };
+
+        let unscoped_hash = scoped_refresh_manifest_hash(signature.clone(), &unscoped);
+        let pruned_hash = scoped_refresh_manifest_hash(signature.clone(), &pruned);
+        let search_scoped_hash = scoped_refresh_manifest_hash(signature, &search_scoped);
+
+        assert_eq!(unscoped_hash, "same-content");
+        assert_ne!(pruned_hash, unscoped_hash);
+        assert_ne!(search_scoped_hash, unscoped_hash);
+        assert_ne!(pruned_hash, search_scoped_hash);
     }
 
     #[test]

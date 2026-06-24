@@ -662,6 +662,7 @@ fn verify_requested_warm_caches(
             &search.config().search,
             &model_name,
             &search.manifest_hash,
+            None,
             search.config().search.embeddings_max_decompressed_bytes,
         ) {
             EmbeddingsCacheLoad::Hit { paths, .. } => {
@@ -693,6 +694,7 @@ fn verify_requested_warm_caches(
             &search.config().search,
             default_sparse_model_name(),
             &search.manifest_hash,
+            None,
             search.config().search.embeddings_max_decompressed_bytes,
         ) {
             SparseEmbeddingsCacheLoad::Hit { paths, .. } => {

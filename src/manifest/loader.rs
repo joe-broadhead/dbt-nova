@@ -727,7 +727,7 @@ fn build_search_backends_for_manifest(
     )
 }
 
-fn scoped_manifest_hash(signature: &ManifestSignature) -> String {
+pub(crate) fn scoped_manifest_hash(signature: &ManifestSignature) -> String {
     if signature.prune_fingerprint.is_empty() && signature.search_index_fingerprint.is_empty() {
         signature.content_hash.clone()
     } else {
