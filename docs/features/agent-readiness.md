@@ -90,7 +90,7 @@ jobs:
       - name: Install dbt-nova
         run: |
           curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
-            bash -s -- --slim --non-interactive
+            DBT_NOVA_VERSION=v0.0.14 bash -s -- --slim --non-interactive
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run agent-readiness report

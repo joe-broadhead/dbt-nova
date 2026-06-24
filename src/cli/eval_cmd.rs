@@ -4984,12 +4984,57 @@ fn provider_failure_evidence(invocation: &provider::ProviderInvocation, stderr: 
 fn provider_invocation_evidence(invocation: &provider::ProviderInvocation) -> JsonValue {
     json!({
         "command": redact_provider_output_text(&invocation.command),
-        "args": invocation
-            .args
-            .iter()
-            .map(|arg| redact_provider_output_text(arg))
-            .collect::<Vec<_>>(),
+        "args": redact_provider_args(&invocation.args),
     })
+}
+
+fn redact_provider_args(args: &[String]) -> Vec<String> {
+    let mut redacted = Vec::with_capacity(args.len());
+    let mut redact_next = false;
+    for arg in args {
+        if redact_next {
+            redacted.push("[REDACTED]".to_string());
+            redact_next = false;
+            continue;
+        }
+        redacted.push(redact_provider_output_text(arg));
+        redact_next = provider_arg_expects_sensitive_value(arg);
+    }
+    redacted
+}
+
+fn provider_arg_expects_sensitive_value(arg: &str) -> bool {
+    let trimmed = arg.trim();
+    if trimmed.is_empty()
+        || trimmed.contains('=')
+        || trimmed.contains(':')
+        || trimmed.contains('/')
+        || !trimmed.starts_with('-')
+    {
+        return false;
+    }
+    let key = trimmed.trim_start_matches('-').to_ascii_lowercase();
+    [
+        "token",
+        "access-token",
+        "access_token",
+        "api-token",
+        "api_token",
+        "apikey",
+        "api-key",
+        "api_key",
+        "secret",
+        "password",
+        "passwd",
+        "pwd",
+        "credential",
+        "authorization",
+        "auth",
+        "session",
+        "jwt",
+    ]
+    .iter()
+    .any(|sensitive| key.contains(sensitive))
 }
 
 fn redact_provider_output_text(output: &str) -> String {

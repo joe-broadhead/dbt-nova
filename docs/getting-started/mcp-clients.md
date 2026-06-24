@@ -24,7 +24,7 @@ If you installed with:
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
   DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/.fastembed_cache" \
   DBT_NOVA_WARMUP_REQUIRED_MODELS=3 \
-  bash -s -- --slim --warm-models --non-interactive
+  DBT_NOVA_VERSION=v0.0.14 bash -s -- --slim --warm-models --non-interactive
 ```
 
 use that exact same `DBT_NOVA_EMBEDDINGS_CACHE_DIR` path in your MCP client env.

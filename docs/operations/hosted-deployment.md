@@ -20,8 +20,8 @@ Recommended hosted posture:
 
 - Use `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest` for general-purpose hosted agent endpoints.
 - Keep `execute_sql` and `run_recipe` denied for discovery-only endpoints.
-  Published container images set `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe`
-  by default.
+  Published container images set the full general-purpose hosted denylist by
+  default.
 - Leave `DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN` unset unless a trusted operator is
   intentionally pruning or cleaning storage.
 - Leave `DBT_NOVA_MCP_ENABLE_MANIFEST_WARM` unset unless a trusted operator is
@@ -49,7 +49,7 @@ export DBT_NOVA_SERVER_TRANSPORT=streamable_http
 export PORT=8080
 export DBT_NOVA_HTTP_PATH=/mcp
 export DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true
-export DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe
+export DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest
 export DBT_NOVA_STORAGE_DIR=/tmp/dbt-nova
 export DBT_NOVA_EMBEDDINGS_CACHE_DIR=/tmp/dbt-nova/models
 export DBT_NOVA_BOOTSTRAP_URI='https://example.invalid/bootstrap.json'
@@ -66,8 +66,9 @@ Why these defaults matter:
 
 - `PORT` lets Nova bind correctly on Cloud Run-style platforms.
 - `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` is required for non-loopback hosted binds and documents that an authenticating reverse proxy is in front of Nova.
-- `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe` keeps a hosted endpoint
-  discovery-only unless SQL execution is intentionally enabled.
+- `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest`
+  keeps a hosted endpoint discovery-only and hides operator inspection tools
+  unless those capabilities are intentionally enabled.
 - `DBT_NOVA_STORAGE_DIR=/tmp/dbt-nova` gives artifact hydration a writable local filesystem.
 - `DBT_NOVA_EMBEDDINGS_CACHE_DIR=/tmp/dbt-nova/models` keeps model cache resolution deterministic.
 - `DBT_NOVA_BOOTSTRAP_URI` should point at the stable bootstrap alias published by the reusable asset workflow.

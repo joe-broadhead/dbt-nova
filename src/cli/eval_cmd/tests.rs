@@ -106,6 +106,10 @@ fn provider_invocation_evidence_redacts_secret_bearing_args() {
         command: "/tmp/token/raw-provider/provider".to_string(),
         args: vec![
             "--api-token=raw-token".to_string(),
+            "--api-token".to_string(),
+            "raw-split-token".to_string(),
+            "--client_secret".to_string(),
+            "raw-split-secret".to_string(),
             "https://user:pass@example.com/path?token=raw-query".to_string(),
             "s3://bucket/secret/raw-artifact/output.json?X-Amz-Signature=raw-signature".to_string(),
         ],
@@ -115,6 +119,8 @@ fn provider_invocation_evidence_redacts_secret_bearing_args() {
 
     assert!(!evidence.contains("raw-provider"));
     assert!(!evidence.contains("raw-token"));
+    assert!(!evidence.contains("raw-split-token"));
+    assert!(!evidence.contains("raw-split-secret"));
     assert!(!evidence.contains("raw-query"));
     assert!(!evidence.contains("raw-artifact"));
     assert!(!evidence.contains("raw-signature"));

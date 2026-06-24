@@ -139,19 +139,19 @@ Minimal MCP client config:
 # Install (recommended: slim + non-interactive)
 # Public repo (unauthenticated)
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
-  bash -s -- --slim --non-interactive
+  DBT_NOVA_VERSION=v0.0.14 bash -s -- --slim --non-interactive
 
 # Private repo (authenticated)
 GH_TOKEN="$(gh auth token)"
 curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
   https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
-  DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --slim --non-interactive
+  DBT_NOVA_VERSION=v0.0.14 DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --slim --non-interactive
 
 # Optional: pre-warm model files during install before enabling semantic layers
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
   DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/.fastembed_cache" \
   DBT_NOVA_WARMUP_REQUIRED_MODELS=3 \
-  bash -s -- --slim --warm-models --non-interactive
+  DBT_NOVA_VERSION=v0.0.14 bash -s -- --slim --warm-models --non-interactive
 
 # Optional: enforce SHA-256 verification during direct HF fallback warmup
 # cp scripts/warm_models.checksums.example /path/to/checksums.txt
@@ -161,10 +161,10 @@ curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scri
 
 # Optional: install all built-in persona skills to ~/.agents/skills
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.14/scripts/install.sh | \
-  bash -s -- --slim --install-skills --non-interactive
+  DBT_NOVA_VERSION=v0.0.14 bash -s -- --slim --install-skills --non-interactive
 
 # Optional: install a single standalone skill
-# bash -s -- --slim --install-skills --skill analyst --non-interactive
+# DBT_NOVA_VERSION=v0.0.14 bash -s -- --slim --install-skills --skill analyst --non-interactive
 
 export DBT_MANIFEST_PATH=/path/to/manifest.json
 export DBT_NOVA_PRUNE_ALLOW_IDS='["model.my_proj.fct_orders","model.my_proj.dim_*"]'

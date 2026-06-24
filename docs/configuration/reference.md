@@ -118,8 +118,8 @@ Remote manifest notes:
 - Tool filter examples:
   - Allowlist only (expose only discovery + entity lookup):
     - `DBT_NOVA_TOOL_ALLOWLIST=search,get_entity`
-  - Denylist only (hide query execution tools):
-    - `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe`
+  - Denylist only (hosted discovery-only and non-admin posture):
+    - `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest`
   - Deny operator/admin tools for normal agent clients:
     - `DBT_NOVA_TOOL_DENYLIST=show_config,validate_config,inspect_storage,prune_storage,cleanup_storage`
   - Combined with denylist precedence (effective exposed set: `search`):
@@ -127,7 +127,7 @@ Remote manifest notes:
     - `DBT_NOVA_TOOL_DENYLIST=execute_sql`
 - Destructive storage admin tools (`prune_storage`, `cleanup_storage`) are also
   disabled by default and require `DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1`.
-- Published container images default to `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe` so hosted image starts are discovery-only unless an operator clears or customizes the denylist.
+- Published container images default to `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest` so hosted image starts are discovery-only and non-admin unless an operator clears or customizes the denylist.
 - Streamable HTTP mode has **no built-in authentication**. Keep it bound to loopback for local use, or set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when an authenticating reverse proxy is enforcing access in front of dbt-nova. Published container images do not set this acknowledgement by default.
 - The MCP endpoint is mounted at `DBT_NOVA_HTTP_PATH`; plain probe endpoints are always available at `/healthz` and `/readyz`.
 

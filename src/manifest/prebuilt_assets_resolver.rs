@@ -694,13 +694,16 @@ where
     let extracted_root = stage_root.join("extract-root");
     fs::create_dir_all(&extracted_root)?;
 
-    extract_tar_gz(archive_path, &extracted_root, limits)?;
-    let payload_root = single_directory_child(&extracted_root)?;
-    validate(&payload_root)?;
-    swap_directory_atomically(&payload_root, target_dir)?;
+    let result = (|| {
+        extract_tar_gz(archive_path, &extracted_root, limits)?;
+        let payload_root = single_directory_child(&extracted_root)?;
+        validate(&payload_root)?;
+        swap_directory_atomically(&payload_root, target_dir)?;
+        Ok(())
+    })();
 
     let _ = fs::remove_dir_all(&stage_root);
-    Ok(())
+    result
 }
 
 fn extract_tar_gz(
