@@ -124,6 +124,16 @@ on:
         required: false
         type: number
         default: 14
+      runner:
+        description: "GitHub Actions runner label for every job in this reusable workflow"
+        required: false
+        type: string
+        default: "ubuntu-22.04"
+      runner_labels_json:
+        description: "Optional JSON array of runner labels (for example [\"self-hosted\",\"linux\",\"x64\"]). Overrides runner when set."
+        required: false
+        type: string
+        default: ""
     secrets:
       DBT_NOVA_SECRET_BUNDLE_JSON:
         description: "Optional JSON object of secret-name -> secret-value pairs used by dbt_secret_env_map_json"
@@ -279,7 +289,7 @@ permissions:
 
 jobs:
   prepare:
-    runs-on: ubuntu-22.04
+    runs-on: ${{ inputs.runner_labels_json != '' && fromJSON(inputs.runner_labels_json) || inputs.runner }}
     outputs:
       manifest_path: ${{ steps.resolve.outputs.manifest_path }}
       manifest_uri: ${{ steps.resolve.outputs.manifest_uri }}
@@ -506,7 +516,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   audit:
-    runs-on: ubuntu-22.04
+    runs-on: ${{ inputs.runner_labels_json != '' && fromJSON(inputs.runner_labels_json) || inputs.runner }}
     needs: prepare
     timeout-minutes: 60
     concurrency:

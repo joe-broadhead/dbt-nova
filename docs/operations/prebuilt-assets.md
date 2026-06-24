@@ -75,6 +75,10 @@ Alternative producer inputs:
 - `models_distribution_mode` (`none`, `publish_only`, `publish_and_bootstrap`)
 - `search_warm_strategy` (`staged` by default, or `full`)
 - `build_timeout_minutes` (integer `1..360`, default `360`)
+- `runner` (single GitHub Actions runner label for all workflow jobs, default
+  `ubuntu-22.04`)
+- `runner_labels_json` (JSON array of runner labels, overriding `runner` when
+  a self-hosted pool requires multiple labels)
 - workflow_call secret `DBT_NOVA_SECRET_BUNDLE_JSON` (optional JSON object of
   `secret-name -> secret-value` entries for cross-owner reusable workflow calls)
 
@@ -179,6 +183,30 @@ Common downstream pattern: keep a repo-local `workflow_dispatch` wrapper and
 call this reusable workflow from it. This lets each repo set its own target
 defaults, storage instance naming, and publish prefixes without forking Nova's
 workflow.
+
+Self-hosted runner example:
+
+```yaml
+jobs:
+  build_nova_assets:
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.6
+    with:
+      runner: decathlon
+      manifest_path: target/manifest.json
+      storage_instance_id: analytics-prod
+```
+
+Multi-label runner example:
+
+```yaml
+jobs:
+  build_nova_assets:
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-build-assets.yml@v0.0.6
+    with:
+      runner_labels_json: '["self-hosted","linux","x64"]'
+      manifest_path: target/manifest.json
+      storage_instance_id: analytics-prod
+```
 
 The producer emits:
 

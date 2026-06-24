@@ -211,6 +211,11 @@ jobs:
       artifact_name_prefix: analytics-prod
 ```
 
+The reusable asset and metadata-audit workflows default to `ubuntu-22.04`.
+Downstream wrappers can pass `runner: decathlon` for a single custom runner
+label, or `runner_labels_json: '["self-hosted","linux","x64"]'` when a runner
+pool requires multiple labels.
+
 Consumer env (required):
 
 ```bash

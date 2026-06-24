@@ -7,6 +7,9 @@ Operational defaults:
 - Linux x86_64 runners are pinned to `ubuntu-22.04` for consistency; release
   jobs use native ARM and Intel macOS runners where platform artifacts require
   that architecture.
+- Public reusable workflows default to `ubuntu-22.04` but expose `runner` and
+  `runner_labels_json` inputs for downstream self-hosted or organization
+  runner pools.
 - Jobs that execute on local runners set explicit `timeout-minutes` budgets.
 
 ## Workflows
@@ -46,7 +49,8 @@ Operational defaults:
   (`DBT_NOVA_SECRET_BUNDLE_JSON`), optional installer source override
   (`installer_repository`, `installer_ref`, `installer_install_mode`), optional models artifact, staged/full semantic warmup
   (`search_warm_strategy`), configurable build timeout
-  (`build_timeout_minutes`), optional remote publish
+  (`build_timeout_minutes`), optional runner selection (`runner` or
+  `runner_labels_json`), optional remote publish
   targets (`s3`, `gcs`, `dbfs`) and `publish_dry_run`; models behavior is
   configured via `models_distribution_mode` (`none|publish_only|publish_and_bootstrap`)
 - **Invocation safety:** structured mode runs
@@ -78,7 +82,8 @@ Operational defaults:
   (`dbt_command`), plus `dbt_env_json`, `dbt_secret_env_map_json`, optional
   workflow_call secret bundle (`DBT_NOVA_SECRET_BUNDLE_JSON`), and optional
   installer source override (`installer_repository`, `installer_ref`,
-  `installer_install_mode`)
+  `installer_install_mode`), plus optional runner selection (`runner` or
+  `runner_labels_json`)
 - **Secret contract:** `dbt_secret_env_map_json` resolves keys from
   `DBT_NOVA_SECRET_BUNDLE_JSON` first, then same-owner inherited workflow
   secrets; downstream wrappers should prefer the bundle pattern for cross-owner

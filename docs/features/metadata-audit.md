@@ -116,6 +116,11 @@ It follows the same installer and dbt invocation standards as the reusable
 asset workflow, but disables vector, sparse, and reranker search so CI does not
 pay for full search/model startup during metadata-only audits.
 
+By default every job runs on `ubuntu-22.04`. Downstream wrappers can pass
+`runner: decathlon` for a single custom runner label, or
+`runner_labels_json: '["self-hosted","linux","x64"]'` when a self-hosted pool
+requires multiple labels.
+
 When `selection_mode: changed` and `changed_files_json` is omitted on
 `pull_request` events, the reusable workflow resolves changed files from the
 immutable PR event SHAs (`pull_request.base.sha` and `pull_request.head.sha`)

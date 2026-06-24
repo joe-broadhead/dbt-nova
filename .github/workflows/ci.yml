@@ -289,6 +289,7 @@ jobs:
       id-token: write
     uses: ./.github/workflows/nova-build-assets.yml
     with:
+      runner: ubuntu-22.04
       manifest_path: tests/fixtures/nova_manifest.json
       storage_instance_id: ci-readonly-smoke
       artifact_name_prefix: ci-readonly-smoke
@@ -353,6 +354,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/nova-metadata-audit.yml
     with:
+      runner_labels_json: '["ubuntu-22.04"]'
       manifest_path: tests/fixtures/nova_manifest.json
       storage_instance_id: ci-metadata-audit-project
       artifact_name_prefix: ci-metadata-audit-project
