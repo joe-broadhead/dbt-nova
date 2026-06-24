@@ -6,7 +6,7 @@ allowed-tools: "Bash Read Write mcp__nova__show_metadata mcp__nova__search mcp__
 metadata:
   owner: "dbt-nova"
   persona: "meta-authoring"
-  version: "0.0.14"
+  version: "0.0.6"
 ---
 
 # Meta Authoring Skill (dbt-nova)

@@ -251,7 +251,9 @@ For faster CI in downstream repos, use `installer_install_mode=release` with a
 tagged `installer_ref` so the workflow downloads a prebuilt `dbt-nova` binary
 instead of compiling from source. Keep `installer_install_mode=auto` as the
 safe default, and use `installer_install_mode=source` for older runner images
-or unreleased installer commits.
+or unreleased installer commits. Reusable workflows reject branch-like
+`installer_ref` values by default; use a release tag or full commit SHA, and set
+`allow_mutable_installer_ref: true` only for trusted development runs.
 
 If you generate manifests in the reusable workflow (`dbt_generate_manifest: true`),
 prefer structured invocation with `dbt_command_args_json` (and optional
@@ -281,7 +283,9 @@ Recommended consumer setup:
 - keep `DBT_NOVA_STORAGE_READ_ONLY` unset for first-run hydration and use `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing`
 - switch to `DBT_NOVA_STORAGE_READ_ONLY=true` plus `DBT_NOVA_ARTIFACT_FETCH_POLICY=never` only after assets already exist locally
 - keep versioned bootstrap URIs only for rollback/debugging
-- after a producer publishes new assets, run `reload_manifest` to adopt the new asset set without editing MCP config
+- after a producer publishes new assets, run `reload_manifest` with no arguments
+  to adopt the new asset set without editing MCP config; changing live source,
+  refresh, or storage settings from MCP requires `DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD=1`
 
 Legacy fallback: if you manually extract artifacts locally, you can omit
 `DBT_NOVA_*_ARTIFACT_URI` vars and keep only

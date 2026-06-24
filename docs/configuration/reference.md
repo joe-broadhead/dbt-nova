@@ -57,6 +57,8 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_MCP_MAX_RESPONSE_BYTES` – central serialized MCP tool response budget in bytes (`0` disables central budgeting, default: `65536`)
 - `DBT_NOVA_MCP_MAX_STRING_CHARS` – max characters retained for long strings when central MCP budgeting truncates (default: `4096`)
 - `DBT_NOVA_MCP_INCLUDE_TRUNCATION_META` – include `_nova_result_meta` when a central MCP budget pass truncates a response (`true`|`false`, default: `true`)
+- `DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD` – allow MCP `reload_manifest` to change `manifest_uri`, `manifest_path`, `refresh_secs`, or `storage_instance_id`; no-argument current-source reloads do not require this opt-in
+- `DBT_NOVA_MCP_ENABLE_MANIFEST_WARM` – allow MCP/`tool call` `warm_manifest` semantic cache writes
 - `DBT_NOVA_SQL_PROVIDER` – SQL backend for `execute_sql` (`databricks`, `bigquery`, `snowflake`, or `duckdb`, default: `databricks`)
 - `DBT_NOVA_GCP_PROJECT_ID` – shared Google project id alias (used by BigQuery fallback resolution)
 - `DBT_NOVA_GCP_ACCESS_TOKEN` – shared Google OAuth access token alias (used by BigQuery fallback resolution)
@@ -65,6 +67,7 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_BIGQUERY_LOCATION` – optional BigQuery location for `execute_sql` and provider preflight
 - `DBT_NOVA_BIGQUERY_TIMEOUT_MS` – HTTP timeout for BigQuery API requests (default: `30000`)
 - `DBT_NOVA_BIGQUERY_TOKEN_CACHE_TTL_SECS` – cache TTL for BigQuery auth token + HTTP client reuse (default: `3000`, minimum: `60`)
+- `DBT_NOVA_BIGQUERY_API_BASE_URL` – advanced/test override for the BigQuery API origin (default: `https://bigquery.googleapis.com`; `http://` is accepted only for loopback test servers)
 - `DBT_NOVA_SNOWFLAKE_ACCOUNT` – Snowflake account identifier when `DBT_NOVA_SQL_PROVIDER=snowflake`; used to build `https://<account>.snowflakecomputing.com`
 - `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` – optional explicit Snowflake account root URL for SQL API calls; use `https://<host>`, not an `/api` path
 - `DBT_NOVA_SNOWFLAKE_WAREHOUSE` – Snowflake warehouse used by `execute_sql` and preflight
@@ -119,15 +122,18 @@ Remote manifest notes:
   - Allowlist only (expose only discovery + entity lookup):
     - `DBT_NOVA_TOOL_ALLOWLIST=search,get_entity`
   - Denylist only (hosted discovery-only and non-admin posture):
-    - `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest`
+    - `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,reload_manifest,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest`
   - Deny operator/admin tools for normal agent clients:
     - `DBT_NOVA_TOOL_DENYLIST=show_config,validate_config,inspect_storage,prune_storage,cleanup_storage`
   - Combined with denylist precedence (effective exposed set: `search`):
     - `DBT_NOVA_TOOL_ALLOWLIST=search,execute_sql`
     - `DBT_NOVA_TOOL_DENYLIST=execute_sql`
+- Source-changing `reload_manifest` calls require
+  `DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD=1`; no-argument reloads refresh the
+  current source.
 - Destructive storage admin tools (`prune_storage`, `cleanup_storage`) are also
   disabled by default and require `DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1`.
-- Published container images default to `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest` so hosted image starts are discovery-only and non-admin unless an operator clears or customizes the denylist.
+- Published container images default to `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,reload_manifest,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest` so hosted image starts are discovery-only and non-admin unless an operator clears or customizes the denylist.
 - Streamable HTTP mode has **no built-in authentication**. Keep it bound to loopback for local use, or set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when an authenticating reverse proxy is enforcing access in front of dbt-nova. Published container images do not set this acknowledgement by default.
 - The MCP endpoint is mounted at `DBT_NOVA_HTTP_PATH`; plain probe endpoints are always available at `/healthz` and `/readyz`.
 

@@ -141,13 +141,15 @@ Configure:
 ### Reloading without restart
 
 If you need to switch manifest sources at runtime (e.g., engineer local → analyst DBFS),
-use the `reload_manifest` tool:
+start the MCP server with `DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD=1` and use the
+`reload_manifest` tool:
 
 ```json
 {"name":"reload_manifest","arguments":{"manifest_uri":"dbfs:///mnt/analytics/manifest.json","refresh_secs":300}}
 ```
 
-`reload_manifest` rebuilds indexes in the background and swaps atomically when ready.
+`reload_manifest` rebuilds indexes in the background and swaps atomically when
+ready. Without that opt-in, MCP reloads can refresh only the current source.
 
 ## Versioned Indexes & Atomic Swaps
 

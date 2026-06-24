@@ -143,7 +143,38 @@ async fn test_find_by_path_respects_limit() {
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
     assert!(count <= 5, "Should respect limit");
+    assert_eq!(result.get("truncated"), Some(&serde_json::json!(true)));
+    assert_eq!(
+        result
+            .get("total_available")
+            .and_then(serde_json::Value::as_u64),
+        Some(6)
+    );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_find_by_path_rejects_excessive_offset() {
+    let searcher = get_searcher();
+    let params = FindByPathParams {
+        path_pattern: "**".to_string(),
+        resource_types: vec![],
+        detail: Some(DetailLevel::Standard),
+        pagination: PaginationParams {
+            limit: Some(5),
+            offset: searcher.config().search.max_offset + 1,
+        },
+    };
+    let err = searcher
+        .find_by_path(&params)
+        .await
+        .expect_err("offset should be rejected");
+
+    assert!(
+        err.to_string().contains("Offset exceeds maximum"),
+        "unexpected error: {err}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_find_by_path_no_matches() {
     let searcher = get_searcher();

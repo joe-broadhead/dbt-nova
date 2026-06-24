@@ -24,7 +24,9 @@ use crate::cli::eval_cmd::{
     build_eval_gate_tool_response, build_eval_history_tool_response, build_eval_init_tool_response,
     build_eval_run_tool_response, build_eval_validate_tool_response,
 };
-use crate::cli::manifest::build_manifest_warm_tool_response;
+use crate::cli::manifest::{
+    build_manifest_warm_tool_response, require_mcp_manifest_reload_enabled,
+};
 use crate::cli::nova_meta_cmd::build_nova_meta_tool_response;
 use crate::cli::storage_cmd::{
     build_storage_cleanup_tool_response, build_storage_inspect_tool_response,
@@ -1887,51 +1889,48 @@ impl DbtNovaServer {
             .unwrap_or_else(|err| Self::serialization_error_response(&err))
     }
 
-    /// Reload the manifest from a new source and rebuild indexes.
+    /// Reload the manifest and rebuild indexes.
     #[tool(
         name = "reload_manifest",
-        description = "Reload manifest from a new source (manifest_uri or manifest_path) and rebuild indexes in the background. Useful for switching between local and remote manifests without restarting."
+        description = "Reload the current manifest source and rebuild indexes in the background. Source, refresh, or storage changes require DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD=1."
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn reload_manifest(&self, params: Parameters<ReloadManifestParams>) -> String {
         let start = Instant::now();
         let mut success = false;
-        let out = match self.searcher.reload(&params.0).await {
-            Ok(payload) => match serde_json::to_value(SuccessResponse::new(payload, 1)) {
-                Ok(response) => match self.searcher.get().await {
-                    Ok(searcher) => {
-                        match Self::serialize_budgeted_value(response, searcher.config()) {
+        let reload_params = params.0;
+        let out = if let Err(err) = require_mcp_manifest_reload_enabled(&reload_params) {
+            Self::error_response(&err)
+        } else {
+            match self.searcher.reload(&reload_params).await {
+                Ok(payload) => match serde_json::to_value(SuccessResponse::new(payload, 1)) {
+                    Ok(response) => match self.searcher.get().await {
+                        Ok(searcher) => {
+                            match Self::serialize_budgeted_value(response, searcher.config()) {
+                                Ok(out) => {
+                                    success = true;
+                                    out
+                                }
+                                Err(err) => Self::serialization_error_response(&err),
+                            }
+                        }
+                        Err(_) => match serde_json::to_string(&response) {
                             Ok(out) => {
                                 success = true;
                                 out
                             }
                             Err(err) => Self::serialization_error_response(&err),
-                        }
-                    }
-                    Err(_) => match serde_json::to_string(&response) {
-                        Ok(out) => {
-                            success = true;
-                            out
-                        }
-                        Err(err) => Self::serialization_error_response(&err),
+                        },
                     },
+                    Err(err) => serde_json::json!({
+                        "success": false,
+                        "error": format!("Serialization error: {}", err),
+                        "error_code": "SERVER_ERROR"
+                    })
+                    .to_string(),
                 },
-                Err(err) => serde_json::json!({
-                    "success": false,
-                    "error": format!("Serialization error: {}", err),
-                    "error_code": "SERVER_ERROR"
-                })
-                .to_string(),
-            },
-            Err(err) => match serde_json::to_string(&err.to_response()) {
-                Ok(out) => out,
-                Err(ser_err) => serde_json::json!({
-                    "success": false,
-                    "error": format!("Serialization error: {}", ser_err),
-                    "error_code": "SERVER_ERROR"
-                })
-                .to_string(),
-            },
+                Err(err) => Self::error_response(&err),
+            }
         };
         self.record_metrics(
             "reload_manifest",
@@ -3343,6 +3342,54 @@ cases:
                 .as_str()
                 .unwrap_or_default()
                 .contains("DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reload_manifest_rejects_source_changes_without_mcp_opt_in() {
+        let env_key = crate::cli::manifest::MCP_ENABLE_MANIFEST_RELOAD_ENV;
+        let original = std::env::var_os(env_key);
+        // SAFETY: this test is the only test that mutates this MCP reload opt-in variable.
+        unsafe { std::env::remove_var(env_key) };
+
+        let temp_dir = TempDir::new().expect("temp dir");
+        let mut config = test_config(temp_dir.path());
+        config.mcp_max_response_bytes = 0;
+        let handle = ManifestSearchHandle::spawn(config);
+        handle
+            .wait_ready()
+            .await
+            .expect("fixture manifest should load");
+        let server = DbtNovaServer::new(handle);
+
+        let response: serde_json::Value = serde_json::from_str(
+            &server
+                .reload_manifest(Parameters(ReloadManifestParams {
+                    manifest_path: Some(fixture_manifest_path_string()),
+                    ..ReloadManifestParams::default()
+                }))
+                .await,
+        )
+        .expect("reload response JSON");
+
+        match original {
+            Some(value) => {
+                // SAFETY: this test restores the process variable it changed above.
+                unsafe { std::env::set_var(env_key, value) };
+            }
+            None => {
+                // SAFETY: this test restores the process variable it changed above.
+                unsafe { std::env::remove_var(env_key) };
+            }
+        }
+
+        assert_eq!(response["success"], serde_json::json!(false));
+        assert_eq!(response["error_code"], serde_json::json!("INVALID_PARAMS"));
+        assert!(
+            response["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD=1")
         );
     }
 

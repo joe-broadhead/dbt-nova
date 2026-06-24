@@ -109,9 +109,9 @@ pub const CLI_MCP_PARITY_MATRIX: [CliMcpParityEntry; 25] = [
     CliMcpParityEntry {
         cli_command: "manifest reload",
         mcp_tool: Some("reload_manifest"),
-        status: CliMcpParityStatus::Equivalent,
+        status: CliMcpParityStatus::SafetyGated,
         issue: None,
-        notes: "MCP starts a background reload for the live server; CLI reload and CLI tool-call reload are one-shot reloads",
+        notes: "MCP current-source reload is allowed; source, refresh, or storage changes require DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD=1",
     },
     CliMcpParityEntry {
         cli_command: "manifest warm",

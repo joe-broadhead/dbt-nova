@@ -20,7 +20,6 @@ fn test_config(host: String) -> DatabricksSqlConfig {
 }
 
 #[tokio::test]
-#[ignore = "requires local socket bind for wiremock; run explicitly in environments that allow loopback bind"]
 async fn databricks_query_succeeds_inline() {
     // Mock a one-shot SQL response where results are embedded inline.
     let server = MockServer::start().await;
@@ -54,7 +53,6 @@ async fn databricks_query_succeeds_inline() {
 }
 
 #[tokio::test]
-#[ignore = "requires local socket bind for wiremock; run explicitly in environments that allow loopback bind"]
 async fn databricks_query_polls_and_fetches_chunks() {
     // Mock a multi-step query that transitions from RUNNING to SUCCEEDED and fetches chunks.
     let server = MockServer::start().await;
@@ -114,7 +112,6 @@ async fn databricks_query_polls_and_fetches_chunks() {
 }
 
 #[tokio::test]
-#[ignore = "requires local socket bind for wiremock; run explicitly in environments that allow loopback bind"]
 async fn databricks_query_failed_returns_error() {
     // Mock a FAILED status to ensure error surfaces with message context.
     let server = MockServer::start().await;
@@ -131,4 +128,6 @@ async fn databricks_query_failed_returns_error() {
     let err = client.query("select explode()").await.err().unwrap();
     let msg = format!("{err}");
     assert!(msg.contains("FAILED"), "unexpected error: {msg}");
+    assert!(msg.contains("message redacted"), "unexpected error: {msg}");
+    assert!(!msg.contains("boom"), "raw provider message leaked: {msg}");
 }

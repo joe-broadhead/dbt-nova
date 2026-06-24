@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Redacted raw upstream Databricks and BigQuery HTTP error bodies from
+  CLI/MCP responses while preserving status and provider error-code context.
+- Safety-gated MCP `reload_manifest` source, refresh, and storage mutations
+  behind `DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD=1`; no-argument MCP reloads still
+  refresh the current source.
+- Bounded broad `find_by_path` scans to the requested page plus a sentinel match
+  and added offset validation for parity with other search tools.
+- Hardened reusable workflow installs by rejecting mutable installer refs by
+  default, verifying signed release checksums, and retrying transient Cargo
+  source-build network failures.
+- Updated release tagging preflight validation, dependency watchlist state,
+  OpenCode design-doc status, and packaged skill version metadata for the
+  `v0.0.6` release line.
 - Added configurable runner inputs to the reusable asset and metadata-audit
   workflows so downstream repositories can run them on self-hosted or
   organization runner pools while preserving the `ubuntu-22.04` default.

@@ -15,7 +15,7 @@ use crate::manifest::rkyv_embeddings::{self, EmbeddingsCacheLoad};
 use crate::manifest::rkyv_sparse_embeddings::{self, SparseEmbeddingsCacheLoad};
 use crate::manifest::search::ManifestSearch;
 use crate::manifest::semantic_cache::default_sparse_model_name;
-use crate::params::WarmManifestParams;
+use crate::params::{ReloadManifestParams, WarmManifestParams};
 use crate::responses::SuccessResponse;
 use crate::utils::sanitize_uri;
 
@@ -77,6 +77,7 @@ struct ManifestWarmMcpSafetyPolicy {
 }
 
 const MCP_ENABLE_MANIFEST_WARM_ENV: &str = "DBT_NOVA_MCP_ENABLE_MANIFEST_WARM";
+pub const MCP_ENABLE_MANIFEST_RELOAD_ENV: &str = "DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD";
 
 /// Runs the `manifest load` CLI command.
 ///
@@ -213,6 +214,22 @@ pub async fn build_manifest_warm_tool_response(
     }
     serde_json::to_value(SuccessResponse::new(payload, 1))
         .map_err(|error| DbtNovaError::ServerError(error.to_string()))
+}
+
+/// Enforces the MCP safety gate for live manifest reloads that change source,
+/// refresh cadence, or storage identity.
+///
+/// # Errors
+/// Returns an invalid-params error when a state-changing MCP reload is disabled.
+pub fn require_mcp_manifest_reload_enabled(params: &ReloadManifestParams) -> Result<()> {
+    if !params.changes_runtime_source_or_storage()
+        || mcp_env_enabled(MCP_ENABLE_MANIFEST_RELOAD_ENV)
+    {
+        return Ok(());
+    }
+    Err(DbtNovaError::InvalidParams(format!(
+        "reload_manifest source changes are disabled for MCP use; call reload_manifest with no arguments to reload the current source, or set {MCP_ENABLE_MANIFEST_RELOAD_ENV}=1 to allow manifest_uri/manifest_path/refresh_secs/storage_instance_id changes"
+    )))
 }
 
 async fn run_manifest_command(
@@ -545,16 +562,19 @@ fn apply_manifest_warm_settings(
 }
 
 fn require_mcp_manifest_warm_enabled() -> Result<()> {
-    if std::env::var(MCP_ENABLE_MANIFEST_WARM_ENV)
-        .ok()
-        .map(|value| value.trim().to_ascii_lowercase())
-        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
-    {
+    if mcp_env_enabled(MCP_ENABLE_MANIFEST_WARM_ENV) {
         return Ok(());
     }
     Err(DbtNovaError::InvalidParams(format!(
         "warm_manifest is disabled for MCP/tool-call use; set {MCP_ENABLE_MANIFEST_WARM_ENV}=1 to enable semantic cache warmup"
     )))
+}
+
+fn mcp_env_enabled(key: &str) -> bool {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
 }
 
 fn warm_requested_query_models(

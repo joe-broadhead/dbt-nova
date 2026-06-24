@@ -62,5 +62,30 @@ jobs:
             exit 1
           fi
 
+          cargo_toml="$(git show "${MERGE_SHA}:Cargo.toml")"
+          changelog="$(git show "${MERGE_SHA}:CHANGELOG.md")"
+          cargo_version="$(awk -F'"' '/^version = "/ { print $2; exit }' <<< "${cargo_toml}")"
+
+          if [ "${cargo_version}" != "${version}" ]; then
+            echo "Skipping tag: Cargo.toml version (${cargo_version}) does not match branch version (${version})."
+            exit 1
+          fi
+
+          if ! grep -q "^## \[${version}\]" <<< "${changelog}"; then
+            echo "Skipping tag: CHANGELOG.md is missing a ## [${version}] entry."
+            exit 1
+          fi
+
+          unreleased_notes="$(awk '
+            index($0, "## [Unreleased]") == 1 { in_unreleased=1; next }
+            /^## \[/ && in_unreleased { exit }
+            in_unreleased && $0 ~ /^-/ { print }
+          ' <<< "${changelog}")"
+          if [ -n "${unreleased_notes}" ]; then
+            echo "Skipping tag: CHANGELOG.md still has bullet entries under [Unreleased]."
+            echo "${unreleased_notes}"
+            exit 1
+          fi
+
           git tag -a "${tag}" "${MERGE_SHA}" -m "Release ${tag}"
           git push origin "${tag}"

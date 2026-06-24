@@ -23,6 +23,12 @@ impl ManifestSearch {
                 self.config.search.max_path_pattern_length
             )));
         }
+        if params.pagination.offset > self.config.search.max_offset {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "Offset exceeds maximum of {}",
+                self.config.search.max_offset
+            )));
+        }
 
         let pattern = params.path_pattern.trim_start_matches("./");
 
@@ -34,6 +40,7 @@ impl ManifestSearch {
         let detail = self.detail_level(params.detail);
         let limit = self.page_limit(params.pagination.limit);
         let offset = params.pagination.offset;
+        let match_scan_cap = offset.saturating_add(limit);
 
         let mut result_rows: Vec<JsonValue> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
@@ -78,6 +85,9 @@ impl ManifestSearch {
 
             if let Some(matched_path) = matched_path {
                 total_matches += 1;
+                if total_matches > match_scan_cap {
+                    break;
+                }
                 if skipped < offset {
                     skipped += 1;
                     continue;
