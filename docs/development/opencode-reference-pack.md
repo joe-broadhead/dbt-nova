@@ -1,4 +1,10 @@
-# OpenCode Reference Pack Design
+# OpenCode Reference Pack Design (Not Shipped)
+
+!!! warning "Design status"
+
+    dbt-nova does not currently ship generated `.opencode` pack files. This
+    page is a design contract for future implementation work, not installation
+    or release documentation.
 
 ## Purpose
 
@@ -6,7 +12,7 @@ The OpenCode reference pack should give dbt-nova users a deterministic starting
 point for agent workflows without making OpenCode mandatory or forking the
 shared skill source. This document defines the target layout, role model,
 permission profiles, MCP examples, smoke evals, and portability boundaries for
-the v0.0.12 OpenCode Reference Agent Pack milestone.
+future OpenCode Reference Agent Pack implementation.
 
 This is a design contract only. The installer, validator, generated pack files,
 and certification workflow belong to follow-up issues.

@@ -87,7 +87,9 @@ For user-owned private repositories, the attestation step is skipped.
 - The OCI image job uploads `dbt-nova-oci-trivy.json` with the release and fails
   on unwaived HIGH/CRITICAL findings in the smoke-tested image.
 
-The installer validates checksum signatures by default when `DBT_NOVA_VERIFY_SIGNATURE=1`.
+The installer validates checksum signatures automatically when `cosign` is
+available. Set `DBT_NOVA_VERIFY_SIGNATURE=1` to make signature verification
+strict.
 
 Supported prebuilt binary targets:
 
@@ -119,6 +121,8 @@ gh release download <tag> --repo joe-broadhead/dbt-nova \
 cosign verify-blob \
   --signature dbt-nova-linux-x86_64.tar.gz.sig \
   --certificate dbt-nova-linux-x86_64.tar.gz.crt \
+  --certificate-identity-regexp 'https://github.com/joe-broadhead/dbt-nova/.github/workflows/release.yml@refs/tags/v.*' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
   dbt-nova-linux-x86_64.tar.gz
 ```
 
@@ -187,8 +191,10 @@ Useful overrides:
 - `DBT_NOVA_INSTALL_NONINTERACTIVE=1`
 - `DBT_NOVA_INSTALL_DIR=/custom/path`
 - `DBT_NOVA_VERIFY_CHECKSUM=1|0`
-- `DBT_NOVA_VERIFY_SIGNATURE=1|0`
+- `DBT_NOVA_VERIFY_SIGNATURE=auto|1|0`
 - `DBT_NOVA_COSIGN_BINARY=cosign`
+- `DBT_NOVA_COSIGN_CERT_IDENTITY_REGEXP=...`
+- `DBT_NOVA_COSIGN_CERT_OIDC_ISSUER=https://token.actions.githubusercontent.com`
 - `--bundled`, `--slim`, `--warm-models`, `--install-skills`, `--skill <name>`, `--skills-dir <path>`, `--non-interactive`, `--install-dir <path>`
 
 ## Packaging Notes

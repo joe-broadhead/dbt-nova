@@ -22,6 +22,8 @@ pub use string::{
     has_query_syntax, levenshtein_distance, levenshtein_similarity, tokenize_alnum_lowercase,
 };
 
+use serde_json::Value as JsonValue;
+
 const URI_REDACT_KEYS: [&str; 8] = [
     "token",
     "access_token",
@@ -107,6 +109,84 @@ pub fn redact_sensitive_text(text: &str) -> String {
         out.push_str(&redact_sensitive_line(line));
     }
     out
+}
+
+/// Summarize an upstream HTTP error body without returning raw provider text.
+#[must_use]
+pub fn summarize_http_error_body(status: u16, body: &str) -> String {
+    if status == 401 || status == 403 {
+        return "authorization failed; check credentials".to_string();
+    }
+
+    if body.trim().is_empty() {
+        return "empty response body".to_string();
+    }
+
+    match serde_json::from_str::<JsonValue>(body) {
+        Ok(value) => summarize_json_error_body(&value, body.len()),
+        Err(_) => format!("non-JSON response ({} bytes)", body.len()),
+    }
+}
+
+fn summarize_json_error_body(value: &JsonValue, body_len: usize) -> String {
+    let mut parts = Vec::new();
+    collect_error_token(value, &["error_code"], "code", &mut parts);
+    collect_error_token(value, &["errorCode"], "code", &mut parts);
+    collect_error_token(value, &["code"], "code", &mut parts);
+    collect_error_token(value, &["reason"], "reason", &mut parts);
+    collect_error_token(value, &["status"], "status", &mut parts);
+    collect_error_token(value, &["error", "code"], "code", &mut parts);
+    collect_error_token(value, &["error", "status"], "status", &mut parts);
+    collect_error_token(value, &["error", "reason"], "reason", &mut parts);
+    collect_error_token(
+        value,
+        &["error", "errors", "0", "reason"],
+        "reason",
+        &mut parts,
+    );
+
+    parts.sort();
+    parts.dedup();
+
+    if parts.is_empty() {
+        format!("JSON error response ({body_len} bytes; message redacted)")
+    } else {
+        format!(
+            "{} ({} bytes; message redacted)",
+            parts.join("; "),
+            body_len
+        )
+    }
+}
+
+fn collect_error_token(value: &JsonValue, path: &[&str], label: &str, parts: &mut Vec<String>) {
+    let Some(raw) = json_path_string(value, path) else {
+        return;
+    };
+    let redacted = redact_sensitive_text(raw).trim().to_string();
+    if redacted.is_empty() || redacted.contains("[REDACTED]") {
+        return;
+    }
+    let token: String = redacted
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '/'))
+        .take(96)
+        .collect();
+    if !token.is_empty() {
+        parts.push(format!("{label}={token}"));
+    }
+}
+
+fn json_path_string<'a>(value: &'a JsonValue, path: &[&str]) -> Option<&'a str> {
+    let mut current = value;
+    for segment in path {
+        if let Ok(index) = segment.parse::<usize>() {
+            current = current.as_array()?.get(index)?;
+        } else {
+            current = current.as_object()?.get(*segment)?;
+        }
+    }
+    current.as_str()
 }
 
 fn redact_sensitive_line(line: &str) -> String {
@@ -242,4 +322,57 @@ fn sanitize_uri_path(path: &str) -> String {
     }
 
     segments.join("/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{redact_sensitive_text, summarize_http_error_body};
+
+    #[test]
+    fn sensitive_text_redaction_masks_common_secret_shapes() {
+        let raw = "Authorization: Bearer raw-token\nurl=https://user:pass@example.com/path?token=raw-query api_token=raw-api-token";
+        let redacted = redact_sensitive_text(raw);
+
+        assert!(!redacted.contains("raw-token"));
+        assert!(!redacted.contains("raw-query"));
+        assert!(!redacted.contains("raw-api-token"));
+        assert!(!redacted.contains("user:pass"));
+        assert!(redacted.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn http_error_summary_does_not_echo_raw_message_or_tokens() {
+        let body = r#"{
+            "error": {
+                "code": 400,
+                "status": "INVALID_ARGUMENT",
+                "message": "Invalid query select * from users where token='raw-token'"
+            }
+        }"#;
+        let summary = summarize_http_error_body(400, body);
+
+        assert!(summary.contains("status=INVALID_ARGUMENT"));
+        assert!(summary.contains("message redacted"));
+        assert!(!summary.contains("raw-token"));
+        assert!(!summary.contains("select *"));
+        assert!(!summary.contains("users"));
+    }
+
+    #[test]
+    fn http_error_summary_hides_auth_failures() {
+        let summary =
+            summarize_http_error_body(401, r#"{"message":"Invalid OAuth access token raw-token"}"#);
+
+        assert_eq!(summary, "authorization failed; check credentials");
+        assert!(!summary.contains("raw-token"));
+    }
+
+    #[test]
+    fn http_error_summary_omits_non_json_bodies() {
+        let body = "proxy failed with Authorization: Bearer raw-token";
+        let summary = summarize_http_error_body(502, body);
+
+        assert_eq!(summary, format!("non-JSON response ({} bytes)", body.len()));
+        assert!(!summary.contains("raw-token"));
+    }
 }

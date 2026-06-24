@@ -426,6 +426,10 @@ Required:
 Optional:
 - `resource_types`, `detail` (`compact` | `standard` | `full`), `limit`, `offset`
 
+Broad path globs are bounded by pagination. When `truncated=true`,
+`total_available` is the number of matches observed before the bounded scan
+stopped, not an exhaustive manifest-wide count.
+
 ```json
 {"name":"find_by_path","arguments":{"path_pattern":"models/staging/**","resource_types":["model"],"detail":"standard"}}
 ```
@@ -1116,13 +1120,16 @@ valid and allow the configured refresh interval to recover automatically.
 ```
 
 ### `reload_manifest`
-Reload the manifest from a new source and rebuild indexes in the background.
+Reload the manifest and rebuild indexes in the background.
 
 Optional:
 - `manifest_uri` or `manifest_path`
 - `refresh_secs`, `storage_instance_id`
 
-If no arguments are provided, Nova reloads the current manifest source.
+If no arguments are provided, Nova reloads the current manifest source. In MCP
+server mode, changing `manifest_uri`, `manifest_path`, `refresh_secs`, or
+`storage_instance_id` is disabled unless the operator sets
+`DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD=1`.
 
 ```json
 {"name":"reload_manifest","arguments":{"manifest_uri":"dbfs:///path/to/manifest.json"}}

@@ -29,7 +29,7 @@ sets the documented opt-in environment variable for local execution or writes.
 | --- | --- | --- | --- | --- |
 | `server start` | None | Lifecycle exception | - | Starts the MCP process and cannot be called from inside that process. |
 | `manifest load` | `health` | Lifecycle exception | - | MCP server startup performs the initial manifest load; `health` reports the active loaded manifest and `reload_manifest` replaces it. |
-| `manifest reload` | `reload_manifest` | Equivalent | - | MCP starts a background reload for the live server; CLI `manifest reload` and CLI `tool call reload_manifest` are one-shot reloads. |
+| `manifest reload` | `reload_manifest` | SafetyGated | - | MCP current-source reload is allowed; source, refresh, or storage changes require `DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD=1`. CLI `manifest reload` and CLI `tool call reload_manifest` are one-shot reloads. |
 | `manifest warm` | `warm_manifest` | SafetyGated | - | MCP semantic cache warmup requires `DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1` and uses the current manifest source. |
 | `tool call <tool_name>` | 53 MCP tools | Equivalent | - | CLI tool-call mode supports the canonical MCP tool catalog. |
 | `audit agent-readiness` | `get_agent_readiness` | Equivalent | - | MCP returns the same `agent_readiness.v1` report without CLI file writes. |

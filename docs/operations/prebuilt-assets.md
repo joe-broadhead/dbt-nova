@@ -43,6 +43,8 @@ Create a workflow in the downstream repo that calls Nova's reusable producer.
 
 The examples below pin `v0.0.6`. For production, pin either a release tag or an
 immutable commit SHA and keep `installer_ref` aligned with the workflow ref.
+Reusable workflows reject branch-like installer refs unless
+`allow_mutable_installer_ref: true` is set for a trusted development run.
 
 ```yaml
 name: Build Nova Assets
@@ -254,6 +256,8 @@ Workflow inputs:
 - `installer_repository` / `installer_ref` (advanced override for which repo/ref
   is used for installing `dbt-nova`; defaults to
   `joe-broadhead/dbt-nova` plus the resolved reusable-workflow ref when available)
+- `allow_mutable_installer_ref`: allow branch-like `installer_ref` values for
+  trusted development runs; defaults to `false`
 - `installer_install_mode`: `auto` (default; try release binary then fall back to source build),
   `release` (release binary only), or `source` (always build from source)
 
@@ -335,7 +339,8 @@ Post-run verification checklist:
 2. Download `artifact_name_publish_summary` and confirm expected target URI keys.
 3. Set `DBT_NOVA_BOOTSTRAP_URI` to the stable bootstrap alias and run `dbt-nova health check --json`.
 4. Confirm health reports `bootstrap.loaded=true` and `artifact_consumer.storage_materialized=true`.
-5. After a later publish, run `reload_manifest` to adopt the newer assets without editing MCP config.
+5. After a later publish, run `reload_manifest` with no arguments to adopt the
+   newer assets without editing MCP config.
 
 ## Consumer
 
@@ -404,7 +409,10 @@ Recommended consumer pattern:
 
 - Point `DBT_NOVA_BOOTSTRAP_URI` at the stable alias (`<storage_instance_id>-latest-bootstrap.json`).
 - Keep the versioned bootstrap URIs for rollback/debugging only.
-- After producers publish a newer asset set, run `reload_manifest` so Nova re-fetches the stable bootstrap alias and adopts the new artifacts.
+- After producers publish a newer asset set, run `reload_manifest` with no
+  arguments so Nova re-fetches the stable bootstrap alias and adopts the new
+  artifacts. Changing source, refresh, or storage settings from MCP requires
+  `DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD=1`.
 - Do not combine `DBT_NOVA_STORAGE_READ_ONLY=true` with `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing|always` on a cold machine.
 
 Use `health` to verify runtime decisions:

@@ -102,7 +102,7 @@ One-page cheatsheet for all 53 dbt-nova MCP tools.
 | Tool | Purpose | Key Parameters |
 |------|---------|----------------|
 | `health` | Readiness and status check | (none) |
-| `reload_manifest` | Reload manifest and rebuild indexes | `manifest_uri`, `manifest_path` (optional) |
+| `reload_manifest` | Reload manifest and rebuild indexes | no args for current source; source changes require `DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD=1` |
 | `warm_manifest` | Warm semantic caches for current manifest source | `vector`, `sparse`, `reranker`, `force` |
 | `show_config` | Inspect active/default runtime config | `defaults` |
 | `validate_config` | Validate active runtime config | (none) |

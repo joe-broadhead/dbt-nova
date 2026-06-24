@@ -31,6 +31,7 @@ use tracing::{debug, warn};
 use crate::error::{DbtNovaError, Result};
 use crate::params::ExecuteSqlParams;
 use crate::responses::SuccessResponse;
+use crate::utils::{redact_sensitive_text, summarize_http_error_body};
 use crate::warehouse::SqlProvider;
 use crate::warehouse::preflight::{
     PreflightReport, ProbePresence, build_configuration_failure_response, build_preflight_response,
@@ -46,11 +47,12 @@ fn dbx_err(message: impl Into<String>) -> DbtNovaError {
     }
 }
 
-fn dbx_http(status: StatusCode, body: String) -> DbtNovaError {
+fn dbx_http(status: StatusCode, body: &str) -> DbtNovaError {
+    let body_summary = summarize_http_error_body(status.as_u16(), body);
     DbtNovaError::DatabricksError {
         message: format!("Databricks API error (HTTP {status})"),
         status: Some(status.as_u16()),
-        body: Some(body),
+        body: Some(body_summary),
     }
 }
 
@@ -323,7 +325,7 @@ impl DatabricksSqlClient {
             Ok(body) => body,
             Err(err) => format!("<failed to read response body: {err}>"),
         };
-        Err(dbx_http(status, body))
+        Err(dbx_http(status, &body))
     }
 
     async fn sql_get_result_chunk(
@@ -497,7 +499,7 @@ impl DatabricksSqlClient {
                         Ok(body) => body,
                         Err(err) => format!("<failed to read response body: {err}>"),
                     };
-                    return Err(dbx_http(status, body));
+                    return Err(dbx_http(status, &body));
                 }
                 Err(e) => {
                     // Retry on transient network/timeouts
@@ -759,7 +761,7 @@ async fn send_json_once<T: DeserializeOwned>(builder: reqwest::RequestBuilder) -
         Ok(body) => body,
         Err(err) => format!("<failed to read response body: {err}>"),
     };
-    Err(dbx_http(status, body))
+    Err(dbx_http(status, &body))
 }
 
 fn normalize_host(host: &str) -> Result<String> {
@@ -831,10 +833,12 @@ fn format_statement_error(err: Option<&StatementError>) -> String {
     match err {
         None => "Unknown error".to_string(),
         Some(e) => match (&e.error_code, &e.message) {
-            (Some(code), Some(msg)) => format!("{code}: {msg}"),
-            (Some(code), None) => code.clone(),
-            (None, Some(msg)) => msg.clone(),
-            (None, None) => "Unknown error".to_string(),
+            (Some(code), Some(msg)) if !msg.trim().is_empty() => {
+                format!("{}: message redacted", redact_sensitive_text(code))
+            }
+            (Some(code), _) => redact_sensitive_text(code),
+            (None, Some(msg)) if !msg.trim().is_empty() => "message redacted".to_string(),
+            (None, Some(_) | None) => "Unknown error".to_string(),
         },
     }
 }
@@ -1162,10 +1166,11 @@ async fn preflight_databricks(params: &ExecuteSqlParams) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::{
-        QueryResult, QueryStats, catalog_preflight_statement, normalize_preflight_relation,
-        normalize_warehouse_id, preflight_result_has_rows, relation_preflight_statement,
-        schema_preflight_statement,
+        QueryResult, QueryStats, StatementError, catalog_preflight_statement, dbx_http,
+        format_statement_error, normalize_preflight_relation, normalize_warehouse_id,
+        preflight_result_has_rows, relation_preflight_statement, schema_preflight_statement,
     };
+    use reqwest::StatusCode;
     use serde_json::Value;
 
     fn sample_preflight_result(rows: Vec<Vec<Value>>, total_row_count: Option<u64>) -> QueryResult {
@@ -1190,6 +1195,41 @@ mod tests {
     fn normalize_warehouse_id_accepts_raw_id() {
         let got = normalize_warehouse_id("abc123").expect("raw id should parse");
         assert_eq!(got, "abc123");
+    }
+
+    #[test]
+    fn databricks_http_errors_do_not_expose_raw_body() {
+        let err = dbx_http(
+            StatusCode::BAD_REQUEST,
+            r#"{"error_code":"INVALID_PARAMETER_VALUE","message":"Bad SQL select * from users where token='raw-token'"}"#,
+        );
+        let response = err.to_response();
+        let serialized = response.to_string();
+
+        assert_eq!(response["status"], serde_json::json!(400));
+        assert!(
+            response["body"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("code=INVALID_PARAMETER_VALUE")
+        );
+        assert!(!serialized.contains("raw-token"));
+        assert!(!serialized.contains("select *"));
+        assert!(!serialized.contains("users"));
+    }
+
+    #[test]
+    fn databricks_statement_errors_do_not_expose_raw_message() {
+        let err = StatementError {
+            error_code: Some("BAD_REQUEST".to_string()),
+            message: Some("Bad SQL select * from users where token='raw-token'".to_string()),
+        };
+        let formatted = format_statement_error(Some(&err));
+
+        assert_eq!(formatted, "BAD_REQUEST: message redacted");
+        assert!(!formatted.contains("raw-token"));
+        assert!(!formatted.contains("select *"));
+        assert!(!formatted.contains("users"));
     }
 
     #[test]

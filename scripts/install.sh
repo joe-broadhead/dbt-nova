@@ -12,8 +12,10 @@ SKILL_NAME="${DBT_NOVA_SKILL_NAME:-}"
 NON_INTERACTIVE="${DBT_NOVA_INSTALL_NONINTERACTIVE:-0}"
 INSTALL_WARM_MODELS="${DBT_NOVA_INSTALL_WARM_MODELS:-0}"
 VERIFY_CHECKSUM="${DBT_NOVA_VERIFY_CHECKSUM:-1}"
-VERIFY_SIGNATURE="${DBT_NOVA_VERIFY_SIGNATURE:-0}"
+VERIFY_SIGNATURE="${DBT_NOVA_VERIFY_SIGNATURE:-auto}"
 COSIGN_BINARY="${DBT_NOVA_COSIGN_BINARY:-cosign}"
+COSIGN_CERT_IDENTITY_REGEXP="${DBT_NOVA_COSIGN_CERT_IDENTITY_REGEXP:-https://github.com/${REPO_SLUG}/.github/workflows/release.yml@refs/tags/v.*}"
+COSIGN_CERT_OIDC_ISSUER="${DBT_NOVA_COSIGN_CERT_OIDC_ISSUER:-https://token.actions.githubusercontent.com}"
 DOWNLOAD_TOKEN="${DBT_NOVA_GITHUB_TOKEN:-${GITHUB_TOKEN:-${GH_TOKEN:-}}}"
 
 usage() {
@@ -39,8 +41,10 @@ Environment overrides:
   DBT_NOVA_INSTALL_WARM_MODELS     1 to pre-warm model files after install (default: 0)
   DBT_NOVA_INSTALL_NONINTERACTIVE  1 to skip prompts (defaults to slim)
   DBT_NOVA_VERIFY_CHECKSUM         1 to verify artifact checksum (default: 1)
-  DBT_NOVA_VERIFY_SIGNATURE        1 to verify artifact signature (default: 0)
+  DBT_NOVA_VERIFY_SIGNATURE        auto|1|0 checksum signature verification (default: auto)
   DBT_NOVA_COSIGN_BINARY           Path to cosign executable (default: cosign)
+  DBT_NOVA_COSIGN_CERT_IDENTITY_REGEXP  Expected signing identity regexp
+  DBT_NOVA_COSIGN_CERT_OIDC_ISSUER      Expected signing OIDC issuer
 EOF
 }
 
@@ -137,23 +141,33 @@ verify_signature() {
   local signature="$2"
   local certificate="$3"
 
-  if [[ "${VERIFY_SIGNATURE}" != "1" ]]; then
+  if [[ "${VERIFY_SIGNATURE}" == "0" ]]; then
     return 0
   fi
 
   if ! command -v "$COSIGN_BINARY" >/dev/null 2>&1; then
-    echo "Signature verification requested but cosign is not available." >&2
+    if [[ "${VERIFY_SIGNATURE}" == "auto" ]]; then
+      echo "cosign is not available; skipping automatic signature verification." >&2
+      return 0
+    fi
+    echo "Signature verification is required but cosign is not available." >&2
     return 1
   fi
 
   if [[ ! -f "$signature" || ! -f "$certificate" ]]; then
-    echo "Signature verification requested, but files are missing: $signature or $certificate." >&2
+    if [[ "${VERIFY_SIGNATURE}" == "auto" ]]; then
+      echo "Signature files are unavailable; skipping automatic signature verification." >&2
+      return 0
+    fi
+    echo "Signature verification is required, but files are missing: $signature or $certificate." >&2
     return 1
   fi
 
   COSIGN_YES=1 "$COSIGN_BINARY" verify-blob \
     --signature "$signature" \
     --certificate "$certificate" \
+    --certificate-identity-regexp "$COSIGN_CERT_IDENTITY_REGEXP" \
+    --certificate-oidc-issuer "$COSIGN_CERT_OIDC_ISSUER" \
     "$artifact"
 }
 
@@ -582,7 +596,7 @@ if [[ "${VERIFY_CHECKSUM}" == "1" ]]; then
   verify_checksum_file "${tmp_dir}/${asset}" "${tmp_dir}/${checksum_file}"
 fi
 
-if [[ "${VERIFY_SIGNATURE}" == "1" ]]; then
+if [[ "${VERIFY_SIGNATURE}" != "0" ]]; then
   if [[ "${VERIFY_CHECKSUM}" != "1" ]]; then
     echo "Enabling checksum verification because signature verification requires checksum_file."
     echo "Downloading ${checksum_url}"
@@ -592,11 +606,30 @@ if [[ "${VERIFY_SIGNATURE}" == "1" ]]; then
     verify_checksum_file "${tmp_dir}/${asset}" "${tmp_dir}/${checksum_file}"
   fi
 
+  signature_available=1
   echo "Downloading ${signature_url}"
-  download_file "${signature_file}" "${signature_url}" "${tmp_dir}/${signature_file}"
+  if ! download_file "${signature_file}" "${signature_url}" "${tmp_dir}/${signature_file}"; then
+    if [[ "${VERIFY_SIGNATURE}" == "auto" ]]; then
+      echo "Checksum signature unavailable; skipping automatic signature verification." >&2
+      rm -f "${tmp_dir}/${signature_file}"
+      signature_available=0
+    else
+      exit 1
+    fi
+  fi
   echo "Downloading ${certificate_url}"
-  download_file "${certificate_file}" "${certificate_url}" "${tmp_dir}/${certificate_file}"
-  verify_signature "${tmp_dir}/${checksum_file}" "${tmp_dir}/${signature_file}" "${tmp_dir}/${certificate_file}"
+  if ! download_file "${certificate_file}" "${certificate_url}" "${tmp_dir}/${certificate_file}"; then
+    if [[ "${VERIFY_SIGNATURE}" == "auto" ]]; then
+      echo "Checksum certificate unavailable; skipping automatic signature verification." >&2
+      rm -f "${tmp_dir}/${certificate_file}"
+      signature_available=0
+    else
+      exit 1
+    fi
+  fi
+  if [[ "${signature_available}" == "1" ]]; then
+    verify_signature "${tmp_dir}/${checksum_file}" "${tmp_dir}/${signature_file}" "${tmp_dir}/${certificate_file}"
+  fi
 fi
 
 tar -xzf "${tmp_dir}/${asset}" -C "${tmp_dir}"

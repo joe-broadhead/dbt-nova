@@ -23,6 +23,11 @@ on:
         required: false
         type: string
         default: ""
+      allow_mutable_installer_ref:
+        description: "Allow branch-like installer_ref values. Keep false for production; use tags or full SHAs instead."
+        required: false
+        type: boolean
+        default: false
       installer_install_mode:
         description: "How to install dbt-nova in CI: auto (try release, fallback source), release, or source"
         required: false
@@ -182,6 +187,11 @@ on:
         required: false
         type: string
         default: ""
+      allow_mutable_installer_ref:
+        description: "Allow branch-like installer_ref values. Keep false for production; use tags or full SHAs instead."
+        required: false
+        type: boolean
+        default: false
       installer_install_mode:
         description: "How to install dbt-nova in CI: auto (try release, fallback source), release, or source"
         required: false
@@ -320,6 +330,7 @@ jobs:
           INPUT_MANIFEST_URI: ${{ inputs.manifest_uri }}
           INPUT_INSTALLER_REPOSITORY: ${{ inputs.installer_repository }}
           INPUT_INSTALLER_REF: ${{ inputs.installer_ref }}
+          INPUT_ALLOW_MUTABLE_INSTALLER_REF: ${{ inputs.allow_mutable_installer_ref }}
           INPUT_INSTALLER_INSTALL_MODE: ${{ inputs.installer_install_mode }}
           INPUT_DBT_GENERATE_MANIFEST: ${{ inputs.dbt_generate_manifest }}
           INPUT_DBT_COMMAND: ${{ inputs.dbt_command }}
@@ -376,6 +387,7 @@ jobs:
           manifest_uri = os.environ["INPUT_MANIFEST_URI"].strip()
           installer_repository = os.environ["INPUT_INSTALLER_REPOSITORY"].strip()
           installer_ref = os.environ["INPUT_INSTALLER_REF"].strip()
+          allow_mutable_installer_ref = os.environ["INPUT_ALLOW_MUTABLE_INSTALLER_REF"].strip().lower()
           installer_install_mode = os.environ["INPUT_INSTALLER_INSTALL_MODE"].strip()
           dbt_generate_manifest = os.environ["INPUT_DBT_GENERATE_MANIFEST"].strip().lower()
           dbt_command = os.environ["INPUT_DBT_COMMAND"]
@@ -465,6 +477,17 @@ jobs:
               installer_ref = current_sha
           if not installer_repository or not installer_ref:
               fail("failed to resolve installer_repository/installer_ref; set installer_ref explicitly.")
+          if allow_mutable_installer_ref != "true":
+              immutable_ref = (
+                  re.fullmatch(r"[0-9a-fA-F]{40}", installer_ref)
+                  or re.fullmatch(r"v?[0-9]+\.[0-9]+\.[0-9]+", installer_ref)
+              )
+              if not immutable_ref:
+                  fail(
+                      "installer_ref must be an immutable full commit SHA or release tag "
+                      f"(for example v0.0.6); resolved installer_ref={installer_ref!r}. "
+                      "Set allow_mutable_installer_ref=true only for trusted development runs."
+                  )
 
           run_suffix = os.environ.get("GITHUB_RUN_ID", "local")
           artifact_name_report_json = f"{artifact_name_prefix}-report-{run_suffix}"
@@ -549,6 +572,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq
 
+      - name: Install cosign
+        if: ${{ needs.prepare.outputs.installer_install_mode != 'source' }}
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac
+        with:
+          cosign-release: "v2.4.1"
+
       - name: Install dbt-nova from release assets
         id: install_release
         if: ${{ needs.prepare.outputs.installer_install_mode != 'source' }}
@@ -563,6 +592,8 @@ jobs:
           work_dir="${RUNNER_TEMP}/dbt-nova-release-install"
           tarball_path="${work_dir}/dbt-nova-linux-x86_64.tar.gz"
           checksum_path="${work_dir}/dbt-nova-linux-x86_64.sha256"
+          signature_path="${checksum_path}.sig"
+          certificate_path="${checksum_path}.crt"
           mkdir -p "${work_dir}"
 
           download_asset() {
@@ -586,6 +617,27 @@ jobs:
             fi
             exit 1
           fi
+          if ! download_asset "dbt-nova-linux-x86_64.sha256.sig" "${signature_path}"; then
+            if [[ "${INSTALLER_INSTALL_MODE}" == "auto" ]]; then
+              echo "installed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            exit 1
+          fi
+          if ! download_asset "dbt-nova-linux-x86_64.sha256.crt" "${certificate_path}"; then
+            if [[ "${INSTALLER_INSTALL_MODE}" == "auto" ]]; then
+              echo "installed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            exit 1
+          fi
+
+          COSIGN_EXPERIMENTAL=1 COSIGN_YES=1 cosign verify-blob \
+            --signature "${signature_path}" \
+            --certificate "${certificate_path}" \
+            --certificate-identity-regexp "https://github.com/${INSTALLER_REPOSITORY}/.github/workflows/release.yml@refs/tags/v.*" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${checksum_path}"
 
           expected_sha="$(awk '{print $1}' "${checksum_path}")"
           actual_sha="$(sha256sum "${tarball_path}" | awk '{print $1}')"
@@ -624,9 +676,23 @@ jobs:
       - name: Build dbt-nova from pinned workflow source
         if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
         shell: bash
+        env:
+          CARGO_NET_RETRY: "10"
+          CARGO_HTTP_TIMEOUT: "60"
         run: |
           set -euo pipefail
-          cargo build --locked --release --manifest-path .nova-installer-source/Cargo.toml
+          for attempt in 1 2 3; do
+            if cargo build --locked --release --manifest-path .nova-installer-source/Cargo.toml; then
+              break
+            fi
+            if [[ "${attempt}" == "3" ]]; then
+              echo "cargo build failed after ${attempt} attempts."
+              exit 1
+            fi
+            sleep_seconds=$(( attempt * 20 ))
+            echo "cargo build failed; retrying in ${sleep_seconds}s (attempt ${attempt}/3)."
+            sleep "${sleep_seconds}"
+          done
           mkdir -p "$HOME/.local/bin"
           install -m 755 .nova-installer-source/target/release/dbt-nova "$HOME/.local/bin/dbt-nova"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"

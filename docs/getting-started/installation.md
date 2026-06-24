@@ -120,7 +120,10 @@ find "$HOME/.dbt-nova/.fastembed_cache" -type f \
 The installer verifies SHA-256 checksums for downloaded archives by default.
 Set `DBT_NOVA_VERIFY_CHECKSUM=0` to skip this check.
 
-To also verify the checksum signature, install `cosign` and set:
+Checksum signature verification defaults to `auto`: if `cosign` is available
+and the release includes a `.sha256.sig` and `.sha256.crt`, the installer
+verifies the signed checksum against the release workflow identity. To require
+signature verification, install `cosign` and set:
 
 ```bash
 export DBT_NOVA_VERIFY_SIGNATURE=1
@@ -142,6 +145,8 @@ sha256sum -c dbt-nova-linux-x86_64.sha256
 cosign verify-blob \
   --signature dbt-nova-linux-x86_64.sha256.sig \
   --certificate dbt-nova-linux-x86_64.sha256.crt \
+  --certificate-identity-regexp 'https://github.com/joe-broadhead/dbt-nova/.github/workflows/release.yml@refs/tags/v.*' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
   dbt-nova-linux-x86_64.sha256
 ```
 
@@ -216,8 +221,10 @@ The installer defaults to **slim** and supports:
 - `DBT_NOVA_INSTALL_DIR=/custom/path`
 - `--bundled`, `--slim`, `--warm-models`, `--install-skills`, `--skill <name>`, `--skills-dir <path>`, `--non-interactive`, `--install-dir <path>`
 - `DBT_NOVA_VERIFY_CHECKSUM=1|0`
-- `DBT_NOVA_VERIFY_SIGNATURE=1|0`
+- `DBT_NOVA_VERIFY_SIGNATURE=auto|1|0`
 - `DBT_NOVA_COSIGN_BINARY=cosign`
+- `DBT_NOVA_COSIGN_CERT_IDENTITY_REGEXP=...`
+- `DBT_NOVA_COSIGN_CERT_OIDC_ISSUER=https://token.actions.githubusercontent.com`
 
 ## Troubleshooting
 

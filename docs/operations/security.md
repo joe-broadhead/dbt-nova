@@ -32,7 +32,7 @@ warehouse-backed `execute_sql` capability. dbt-nova does **not** provide built-i
 authentication or authorization for this transport.
 
 Published container images default to discovery-only, non-admin MCP exposure with
-`DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest`.
+`DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,reload_manifest,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest`.
 Clear or customize that denylist only for a SQL-enabled or operator endpoint
 that is isolated, authenticated, and backed by least-privilege credentials.
 
@@ -55,6 +55,11 @@ in:
 
 Keep these flags disabled for hosted MCP unless the process runs in an isolated
 trusted environment with appropriate filesystem and provider-command controls.
+
+`reload_manifest` can mutate the live server source, refresh cadence, or storage
+identity. No-argument reloads refresh the current source, but source-changing
+reloads require `DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD=1`. Keep `reload_manifest`
+hidden on normal hosted endpoints unless an operator channel needs it.
 
 `warm_manifest` writes semantic cache artifacts and is also disabled by default.
 Set `DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1` only for trusted local or isolated
@@ -98,8 +103,8 @@ metadata in the `reason` field. CI enforces that review dates are not expired vi
 ## Dependency Watchlist
 
 Beyond RustSec advisories, Nova tracks known dependency constraints (for example,
-the `ort-sys` RC pin and `reqwest` transitive version split) in a machine-readable
-watchlist with owners, review dates, and upgrade triggers.
+the `ort-sys` RC pin and the `reqwest` 0.11/0.12/0.13 transitive split) in a
+machine-readable watchlist with owners, review dates, and upgrade triggers.
 
 - Watchlist file: `dependency-watchlist.toml`
 - Validation script: `scripts/check_dependency_watchlist.sh`

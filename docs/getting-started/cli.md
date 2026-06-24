@@ -304,8 +304,11 @@ takes precedence.
 
 MCP `reload_manifest` differs because it mutates a running server: it accepts
 the request, starts a background rebuild, and keeps serving the previous
-manifest until the new one is ready. CLI `manifest reload` and CLI `tool call
-reload_manifest` load once and return after the target manifest is available.
+manifest until the new one is ready. No-argument MCP reloads refresh the current
+source; changing `manifest_uri`, `manifest_path`, `refresh_secs`, or
+`storage_instance_id` requires `DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD=1`. CLI
+`manifest reload` and CLI `tool call reload_manifest` load once and return after
+the target manifest is available.
 
 ## `warm_manifest` via `tool call`
 

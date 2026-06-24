@@ -72,7 +72,10 @@ Recommended with prebuilt artifacts:
   manifest content used by the producer build.
 - Use the same Nova release on producer and consumer.
 - Prefer the stable bootstrap alias (`<storage_instance_id>-latest-bootstrap.json`) and allow Nova to cache fetched artifacts locally.
-- After a producer publishes new assets, run `reload_manifest` to pick up the newer bootstrap via the same URI.
+- After a producer publishes new assets, run `reload_manifest` with no arguments
+  to pick up the newer bootstrap via the same URI. Changing source URI/path,
+  refresh interval, or storage identity from MCP requires
+  `DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD=1`.
 - Do not combine `DBT_NOVA_STORAGE_READ_ONLY=true` with `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing|always` on a cold machine.
 
 Bootstrap precedence reminder:
@@ -223,6 +226,8 @@ Required:
 Optional:
 - `DBT_NOVA_BIGQUERY_LOCATION` (e.g., `US`, `EU`)
 - `DBT_NOVA_BIGQUERY_TIMEOUT_MS` (default: `30000`)
+- `DBT_NOVA_BIGQUERY_API_BASE_URL` (advanced/test override; defaults to Google;
+  `http://` is accepted only for loopback test servers)
 - `DBT_NOVA_SQL_MAX_ROW_LIMIT` (default: `10000`)
 - `DBT_NOVA_SQL_MAX_BYTE_LIMIT` (default: `100000000`)
 - `DBT_NOVA_SQL_MAX_CHUNKS` (default: `100`)

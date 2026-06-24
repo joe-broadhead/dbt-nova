@@ -97,8 +97,10 @@ returns to `ready` automatically without a process restart.
 
 ### Reload manifest source without restart
 
-Use the `reload_manifest` tool to point Nova at a new manifest path/URI and rebuild
-indexes in the background:
+Use the `reload_manifest` tool without arguments to reload the current manifest
+source, or set `DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD=1` before server start to
+allow an MCP client to point Nova at a new manifest path/URI and rebuild indexes
+in the background:
 
 ```json
 {"name":"reload_manifest","arguments":{"manifest_path":"/path/to/manifest.json"}}

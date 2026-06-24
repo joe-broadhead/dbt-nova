@@ -59,7 +59,7 @@ Hotfix flow:
 1. Cut `hotfix/<version>` from `master`
 2. Merge hotfix -> `master`, tag `v<version>`
 
-Only `master` is tagged for releases. Docs deploy from release tags.
+Only `master` is tagged for releases. Docs deploy from pushes to `master`.
 
 ## Code Standards
 

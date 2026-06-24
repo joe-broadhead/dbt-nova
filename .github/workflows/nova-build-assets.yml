@@ -27,6 +27,11 @@ on:
         required: false
         type: string
         default: ""
+      allow_mutable_installer_ref:
+        description: "Allow branch-like installer_ref values. Keep false for production; use tags or full SHAs instead."
+        required: false
+        type: boolean
+        default: false
       installer_install_mode:
         description: "How to install dbt-nova in CI: auto (try release, fallback source), release, or source"
         required: false
@@ -261,6 +266,7 @@ jobs:
           INPUT_STORAGE_INSTANCE_ID: ${{ inputs.storage_instance_id }}
           INPUT_INSTALLER_REPOSITORY: ${{ inputs.installer_repository }}
           INPUT_INSTALLER_REF: ${{ inputs.installer_ref }}
+          INPUT_ALLOW_MUTABLE_INSTALLER_REF: ${{ inputs.allow_mutable_installer_ref }}
           INPUT_INSTALLER_INSTALL_MODE: ${{ inputs.installer_install_mode }}
           INPUT_DBT_GENERATE_MANIFEST: ${{ inputs.dbt_generate_manifest }}
           INPUT_DBT_COMMAND: ${{ inputs.dbt_command }}
@@ -298,6 +304,7 @@ jobs:
           storage_instance_id="${INPUT_STORAGE_INSTANCE_ID}"
           installer_repository="${INPUT_INSTALLER_REPOSITORY}"
           installer_ref="${INPUT_INSTALLER_REF}"
+          allow_mutable_installer_ref="${INPUT_ALLOW_MUTABLE_INSTALLER_REF}"
           installer_install_mode="${INPUT_INSTALLER_INSTALL_MODE}"
           dbt_generate_manifest="${INPUT_DBT_GENERATE_MANIFEST}"
           dbt_command="${INPUT_DBT_COMMAND}"
@@ -655,6 +662,13 @@ jobs:
             echo "Set installer_ref explicitly when invoking the reusable workflow."
             exit 1
           fi
+          if [[ "${allow_mutable_installer_ref}" != "true" ]]; then
+            if ! [[ "${installer_ref}" =~ ^[0-9a-fA-F]{40}$ || "${installer_ref}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "installer_ref must be an immutable full commit SHA or release tag (for example v0.0.6)."
+              echo "Resolved installer_ref='${installer_ref}'. Set allow_mutable_installer_ref=true only for trusted development runs."
+              exit 1
+            fi
+          fi
 
           storage_dir="${GITHUB_WORKSPACE}/out/dbt-nova-storage"
           models_dir="${GITHUB_WORKSPACE}/out/dbt-nova-models"
@@ -788,6 +802,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq
 
+      - name: Install cosign
+        if: ${{ needs.prepare.outputs.installer_install_mode != 'source' }}
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac
+        with:
+          cosign-release: "v2.4.1"
+
       - name: Install dbt-nova from release assets
         id: install_release
         if: ${{ needs.prepare.outputs.installer_install_mode != 'source' }}
@@ -803,6 +823,8 @@ jobs:
           work_dir="${RUNNER_TEMP}/dbt-nova-release-install"
           tarball_path="${work_dir}/dbt-nova-linux-x86_64.tar.gz"
           checksum_path="${work_dir}/dbt-nova-linux-x86_64.sha256"
+          signature_path="${checksum_path}.sig"
+          certificate_path="${checksum_path}.crt"
           mkdir -p "${work_dir}"
 
           download_asset() {
@@ -833,6 +855,31 @@ jobs:
             echo "Failed to download release checksum from ${base_url}."
             exit 1
           fi
+          if ! download_asset "dbt-nova-linux-x86_64.sha256.sig" "${signature_path}"; then
+            if [[ "${INSTALLER_INSTALL_MODE}" == "auto" ]]; then
+              echo "Release checksum signature unavailable at ${base_url}; falling back to source build."
+              echo "installed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Failed to download release checksum signature from ${base_url}."
+            exit 1
+          fi
+          if ! download_asset "dbt-nova-linux-x86_64.sha256.crt" "${certificate_path}"; then
+            if [[ "${INSTALLER_INSTALL_MODE}" == "auto" ]]; then
+              echo "Release checksum certificate unavailable at ${base_url}; falling back to source build."
+              echo "installed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Failed to download release checksum certificate from ${base_url}."
+            exit 1
+          fi
+
+          COSIGN_EXPERIMENTAL=1 COSIGN_YES=1 cosign verify-blob \
+            --signature "${signature_path}" \
+            --certificate "${certificate_path}" \
+            --certificate-identity-regexp "https://github.com/${INSTALLER_REPOSITORY}/.github/workflows/release.yml@refs/tags/v.*" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${checksum_path}"
 
           expected_sha="$(awk '{print $1}' "${checksum_path}")"
           actual_sha="$(sha256sum "${tarball_path}" | awk '{print $1}')"
@@ -889,9 +936,23 @@ jobs:
       - name: Build dbt-nova from pinned workflow source
         if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
         shell: bash
+        env:
+          CARGO_NET_RETRY: "10"
+          CARGO_HTTP_TIMEOUT: "60"
         run: |
           set -euo pipefail
-          cargo build --locked --release --manifest-path .nova-installer-source/Cargo.toml
+          for attempt in 1 2 3; do
+            if cargo build --locked --release --manifest-path .nova-installer-source/Cargo.toml; then
+              break
+            fi
+            if [[ "${attempt}" == "3" ]]; then
+              echo "cargo build failed after ${attempt} attempts."
+              exit 1
+            fi
+            sleep_seconds=$(( attempt * 20 ))
+            echo "cargo build failed; retrying in ${sleep_seconds}s (attempt ${attempt}/3)."
+            sleep "${sleep_seconds}"
+          done
           mkdir -p "$HOME/.local/bin"
           install -m 755 .nova-installer-source/target/release/dbt-nova "$HOME/.local/bin/dbt-nova"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"

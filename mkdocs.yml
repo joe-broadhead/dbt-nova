@@ -151,6 +151,6 @@ nav:
     - Architecture: development/architecture.md
     - Negative Results Log: development/negative-results.md
     - Agent Tokenomics Plan: development/agent-tokenomics-plan.md
-    - OpenCode Reference Pack Design: development/opencode-reference-pack.md
+    - OpenCode Reference Pack Design (Not Shipped): development/opencode-reference-pack.md
     - CI & Automation: development/ci.md
     - Release: development/release.md

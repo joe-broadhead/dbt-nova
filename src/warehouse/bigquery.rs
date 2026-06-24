@@ -5,7 +5,7 @@ use std::env;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use reqwest::Client;
+use reqwest::{Client, Url};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value};
@@ -14,7 +14,10 @@ use tokio::sync::RwLock;
 use crate::error::{DbtNovaError, Result};
 use crate::params::ExecuteSqlParams;
 use crate::responses::SuccessResponse;
-use crate::utils::{resolve_gcp_access_token_async, resolve_gcp_project_id};
+use crate::utils::{
+    redact_sensitive_text, resolve_gcp_access_token_async, resolve_gcp_project_id,
+    summarize_http_error_body,
+};
 use crate::warehouse::SqlProvider;
 use crate::warehouse::preflight::{
     PreflightReport, ProbePresence, build_configuration_failure_response, build_preflight_response,
@@ -42,6 +45,7 @@ struct BigQueryConfig {
     location: Option<String>,
     access_token: String,
     timeout: Duration,
+    api_base_url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -76,12 +80,19 @@ impl BigQueryConfig {
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(DEFAULT_TIMEOUT_MS)
             .max(1_000);
+        let api_base_url = env::var("DBT_NOVA_BIGQUERY_API_BASE_URL")
+            .ok()
+            .map(|value| value.trim().trim_end_matches('/').to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "https://bigquery.googleapis.com".to_string());
+        validate_bigquery_api_base_url(&api_base_url)?;
 
         Ok(Self {
             project_id,
             location,
             access_token,
             timeout: Duration::from_millis(timeout_ms),
+            api_base_url,
         })
     }
 }
@@ -152,6 +163,28 @@ fn normalize_project_id(project_id: &str) -> Result<String> {
         )));
     }
     Ok(trimmed.to_string())
+}
+
+fn validate_bigquery_api_base_url(value: &str) -> Result<()> {
+    let url = Url::parse(value).map_err(|err| {
+        DbtNovaError::InvalidParams(format!("Invalid DBT_NOVA_BIGQUERY_API_BASE_URL: {err}"))
+    })?;
+    match url.scheme() {
+        "https" => Ok(()),
+        "http" if is_loopback_host(url.host_str().unwrap_or_default()) => Ok(()),
+        "http" => Err(DbtNovaError::InvalidParams(
+            "DBT_NOVA_BIGQUERY_API_BASE_URL may use http:// only for loopback test servers"
+                .to_string(),
+        )),
+        _ => Err(DbtNovaError::InvalidParams(
+            "DBT_NOVA_BIGQUERY_API_BASE_URL must start with https://, or http:// for loopback tests"
+                .to_string(),
+        )),
+    }
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    matches!(host, "localhost" | "127.0.0.1" | "::1")
 }
 
 fn normalize_dataset_identifier(dataset: &str, context: &str) -> Result<String> {
@@ -340,44 +373,38 @@ struct QueryStatus {
 fn query_error(response: &QueryResponse) -> Option<String> {
     if let Some(status) = &response.status {
         if let Some(error) = &status.error_result {
-            let message = error
-                .message
-                .clone()
-                .unwrap_or_else(|| "Unknown BigQuery error".to_string());
-            let reason = error
-                .reason
-                .clone()
-                .unwrap_or_else(|| "unknown_reason".to_string());
-            return Some(format!("{reason}: {message}"));
+            return Some(format_query_error(error));
         }
         if let Some(errors) = &status.errors
             && let Some(error) = errors.first()
         {
-            let message = error
-                .message
-                .clone()
-                .unwrap_or_else(|| "Unknown BigQuery error".to_string());
-            let reason = error
-                .reason
-                .clone()
-                .unwrap_or_else(|| "unknown_reason".to_string());
-            return Some(format!("{reason}: {message}"));
+            return Some(format_query_error(error));
         }
     }
     if let Some(errors) = &response.errors
         && let Some(error) = errors.first()
     {
-        let message = error
-            .message
-            .clone()
-            .unwrap_or_else(|| "Unknown BigQuery error".to_string());
-        let reason = error
-            .reason
-            .clone()
-            .unwrap_or_else(|| "unknown_reason".to_string());
-        return Some(format!("{reason}: {message}"));
+        return Some(format_query_error(error));
     }
     None
+}
+
+fn format_query_error(error: &QueryError) -> String {
+    let reason = error
+        .reason
+        .as_deref()
+        .map(redact_sensitive_text)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "unknown_reason".to_string());
+    if error
+        .message
+        .as_deref()
+        .is_some_and(|message| !message.trim().is_empty())
+    {
+        format!("{reason}: message redacted")
+    } else {
+        reason
+    }
 }
 
 fn parse_u64(value: Option<&String>) -> Option<u64> {
@@ -401,12 +428,12 @@ fn schema_catalog_details(project: &str, dataset: &str) -> JsonMap<String, Value
     details
 }
 
-fn query_url(project_id: &str) -> String {
-    format!("https://bigquery.googleapis.com/bigquery/v2/projects/{project_id}/queries")
+fn query_url(api_base_url: &str, project_id: &str) -> String {
+    format!("{api_base_url}/bigquery/v2/projects/{project_id}/queries")
 }
 
-fn query_page_url(project_id: &str, job_id: &str) -> String {
-    format!("https://bigquery.googleapis.com/bigquery/v2/projects/{project_id}/queries/{job_id}")
+fn query_page_url(api_base_url: &str, project_id: &str, job_id: &str) -> String {
+    format!("{api_base_url}/bigquery/v2/projects/{project_id}/queries/{job_id}")
 }
 
 async fn send_json<T: DeserializeOwned>(builder: reqwest::RequestBuilder) -> Result<T> {
@@ -427,8 +454,9 @@ async fn send_json<T: DeserializeOwned>(builder: reqwest::RequestBuilder) -> Res
         Ok(body) => body,
         Err(err) => format!("<failed to read body: {err}>"),
     };
+    let summary = summarize_http_error_body(status.as_u16(), &body);
     Err(bq_err(format!(
-        "BigQuery API error (HTTP {}): {body}",
+        "BigQuery API error (HTTP {}): {summary}",
         status.as_u16()
     )))
 }
@@ -438,7 +466,7 @@ async fn post_query(
     config: &BigQueryConfig,
     request: &QueryRequest,
 ) -> Result<QueryResponse> {
-    let url = query_url(&config.project_id);
+    let url = query_url(&config.api_base_url, &config.project_id);
     let builder = client
         .post(url)
         .bearer_auth(&config.access_token)
@@ -454,7 +482,7 @@ async fn get_query_page(
     page_token: Option<&str>,
     location: Option<&str>,
 ) -> Result<QueryResponse> {
-    let url = query_page_url(&config.project_id, job_id);
+    let url = query_page_url(&config.api_base_url, &config.project_id, job_id);
     let mut params = vec![("maxResults", max_results.to_string())];
     if let Some(token) = page_token {
         params.push(("pageToken", token.to_string()));
@@ -705,10 +733,18 @@ async fn execute_bigquery_statement(
     settings: &ExecuteSettings,
 ) -> Result<QueryExecutionResult> {
     let runtime = cached_bigquery_runtime().await?;
-    let config = runtime.config;
-    let client = runtime.client;
+    execute_bigquery_statement_with_runtime(&runtime.client, &runtime.config, statement, settings)
+        .await
+}
 
-    let (mut response, job_id, location) = run_query(&client, &config, statement, settings).await?;
+#[allow(clippy::too_many_lines)]
+async fn execute_bigquery_statement_with_runtime(
+    client: &Client,
+    config: &BigQueryConfig,
+    statement: &str,
+    settings: &ExecuteSettings,
+) -> Result<QueryExecutionResult> {
+    let (mut response, job_id, location) = run_query(client, config, statement, settings).await?;
 
     let mut fields = response
         .schema
@@ -756,8 +792,8 @@ async fn execute_bigquery_statement(
         }
 
         let page = get_query_page(
-            &client,
-            &config,
+            client,
+            config,
             &job_id,
             settings.row_limit,
             Some(&page_token),
@@ -1034,17 +1070,139 @@ impl SqlProvider for BigQueryProvider {
 #[cfg(test)]
 mod tests {
     use super::{
-        QueryResponse, build_query_parameters, catalog_preflight_statement, normalize_project_id,
+        BigQueryConfig, ExecuteSettings, QueryError, QueryResponse, build_bigquery_client,
+        build_query_parameters, catalog_preflight_statement,
+        execute_bigquery_statement_with_runtime, format_query_error, normalize_project_id,
         normalize_relation_name, preflight_query_has_rows, relation_preflight_statement,
-        schema_preflight_statement,
+        schema_preflight_statement, summarize_http_error_body, validate_bigquery_api_base_url,
     };
     use serde_json::json;
     use std::collections::HashMap;
+    use std::time::Duration;
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn normalize_project_allows_hyphen() {
         let project = normalize_project_id("my-project-123").expect("valid project id");
         assert_eq!(project, "my-project-123");
+    }
+
+    #[test]
+    fn bigquery_api_base_url_allows_https_and_loopback_http_only() {
+        validate_bigquery_api_base_url("https://bigquery.googleapis.com").expect("https");
+        validate_bigquery_api_base_url("http://127.0.0.1:8080").expect("loopback");
+        validate_bigquery_api_base_url("http://localhost:8080").expect("localhost");
+
+        let err = validate_bigquery_api_base_url("http://metadata.google.internal")
+            .expect_err("non-loopback http should fail");
+        assert!(err.to_string().contains("loopback"));
+    }
+
+    #[test]
+    fn bigquery_http_errors_do_not_expose_raw_body() {
+        let body = r#"{
+            "error": {
+                "code": 400,
+                "status": "INVALID_ARGUMENT",
+                "message": "Bad SQL select * from users where token='raw-token'"
+            }
+        }"#;
+        let summary = summarize_http_error_body(400, body);
+
+        assert!(summary.contains("status=INVALID_ARGUMENT"));
+        assert!(summary.contains("message redacted"));
+        assert!(!summary.contains("raw-token"));
+        assert!(!summary.contains("select *"));
+        assert!(!summary.contains("users"));
+    }
+
+    #[test]
+    fn bigquery_statement_errors_do_not_expose_raw_message() {
+        let err = QueryError {
+            reason: Some("invalidQuery".to_string()),
+            message: Some("Bad SQL select * from users where token='raw-token'".to_string()),
+        };
+        let formatted = format_query_error(&err);
+
+        assert_eq!(formatted, "invalidQuery: message redacted");
+        assert!(!formatted.contains("raw-token"));
+        assert!(!formatted.contains("select *"));
+        assert!(!formatted.contains("users"));
+    }
+
+    #[tokio::test]
+    async fn bigquery_query_fetches_additional_result_pages() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/bigquery/v2/projects/test-project/queries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jobComplete": true,
+                "jobReference": {
+                    "jobId": "job_123",
+                    "location": "US"
+                },
+                "schema": {
+                    "fields": [{"name": "order_count", "type": "INT64"}]
+                },
+                "rows": [{"f": [{"v": "1"}]}],
+                "pageToken": "next-page",
+                "totalRows": "2",
+                "totalBytesProcessed": "128"
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/bigquery/v2/projects/test-project/queries/job_123"))
+            .and(query_param("maxResults", "10"))
+            .and(query_param("pageToken", "next-page"))
+            .and(query_param("location", "US"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jobComplete": true,
+                "schema": {
+                    "fields": [{"name": "order_count", "type": "INT64"}]
+                },
+                "rows": [{"f": [{"v": "2"}]}],
+                "totalRows": "2",
+                "totalBytesProcessed": "128"
+            })))
+            .mount(&server)
+            .await;
+
+        let config = BigQueryConfig {
+            project_id: "test-project".to_string(),
+            location: Some("US".to_string()),
+            access_token: "test-token".to_string(),
+            timeout: Duration::from_secs(5),
+            api_base_url: server.uri(),
+        };
+        let client = build_bigquery_client(config.timeout).expect("client");
+        let settings = ExecuteSettings {
+            row_limit: 10,
+            byte_limit: 1_000,
+            wait_timeout_s: Some(1),
+            poll_interval: Duration::from_millis(1),
+            max_poll: Duration::from_secs(1),
+            fetch_all_chunks: true,
+            max_chunks: 5,
+            parameters: Vec::new(),
+        };
+
+        let result =
+            execute_bigquery_statement_with_runtime(&client, &config, "select 1", &settings)
+                .await
+                .expect("query execution should succeed");
+
+        assert_eq!(result.job_id, "job_123");
+        assert_eq!(result.columns, vec!["order_count".to_string()]);
+        assert_eq!(result.column_types, vec!["INT64".to_string()]);
+        assert_eq!(result.rows, vec![vec![json!(1)], vec![json!(2)]]);
+        assert_eq!(result.fetched_chunks, 2);
+        assert_eq!(result.total_row_count, Some(2));
+        assert_eq!(result.total_byte_count, Some(128));
+        assert!(!result.truncated);
     }
 
     #[test]

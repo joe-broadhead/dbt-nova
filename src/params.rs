@@ -903,7 +903,7 @@ pub struct ConfigShowParams {
 pub struct ConfigValidateParams {}
 
 /// Parameters for the reload_manifest tool.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
 pub struct ReloadManifestParams {
     /// Manifest URI to load (e.g. http(s)://, s3://, gs://, dbfs://)
     pub manifest_uri: Option<String>,
@@ -913,6 +913,22 @@ pub struct ReloadManifestParams {
     pub refresh_secs: Option<u64>,
     /// Optional explicit storage instance id for index storage
     pub storage_instance_id: Option<String>,
+}
+
+impl ReloadManifestParams {
+    /// Returns true when the request changes the live MCP server source,
+    /// scheduler, or storage identity rather than reloading the current source.
+    #[must_use]
+    pub fn changes_runtime_source_or_storage(&self) -> bool {
+        non_empty_param(self.manifest_uri.as_deref())
+            || non_empty_param(self.manifest_path.as_deref())
+            || non_empty_param(self.storage_instance_id.as_deref())
+            || self.refresh_secs.is_some()
+    }
+}
+
+fn non_empty_param(value: Option<&str>) -> bool {
+    value.is_some_and(|value| !value.trim().is_empty())
 }
 
 /// Parameters for the warm_manifest tool.

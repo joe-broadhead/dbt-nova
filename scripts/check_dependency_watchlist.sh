@@ -71,6 +71,15 @@ check_cargo_lock_has_reqwest_012() {
   ' "$cargo_lock"
 }
 
+check_cargo_lock_has_reqwest_013() {
+  awk '
+    $0 == "name = \"reqwest\"" { in_pkg = 1; next }
+    in_pkg && /^version = "0\.13\./ { found = 1; exit }
+    in_pkg && /^\[\[package\]\]/ { in_pkg = 0 }
+    END { exit found ? 0 : 1 }
+  ' "$cargo_lock"
+}
+
 run_state_check() {
   case "$1" in
     cargo_toml_has_ort_sys_rc_pin)
@@ -87,6 +96,9 @@ run_state_check() {
       ;;
     cargo_lock_has_reqwest_012)
       check_cargo_lock_has_reqwest_012
+      ;;
+    cargo_lock_has_reqwest_013)
+      check_cargo_lock_has_reqwest_013
       ;;
     *)
       return 2

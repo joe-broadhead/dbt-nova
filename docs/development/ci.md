@@ -47,7 +47,8 @@ Operational defaults:
   invocation (`dbt_command`), plus `dbt_env_json`,
   `dbt_secret_env_map_json`, optional workflow_call secret bundle
   (`DBT_NOVA_SECRET_BUNDLE_JSON`), optional installer source override
-  (`installer_repository`, `installer_ref`, `installer_install_mode`), optional models artifact, staged/full semantic warmup
+  (`installer_repository`, `installer_ref`, `installer_install_mode`,
+  `allow_mutable_installer_ref` for trusted branch-ref development runs), optional models artifact, staged/full semantic warmup
   (`search_warm_strategy`), configurable build timeout
   (`build_timeout_minutes`), optional runner selection (`runner` or
   `runner_labels_json`), optional remote publish
@@ -82,7 +83,8 @@ Operational defaults:
   (`dbt_command`), plus `dbt_env_json`, `dbt_secret_env_map_json`, optional
   workflow_call secret bundle (`DBT_NOVA_SECRET_BUNDLE_JSON`), and optional
   installer source override (`installer_repository`, `installer_ref`,
-  `installer_install_mode`), plus optional runner selection (`runner` or
+  `installer_install_mode`, `allow_mutable_installer_ref` for trusted branch-ref
+  development runs), plus optional runner selection (`runner` or
   `runner_labels_json`)
 - **Secret contract:** `dbt_secret_env_map_json` resolves keys from
   `DBT_NOVA_SECRET_BUNDLE_JSON` first, then same-owner inherited workflow
@@ -169,7 +171,7 @@ Additional secret required:
 
 - Default and release branch: `master`
 - Release/hotfix branches are cut from `master`
-- Release tags (`v*`) drive both binary artifacts and docs deployment
+- Release tags (`v*`) drive binary artifacts; docs deploy from pushes to `master`
 
 ## Local Checks (Suggested)
 
@@ -203,7 +205,7 @@ flowchart TD
   H[hotfix/<version>] -->|PR to master| C
   C -->|merge PR| D[Tag Release v<version>]
   D -->|push v* tag| E[Release Build: artifacts]
-  D -->|push v* tag| F[Docs Deploy: GitHub Pages]
+  C -->|push master| F[Docs Deploy: GitHub Pages]
 ```
 
 ## Hotfix Checklist
@@ -213,4 +215,4 @@ flowchart TD
 - [ ] Ensure `cargo test --all-features` passes
 - [ ] Open PR to `master` and merge
 - [ ] Tag auto-created (`v<version>`)
-- [ ] Verify release assets and docs deploy
+- [ ] Verify release assets and the `master` docs deploy

@@ -138,7 +138,7 @@ OpenCode can discover project skills from `.opencode/skills/<name>/SKILL.md`
 and can load them through its `skill` tool. dbt-nova does not yet ship generated
 `.opencode` pack files. The target layout, role permissions, MCP examples, and
 smoke eval expectations are defined in the
-[OpenCode reference pack design](../development/opencode-reference-pack.md).
+[OpenCode reference pack design (not shipped)](../development/opencode-reference-pack.md).
 
 ## Validation (optional)
 
