@@ -354,7 +354,7 @@ impl Default for DbtNovaConfig {
             bootstrap_uri: String::new(),
             artifact_fetch_policy: ArtifactFetchPolicy::IfMissing,
             artifact_timeout_secs: 300,
-            artifact_max_bytes: 2 * 1024 * 1024 * 1024, // 2 GiB
+            artifact_max_bytes: 3 * 1024 * 1024 * 1024, // 3 GiB
             artifact_archive_max_entries: 200_000,
             artifact_archive_max_uncompressed_bytes: 10 * 1024 * 1024 * 1024, // 10 GiB
             artifact_allow_http: false,

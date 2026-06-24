@@ -327,7 +327,7 @@ Optional:
   `DBT_NOVA_MODELS_ARTIFACT_URI` (explicit mode if you do not use bootstrap URI)
 - `DBT_NOVA_ARTIFACTS_CACHE_DIR` (defaults to `<storage_root>/artifacts`)
 - `DBT_NOVA_ARTIFACT_TIMEOUT_SECS` (default `300`)
-- `DBT_NOVA_ARTIFACT_MAX_BYTES` (compressed artifact cap, default `2147483648`)
+- `DBT_NOVA_ARTIFACT_MAX_BYTES` (compressed artifact cap, default `3221225472`)
 - `DBT_NOVA_ARTIFACT_ARCHIVE_MAX_ENTRIES` (archive entry cap, default `200000`)
 - `DBT_NOVA_ARTIFACT_ARCHIVE_MAX_UNCOMPRESSED_BYTES` (decompressed archive cap, default `10737418240`)
 - `DBT_NOVA_ARTIFACT_ALLOW_HTTP=true` (only for non-TLS artifact URIs; not recommended)

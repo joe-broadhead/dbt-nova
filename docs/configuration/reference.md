@@ -30,7 +30,7 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_ARTIFACTS_CACHE_DIR` – optional cache dir for downloaded artifact archives (default: `<storage_root>/artifacts`)
 - `DBT_NOVA_ARTIFACT_FETCH_POLICY` – artifact fetch policy (`if_missing`, `always`, `never`; default: `if_missing`; use `never` with `DBT_NOVA_STORAGE_READ_ONLY=true`, use `if_missing|always` for writable first-run hydration)
 - `DBT_NOVA_ARTIFACT_TIMEOUT_SECS` – fetch timeout for remote artifact downloads (`0` = disabled, default: `300`)
-- `DBT_NOVA_ARTIFACT_MAX_BYTES` – maximum compressed bytes allowed for each remote prebuilt artifact download (`0` = unlimited, default: `2147483648`)
+- `DBT_NOVA_ARTIFACT_MAX_BYTES` – maximum compressed bytes allowed for each remote prebuilt artifact download (`0` = unlimited, default: `3221225472`)
 - `DBT_NOVA_ARTIFACT_ARCHIVE_MAX_ENTRIES` – maximum number of entries allowed while extracting a prebuilt artifact archive (`0` = unlimited, default: `200000`)
 - `DBT_NOVA_ARTIFACT_ARCHIVE_MAX_UNCOMPRESSED_BYTES` – maximum decompressed bytes allowed while extracting a prebuilt artifact archive (`0` = unlimited, default: `10737418240`)
 - `DBT_NOVA_ARTIFACT_ALLOW_HTTP` – allow `http://` artifact URIs (`true`|`false`, default: `false`)
