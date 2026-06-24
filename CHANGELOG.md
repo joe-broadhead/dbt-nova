@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added configurable runner inputs to the reusable asset and metadata-audit
+  workflows so downstream repositories can run them on self-hosted or
+  organization runner pools while preserving the `ubuntu-22.04` default.
+
 ## [0.0.6] - 2026-06-24
 
 - Hardened hosted HTTP container defaults by removing the baked-in auth-proxy

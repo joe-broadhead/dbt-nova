@@ -107,6 +107,16 @@ on:
         required: false
         type: number
         default: 360
+      runner:
+        description: "GitHub Actions runner label for every job in this reusable workflow"
+        required: false
+        type: string
+        default: "ubuntu-22.04"
+      runner_labels_json:
+        description: "Optional JSON array of runner labels (for example [\"self-hosted\",\"linux\",\"x64\"]). Overrides runner when set."
+        required: false
+        type: string
+        default: ""
       publish_targets:
         description: "Comma-separated remote publish targets: s3,gcs,dbfs"
         required: false
@@ -207,7 +217,7 @@ permissions:
 jobs:
   prepare:
     name: Validate inputs and define contract outputs
-    runs-on: ubuntu-22.04
+    runs-on: ${{ inputs.runner_labels_json != '' && fromJSON(inputs.runner_labels_json) || inputs.runner }}
     timeout-minutes: 20
     outputs:
       artifact_name_storage: ${{ steps.resolve.outputs.artifact_name_storage }}
@@ -727,7 +737,7 @@ jobs:
 
   build:
     name: Build, validate, and publish storage artifact
-    runs-on: ubuntu-22.04
+    runs-on: ${{ inputs.runner_labels_json != '' && fromJSON(inputs.runner_labels_json) || inputs.runner }}
     timeout-minutes: ${{ fromJSON(needs.prepare.outputs.build_timeout_minutes) }}
     needs: prepare
     concurrency:
