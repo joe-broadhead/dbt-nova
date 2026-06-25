@@ -38,8 +38,9 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     env:
-      DBT_NOVA_INSTALL_REF: v0.0.6
-      DBT_NOVA_VERSION: v0.0.6
+      DBT_NOVA_INSTALL_REF: v0.0.5
+      DBT_NOVA_VERSION: v0.0.5
+      DBT_NOVA_VERIFY_SIGNATURE: "1"
       NOVA_EVAL_SUITE: evals/analyst-smoke.yml
       NOVA_EVAL_NAME: analyst-smoke
       NOVA_EVAL_OUTPUT: out/nova-bridge-evals
@@ -49,6 +50,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac
+        with:
+          cosign-release: "v2.4.1"
 
       - name: Install dbt project dependencies
         run: |
@@ -63,7 +69,7 @@ jobs:
       - name: Install dbt-nova
         run: |
           curl -fsSL "https://raw.githubusercontent.com/joe-broadhead/dbt-nova/${DBT_NOVA_INSTALL_REF}/scripts/install.sh" | \
-            DBT_NOVA_VERSION="${DBT_NOVA_VERSION}" bash -s -- --slim --non-interactive
+            DBT_NOVA_VERSION="${DBT_NOVA_VERSION}" DBT_NOVA_VERIFY_SIGNATURE="${DBT_NOVA_VERIFY_SIGNATURE}" bash -s -- --slim --non-interactive
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Validate eval suite
@@ -152,8 +158,9 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     env:
-      DBT_NOVA_INSTALL_REF: v0.0.6
-      DBT_NOVA_VERSION: v0.0.6
+      DBT_NOVA_INSTALL_REF: v0.0.5
+      DBT_NOVA_VERSION: v0.0.5
+      DBT_NOVA_VERIFY_SIGNATURE: "1"
       NOVA_AGENT_SUITE: evals/analyst-agent.yml
       NOVA_AGENT_NAME: analyst-agent-smoke
       NOVA_AGENT_OUTPUT: out/nova-agent-evals
@@ -164,6 +171,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac
+        with:
+          cosign-release: "v2.4.1"
 
       - name: Install dbt project dependencies
         run: |
@@ -178,7 +190,7 @@ jobs:
       - name: Install dbt-nova
         run: |
           curl -fsSL "https://raw.githubusercontent.com/joe-broadhead/dbt-nova/${DBT_NOVA_INSTALL_REF}/scripts/install.sh" | \
-            DBT_NOVA_VERSION="${DBT_NOVA_VERSION}" bash -s -- --slim --non-interactive
+            DBT_NOVA_VERSION="${DBT_NOVA_VERSION}" DBT_NOVA_VERIFY_SIGNATURE="${DBT_NOVA_VERIFY_SIGNATURE}" bash -s -- --slim --non-interactive
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Validate agent eval suite

@@ -485,7 +485,7 @@ jobs:
               if not immutable_ref:
                   fail(
                       "installer_ref must be an immutable full commit SHA or release tag "
-                      f"(for example v0.0.6); resolved installer_ref={installer_ref!r}. "
+                      f"(for example v0.0.5); resolved installer_ref={installer_ref!r}. "
                       "Set allow_mutable_installer_ref=true only for trusted development runs."
                   )
 

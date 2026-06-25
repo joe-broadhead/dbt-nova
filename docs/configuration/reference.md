@@ -327,6 +327,9 @@ Guardrails:
   vector/sparse, manifest-scoped caches.
 
 - `DBT_NOVA_SEARCH_ENABLE_VECTOR` – enable dense vectors (default: `false`)
+- `DBT_NOVA_SEARCH_COLD_START_POLICY` – semantic cache behavior when
+  manifest-scoped caches are missing: `degrade` skips semantic startup work,
+  `build` creates missing caches during startup (default: `degrade`)
 - `DBT_NOVA_SEARCH_VECTOR_TOP_K` – max vector hits before fusion (default: `200`)
 - `DBT_NOVA_SEARCH_VECTOR_MAX_CHARS` – max chars in embedding text (default: `4000`)
 - `DBT_NOVA_SEARCH_ENABLE_VECTOR_ANN` – enable ANN buckets (default: `true`)
@@ -335,10 +338,15 @@ Guardrails:
 - `DBT_NOVA_SEARCH_VECTOR_ANN_HAMMING` – ANN Hamming radius (default: `1`)
 - `DBT_NOVA_SEARCH_VECTOR_ANN_MAX_CANDIDATES` – max ANN candidates (default: `5000`)
 - `DBT_NOVA_SEARCH_VECTOR_ANN_MIN_CANDIDATES` – min before full scan (default: `200`)
+- `DBT_NOVA_SEARCH_ONNX_THREADS` – ONNX intra-thread count for vector, sparse,
+  and reranker models (default: min available parallelism, capped at `4`)
 - `DBT_NOVA_SEARCH_EMBEDDING_BATCH_SIZE` – embedding batch size (default: `128`)
 - `DBT_NOVA_EMBEDDING_MODEL` – embedding model name (default: `intfloat/multilingual-e5-base`)
 - `DBT_NOVA_SEARCH_ENABLE_SPARSE` – enable sparse vectors (default: `false`)
 - `DBT_NOVA_SEARCH_SPARSE_TOP_K` – max sparse hits before fusion (default: `200`)
+- `DBT_NOVA_SEARCH_SPARSE_EMBEDDING_BATCH_SIZE` – sparse embedding batch size
+  (default: `16`; falls back to `DBT_NOVA_SEARCH_EMBEDDING_BATCH_SIZE` only
+  when the sparse-specific variable is unset)
 - `DBT_NOVA_SEARCH_ENABLE_RERANKER` – enable cross‑encoder reranker (default: `false`)
 - `DBT_NOVA_RERANKER_MODEL` – reranker model (default: `jinaai/jina-reranker-v2-base-multilingual`)
 - `DBT_NOVA_SEARCH_RERANK_TOP_N` – max results reranked (default: `20`)
@@ -441,10 +449,47 @@ Post‑retrieval tuning:
 - `DBT_NOVA_SEARCH_CANONICAL_META_MATCH_BONUS` (default: `2.5`)
 - `DBT_NOVA_SEARCH_ENGINEER_EXACT_MATCH_MULTIPLIER` (default: `2.0`)
 
+Indicator search and grouping:
+- `DBT_NOVA_SEARCH_INDICATOR_ENABLE_PARENT_COHERENCE` (default: `true`)
+- `DBT_NOVA_SEARCH_INDICATOR_PARENT_GROUP_MAX_GROUPS` (default: `5`)
+- `DBT_NOVA_SEARCH_INDICATOR_PARENT_GROUP_MAX_INDICATORS` (default: `4`)
+- `DBT_NOVA_SEARCH_INDICATOR_GENERIC_LABEL_BONUS_ONE_TOKEN` (default: `2.5`)
+- `DBT_NOVA_SEARCH_INDICATOR_GENERIC_LABEL_BONUS_TWO_TOKENS` (default: `1.5`)
+- `DBT_NOVA_SEARCH_INDICATOR_GENERIC_LABEL_BONUS_THREE_PLUS_TOKENS` (default: `0.75`)
+- `DBT_NOVA_SEARCH_INDICATOR_PARENT_SYNONYM_BONUS_ONE_TOKEN` (default: `1.5`)
+- `DBT_NOVA_SEARCH_INDICATOR_PARENT_SYNONYM_BONUS_TWO_TOKENS` (default: `1.0`)
+- `DBT_NOVA_SEARCH_INDICATOR_PARENT_SYNONYM_BONUS_THREE_PLUS_TOKENS` (default: `0.5`)
+- `DBT_NOVA_SEARCH_INDICATOR_SEMANTIC_LABEL_PRECISION_SCALE` (default: `0.14`)
+- `DBT_NOVA_SEARCH_INDICATOR_SEMANTIC_LABEL_PRECISION_CANONICAL_BONUS` (default: `0.12`)
+- `DBT_NOVA_SEARCH_INDICATOR_PARENT_COHERENCE_DIVERSITY_BONUS` (default: `0.28`)
+- `DBT_NOVA_SEARCH_INDICATOR_PARENT_COHERENCE_CANONICAL_BONUS` (default: `0.14`)
+- `DBT_NOVA_SEARCH_INDICATOR_PARENT_COHERENCE_STRONG_MATCH_BONUS` (default: `0.08`)
+- `DBT_NOVA_SEARCH_INDICATOR_PARENT_COHERENCE_SUPPORT_SURFACE_BONUS` (default: `0.06`)
+- `DBT_NOVA_SEARCH_INDICATOR_PARENT_COHERENCE_TIME_FIELD_BONUS` (default: `0.06`)
+- `DBT_NOVA_SEARCH_INDICATOR_PARENT_COHERENCE_DIMENSION_BONUS` (default: `0.06`)
+- `DBT_NOVA_SEARCH_INDICATOR_PARENT_COHERENCE_MAX_BONUS` (default: `0.95`)
+- `DBT_NOVA_SEARCH_INDICATOR_SEARCH_PARENT_BONUS_SCALE` (default: `0.55`)
+- `DBT_NOVA_SEARCH_INDICATOR_SEARCH_MISSING_PARENT_MULTIPLIER` (default: `0.75`)
+- `DBT_NOVA_SEARCH_INDICATOR_SEARCH_PARENT_TOP_K` (default: `3`)
+- `DBT_NOVA_SEARCH_INDICATOR_RRF_SCORE_WEIGHT` (default: `1.0`)
+- `DBT_NOVA_SEARCH_INDICATOR_RERANKER_SCORE_WEIGHT` (default: `1.0`)
+
+Metadata support signals:
+- `DBT_NOVA_SEARCH_METADATA_SUPPORT_PARENT_SYNONYM_WEIGHT` (default: `0.4`)
+- `DBT_NOVA_SEARCH_METADATA_SUPPORT_DOMAIN_WEIGHT` (default: `0.35`)
+- `DBT_NOVA_SEARCH_METADATA_SUPPORT_USE_CASE_WEIGHT` (default: `0.25`)
+- `DBT_NOVA_SEARCH_METADATA_SUPPORT_DIMENSION_WEIGHT` (default: `0.45`)
+- `DBT_NOVA_SEARCH_METADATA_SUPPORT_COLUMN_NAME_WEIGHT` (default: `0.2`)
+- `DBT_NOVA_SEARCH_METADATA_SUPPORT_COLUMN_ROLE_WEIGHT` (default: `0.2`)
+- `DBT_NOVA_SEARCH_METADATA_SUPPORT_SEMANTIC_TYPE_WEIGHT` (default: `0.35`)
+- `DBT_NOVA_SEARCH_METADATA_SUPPORT_EXAMPLE_VALUE_WEIGHT` (default: `0.5`)
+- `DBT_NOVA_SEARCH_METADATA_SUPPORT_MAX_BONUS` (default: `1.25`)
+- `DBT_NOVA_SEARCH_METADATA_SUPPORT_MAX_VALUES_PER_FIELD` (default: `4`)
+
 Staging deboost behavior:
 - `DBT_NOVA_SEARCH_STAGING_DEBOOST_FACTOR` applies when an entity matches a configured
   layer rule with layer name `staging`, `stage`, or `stg` (case-insensitive).
-- Configure layer mapping with `DBT_NOVA_LAYER_RULES_JSON`.
+- Configure layer mapping with `DBT_NOVA_LAYER_RULES`.
 
 Persona candidate behavior:
 - `DBT_NOVA_SEARCH_*_CANDIDATE_FALSE_DEBOOST_FACTOR` applies when

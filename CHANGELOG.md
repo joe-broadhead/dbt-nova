@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Hardened production readiness by making installer checksum signature
+  verification fail closed by default, resolving `latest` installs to the
+  immutable release tag before fetching optional support assets, adding
+  cooperative deadlines to synchronous MCP/CLI search scans, accounting
+  semantic timeouts as circuit-breaker failures, and correcting release-tag and
+  config-reference docs without publishing `v0.0.6`.
 - Redacted raw upstream Databricks and BigQuery HTTP error bodies from
   CLI/MCP responses while preserving status and provider error-code context.
 - Safety-gated MCP `reload_manifest` source, refresh, and storage mutations

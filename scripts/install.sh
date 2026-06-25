@@ -12,7 +12,7 @@ SKILL_NAME="${DBT_NOVA_SKILL_NAME:-}"
 NON_INTERACTIVE="${DBT_NOVA_INSTALL_NONINTERACTIVE:-0}"
 INSTALL_WARM_MODELS="${DBT_NOVA_INSTALL_WARM_MODELS:-0}"
 VERIFY_CHECKSUM="${DBT_NOVA_VERIFY_CHECKSUM:-1}"
-VERIFY_SIGNATURE="${DBT_NOVA_VERIFY_SIGNATURE:-auto}"
+VERIFY_SIGNATURE="${DBT_NOVA_VERIFY_SIGNATURE:-1}"
 COSIGN_BINARY="${DBT_NOVA_COSIGN_BINARY:-cosign}"
 COSIGN_CERT_IDENTITY_REGEXP="${DBT_NOVA_COSIGN_CERT_IDENTITY_REGEXP:-https://github.com/${REPO_SLUG}/.github/workflows/release.yml@refs/tags/v.*}"
 COSIGN_CERT_OIDC_ISSUER="${DBT_NOVA_COSIGN_CERT_OIDC_ISSUER:-https://token.actions.githubusercontent.com}"
@@ -41,7 +41,7 @@ Environment overrides:
   DBT_NOVA_INSTALL_WARM_MODELS     1 to pre-warm model files after install (default: 0)
   DBT_NOVA_INSTALL_NONINTERACTIVE  1 to skip prompts (defaults to slim)
   DBT_NOVA_VERIFY_CHECKSUM         1 to verify artifact checksum (default: 1)
-  DBT_NOVA_VERIFY_SIGNATURE        auto|1|0 checksum signature verification (default: auto)
+  DBT_NOVA_VERIFY_SIGNATURE        1|auto|0 checksum signature verification (default: 1)
   DBT_NOVA_COSIGN_BINARY           Path to cosign executable (default: cosign)
   DBT_NOVA_COSIGN_CERT_IDENTITY_REGEXP  Expected signing identity regexp
   DBT_NOVA_COSIGN_CERT_OIDC_ISSUER      Expected signing OIDC issuer
@@ -186,11 +186,7 @@ download_file() {
 
   if command -v gh >/dev/null 2>&1; then
     echo "Direct download failed for ${file_name}; trying gh release download"
-    if [[ "${VERSION}" == "latest" ]]; then
-      gh release download --repo "${REPO_SLUG}" --pattern "${file_name}" --output "${out}"
-    else
-      gh release download "${VERSION}" --repo "${REPO_SLUG}" --pattern "${file_name}" --output "${out}"
-    fi
+    gh release download "${VERSION}" --repo "${REPO_SLUG}" --pattern "${file_name}" --output "${out}"
     return 0
   fi
 
@@ -226,8 +222,8 @@ download_repo_archive() {
   fi
 }
 
-repo_default_branch() {
-  local api_url="https://api.github.com/repos/${REPO_SLUG}"
+latest_release_tag() {
+  local api_url="https://api.github.com/repos/${REPO_SLUG}/releases/latest"
   local response=""
 
   if [[ -n "${DOWNLOAD_TOKEN}" ]]; then
@@ -236,13 +232,32 @@ repo_default_branch() {
     response="$(curl -fsSL "${api_url}" 2>/dev/null || true)"
   fi
 
-  if [[ -z "${response}" ]]; then
+  if [[ -n "${response}" ]]; then
+    printf '%s' "${response}" \
+      | tr -d '\n' \
+      | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
     return 0
   fi
 
-  printf '%s' "${response}" \
-    | tr -d '\n' \
-    | sed -n 's/.*"default_branch"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+  if command -v gh >/dev/null 2>&1; then
+    gh release view --repo "${REPO_SLUG}" --json tagName --jq '.tagName' 2>/dev/null || true
+  fi
+}
+
+resolve_latest_version() {
+  if [[ "${VERSION}" != "latest" ]]; then
+    return 0
+  fi
+
+  local tag
+  tag="$(latest_release_tag)"
+  if [[ -z "${tag}" ]]; then
+    echo "Could not resolve the latest release tag for ${REPO_SLUG}." >&2
+    echo "Set DBT_NOVA_VERSION to an explicit release tag." >&2
+    exit 1
+  fi
+  VERSION="${tag}"
+  echo "Resolved latest release to ${VERSION}"
 }
 
 normalize_model_layout() {
@@ -507,6 +522,14 @@ done
 
 resolve_skill_install_selection
 
+case "${VERIFY_SIGNATURE}" in
+  1|auto|0) ;;
+  *)
+    echo "Invalid DBT_NOVA_VERIFY_SIGNATURE='${VERIFY_SIGNATURE}'. Use 1, auto, or 0." >&2
+    exit 1
+    ;;
+esac
+
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 
@@ -558,19 +581,13 @@ set_artifact_urls() {
   checksum_file="dbt-nova-${asset_os}-${asset_arch}.sha256"
   signature_file="${checksum_file}.sig"
   certificate_file="${checksum_file}.crt"
-  if [[ "${VERSION}" == "latest" ]]; then
-    url="https://github.com/${REPO_SLUG}/releases/latest/download/${asset}"
-    checksum_url="https://github.com/${REPO_SLUG}/releases/latest/download/${checksum_file}"
-    signature_url="https://github.com/${REPO_SLUG}/releases/latest/download/${signature_file}"
-    certificate_url="https://github.com/${REPO_SLUG}/releases/latest/download/${certificate_file}"
-  else
-    url="https://github.com/${REPO_SLUG}/releases/download/${VERSION}/${asset}"
-    checksum_url="https://github.com/${REPO_SLUG}/releases/download/${VERSION}/${checksum_file}"
-    signature_url="https://github.com/${REPO_SLUG}/releases/download/${VERSION}/${signature_file}"
-    certificate_url="https://github.com/${REPO_SLUG}/releases/download/${VERSION}/${certificate_file}"
-  fi
+  url="https://github.com/${REPO_SLUG}/releases/download/${VERSION}/${asset}"
+  checksum_url="https://github.com/${REPO_SLUG}/releases/download/${VERSION}/${checksum_file}"
+  signature_url="https://github.com/${REPO_SLUG}/releases/download/${VERSION}/${signature_file}"
+  certificate_url="https://github.com/${REPO_SLUG}/releases/download/${VERSION}/${certificate_file}"
 }
 
+resolve_latest_version
 set_artifact_urls
 
 tmp_dir="$(mktemp -d)"
@@ -659,15 +676,7 @@ if [[ "${INSTALL_WARM_MODELS}" == "1" && "${INSTALL_FLAVOR}" == "slim" ]]; then
   warm_script_url=""
 
   warm_script_refs=()
-  if [[ "${VERSION}" != "latest" ]]; then
-    warm_script_refs+=("${VERSION}")
-  else
-    detected_default_branch="$(repo_default_branch)"
-    if [[ -n "${detected_default_branch}" ]]; then
-      warm_script_refs+=("${detected_default_branch}")
-    fi
-    warm_script_refs+=("main" "master")
-  fi
+  warm_script_refs+=("${VERSION}")
 
   for warm_script_ref in "${warm_script_refs[@]}"; do
     [[ -n "${warm_script_ref}" ]] || continue
@@ -696,15 +705,7 @@ if [[ "${INSTALL_SKILLS}" == "1" ]]; then
   skills_refs=()
   skills_installed="0"
 
-  if [[ "${VERSION}" != "latest" ]]; then
-    skills_refs+=("${VERSION}")
-  else
-    detected_default_branch="$(repo_default_branch)"
-    if [[ -n "${detected_default_branch}" ]]; then
-      skills_refs+=("${detected_default_branch}")
-    fi
-    skills_refs+=("main" "master")
-  fi
+  skills_refs+=("${VERSION}")
 
   for skills_ref in "${skills_refs[@]}"; do
     [[ -n "${skills_ref}" ]] || continue

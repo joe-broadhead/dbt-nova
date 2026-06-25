@@ -87,9 +87,10 @@ For user-owned private repositories, the attestation step is skipped.
 - The OCI image job uploads `dbt-nova-oci-trivy.json` with the release and fails
   on unwaived HIGH/CRITICAL findings in the smoke-tested image.
 
-The installer validates checksum signatures automatically when `cosign` is
-available. Set `DBT_NOVA_VERIFY_SIGNATURE=1` to make signature verification
-strict.
+The next-release installer defaults to strict checksum signature verification:
+`DBT_NOVA_VERIFY_SIGNATURE=1` requires `cosign` plus the released `.sha256.sig`
+and `.sha256.crt` files. Use `DBT_NOVA_VERIFY_SIGNATURE=auto` only for trusted
+development installs where missing `cosign` or signatures may be skipped.
 
 Supported prebuilt binary targets:
 
@@ -191,7 +192,7 @@ Useful overrides:
 - `DBT_NOVA_INSTALL_NONINTERACTIVE=1`
 - `DBT_NOVA_INSTALL_DIR=/custom/path`
 - `DBT_NOVA_VERIFY_CHECKSUM=1|0`
-- `DBT_NOVA_VERIFY_SIGNATURE=auto|1|0`
+- `DBT_NOVA_VERIFY_SIGNATURE=1|auto|0`
 - `DBT_NOVA_COSIGN_BINARY=cosign`
 - `DBT_NOVA_COSIGN_CERT_IDENTITY_REGEXP=...`
 - `DBT_NOVA_COSIGN_CERT_OIDC_ISSUER=https://token.actions.githubusercontent.com`

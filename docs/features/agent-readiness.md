@@ -55,7 +55,9 @@ fresh local cache for the manifest under test.
 Run agent readiness after dbt has produced `target/manifest.json`. This example
 starts in advisory mode, writes machine and human reports, always uploads the
 reports as workflow artifacts, and mirrors the Markdown report into the job
-summary.
+summary. Replace `<nova-release-tag>` with a release that includes
+`audit agent-readiness`; until that release exists, install Nova from an
+immutable source commit instead of using the release installer step.
 
 ```yaml
 name: Agent readiness
@@ -68,6 +70,7 @@ jobs:
   agent_readiness:
     runs-on: ubuntu-22.04
     env:
+      DBT_NOVA_RELEASE: <nova-release-tag>
       READINESS_THRESHOLDS: >-
         {"overall":{"min_score":70,"severity":"advisory"},"persona":{"engineer":{"min_score":70,"severity":"advisory"},"analyst":{"min_score":65,"severity":"advisory"},"governance":{"min_score":65,"severity":"advisory"}}}
     steps:
@@ -76,6 +79,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac
+        with:
+          cosign-release: "v2.4.1"
 
       - name: Install dbt project dependencies
         run: |
@@ -89,8 +97,8 @@ jobs:
 
       - name: Install dbt-nova
         run: |
-          curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
-            DBT_NOVA_VERSION=v0.0.6 bash -s -- --slim --non-interactive
+          curl -fsSL "https://raw.githubusercontent.com/joe-broadhead/dbt-nova/${DBT_NOVA_RELEASE}/scripts/install.sh" | \
+            DBT_NOVA_VERSION="${DBT_NOVA_RELEASE}" DBT_NOVA_VERIFY_SIGNATURE=1 bash -s -- --slim --non-interactive
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run agent-readiness report
