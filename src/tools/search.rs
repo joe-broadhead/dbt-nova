@@ -30,6 +30,7 @@ use crate::utils::{SearchPersona, has_query_syntax, tokenize_alnum_lowercase};
 use tracing::{debug, instrument, warn};
 
 const SEMANTIC_TIMEOUT_RESERVE_MS: u64 = 10;
+const SCAN_DEADLINE_CHECK_INTERVAL: usize = 64;
 
 #[derive(Debug, Clone, Copy)]
 struct SearchDeadline {
@@ -60,6 +61,34 @@ impl SearchDeadline {
     fn has_timeout(self) -> bool {
         self.timeout_ms > 0
     }
+
+    fn check(self) -> Result<()> {
+        if !self.has_timeout() {
+            return Ok(());
+        }
+        let elapsed_ms = u64::try_from(self.started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
+        if elapsed_ms >= self.timeout_ms {
+            return Err(DbtNovaError::ServerError(format!(
+                "Search timed out after {}ms",
+                self.timeout_ms
+            )));
+        }
+        Ok(())
+    }
+}
+
+enum SemanticWorkResult<T> {
+    Completed(Result<T>),
+    SkippedDeadline,
+    TimedOut,
+}
+
+fn check_scan_deadline(deadline: SearchDeadline, scanned: &mut usize) -> Result<()> {
+    *scanned = scanned.wrapping_add(1);
+    if *scanned == 1 || (*scanned).is_multiple_of(SCAN_DEADLINE_CHECK_INTERVAL) {
+        deadline.check()?;
+    }
+    Ok(())
 }
 
 async fn run_semantic_blocking<T, F>(
@@ -67,7 +96,7 @@ async fn run_semantic_blocking<T, F>(
     component: &'static str,
     operation: &'static str,
     f: F,
-) -> Result<Option<Result<T>>>
+) -> Result<SemanticWorkResult<T>>
 where
     T: Send + 'static,
     F: FnOnce() -> Result<T> + Send + 'static,
@@ -78,14 +107,14 @@ where
             component,
             operation, "semantic operation skipped because request deadline is exhausted"
         );
-        return Ok(None);
+        return Ok(SemanticWorkResult::SkippedDeadline);
     }
 
     let mut handle = tokio::task::spawn_blocking(f);
     if let Some(remaining) = remaining {
         if let Ok(joined) = tokio::time::timeout(remaining, &mut handle).await {
             joined
-                .map(Some)
+                .map(SemanticWorkResult::Completed)
                 .map_err(|error| DbtNovaError::ServerError(error.to_string()))
         } else {
             handle.abort();
@@ -95,12 +124,12 @@ where
                 timeout_ms = remaining.as_millis(),
                 "semantic operation timed out before request deadline"
             );
-            Ok(None)
+            Ok(SemanticWorkResult::TimedOut)
         }
     } else {
         handle
             .await
-            .map(Some)
+            .map(SemanticWorkResult::Completed)
             .map_err(|error| DbtNovaError::ServerError(error.to_string()))
     }
 }
@@ -236,7 +265,7 @@ impl ManifestSearch {
                         )
                         .await?
                         {
-                            Some(Ok(reranked_hits)) => {
+                            SemanticWorkResult::Completed(Ok(reranked_hits)) => {
                                 self.reranker_breaker.on_success().await;
                                 let mut reordered: Vec<(String, f32)> = Vec::new();
                                 let mut seen: HashSet<String> = HashSet::new();
@@ -256,12 +285,16 @@ impl ManifestSearch {
                                 fused_hits = reordered;
                                 reranker_applied = true;
                             }
-                            Some(Err(err)) => {
+                            SemanticWorkResult::Completed(Err(err)) => {
                                 self.reranker_breaker.on_failure().await;
                                 warn!(error = %err, "reranker failed; using fused ranking");
                             }
-                            None => {
+                            SemanticWorkResult::SkippedDeadline => {
                                 debug!("reranker skipped because request deadline was exhausted");
+                            }
+                            SemanticWorkResult::TimedOut => {
+                                self.reranker_breaker.on_failure().await;
+                                warn!("reranker timed out; using fused ranking");
                             }
                         }
                     }
@@ -538,6 +571,7 @@ impl ManifestSearch {
             resource_filter.as_ref(),
             indicator_filter.as_ref(),
             params.explain,
+            deadline,
         )?;
         rows = self
             .rank_indicator_rows(params, query_has_syntax, persona, rows, deadline)
@@ -561,12 +595,14 @@ impl ManifestSearch {
             )));
         }
 
+        let deadline = SearchDeadline::from_config(&self.config.search);
         let resource_filter = normalized_resource_type_filter(&params.resource_types);
         let indicator_filter = normalized_indicator_type_filter(&params.indicator_types)?;
         let rows = self.indicator_inventory_rows(
             resource_filter.as_ref(),
             indicator_filter.as_ref(),
             params.canonical_only,
+            deadline,
         )?;
         let total = rows.len();
         let limit = self.page_limit(params.pagination.limit);
@@ -615,6 +651,7 @@ impl ManifestSearch {
             ));
         }
 
+        let deadline = SearchDeadline::from_config(&self.config.search);
         let resource_filter = normalized_resource_type_filter(&params.resource_types);
         let role_filter = normalized_value_filter(&params.roles);
         let semantic_type_filter = normalized_value_filter(&params.semantic_types);
@@ -625,6 +662,7 @@ impl ManifestSearch {
             resource_filter.as_ref(),
             role_filter.as_ref(),
             semantic_type_filter.as_ref(),
+            deadline,
         )?;
         if let Some(min_score) = params.min_score {
             rows.retain(|row| row.score >= min_score);
@@ -662,6 +700,7 @@ impl ManifestSearch {
             )));
         }
 
+        let deadline = SearchDeadline::from_config(&self.config.search);
         let resource_filter = normalized_resource_type_filter(&params.resource_types);
         let role_filter = normalized_value_filter(&params.roles);
         let semantic_type_filter = normalized_value_filter(&params.semantic_types);
@@ -670,6 +709,7 @@ impl ManifestSearch {
             role_filter.as_ref(),
             semantic_type_filter.as_ref(),
             params.annotated_only,
+            deadline,
         )?;
         let total = rows.len();
         let limit = self.page_limit(params.pagination.limit);
@@ -772,7 +812,7 @@ impl ManifestSearch {
                     )
                     .await?
                     {
-                        Some(Ok(reranked_hits)) => {
+                        SemanticWorkResult::Completed(Ok(reranked_hits)) => {
                             self.reranker_breaker.on_success().await;
                             rows = reorder_indicator_rows_with_reranker(
                                 rows,
@@ -781,17 +821,21 @@ impl ManifestSearch {
                                 &self.config.search.indicator_ranking,
                             );
                         }
-                        Some(Err(err)) => {
+                        SemanticWorkResult::Completed(Err(err)) => {
                             self.reranker_breaker.on_failure().await;
                             warn!(
                                 error = %err,
                                 "indicator reranker failed; using existing indicator ranking"
                             );
                         }
-                        None => {
+                        SemanticWorkResult::SkippedDeadline => {
                             debug!(
                                 "indicator reranker skipped because request deadline was exhausted"
                             );
+                        }
+                        SemanticWorkResult::TimedOut => {
+                            self.reranker_breaker.on_failure().await;
+                            warn!("indicator reranker timed out; using existing indicator ranking");
                         }
                     }
                 }
@@ -962,13 +1006,16 @@ impl ManifestSearch {
         resource_filter: Option<&HashSet<String>>,
         indicator_filter: Option<&HashSet<String>>,
         include_explain: bool,
+        deadline: SearchDeadline,
     ) -> Result<Vec<IndicatorSearchRow>> {
         let min_word_len = self.config.search.min_word_length.max(1);
         let token_set: HashSet<&str> = tokens.iter().map(String::as_str).collect();
         let query_token_count = token_set.len();
         let mut rows: Vec<IndicatorSearchRow> = Vec::new();
+        let mut scanned = 0usize;
 
         for unique_id in self.entities.ids() {
+            check_scan_deadline(deadline, &mut scanned)?;
             let Some(entity) = self.get_entity_archived(unique_id)? else {
                 continue;
             };
@@ -1050,10 +1097,13 @@ impl ManifestSearch {
         resource_filter: Option<&HashSet<String>>,
         indicator_filter: Option<&HashSet<String>>,
         canonical_only: bool,
+        deadline: SearchDeadline,
     ) -> Result<Vec<IndicatorInventoryRow>> {
         let mut rows = Vec::new();
+        let mut scanned = 0usize;
 
         for unique_id in self.entities.ids() {
+            check_scan_deadline(deadline, &mut scanned)?;
             let Some(entity) = self.get_entity_archived(unique_id)? else {
                 continue;
             };
@@ -1113,10 +1163,13 @@ impl ManifestSearch {
         resource_filter: Option<&HashSet<String>>,
         role_filter: Option<&HashSet<String>>,
         semantic_type_filter: Option<&HashSet<String>>,
+        deadline: SearchDeadline,
     ) -> Result<Vec<ColumnSearchRow>> {
         let mut rows = Vec::new();
+        let mut scanned = 0usize;
 
         for unique_id in self.entities.ids() {
+            check_scan_deadline(deadline, &mut scanned)?;
             let Some(entity) = self.get_entity_archived(unique_id)? else {
                 continue;
             };
@@ -1127,6 +1180,7 @@ impl ManifestSearch {
             let column_meta = entity_column_meta_lookup(entity);
 
             for column_name in entity.column_names_iter() {
+                check_scan_deadline(deadline, &mut scanned)?;
                 let summary = column_meta.get(column_name).copied();
                 if !column_matches_filters(summary, role_filter, semantic_type_filter, false) {
                     continue;
@@ -1159,10 +1213,13 @@ impl ManifestSearch {
         role_filter: Option<&HashSet<String>>,
         semantic_type_filter: Option<&HashSet<String>>,
         annotated_only: bool,
+        deadline: SearchDeadline,
     ) -> Result<Vec<ColumnInventoryRow>> {
         let mut rows = Vec::new();
+        let mut scanned = 0usize;
 
         for unique_id in self.entities.ids() {
+            check_scan_deadline(deadline, &mut scanned)?;
             let Some(entity) = self.get_entity_archived(unique_id)? else {
                 continue;
             };
@@ -1173,6 +1230,7 @@ impl ManifestSearch {
             let column_meta = entity_column_meta_lookup(entity);
 
             for column_name in entity.column_names_iter() {
+                check_scan_deadline(deadline, &mut scanned)?;
                 let summary = column_meta.get(column_name).copied();
                 if !column_matches_filters(
                     summary,
@@ -1320,16 +1378,20 @@ impl ManifestSearch {
                 )
                 .await?
                 {
-                    Some(Ok(vector_hits)) => {
+                    SemanticWorkResult::Completed(Ok(vector_hits)) => {
                         self.vector_breaker.on_success().await;
                         rankings.push(("vector", scores_to_ids(&vector_hits)));
                     }
-                    Some(Err(err)) => {
+                    SemanticWorkResult::Completed(Err(err)) => {
                         self.vector_breaker.on_failure().await;
                         warn!(error = %err, "vector search failed; skipping vector results");
                     }
-                    None => {
+                    SemanticWorkResult::SkippedDeadline => {
                         debug!("vector retriever skipped because request deadline was exhausted");
+                    }
+                    SemanticWorkResult::TimedOut => {
+                        self.vector_breaker.on_failure().await;
+                        warn!("vector search timed out; skipping vector results");
                     }
                 }
             } else {
@@ -1352,16 +1414,20 @@ impl ManifestSearch {
                 )
                 .await?
                 {
-                    Some(Ok(sparse_hits)) => {
+                    SemanticWorkResult::Completed(Ok(sparse_hits)) => {
                         self.sparse_breaker.on_success().await;
                         rankings.push(("sparse", scores_to_ids(&sparse_hits)));
                     }
-                    Some(Err(err)) => {
+                    SemanticWorkResult::Completed(Err(err)) => {
                         self.sparse_breaker.on_failure().await;
                         warn!(error = %err, "sparse search failed; skipping sparse results");
                     }
-                    None => {
+                    SemanticWorkResult::SkippedDeadline => {
                         debug!("sparse retriever skipped because request deadline was exhausted");
+                    }
+                    SemanticWorkResult::TimedOut => {
+                        self.sparse_breaker.on_failure().await;
+                        warn!("sparse search timed out; skipping sparse results");
                     }
                 }
             } else {
@@ -1378,6 +1444,7 @@ impl ManifestSearch {
                 resource_filter.as_ref(),
                 None,
                 false,
+                deadline,
             )?;
             if self.config.search.indicator_ranking.enable_parent_coherence
                 && indicator_rows.len() > 1
@@ -4630,8 +4697,8 @@ mod tests {
     use crate::error::DbtNovaError;
 
     use super::{
-        SearchCandidate, SearchDeadline, analyst_near_tie_hint, resource_type_allowed_for_search,
-        run_semantic_blocking,
+        SEMANTIC_TIMEOUT_RESERVE_MS, SearchCandidate, SearchDeadline, SemanticWorkResult,
+        analyst_near_tie_hint, resource_type_allowed_for_search, run_semantic_blocking,
     };
 
     #[test]
@@ -4734,7 +4801,24 @@ mod tests {
         .await
         .expect("deadline helper should not fail");
 
-        assert!(result.is_none());
+        assert!(matches!(result, SemanticWorkResult::SkippedDeadline));
         assert!(!ran.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn semantic_blocking_reports_timeout_after_start() {
+        let deadline = SearchDeadline {
+            started_at: Instant::now(),
+            timeout_ms: SEMANTIC_TIMEOUT_RESERVE_MS + 5,
+        };
+
+        let result = run_semantic_blocking(deadline, "vector search", "test", move || {
+            std::thread::sleep(Duration::from_millis(50));
+            Ok::<_, DbtNovaError>(())
+        })
+        .await
+        .expect("deadline helper should not fail");
+
+        assert!(matches!(result, SemanticWorkResult::TimedOut));
     }
 }

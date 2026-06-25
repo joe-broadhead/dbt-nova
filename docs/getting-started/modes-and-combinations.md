@@ -26,7 +26,7 @@ Installer controls:
 - `DBT_NOVA_SKILL_NAME=<skill>` (optional single standalone skill)
 - `DBT_NOVA_INSTALL_NONINTERACTIVE=1`
 - `DBT_NOVA_INSTALL_DIR`, `DBT_NOVA_SKILLS_DIR`
-- `DBT_NOVA_VERIFY_CHECKSUM=1|0`, `DBT_NOVA_VERIFY_SIGNATURE=auto|1|0`
+- `DBT_NOVA_VERIFY_CHECKSUM=1|0`, `DBT_NOVA_VERIFY_SIGNATURE=1|auto|0`
 
 ## 2) Manifest Source Plane
 

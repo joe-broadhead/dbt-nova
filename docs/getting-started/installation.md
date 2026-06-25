@@ -8,6 +8,7 @@
 | **RAM** | 512 MB | 2 GB+ (4 GB with dense vectors) |
 | **Disk** | 100 MB | 500 MB+ (depends on manifest size) |
 | **Rust** | 1.93+ (edition 2024) | Latest stable |
+| **cosign** | 2.x | Required for signed release checksum verification |
 
 You also need:
 
@@ -17,42 +18,46 @@ Remote manifests are supported via `DBT_NOVA_MANIFEST_URI` (http(s), dbfs, s3, g
 
 ## Quick Install (Recommended)
 
-Use the installer script (defaults to **slim**):
+Use the installer script (defaults to **slim**). The examples below require
+`cosign` and enforce signed checksum verification. For development-only installs
+without `cosign` on `v0.0.5`, omit `DBT_NOVA_VERIFY_SIGNATURE=1`. The next
+installer also accepts `DBT_NOVA_VERIFY_SIGNATURE=auto` for opportunistic
+verification.
 
 ```bash
 # Public repo (unauthenticated)
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
-  DBT_NOVA_VERSION=v0.0.6 bash -s -- --slim --non-interactive
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.5/scripts/install.sh | \
+  DBT_NOVA_VERSION=v0.0.5 DBT_NOVA_VERIFY_SIGNATURE=1 bash -s -- --slim --non-interactive
 
 # Private repo (authenticated)
 GH_TOKEN="$(gh auth token)"
 curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
-  https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
-  DBT_NOVA_VERSION=v0.0.6 DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --slim --non-interactive
+  https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.5/scripts/install.sh | \
+  DBT_NOVA_VERSION=v0.0.5 DBT_NOVA_VERIFY_SIGNATURE=1 DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --slim --non-interactive
 ```
 
 Non-interactive examples:
 
 ```bash
 # Public repo: default slim in non-interactive mode
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
-  DBT_NOVA_VERSION=v0.0.6 bash -s -- --non-interactive
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.5/scripts/install.sh | \
+  DBT_NOVA_VERSION=v0.0.5 DBT_NOVA_VERIFY_SIGNATURE=1 bash -s -- --non-interactive
 
 # Public repo: force slim
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
-  DBT_NOVA_VERSION=v0.0.6 bash -s -- --slim --non-interactive
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.5/scripts/install.sh | \
+  DBT_NOVA_VERSION=v0.0.5 DBT_NOVA_VERIFY_SIGNATURE=1 bash -s -- --slim --non-interactive
 
 # Private repo: default slim in non-interactive mode
 GH_TOKEN="$(gh auth token)"
 curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
-  https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
-  DBT_NOVA_VERSION=v0.0.6 DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --non-interactive
+  https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.5/scripts/install.sh | \
+  DBT_NOVA_VERSION=v0.0.5 DBT_NOVA_VERIFY_SIGNATURE=1 DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --non-interactive
 
 # Private repo: force slim
 GH_TOKEN="$(gh auth token)"
 curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
-  https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
-  DBT_NOVA_VERSION=v0.0.6 DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --slim --non-interactive
+  https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.5/scripts/install.sh | \
+  DBT_NOVA_VERSION=v0.0.5 DBT_NOVA_VERIFY_SIGNATURE=1 DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --slim --non-interactive
 ```
 
 The installer places `dbt-nova` in `~/.local/bin`. For bundled installs, it also
@@ -66,10 +71,10 @@ or remote model hydration? See [Modes & Combinations](modes-and-combinations.md)
 If you want users to enable semantic layers without a later model download, pre-warm during install:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.5/scripts/install.sh | \
   DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/.fastembed_cache" \
   DBT_NOVA_WARMUP_REQUIRED_MODELS=3 \
-  DBT_NOVA_VERSION=v0.0.6 bash -s -- --slim --warm-models --non-interactive
+  DBT_NOVA_VERSION=v0.0.5 DBT_NOVA_VERIFY_SIGNATURE=1 bash -s -- --slim --warm-models --non-interactive
 ```
 
 Use the same `DBT_NOVA_EMBEDDINGS_CACHE_DIR` value in your MCP client config so every
@@ -80,23 +85,23 @@ client process reuses that cache.
 Install all built-in standalone persona skills:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
-  DBT_NOVA_VERSION=v0.0.6 bash -s -- --slim --install-skills --non-interactive
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.5/scripts/install.sh | \
+  DBT_NOVA_VERSION=v0.0.5 DBT_NOVA_VERIFY_SIGNATURE=1 bash -s -- --slim --install-skills --non-interactive
 ```
 
 Install one standalone skill:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
-  DBT_NOVA_VERSION=v0.0.6 bash -s -- --slim --install-skills --skill analyst --non-interactive
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.5/scripts/install.sh | \
+  DBT_NOVA_VERSION=v0.0.5 DBT_NOVA_VERIFY_SIGNATURE=1 bash -s -- --slim --install-skills --skill analyst --non-interactive
 ```
 
 To choose a different destination:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.5/scripts/install.sh | \
   DBT_NOVA_SKILLS_DIR="$HOME/.codex/skills" \
-  DBT_NOVA_VERSION=v0.0.6 bash -s -- --slim --install-skills --non-interactive
+  DBT_NOVA_VERSION=v0.0.5 DBT_NOVA_VERIFY_SIGNATURE=1 bash -s -- --slim --install-skills --non-interactive
 ```
 
 ## Verify Installation
@@ -118,12 +123,20 @@ find "$HOME/.dbt-nova/.fastembed_cache" -type f \
 ```
 
 The installer verifies SHA-256 checksums for downloaded archives by default.
-Set `DBT_NOVA_VERIFY_CHECKSUM=0` to skip this check.
+Set `DBT_NOVA_VERIFY_CHECKSUM=0` only for trusted development scenarios.
 
-Checksum signature verification defaults to `auto`: if `cosign` is available
-and the release includes a `.sha256.sig` and `.sha256.crt`, the installer
-verifies the signed checksum against the release workflow identity. To require
-signature verification, install `cosign` and set:
+The installer supports three checksum signature modes:
+
+- `DBT_NOVA_VERIFY_SIGNATURE=1` requires `cosign` plus release `.sha256.sig`
+  and `.sha256.crt` files, and fails closed when verification cannot run.
+- `DBT_NOVA_VERIFY_SIGNATURE=auto` verifies when possible and skips when
+  `cosign` or signature files are unavailable.
+- `DBT_NOVA_VERIFY_SIGNATURE=0` disables checksum signature verification.
+
+Current stable examples pass `DBT_NOVA_VERIFY_SIGNATURE=1` explicitly. The
+`v0.0.5` installer supports this strict mode, while the next release installer
+also defaults to required signature verification and adds the explicit `auto`
+mode. To require verification when invoking the installer directly:
 
 ```bash
 export DBT_NOVA_VERIFY_SIGNATURE=1
@@ -221,7 +234,7 @@ The installer defaults to **slim** and supports:
 - `DBT_NOVA_INSTALL_DIR=/custom/path`
 - `--bundled`, `--slim`, `--warm-models`, `--install-skills`, `--skill <name>`, `--skills-dir <path>`, `--non-interactive`, `--install-dir <path>`
 - `DBT_NOVA_VERIFY_CHECKSUM=1|0`
-- `DBT_NOVA_VERIFY_SIGNATURE=auto|1|0`
+- `DBT_NOVA_VERIFY_SIGNATURE=1|auto|0`
 - `DBT_NOVA_COSIGN_BINARY=cosign`
 - `DBT_NOVA_COSIGN_CERT_IDENTITY_REGEXP=...`
 - `DBT_NOVA_COSIGN_CERT_OIDC_ISSUER=https://token.actions.githubusercontent.com`
@@ -315,7 +328,7 @@ by SHA-256 verification when checksum mode is enabled.
 Example (pin fallback seed to a specific release tag):
 
 ```bash
-DBT_NOVA_WARMUP_VERSION=v0.0.6 bash scripts/warm_models.sh
+DBT_NOVA_WARMUP_VERSION=v0.0.5 bash scripts/warm_models.sh
 ```
 
 ---

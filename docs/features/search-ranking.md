@@ -135,7 +135,7 @@ DBT_NOVA_SEARCH_ENGINEER_EXACT_MATCH_MULTIPLIER=2.0
 3) **Domains/use_cases** provide intent routing but stay below synonyms/measures.
 4) `description`, `columns`, `tags`, `path`, and `code` remain as backstops.
 5) **Staging-layer models** are de‑boosted so curated models rank higher.
-   This deboost is layer-rule driven (`DBT_NOVA_LAYER_RULES_JSON`) and applies
+   This deboost is layer-rule driven (`DBT_NOVA_LAYER_RULES`) and applies
    when the resolved layer is `staging`, `stage`, or `stg`.
 6) **Persona candidate hints** can de‑boost models that are still useful for
    engineering/governance discovery but should not dominate analyst discovery.

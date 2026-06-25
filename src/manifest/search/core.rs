@@ -762,10 +762,15 @@ impl ManifestSearchHandle {
     /// Returns the underlying initialization error if the manifest fails to load.
     pub async fn wait_ready(&self) -> Result<Arc<ManifestSearch>> {
         loop {
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            // Register before checking state so a one-shot readiness notification
+            // cannot land between the check and the wait.
+            notified.as_mut().enable();
             match self.get().await {
                 Ok(searcher) => return Ok(searcher),
                 Err(DbtNovaError::IndexBuildInProgress { .. }) => {
-                    self.notify.notified().await;
+                    notified.await;
                 }
                 Err(err) => return Err(err),
             }

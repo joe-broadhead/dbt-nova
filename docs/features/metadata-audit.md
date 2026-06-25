@@ -119,7 +119,8 @@ pay for full search/model startup during metadata-only audits.
 By default every job runs on `ubuntu-22.04`. Downstream wrappers can pass
 `runner: decathlon` for a single custom runner label, or
 `runner_labels_json: '["self-hosted","linux","x64"]'` when a self-hosted pool
-requires multiple labels.
+requires multiple labels. Those runner override inputs require a release tag or
+immutable commit SHA that includes them.
 
 When `selection_mode: changed` and `changed_files_json` is omitted on
 `pull_request` events, the reusable workflow resolves changed files from the
@@ -139,12 +140,14 @@ emitting the JSON and Markdown audit reports.
 
 When using `dbt_generate_manifest: true`, prefer the same secret-bundle pattern
 as the Nova assets workflow so callers can work consistently across providers
-and across same-owner or cross-owner reusable workflow calls:
+and across same-owner or cross-owner reusable workflow calls. Replace
+`<nova-ref>` with a release tag or full commit SHA that includes the workflow
+inputs you use:
 
 ```yaml
 jobs:
   nova_metadata_audit:
-    uses: joe-broadhead/dbt-nova/.github/workflows/nova-metadata-audit.yml@v0.0.6
+    uses: joe-broadhead/dbt-nova/.github/workflows/nova-metadata-audit.yml@<nova-ref>
     with:
       dbt_generate_manifest: true
       dbt_command_args_json: >-

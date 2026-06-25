@@ -664,7 +664,7 @@ jobs:
           fi
           if [[ "${allow_mutable_installer_ref}" != "true" ]]; then
             if ! [[ "${installer_ref}" =~ ^[0-9a-fA-F]{40}$ || "${installer_ref}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "installer_ref must be an immutable full commit SHA or release tag (for example v0.0.6)."
+              echo "installer_ref must be an immutable full commit SHA or release tag (for example v0.0.5)."
               echo "Resolved installer_ref='${installer_ref}'. Set allow_mutable_installer_ref=true only for trusted development runs."
               exit 1
             fi
