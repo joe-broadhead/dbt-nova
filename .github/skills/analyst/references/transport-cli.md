@@ -9,8 +9,12 @@ Use this reference when the client does not expose Nova MCP tools directly and y
 - Always use `--json`.
 - Prefer `--params-file` over long inline JSON when payloads get large.
 - Run `dbt-nova health check` before substantive work.
-- If health is not ready, resolve the readiness problem before trusting search or SQL.
+- If health is not ready or `ready_for_traffic` is false, resolve the readiness
+  problem before trusting search or SQL.
 - `execute_sql` and `run_recipe` require valid warehouse environment variables.
+- Do not run `manifest warm` during analyst work unless the user explicitly
+  approves semantic cache warmup. For large or memory-constrained manifests,
+  keep vector, sparse, and reranker search disabled in the environment.
 
 ## Transport mapping
 
@@ -39,6 +43,8 @@ fallback is used.
 - Prefer `--params-file` or `--params-json` to avoid shell-escaping mistakes.
 - Prefer `--params-file` for `execute_sql` when SQL contains quotes or newlines.
 - Treat warehouse auth failures as execution blockers, not discovery failures.
+- Treat `INDEX_BUILDING` as a readiness state. Poll health until
+  `ready_for_traffic=true` instead of retrying analytical tools immediately.
 
 ## Execution
 

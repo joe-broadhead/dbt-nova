@@ -7,7 +7,12 @@ Use this reference when the client exposes `mcp__nova__*` tools directly.
 - Use `show_metadata` first for a fast scope check when you need project identity or manifest scope.
 - Use MCP first for discovery, inspection, impact, and quality checks.
 - Use `health` only when readiness is uncertain or a prior tool suggests a startup/cache issue.
+- If `health` reports `ready_for_traffic=false` or a tool returns
+  `INDEX_BUILDING`, wait for readiness before continuing tool-based evidence
+  gathering.
 - If the change requires local compile/build or `audit nova-meta`, switch to CLI for that part instead of forcing MCP to do it.
+- Do not call `warm_manifest` on shared or constrained environments unless the
+  task is explicitly about semantic cache lifecycle validation.
 
 ## Discovery order
 

@@ -12,6 +12,61 @@ cargo test -- --nocapture
 - `src/tests/` – in‑crate unit tests
 - `tests/` – integration/property tests and fixtures
 
+## No-Warm Release Smoke
+
+Use the release smoke harness when you need to prove the built binary, CLI
+surface, MCP stdio readiness, and a small set of agent-readiness checks against
+a real manifest without building dense, sparse, or reranker semantic caches:
+
+```bash
+scripts/smoke_release_no_warm.sh \
+  --manifest-path target/manifest.json \
+  --output-dir out/nova-release-smoke \
+  --storage-instance-id release-no-warm-smoke
+```
+
+The harness runs `cargo build --release --locked` unless `--skip-build` is
+passed. It exports:
+
+- `DBT_NOVA_SEARCH_ENABLE_VECTOR=false`
+- `DBT_NOVA_SEARCH_ENABLE_SPARSE=false`
+- `DBT_NOVA_SEARCH_ENABLE_RERANKER=false`
+
+It intentionally does not run `dbt-nova manifest warm`. It also verifies that
+`warm_manifest` remains disabled without
+`DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1`, polls MCP `health` until
+`ready_for_traffic=true`, checks `tools/list`, and writes `summary.json` plus
+`report.md`.
+
+Bridge and provider-backed evals are opt-in because production manifests,
+provider credentials, and artifact policies differ by environment:
+
+```bash
+scripts/smoke_release_no_warm.sh \
+  --manifest-path tests/fixtures/starter_eval_manifest.json \
+  --bridge-suite evals/starter.yml \
+  --agent-suite evals/starter.yml \
+  --agent-providers opencode,claude,codex \
+  --fail-under 1.0
+```
+
+Keep private manifests, provider stdout/stderr, raw traces, and credentials out
+of public artifacts. The script captures only the Nova artifacts needed for a
+local hardening or release review.
+
+## MCP File Path Policy
+
+MCP file tools resolve local paths under the server working directory. This
+applies to eval suites, eval result comparisons, trace inspection/redaction, and
+`validate_nova_meta` project scans. If a path is outside the server cwd, the
+tool should reject it instead of reading arbitrary local files.
+
+For local testing, start `dbt-nova server start` from the dbt project root when
+you need `validate_nova_meta` to scan project YAML. For eval and trace tests,
+write suites, result directories, and trace JSONL files under the server cwd and
+pass relative paths where possible. Avoid symlink workarounds; they make audit
+evidence harder to reproduce.
+
 ## Nova Metadata and Agent Evals
 
 Use `dbt-nova eval run` to test that a manifest exposes the right search,

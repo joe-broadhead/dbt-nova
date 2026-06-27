@@ -29,6 +29,8 @@ Before tagging:
 - [ ] `cargo clippy --locked --all-targets --all-features -- -D warnings` passes
 - [ ] `cargo fmt --check` passes
 - [ ] Docs build clean (`mkdocs build --strict`)
+- [ ] No-warm release smoke passes against the intended manifest or fixture:
+      `scripts/smoke_release_no_warm.sh --manifest-path <manifest.json>`
 - [ ] Release PR approved and merged to `master`
 
 After merge to `master`:

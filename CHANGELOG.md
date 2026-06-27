@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added no-warm release hardening coverage for CLI and MCP validation,
+  including an all-tool MCP catalog smoke test, a release smoke harness,
+  refreshed provider-eval documentation, and packaged agent-skill readiness
+  guidance for large manifest testing.
 - Hardened production readiness by making installer checksum signature
   verification fail closed by default, resolving `latest` installs to the
   immutable release tag before fetching optional support assets, adding

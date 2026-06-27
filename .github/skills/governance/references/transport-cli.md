@@ -10,6 +10,11 @@ Use this reference when you are working through the local `dbt-nova` CLI.
 - Freeze scope before scoring and keep it stable for reruns.
 - Use `audit metadata-score` as the primary gate.
 - Use `audit nova-meta` when schema YAML or Nova metadata is in scope.
+- Do not run `manifest warm` as part of a governance audit unless semantic
+  cache readiness is the audit subject. On constrained machines, keep vector,
+  sparse, and reranker search disabled.
+- Treat `INDEX_BUILDING` as a readiness state. Wait for
+  `ready_for_traffic=true` before freezing audit evidence.
 
 ## CLI mapping
 
@@ -20,3 +25,4 @@ Common mappings:
 - local Nova validation: `audit nova-meta`
 - blocker detail: `tool call get_metadata_score`, `get_test_coverage`, `get_entity`
 - scope inventory: `tool call list_entities`, `find_by_path`
+- release/local hardening: `scripts/smoke_release_no_warm.sh`

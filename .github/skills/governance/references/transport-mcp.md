@@ -7,8 +7,13 @@ Use this reference when the client exposes `mcp__nova__*` tools directly.
 - Use `show_metadata` first to capture manifest identity and project scope.
 - Use MCP for scope inventory, metadata scoring, test-coverage review, and entity-level blocker extraction.
 - Use `health` only when readiness is uncertain or a prior tool suggests startup/cache issues.
+- If `health` reports `ready_for_traffic=false` or a tool returns
+  `INDEX_BUILDING`, wait for readiness before freezing audit scope or scoring
+  evidence.
 - Use CLI separately for `audit nova-meta` or other local-only validation.
 - Do not reload or mutate shared hosted MCP servers from a governance audit.
+- Do not call `warm_manifest` from governance audits unless semantic cache
+  readiness is explicitly in scope.
 
 ## Practical order
 

@@ -3054,7 +3054,7 @@ fn append_suggested_meta_patches_table(out: &mut String, patches: &[SuggestedMet
                 .column_name
                 .as_deref()
                 .or(patch.indicator_name.as_deref())
-                .map_or_else(|| patch.unique_id.as_str(), |name| name);
+                .unwrap_or(patch.unique_id.as_str());
             let _ = writeln!(
                 out,
                 "| `{}` | `{}` | `{}` | {} |",

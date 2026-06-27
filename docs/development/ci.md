@@ -183,12 +183,18 @@ cargo check --locked --no-default-features --all-targets
 cargo check --locked --all-features
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo fmt --check
+scripts/smoke_release_no_warm.sh --manifest-path tests/fixtures/starter_eval_manifest.json
 scripts/check_config_reference.sh
 scripts/check_dependency_watchlist.sh
 pip install -r docs/requirements.txt
 mkdocs build --strict
 cargo deny check advisories licenses sources
 ```
+
+For private production-manifest hardening, point the no-warm smoke script at the
+generated `target/manifest.json` and pass private bridge/provider suites
+explicitly. Do not run semantic warmup on memory-constrained machines unless
+the test is specifically about vector, sparse, or reranker cache behavior.
 
 For ranking, retrieval, skill, or eval experiments, include before/after eval
 evidence where possible. If the change does not improve accuracy, latency,

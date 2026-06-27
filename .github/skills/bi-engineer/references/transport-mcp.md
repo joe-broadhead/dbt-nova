@@ -6,6 +6,8 @@ Use this reference when the client exposes `mcp__nova__*` tools directly.
 
 - Use MCP first for indicator resolution, contract checks, and filter validation.
 - Use `health` when readiness is uncertain and `show_metadata` when manifest context matters.
+- If `health` reports `ready_for_traffic=false` or a tool returns
+  `INDEX_BUILDING`, wait for readiness before continuing.
 - Use recipe tools when a recurring reporting workflow already exists; otherwise design from the entity contract.
 - Treat warehouse failures as execution blockers, not design proof.
 - Keep SQL bounded with explicit time/filter predicates, `row_limit`, `byte_limit`, small `max_chunks`, and finite timeouts.

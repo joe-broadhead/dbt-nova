@@ -10,6 +10,11 @@ Use this reference when you are working through the local `dbt-nova` CLI in the 
 - Prefer `--params-file` when payloads become awkward inline.
 - Run `audit nova-meta` when schema YAML or `meta.nova` changes.
 - After local compile/build updates the manifest, refresh the Nova view before trusting new discovery results.
+- For large-manifest validation on constrained machines, do not run
+  `manifest warm`; keep vector, sparse, and reranker search disabled unless the
+  user explicitly asks to test semantic cache behavior.
+- Treat `INDEX_BUILDING` as a startup/readiness state and wait for
+  `ready_for_traffic=true` before drawing conclusions from search tools.
 
 ## CLI mapping
 
@@ -29,3 +34,5 @@ Common mappings:
 - Prefer `tool call` parity with MCP before inventing custom shell parsing.
 - Treat auth failures as execution blockers, not discovery failures.
 - Use CLI JSON output as evidence for ship summaries.
+- Use `scripts/smoke_release_no_warm.sh` when the task is release or local
+  hardening evidence rather than model implementation.

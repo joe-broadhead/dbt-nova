@@ -185,7 +185,16 @@ called_with:
 
 ## Provider Runs
 
-Default provider:
+Default provider presets:
+
+| Provider | Default command shape |
+| --- | --- |
+| `opencode` | `opencode run --format json <prompt>` |
+| `codex` | `codex exec --json --cd <workdir> <prompt>` |
+| `claude` | `claude -p --verbose --output-format stream-json <prompt>` |
+| `goose` | `goose run --text <prompt> --output-format stream-json --no-session` |
+
+Default provider run:
 
 ```bash
 dbt-nova eval agent run \
@@ -195,6 +204,41 @@ dbt-nova eval agent run \
   --case-id metric_lookup_flow \
   --fail-under 1.0
 ```
+
+For a trusted local hardening run where the agent CLIs are already configured
+and noninteractive execution is acceptable, use explicit custom provider args:
+
+```bash
+dbt-nova eval agent run \
+  --suite evals/analyst-agent.yml \
+  --provider custom \
+  --provider-command opencode \
+  --provider-args-json '["run","--format","json","--dangerously-skip-permissions","{prompt}"]' \
+  --manifest-path target/manifest.json \
+  --telemetry \
+  --fail-under 1.0
+
+dbt-nova eval agent run \
+  --suite evals/analyst-agent.yml \
+  --provider custom \
+  --provider-command claude \
+  --provider-args-json '["-p","--dangerously-skip-permissions","--verbose","--output-format","stream-json","{prompt}"]' \
+  --manifest-path target/manifest.json \
+  --telemetry \
+  --fail-under 1.0
+
+dbt-nova eval agent run \
+  --suite evals/analyst-agent.yml \
+  --provider custom \
+  --provider-command codex \
+  --provider-args-json '["exec","--json","--dangerously-bypass-approvals-and-sandbox","--skip-git-repo-check","--cd","{workdir}","{prompt}"]' \
+  --manifest-path target/manifest.json \
+  --telemetry \
+  --fail-under 1.0
+```
+
+Use bypass flags only on trusted local machines or reviewed private runners.
+Keep them out of public default CI.
 
 Custom provider:
 
@@ -213,3 +257,8 @@ dbt-nova eval agent run \
 - If the wrong MCP server alias is used, set `DBT_NOVA_EVAL_MCP_SERVER_ALIASES`.
 - If `selected_entities` fails but `must_call` passes, inspect the tool result shape and prefer `selected_entity_ranks` scoped to the discovery tool.
 - If final-answer checks are brittle, remove broad prose expectations and keep only durable business terms.
+- If a provider chooses a per-unit metric when the task asks for a total
+  business amount, tighten the task wording and assert the intended indicator in
+  `selected_entity_ranks` or final-answer durable terms.
+- If a gate reports missing telemetry, rerun the full suite with `--telemetry`;
+  filtered `--case-id` runs do not satisfy launch-readiness gates.

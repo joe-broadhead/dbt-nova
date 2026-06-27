@@ -122,6 +122,12 @@ dbt-nova manifest warm \
   --json
 ```
 
+If no component flag is supplied, `manifest warm` requests vector and sparse
+warmup. On constrained machines or very large manifests, skip this command and
+leave `DBT_NOVA_SEARCH_ENABLE_VECTOR=false`,
+`DBT_NOVA_SEARCH_ENABLE_SPARSE=false`, and
+`DBT_NOVA_SEARCH_ENABLE_RERANKER=false` for smoke tests.
+
 ### One-shot tool execution
 
 ```bash
@@ -326,6 +332,9 @@ dbt-nova tool call warm_manifest \
 
 The tool-call form uses the manifest source loaded for the tool call. The MCP
 server form uses the currently configured live-server manifest source.
+When no component flag is supplied, the tool requests vector and sparse warmup,
+matching `manifest warm`; keep the safety gate unset for no-warm release or
+large-manifest smoke tests.
 
 ## Operator admin tools via `tool call`
 
