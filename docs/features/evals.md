@@ -561,6 +561,53 @@ wrapped into one of the supported event shapes.
 from provider JSON event streams. For custom providers that do not emit JSON
 events, dbt-nova falls back to the provider stdout.
 
+Default provider preset commands are intentionally conservative:
+
+| Provider | Default command shape |
+| --- | --- |
+| `opencode` | `opencode run --format json <prompt>` |
+| `codex` | `codex exec --json --cd <workdir> <prompt>` |
+| `claude` | `claude -p --verbose --output-format stream-json <prompt>` |
+| `goose` | `goose run --text <prompt> --output-format stream-json --no-session` |
+
+For a trusted local hardening run where the CLIs are already configured and
+noninteractive execution is acceptable, use explicit custom args so the command
+line is auditable:
+
+```bash
+dbt-nova eval agent run \
+  --suite evals/analyst-agent.yml \
+  --provider custom \
+  --provider-command opencode \
+  --provider-args-json '["run","--format","json","--dangerously-skip-permissions","{prompt}"]' \
+  --manifest-path /path/to/target/manifest.json \
+  --telemetry \
+  --fail-under 1.0
+
+dbt-nova eval agent run \
+  --suite evals/analyst-agent.yml \
+  --provider custom \
+  --provider-command claude \
+  --provider-args-json '["-p","--dangerously-skip-permissions","--verbose","--output-format","stream-json","{prompt}"]' \
+  --manifest-path /path/to/target/manifest.json \
+  --telemetry \
+  --fail-under 1.0
+
+dbt-nova eval agent run \
+  --suite evals/analyst-agent.yml \
+  --provider custom \
+  --provider-command codex \
+  --provider-args-json '["exec","--json","--dangerously-bypass-approvals-and-sandbox","--skip-git-repo-check","--cd","{workdir}","{prompt}"]' \
+  --manifest-path /path/to/target/manifest.json \
+  --telemetry \
+  --fail-under 1.0
+```
+
+Keep these bypass flags out of shared CI unless the runner, credentials, and
+artifact policy have been reviewed. For launch-readiness claims, run the full
+suite with `--telemetry`, then check `dbt-nova eval gate <suite-name> --json`;
+filtered `--case-id` runs are for debugging only.
+
 For another provider or a custom local wrapper, pass an explicit command:
 
 ```bash

@@ -75,6 +75,13 @@ Eval execution is CLI-only. MCP is for discovering ground truth and debugging ex
 - Freeze relative dates in agent tasks. Do not leave "last week", "this month", or "last 52 weeks" unresolved unless the eval is explicitly testing date interpretation.
 - Keep smoke suites small and strict. Keep broader regression suites larger with realistic `--fail-under` thresholds.
 - Put advisory launch-readiness thresholds in suite YAML as `gate: { threshold: <0.0-1.0> }`, then verify the latest full-suite telemetry with `dbt-nova eval gate <suite_name> --json`. Filtered `--case-id` runs are for iteration and do not satisfy configured gates.
+- For large manifests or constrained machines, keep vector, sparse, and reranker
+  search disabled during smoke/eval validation unless semantic model behavior is
+  the explicit test target. Do not run `manifest warm` or `warm_manifest` as a
+  side effect of eval authoring.
+- MCP eval, trace, and nova-meta file paths are scoped under the server working
+  directory. Put suite files, result directories, traces, and validation
+  fixtures under that root, or run the server from the project root.
 - Never include secrets, credentials, raw SQL parameter maps, or private manifests in public eval artifacts.
 
 ## Output standard

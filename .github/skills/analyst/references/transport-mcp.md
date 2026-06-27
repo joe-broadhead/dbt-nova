@@ -6,9 +6,15 @@ Use this reference when the client exposes `mcp__nova__*` tools directly.
 
 - Use `show_metadata` for fast project identity and manifest scope checks.
 - Use `health` only when readiness is uncertain or a prior tool suggests startup, refresh, or cache issues.
-- If `health.status` is not `ready` on a shared hosted endpoint, stop and report the readiness state. Do not mutate server state from an analyst workflow.
+- If `health.status` is not `ready` or `health.data.ready_for_traffic` is false
+  on a shared hosted endpoint, stop and report the readiness state. Do not
+  mutate server state from an analyst workflow.
+- Treat `INDEX_BUILDING` as normal startup/readiness evidence, not as a failed
+  analytical result.
 - `run_recipe` uses the same warehouse execution path as `execute_sql`.
 - A warehouse auth or provider failure is an execution blocker, not a discovery failure.
+- Do not call `warm_manifest` from an analyst workflow unless the user
+  explicitly approved semantic cache warmup for the running machine.
 
 ## Discovery order
 

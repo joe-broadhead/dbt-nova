@@ -37,6 +37,29 @@ or reranking in your MCP client, enable them explicitly with:
 - `DBT_NOVA_SEARCH_ENABLE_SPARSE=true`
 - `DBT_NOVA_SEARCH_ENABLE_RERANKER=true`
 
+For large manifests or memory-constrained machines, keep those three variables
+unset or explicitly set them to `false`, and do not call `warm_manifest` unless
+you have intentionally provisioned the machine for semantic cache writes.
+
+## Readiness Polling
+
+MCP clients may receive `INDEX_BUILDING` while the manifest is still loading or
+indexes are still materializing. Treat that as a startup state, not as a failed
+tool contract.
+
+Automation should wait for one of:
+
+- MCP `health` with `data.ready_for_traffic=true`
+- HTTP `/readyz` returning ready when using streamable HTTP
+
+Do not treat `tools/list` or MCP `initialize` as readiness proof; those can
+succeed before search and metadata tools are safe to call. For local release or
+large-manifest checks, use:
+
+```bash
+scripts/smoke_release_no_warm.sh --manifest-path target/manifest.json
+```
+
 Optional manifest pruning (applies to MCP server startup and reloads):
 - `DBT_NOVA_PRUNE_ALLOW_IDS` (JSON array of dbt `unique_id` patterns)
 - `DBT_NOVA_PRUNE_DENY_IDS` (JSON array of dbt `unique_id` patterns; deny wins)

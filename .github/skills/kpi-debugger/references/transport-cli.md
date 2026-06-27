@@ -9,8 +9,12 @@ Use this reference when you are working through the local `dbt-nova` CLI.
 - Always use `--json`.
 - Prefer `--params-file` for structured payloads.
 - Run `health check` before substantive work.
+- If health is not ready or `ready_for_traffic` is false, wait before using
+  discovery or execution evidence.
 - Keep warehouse execution bounded with explicit dates, filters, row/byte limits, and finite timeouts.
 - Do not use CLI workarounds that warm a full manifest or scan a full table unless the user explicitly approves it.
+- Treat `INDEX_BUILDING` as startup readiness evidence, not discrepancy
+  evidence.
 
 ## CLI mapping
 

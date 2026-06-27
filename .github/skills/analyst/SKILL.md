@@ -66,6 +66,18 @@ can state one of these evidence-backed reasons:
 When you fall back to raw model search, say what semantic discovery you tried
 and why it was insufficient.
 
+Metric disambiguation rules:
+- If the ask says "total", "amount", "GMV", "revenue", or another additive
+  business result, prefer the total measure or metric definition. Reject
+  `per_*`, ratio, average, per-teammate, per-business-unit, or normalized
+  indicators unless the user explicitly asks for that grain.
+- If top semantic results include both a total indicator and a per-unit
+  indicator, choose the total indicator when the wording asks for an amount;
+  ask one clarification question before execution only when the wording itself
+  is genuinely ambiguous.
+- Preserve the rejected indicator names in your evidence when the distinction
+  matters to the answer.
+
 ## Transport selection (required)
 
 Choose transport before loading transport-specific references:

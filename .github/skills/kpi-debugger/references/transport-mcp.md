@@ -6,6 +6,8 @@ Use this reference when the client exposes `mcp__nova__*` tools directly.
 
 - Use MCP first for KPI resolution, contract checks, recipe discovery, and bounded reproduction.
 - Use `health` when readiness is uncertain.
+- If `health` reports `ready_for_traffic=false` or a tool returns
+  `INDEX_BUILDING`, wait for readiness before continuing.
 - Use `show_metadata` when the manifest/project context matters.
 - Use recipes only when a recurring reconciliation or debug workflow already exists and its required parameters are clear.
 - Treat warehouse failures as execution blockers, not diagnosis proof.

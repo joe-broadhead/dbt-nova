@@ -34,6 +34,14 @@ suite will use. Do not add `--read-only` during first-time discovery unless a
 reusable index is already materialized; otherwise Nova cannot build the index
 needed to answer search tools.
 
+For large manifests or memory-constrained machines, explicitly disable vector,
+sparse, and reranker search when the suite is not testing semantic model
+behavior. Do not run `manifest warm` or `warm_manifest` just to validate bridge
+or provider tool-use behavior.
+
+When using MCP, wait for `health.data.ready_for_traffic=true` before recording
+ground truth. `INDEX_BUILDING` is startup evidence, not a failed assertion.
+
 Freeze relative dates before writing agent tasks. For example, replace "last
 week" with explicit start/end dates and state the comparison basis. If the eval
 targets a recipe, follow that recipe's calendar contract instead of assuming a
