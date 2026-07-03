@@ -14,7 +14,7 @@ categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-rmcp = { version = "0.14.0", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
+rmcp = { version = "1.4.0", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 axum = "0.8"
 schemars = { version = "1.2", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }

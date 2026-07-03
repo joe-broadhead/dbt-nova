@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Hardened Monthly dependency checks by upgrading `anyhow` and `rmcp` past new
+  RustSec advisories, retaining streamable HTTP Host validation, and adding
+  `DBT_NOVA_HTTP_ALLOWED_HOSTS` for hosted reverse-proxy deployments.
 - Added no-warm release hardening coverage for CLI and MCP validation,
   including an all-tool MCP catalog smoke test, a release smoke harness,
   refreshed provider-eval documentation, and packaged agent-skill readiness

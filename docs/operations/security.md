@@ -78,10 +78,12 @@ Operator policy:
 - Bind to loopback (`127.0.0.1` or `::1`) for local-only use.
 - For non-loopback / hosted exposure, place dbt-nova behind an authenticating reverse proxy.
 - Set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when that proxy is enforcing access.
+- Set `DBT_NOVA_HTTP_ALLOWED_HOSTS` to the public/proxy hostnames clients send in the `Host` header.
 
 Runtime enforcement:
 
 - Non-loopback `streamable_http` binds fail validation unless `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true`.
+- Streamable HTTP requests are rejected when their `Host` header is outside the transport loopback defaults and `DBT_NOVA_HTTP_ALLOWED_HOSTS`.
 - Successful `streamable_http` startup logs a warning that the transport has no built-in auth.
 
 ## Advisory Exceptions

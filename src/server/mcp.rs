@@ -6,10 +6,7 @@ use std::time::{Duration, Instant};
 use rmcp::{
     ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{
-        Implementation, JsonObject, ProtocolVersion, ServerCapabilities, ServerInfo,
-        ToolsCapability,
-    },
+    model::{Implementation, JsonObject, ServerCapabilities, ServerInfo},
     serde_json, tool, tool_handler, tool_router,
 };
 use tracing::instrument;
@@ -72,19 +69,9 @@ pub struct DbtNovaServer {
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for DbtNovaServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::default(),
-            capabilities: ServerCapabilities {
-                tools: Some(ToolsCapability::default()),
-                ..ServerCapabilities::default()
-            },
-            server_info: Implementation {
-                name: "dbt-nova".into(),
-                version: env!("CARGO_PKG_VERSION").into(),
-                ..Implementation::default()
-            },
-            instructions: Some("DBT Manifest Search and Analysis MCP Server. Use 'search' for full-text discovery, 'search_indicator' for canonical measures and metrics, 'get_entity' for complete entity data, and 'execute_sql' to run warehouse queries with the configured SQL provider.".into()),
-        }
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::new("dbt-nova", env!("CARGO_PKG_VERSION")))
+            .with_instructions("DBT Manifest Search and Analysis MCP Server. Use 'search' for full-text discovery, 'search_indicator' for canonical measures and metrics, 'get_entity' for complete entity data, and 'execute_sql' to run warehouse queries with the configured SQL provider.")
     }
 }
 

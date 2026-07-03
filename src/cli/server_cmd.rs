@@ -30,6 +30,7 @@ struct HttpServerSettings {
     stateful_mode: bool,
     sse_keep_alive_secs: u64,
     sse_retry_secs: u64,
+    allowed_hosts: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -46,6 +47,7 @@ impl HttpServerSettings {
             stateful_mode: config.http_stateful_mode,
             sse_keep_alive_secs: config.http_sse_keep_alive_secs,
             sse_retry_secs: config.http_sse_retry_secs,
+            allowed_hosts: parse_http_allowed_hosts(&config.http_allowed_hosts),
         }
     }
 }
@@ -217,16 +219,22 @@ async fn serve_streamable_http(
     settings: HttpServerSettings,
     shutdown: CancellationToken,
 ) -> Result<()> {
+    let mut transport_config = StreamableHttpServerConfig::default();
+    transport_config.stateful_mode = settings.stateful_mode;
+    transport_config.sse_keep_alive = secs_to_option(settings.sse_keep_alive_secs);
+    transport_config.sse_retry = secs_to_option(settings.sse_retry_secs);
+    transport_config.cancellation_token = shutdown.clone();
+    for host in &settings.allowed_hosts {
+        if !transport_config.allowed_hosts.contains(host) {
+            transport_config.allowed_hosts.push(host.clone());
+        }
+    }
+
     let service: StreamableHttpService<DbtNovaServer, LocalSessionManager> =
         StreamableHttpService::new(
             move || Ok::<DbtNovaServer, io::Error>(server.clone()),
             std::sync::Arc::default(),
-            StreamableHttpServerConfig {
-                stateful_mode: settings.stateful_mode,
-                sse_keep_alive: secs_to_option(settings.sse_keep_alive_secs),
-                sse_retry: secs_to_option(settings.sse_retry_secs),
-                cancellation_token: shutdown.clone(),
-            },
+            transport_config,
         );
 
     let base_app = Router::new()
@@ -299,6 +307,14 @@ fn secs_to_option(value: u64) -> Option<Duration> {
     }
 }
 
+fn parse_http_allowed_hosts(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|host| !host.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
 async fn wait_for_shutdown_signal() -> Result<()> {
     #[cfg(unix)]
     {
@@ -337,7 +353,7 @@ mod tests {
     use tokio::net::TcpListener;
     use tokio_util::sync::CancellationToken;
 
-    use super::{build_start_config, start_with_config_and_shutdown};
+    use super::{HttpServerSettings, build_start_config, start_with_config_and_shutdown};
     use crate::cli::args::{ServerStartArgs, ServerTransportArg};
     use crate::config::{DbtNovaConfig, SearchConfig, ServerTransport};
     use crate::tests::common::fixture_manifest_path_string;
@@ -555,6 +571,25 @@ mod tests {
         });
 
         assert_eq!(config.http_path, "/mcp");
+    }
+
+    #[test]
+    fn http_settings_parse_additional_allowed_hosts() {
+        let config = DbtNovaConfig {
+            http_allowed_hosts: "nova.example.com, nova.example.com:443, ,localhost".to_string(),
+            ..Default::default()
+        };
+
+        let settings = HttpServerSettings::from_config(&config);
+
+        assert_eq!(
+            settings.allowed_hosts,
+            vec![
+                "nova.example.com".to_string(),
+                "nova.example.com:443".to_string(),
+                "localhost".to_string()
+            ]
+        );
     }
 
     fn http_test_config(temp_dir: &TempDir, manifest_path: String, port: u16) -> DbtNovaConfig {

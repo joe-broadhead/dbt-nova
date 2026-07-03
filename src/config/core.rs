@@ -247,6 +247,8 @@ pub struct DbtNovaConfig {
     pub http_path: String,
     /// Explicit acknowledgement that hosted HTTP is protected by an authenticating reverse proxy.
     pub http_expect_auth_proxy: bool,
+    /// Additional inbound Host header values allowed by the Streamable HTTP transport.
+    pub http_allowed_hosts: String,
     /// Whether hosted HTTP mode should use stateful sessions
     pub http_stateful_mode: bool,
     /// SSE keepalive interval in seconds for hosted HTTP mode (0 = disable)
@@ -363,6 +365,7 @@ impl Default for DbtNovaConfig {
             http_port: 8000,
             http_path: "/mcp".to_string(),
             http_expect_auth_proxy: false,
+            http_allowed_hosts: String::new(),
             http_stateful_mode: true,
             http_sse_keep_alive_secs: 15,
             http_sse_retry_secs: 3,
@@ -1046,6 +1049,9 @@ impl DbtNovaConfig {
         }
         if let Some(value) = parse_bool("DBT_NOVA_HTTP_EXPECT_AUTH_PROXY") {
             self.http_expect_auth_proxy = value;
+        }
+        if let Some(value) = env_string("DBT_NOVA_HTTP_ALLOWED_HOSTS") {
+            self.http_allowed_hosts = value;
         }
         if let Some(value) = parse_bool("DBT_NOVA_HTTP_STATEFUL_MODE") {
             self.http_stateful_mode = value;
@@ -1920,6 +1926,48 @@ mod tests {
         }
 
         assert!(config.http_expect_auth_proxy);
+    }
+
+    #[test]
+    fn from_env_reads_http_allowed_hosts() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [(
+            "DBT_NOVA_HTTP_ALLOWED_HOSTS",
+            Some("nova.example.com,nova.example.com:443"),
+        )];
+        let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let config = DbtNovaConfig::from_env();
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        assert_eq!(
+            config.http_allowed_hosts,
+            "nova.example.com,nova.example.com:443"
+        );
     }
 
     #[test]

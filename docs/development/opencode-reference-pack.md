@@ -196,7 +196,8 @@ Remote streamable HTTP example:
 Remote deployments must follow Nova's hosted-server security posture:
 `streamable_http` has no built-in authentication. Non-loopback binds require
 `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` and an authenticating reverse proxy in
-front of dbt-nova.
+front of dbt-nova. Set `DBT_NOVA_HTTP_ALLOWED_HOSTS` to the public/proxy
+hostnames clients send in `Host`.
 
 ## Permission Model
 
