@@ -49,6 +49,7 @@ export DBT_NOVA_SERVER_TRANSPORT=streamable_http
 export PORT=8080
 export DBT_NOVA_HTTP_PATH=/mcp
 export DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true
+export DBT_NOVA_HTTP_ALLOWED_HOSTS=nova.example.com
 export DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,reload_manifest,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest
 export DBT_NOVA_STORAGE_DIR=/tmp/dbt-nova
 export DBT_NOVA_EMBEDDINGS_CACHE_DIR=/tmp/dbt-nova/models
@@ -66,6 +67,7 @@ Why these defaults matter:
 
 - `PORT` lets Nova bind correctly on Cloud Run-style platforms.
 - `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` is required for non-loopback hosted binds and documents that an authenticating reverse proxy is in front of Nova.
+- `DBT_NOVA_HTTP_ALLOWED_HOSTS` allows the public/proxy `Host` header while the transport still rejects unexpected hosts.
 - `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,reload_manifest,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest`
   keeps a hosted endpoint discovery-only and hides operator inspection tools
   unless those capabilities are intentionally enabled.
@@ -195,7 +197,8 @@ If bootstrap omits `models_artifact_uri`, you must do one of these:
 1. Publish prebuilt assets and a stable bootstrap alias.
 2. Set `DBT_NOVA_BOOTSTRAP_URI` to that stable alias.
 3. Put dbt-nova behind an authenticating reverse proxy and set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true`.
-4. Keep `execute_sql` and `run_recipe` denied unless this is an intentional SQL-enabled endpoint.
-5. Keep `DBT_NOVA_STORAGE_DIR` and `DBT_NOVA_EMBEDDINGS_CACHE_DIR` writable.
-6. Use `/healthz` for liveness and `/readyz` for readiness.
-7. Do not enable strict read-only mode until local artifacts already exist.
+4. Set `DBT_NOVA_HTTP_ALLOWED_HOSTS` to the public/proxy hostnames clients use.
+5. Keep `execute_sql` and `run_recipe` denied unless this is an intentional SQL-enabled endpoint.
+6. Keep `DBT_NOVA_STORAGE_DIR` and `DBT_NOVA_EMBEDDINGS_CACHE_DIR` writable.
+7. Use `/healthz` for liveness and `/readyz` for readiness.
+8. Do not enable strict read-only mode until local artifacts already exist.

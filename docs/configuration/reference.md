@@ -39,6 +39,7 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_HTTP_PORT` – bind port for streamable HTTP mode (default: `8000`; falls back to `PORT` when unset)
 - `DBT_NOVA_HTTP_PATH` – HTTP mount path for MCP requests in streamable HTTP mode (default: `/mcp`; reserved probe paths `/healthz` and `/readyz` are not allowed)
 - `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY` – required acknowledgement for non-loopback streamable HTTP binds (`true`|`false`, default: `false`; set to `true` only when an authenticating reverse proxy is enforcing access in front of dbt-nova)
+- `DBT_NOVA_HTTP_ALLOWED_HOSTS` – comma-separated additional `Host` header values accepted by streamable HTTP mode (default: empty; loopback hosts are always allowed by the transport)
 - `DBT_NOVA_HTTP_STATEFUL_MODE` – enable stateful streamable HTTP sessions (`true`|`false`, default: `true`)
 - `DBT_NOVA_HTTP_SSE_KEEP_ALIVE_SECS` – SSE keepalive interval for streamable HTTP mode (`0` disables keepalives, default: `15`)
 - `DBT_NOVA_HTTP_SSE_RETRY_SECS` – SSE retry hint for streamable HTTP mode (`0` disables retry hints, default: `3`)
@@ -134,7 +135,7 @@ Remote manifest notes:
 - Destructive storage admin tools (`prune_storage`, `cleanup_storage`) are also
   disabled by default and require `DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1`.
 - Published container images default to `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,reload_manifest,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest` so hosted image starts are discovery-only and non-admin unless an operator clears or customizes the denylist.
-- Streamable HTTP mode has **no built-in authentication**. Keep it bound to loopback for local use, or set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when an authenticating reverse proxy is enforcing access in front of dbt-nova. Published container images do not set this acknowledgement by default.
+- Streamable HTTP mode has **no built-in authentication**. Keep it bound to loopback for local use, or set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when an authenticating reverse proxy is enforcing access in front of dbt-nova. For hosted/proxied deployments, set `DBT_NOVA_HTTP_ALLOWED_HOSTS` to the public/proxy hostnames clients send in `Host`. Published container images do not set these acknowledgements by default.
 - The MCP endpoint is mounted at `DBT_NOVA_HTTP_PATH`; plain probe endpoints are always available at `/healthz` and `/readyz`.
 
 Manifest pruning notes:
