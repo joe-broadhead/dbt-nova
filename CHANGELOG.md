@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-07-04
+
 - Hardened Monthly dependency checks by upgrading `anyhow` and `rmcp` past new
   RustSec advisories, retaining streamable HTTP Host validation, and adding
   `DBT_NOVA_HTTP_ALLOWED_HOSTS` for hosted reverse-proxy deployments.
@@ -36,8 +38,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added configurable runner inputs to the reusable asset and metadata-audit
   workflows so downstream repositories can run them on self-hosted or
   organization runner pools while preserving the `ubuntu-22.04` default.
-
-## [0.0.6] - 2026-06-24
 
 - Hardened hosted HTTP container defaults by removing the baked-in auth-proxy
   acknowledgement, defaulting published images to discovery-only SQL tool
