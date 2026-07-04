@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.0.6] - 2026-07-04
 
+- Hardened OCI release images to upgrade pinned Debian runtime packages during
+  image builds so fixed base-image vulnerabilities are remediated before the
+  Trivy release gate runs.
 - Hardened Monthly dependency checks by upgrading `anyhow` and `rmcp` past new
   RustSec advisories, retaining streamable HTTP Host validation, and adding
   `DBT_NOVA_HTTP_ALLOWED_HOSTS` for hosted reverse-proxy deployments.
