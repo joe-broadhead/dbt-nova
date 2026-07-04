@@ -26,6 +26,7 @@ RUN cargo build --locked --release --bin dbt-nova
 FROM debian:bookworm-slim@sha256:67b30a61dc87758f0caf819646104f29ecbda97d920aaf5edc834128ac8493d3 AS runtime
 
 RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
