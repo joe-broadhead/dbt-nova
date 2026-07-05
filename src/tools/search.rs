@@ -1419,167 +1419,31 @@ impl ManifestSearch {
         }
 
         let mut rankings: Vec<(&str, Vec<String>)> = Vec::new();
-        let mut indicator_parent_scores = HashMap::new();
+        rankings.push(("bm25", hits_to_ids(primary_results)));
 
-        let bm25_exact = run_tantivy_search(
-            self.tantivy.clone(),
-            self.config.search.clone(),
-            OwnedSearchRequest {
-                query_text: params.query.clone(),
-                resource_types: params.resource_types.clone(),
-                limit: fetch_limit,
-                min_score: params.min_score,
-                fuzzy: false,
-                include_highlights: false,
-                include_ngram_override: Some(false),
-                scope: SearchScope::Full,
-                persona,
-            },
-        )
-        .await?;
-        rankings.push(("bm25", hits_to_ids(&bm25_exact)));
+        let (ngram_ranking, fuzzy_ranking, vector_ranking, sparse_ranking, indicator_ranking) = tokio::try_join!(
+            self.fused_ngram_ranking(params, persona, query_has_syntax, fetch_limit),
+            self.fused_fuzzy_ranking(params, persona, fetch_limit),
+            self.fused_vector_ranking(params, fetch_limit, deadline),
+            self.fused_sparse_ranking(params, fetch_limit, deadline),
+            self.fused_indicator_ranking(params, persona, fetch_limit, deadline),
+        )?;
 
-        if self.config.search.enable_ngram && !query_has_syntax {
-            let ngram_hits = run_tantivy_search(
-                self.tantivy.clone(),
-                self.config.search.clone(),
-                OwnedSearchRequest {
-                    query_text: params.query.clone(),
-                    resource_types: params.resource_types.clone(),
-                    limit: fetch_limit,
-                    min_score: params.min_score,
-                    fuzzy: false,
-                    include_highlights: false,
-                    include_ngram_override: Some(true),
-                    scope: SearchScope::Full,
-                    persona,
-                },
-            )
-            .await?;
-            rankings.push(("ngram", hits_to_ids(&ngram_hits)));
+        if let Some(ranking) = ngram_ranking {
+            rankings.push(("ngram", ranking));
         }
-
-        if params.fuzzy {
-            let fuzzy_hits = run_tantivy_search(
-                self.tantivy.clone(),
-                self.config.search.clone(),
-                OwnedSearchRequest {
-                    query_text: params.query.clone(),
-                    resource_types: params.resource_types.clone(),
-                    limit: fetch_limit,
-                    min_score: params.min_score,
-                    fuzzy: true,
-                    include_highlights: false,
-                    include_ngram_override: Some(false),
-                    scope: SearchScope::Full,
-                    persona,
-                },
-            )
-            .await?;
-            rankings.push(("fuzzy", hits_to_ids(&fuzzy_hits)));
+        if let Some(ranking) = fuzzy_ranking {
+            rankings.push(("fuzzy", ranking));
         }
-
-        if self.config.search.enable_vector_search
-            && let Some(vector_search) = &self.vector_search
-        {
-            if self.vector_breaker.allow().await {
-                let vector_limit = self.config.search.vector_top_k.max(fetch_limit);
-                let query = params.query.clone();
-                let vector_search = Arc::clone(vector_search);
-                match run_semantic_blocking(
-                    deadline,
-                    "vector search",
-                    "query embedding",
-                    move || vector_search.search(&query, vector_limit),
-                )
-                .await?
-                {
-                    SemanticWorkResult::Completed(Ok(vector_hits)) => {
-                        self.vector_breaker.on_success().await;
-                        rankings.push(("vector", scores_to_ids(&vector_hits)));
-                    }
-                    SemanticWorkResult::Completed(Err(err)) => {
-                        self.vector_breaker.on_failure().await;
-                        warn!(error = %err, "vector search failed; skipping vector results");
-                    }
-                    SemanticWorkResult::SkippedDeadline => {
-                        debug!("vector retriever skipped because request deadline was exhausted");
-                    }
-                    SemanticWorkResult::TimedOut => {
-                        self.vector_breaker.on_failure().await;
-                        warn!("vector search timed out; skipping vector results");
-                    }
-                }
-            } else {
-                debug!("vector search circuit open; skipping vector retriever");
-            }
+        if let Some(ranking) = vector_ranking {
+            rankings.push(("vector", ranking));
         }
-
-        if self.config.search.enable_sparse_search
-            && let Some(sparse_search) = &self.sparse_search
-        {
-            if self.sparse_breaker.allow().await {
-                let sparse_limit = self.config.search.sparse_top_k.max(fetch_limit);
-                let query = params.query.clone();
-                let sparse_search = Arc::clone(sparse_search);
-                match run_semantic_blocking(
-                    deadline,
-                    "sparse search",
-                    "query embedding",
-                    move || sparse_search.search(&query, sparse_limit),
-                )
-                .await?
-                {
-                    SemanticWorkResult::Completed(Ok(sparse_hits)) => {
-                        self.sparse_breaker.on_success().await;
-                        rankings.push(("sparse", scores_to_ids(&sparse_hits)));
-                    }
-                    SemanticWorkResult::Completed(Err(err)) => {
-                        self.sparse_breaker.on_failure().await;
-                        warn!(error = %err, "sparse search failed; skipping sparse results");
-                    }
-                    SemanticWorkResult::SkippedDeadline => {
-                        debug!("sparse retriever skipped because request deadline was exhausted");
-                    }
-                    SemanticWorkResult::TimedOut => {
-                        self.sparse_breaker.on_failure().await;
-                        warn!("sparse search timed out; skipping sparse results");
-                    }
-                }
-            } else {
-                debug!("sparse search circuit open; skipping sparse retriever");
-            }
+        if let Some(ranking) = sparse_ranking {
+            rankings.push(("sparse", ranking));
         }
-
-        if persona == SearchPersona::Analyst {
-            let indicator_tokens =
-                tokenize_alnum_lowercase(&params.query, self.config.search.min_word_length.max(1));
-            let resource_filter = normalized_resource_type_filter(&params.resource_types);
-            let mut indicator_rows = self
-                .search_indicator_rows_blocking(
-                    indicator_tokens,
-                    resource_filter,
-                    None,
-                    false,
-                    deadline,
-                )
-                .await?;
-            if self.config.search.indicator_ranking.enable_parent_coherence
-                && indicator_rows.len() > 1
-            {
-                indicator_rows = apply_parent_coherence_bonus(
-                    indicator_rows,
-                    &self.config.search.indicator_ranking,
-                );
-            }
-            let indicator_ranking = dedupe_indicator_parent_ids(&indicator_rows, fetch_limit);
-            if !indicator_ranking.is_empty() {
-                rankings.push(("indicator", indicator_ranking));
-                indicator_parent_scores = normalized_indicator_parent_scores(
-                    &indicator_rows,
-                    &self.config.search.indicator_ranking,
-                );
-            }
+        let (indicator_ranking, indicator_parent_scores) = indicator_ranking;
+        if let Some(ranking) = indicator_ranking {
+            rankings.push(("indicator", ranking));
         }
 
         let fusion_limit = fetch_limit.max(1);
@@ -1607,6 +1471,191 @@ impl ManifestSearch {
             retrieval_explain,
             retrievers_used,
         })
+    }
+
+    async fn fused_ngram_ranking(
+        &self,
+        params: &SearchParams,
+        persona: SearchPersona,
+        query_has_syntax: bool,
+        fetch_limit: usize,
+    ) -> Result<Option<Vec<String>>> {
+        if !self.config.search.enable_ngram || query_has_syntax {
+            return Ok(None);
+        }
+        let hits = run_tantivy_search(
+            self.tantivy.clone(),
+            self.config.search.clone(),
+            OwnedSearchRequest {
+                query_text: params.query.clone(),
+                resource_types: params.resource_types.clone(),
+                limit: fetch_limit,
+                min_score: params.min_score,
+                fuzzy: false,
+                include_highlights: false,
+                include_ngram_override: Some(true),
+                scope: SearchScope::Full,
+                persona,
+            },
+        )
+        .await?;
+        Ok(Some(hits_to_ids(&hits)))
+    }
+
+    async fn fused_fuzzy_ranking(
+        &self,
+        params: &SearchParams,
+        persona: SearchPersona,
+        fetch_limit: usize,
+    ) -> Result<Option<Vec<String>>> {
+        if !params.fuzzy {
+            return Ok(None);
+        }
+        let hits = run_tantivy_search(
+            self.tantivy.clone(),
+            self.config.search.clone(),
+            OwnedSearchRequest {
+                query_text: params.query.clone(),
+                resource_types: params.resource_types.clone(),
+                limit: fetch_limit,
+                min_score: params.min_score,
+                fuzzy: true,
+                include_highlights: false,
+                include_ngram_override: Some(false),
+                scope: SearchScope::Full,
+                persona,
+            },
+        )
+        .await?;
+        Ok(Some(hits_to_ids(&hits)))
+    }
+
+    async fn fused_vector_ranking(
+        &self,
+        params: &SearchParams,
+        fetch_limit: usize,
+        deadline: SearchDeadline,
+    ) -> Result<Option<Vec<String>>> {
+        if !self.config.search.enable_vector_search {
+            return Ok(None);
+        }
+        let Some(vector_search) = &self.vector_search else {
+            return Ok(None);
+        };
+        if !self.vector_breaker.allow().await {
+            debug!("vector search circuit open; skipping vector retriever");
+            return Ok(None);
+        }
+        let vector_limit = self.config.search.vector_top_k.max(fetch_limit);
+        let query = params.query.clone();
+        let vector_search = Arc::clone(vector_search);
+        match run_semantic_blocking(deadline, "vector search", "query embedding", move || {
+            vector_search.search(&query, vector_limit)
+        })
+        .await?
+        {
+            SemanticWorkResult::Completed(Ok(vector_hits)) => {
+                self.vector_breaker.on_success().await;
+                Ok(Some(scores_to_ids(&vector_hits)))
+            }
+            SemanticWorkResult::Completed(Err(err)) => {
+                self.vector_breaker.on_failure().await;
+                warn!(error = %err, "vector search failed; skipping vector results");
+                Ok(None)
+            }
+            SemanticWorkResult::SkippedDeadline => {
+                debug!("vector retriever skipped because request deadline was exhausted");
+                Ok(None)
+            }
+            SemanticWorkResult::TimedOut => {
+                self.vector_breaker.on_failure().await;
+                warn!("vector search timed out; skipping vector results");
+                Ok(None)
+            }
+        }
+    }
+
+    async fn fused_sparse_ranking(
+        &self,
+        params: &SearchParams,
+        fetch_limit: usize,
+        deadline: SearchDeadline,
+    ) -> Result<Option<Vec<String>>> {
+        if !self.config.search.enable_sparse_search {
+            return Ok(None);
+        }
+        let Some(sparse_search) = &self.sparse_search else {
+            return Ok(None);
+        };
+        if !self.sparse_breaker.allow().await {
+            debug!("sparse search circuit open; skipping sparse retriever");
+            return Ok(None);
+        }
+        let sparse_limit = self.config.search.sparse_top_k.max(fetch_limit);
+        let query = params.query.clone();
+        let sparse_search = Arc::clone(sparse_search);
+        match run_semantic_blocking(deadline, "sparse search", "query embedding", move || {
+            sparse_search.search(&query, sparse_limit)
+        })
+        .await?
+        {
+            SemanticWorkResult::Completed(Ok(sparse_hits)) => {
+                self.sparse_breaker.on_success().await;
+                Ok(Some(scores_to_ids(&sparse_hits)))
+            }
+            SemanticWorkResult::Completed(Err(err)) => {
+                self.sparse_breaker.on_failure().await;
+                warn!(error = %err, "sparse search failed; skipping sparse results");
+                Ok(None)
+            }
+            SemanticWorkResult::SkippedDeadline => {
+                debug!("sparse retriever skipped because request deadline was exhausted");
+                Ok(None)
+            }
+            SemanticWorkResult::TimedOut => {
+                self.sparse_breaker.on_failure().await;
+                warn!("sparse search timed out; skipping sparse results");
+                Ok(None)
+            }
+        }
+    }
+
+    async fn fused_indicator_ranking(
+        &self,
+        params: &SearchParams,
+        persona: SearchPersona,
+        fetch_limit: usize,
+        deadline: SearchDeadline,
+    ) -> Result<(Option<Vec<String>>, HashMap<String, f32>)> {
+        if persona != SearchPersona::Analyst {
+            return Ok((None, HashMap::new()));
+        }
+        let indicator_tokens =
+            tokenize_alnum_lowercase(&params.query, self.config.search.min_word_length.max(1));
+        let resource_filter = normalized_resource_type_filter(&params.resource_types);
+        let mut indicator_rows = self
+            .search_indicator_rows_blocking(
+                indicator_tokens,
+                resource_filter,
+                None,
+                false,
+                deadline,
+            )
+            .await?;
+        if self.config.search.indicator_ranking.enable_parent_coherence && indicator_rows.len() > 1
+        {
+            indicator_rows =
+                apply_parent_coherence_bonus(indicator_rows, &self.config.search.indicator_ranking);
+        }
+        let ranking = dedupe_indicator_parent_ids(&indicator_rows, fetch_limit);
+        if ranking.is_empty() {
+            return Ok((None, HashMap::new()));
+        }
+        let scores = normalized_indicator_parent_scores(
+            &indicator_rows,
+            &self.config.search.indicator_ranking,
+        );
+        Ok((Some(ranking), scores))
     }
 
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]

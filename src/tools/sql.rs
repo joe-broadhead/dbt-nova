@@ -40,7 +40,7 @@ const DUCKDB_EXTERNAL_ACCESS_FUNCTIONS: &[&str] = &[
 ///
 /// # Errors
 /// Returns an error if the statement is empty, invalid, or not permitted.
-pub(crate) fn validate_sql_statement_for_provider(statement: &str, provider: &str) -> Result<()> {
+pub fn validate_sql_statement_for_provider(statement: &str, provider: &str) -> Result<()> {
     if statement.trim().is_empty() {
         return Err(DbtNovaError::InvalidParams(
             "statement cannot be empty".to_string(),
@@ -396,6 +396,45 @@ mod tests {
     }
 
     #[test]
+    fn validate_sql_statement_allows_read_only_query_matrix() {
+        let cases = [
+            "select * from orders",
+            "explain select * from orders",
+            "with recent as (select * from orders where order_date >= current_date - interval '7 days') select * from recent",
+            "select * from orders o join customers c on o.customer_id = c.customer_id",
+            "select * from (select customer_id, count(*) as order_count from orders group by customer_id) counts where order_count > 1",
+            "values (1), (2)",
+        ];
+
+        for sql in cases {
+            validate_sql_statement_for_provider(sql, "generic")
+                .unwrap_or_else(|err| panic!("expected read-only SQL to pass: {sql}: {err}"));
+        }
+    }
+
+    #[test]
+    fn validate_sql_statement_rejects_dangerous_matrix() {
+        let cases = [
+            "insert into orders values (1)",
+            "update orders set amount = 1",
+            "delete from orders",
+            "drop table orders",
+            "truncate table orders",
+            "alter table orders add column x int",
+            "create table backup as select * from orders",
+            "copy orders to '/tmp/orders.csv'",
+            "pragma version",
+            "set enable_external_access = true",
+            "/* hidden */ delete from orders",
+        ];
+
+        for sql in cases {
+            validate_sql_statement_for_provider(sql, "generic")
+                .expect_err("expected dangerous SQL to fail");
+        }
+    }
+
+    #[test]
     fn validate_sql_statement_rejects_snowflake_multi_statement() {
         let err = validate_sql_statement_for_provider("select 1; select 2", "snowflake")
             .expect_err("snowflake multi-statement should be rejected");
@@ -415,6 +454,7 @@ mod tests {
             "select * from read_csv_auto('/tmp/orders.csv')",
             "select * from parquet_scan('/tmp/orders.parquet')",
             "select read_text('/tmp/secret.txt')",
+            "select * from read_csv('http://169.254.169.254/latest/meta-data/')",
             "select * from read_json_objects_auto('/tmp/orders.json')",
             "select * from read_ndjson_auto('/tmp/orders.ndjson')",
             "explain select * from read_json_auto('/tmp/orders.json')",

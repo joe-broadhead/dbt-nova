@@ -21,6 +21,7 @@ const MCP_SMOKE_ENV_REMOVE: &[&str] = &[
     "DBT_NOVA_SERVER_TRANSPORT",
     "DBT_NOVA_TOOL_ALLOWLIST",
     "DBT_NOVA_TOOL_DENYLIST",
+    "DBT_NOVA_TOOL_PROFILE",
     "DBT_NOVA_TRACE_TOOL_CALLS_PATH",
     "DBT_NOVA_STORAGE_READ_ONLY",
     "DBT_NOVA_TOOL_RATE_LIMITS",
@@ -170,6 +171,7 @@ async fn spawn_stdio_server(
         .env("DBT_NOVA_SQL_PROVIDER", "duckdb")
         .env("DBT_NOVA_DUCKDB_PATH", duckdb_path);
     scrub_mcp_smoke_env(&mut command);
+    command.env("DBT_NOVA_TOOL_PROFILE", "all");
     let mut child = command
         .spawn()
         .expect("failed to spawn dbt-nova MCP server");
@@ -180,6 +182,17 @@ async fn spawn_stdio_server(
 }
 
 async fn call_tool(
+    stdin: &mut ChildStdin,
+    stdout: &mut BufReader<ChildStdout>,
+    request_id: i64,
+    name: &str,
+    arguments: Value,
+) -> Value {
+    let response = call_tool_raw(stdin, stdout, request_id, name, arguments).await;
+    parse_tool_response_text(name, &response)
+}
+
+async fn call_tool_raw(
     stdin: &mut ChildStdin,
     stdout: &mut BufReader<ChildStdout>,
     request_id: i64,
@@ -206,6 +219,10 @@ async fn call_tool(
         response.get("error").is_none(),
         "{name} returned JSON-RPC error: {response}"
     );
+    response
+}
+
+fn parse_tool_response_text(name: &str, response: &Value) -> Value {
     let text = response
         .get("result")
         .and_then(|result| result.get("content"))
@@ -216,6 +233,13 @@ async fn call_tool(
         .unwrap_or_else(|| panic!("{name} response missing result.content[0].text: {response}"));
     serde_json::from_str(text)
         .unwrap_or_else(|error| panic!("{name} response text was not JSON ({error}): {text}"))
+}
+
+fn tool_response_is_error(response: &Value) -> Option<bool> {
+    response
+        .get("result")
+        .and_then(|result| result.get("isError").or_else(|| result.get("is_error")))
+        .and_then(Value::as_bool)
 }
 
 async fn wait_for_ready(
@@ -553,6 +577,40 @@ async fn mcp_stdio_honors_tool_allowlist_and_denylist() {
     assert!(
         call_response.get("error").is_some(),
         "filtered tool call should fail: {call_response}"
+    );
+
+    child.start_kill().expect("failed to terminate MCP child");
+    let _ = child.wait().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mcp_stdio_tool_failures_set_protocol_error_flag() {
+    let manifest_path = fixture_manifest_path("nova_manifest.json");
+    let storage_dir = tempfile::tempdir().expect("tempdir for protocol smoke storage");
+
+    let (mut child, mut stdin, mut stdout) =
+        spawn_stdio_server(&manifest_path, storage_dir.path(), "tests-mcp-error-flag").await;
+
+    initialize_stdio_session(&mut stdin, &mut stdout).await;
+
+    let mut next_request_id = 2;
+    wait_for_ready(&mut stdin, &mut stdout, &mut next_request_id).await;
+
+    let response = call_tool_raw(
+        &mut stdin,
+        &mut stdout,
+        next_request_id,
+        "get_entity",
+        json!({"id_or_name":"model.pkg.missing","detail":"compact"}),
+    )
+    .await;
+    let payload = parse_tool_response_text("get_entity", &response);
+
+    assert_eq!(tool_response_is_error(&response), Some(true), "{response}");
+    assert_eq!(payload.get("success"), Some(&json!(false)));
+    assert_eq!(
+        payload.get("error_code").and_then(Value::as_str),
+        Some("NOT_FOUND")
     );
 
     child.start_kill().expect("failed to terminate MCP child");

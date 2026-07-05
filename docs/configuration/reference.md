@@ -14,6 +14,7 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 
 - `DBT_MANIFEST_PATH` – path to `manifest.json` (default: `manifest.json`)
 - `DBT_NOVA_MANIFEST_URI` – optional manifest URI (`file://`, `http(s)://`, `dbfs://`, `s3://`, `gs://`)
+- `DBT_NOVA_CATALOG_PATH` – optional dbt `catalog.json` path/URI for warehouse column types and stats; when unset, a local sibling `catalog.json` next to the resolved manifest is loaded if present
 - `DBT_NOVA_MANIFEST_CACHE_DIR` – optional local cache dir for remote manifests (default: `<storage_root>/manifests`)
 - `DBT_NOVA_MANIFEST_REFRESH_SECS` – refresh interval for remote manifests (`0` = never refresh, default: `300`)
 - `DBT_NOVA_MANIFEST_MAX_BYTES` – max bytes allowed for remote manifest fetches (`0` = unlimited, default: `268435456`)
@@ -50,6 +51,7 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_RECIPES_DIR` – manifest `original_file_path` prefix used to discover recipe `analysis` nodes (default: `analyses/recipes`). Recipe SQL is resolved from manifest `compiled_code` (or `raw_code` fallback). Recipes are documented in [Analysis Recipes](../features/recipes.md).
 - `DBT_NOVA_LOG` / `RUST_LOG` – enable structured logs to stderr (e.g., `info`, `debug`, `trace`)
 - `DBT_NOVA_DISABLE_TOOL_SCHEMAS` – strip JSON schema hints from MCP tools (useful for strict clients like Gemini; see [MCP Clients](../getting-started/mcp-clients.md))
+- `DBT_NOVA_TOOL_PROFILE` – MCP tool profile (`agent`, `analyst`, `engineer`, `governance`, `ops`, or `all`; default: `agent`)
 - `DBT_NOVA_TOOL_ALLOWLIST` – optional comma-separated allowlist of exact MCP tool names to expose; when set, only these tools are eligible for exposure
 - `DBT_NOVA_TOOL_DENYLIST` – optional comma-separated denylist of exact MCP tool names to hide after allowlist processing
 - `DBT_NOVA_RESULT_PROFILE` – default detail profile when CLI/tool-call requests omit `detail` (`compact`, `standard`, or `full`; default: `standard`)
@@ -110,8 +112,10 @@ Remote manifest notes:
 - To allow insecure `http://` prebuilt artifact URIs (not recommended), set `DBT_NOVA_ARTIFACT_ALLOW_HTTP=true`.
 - Remote artifact downloads and extraction are bounded by `DBT_NOVA_ARTIFACT_MAX_BYTES`, `DBT_NOVA_ARTIFACT_ARCHIVE_MAX_ENTRIES`, and `DBT_NOVA_ARTIFACT_ARCHIVE_MAX_UNCOMPRESSED_BYTES`.
 - Bootstrap precedence is deterministic: explicit env vars override bootstrap values, and bootstrap values override defaults.
-- Tool filtering precedence is deterministic: allowlist is applied first, then denylist; denylist wins when both include the same tool.
+- Optional `catalog.json` is treated as warehouse reality: catalog column types replace manifest-declared `columns.*.data_type`, while the original manifest type, catalog-only columns, missing-in-catalog columns, stats, and type mismatches are surfaced on column payloads as `catalog_*` and `catalog_drift` fields. Catalog content is part of the storage signature, so changing it rebuilds stored entities.
+- Tool profile precedence is deterministic: the selected profile provides the eligible catalog unless `DBT_NOVA_TOOL_ALLOWLIST` is set. Allowlist is applied first, then denylist; denylist wins when both include the same tool.
 - Tool filter names are strict and case-sensitive. Unknown names in either list fail startup validation with a hard error.
+- The default `agent` profile exposes a lean read-oriented discovery/context/lineage/quality/recipe catalog and omits operator, eval, trace, storage-admin, and SQL execution tools. Use `DBT_NOVA_TOOL_PROFILE=all` for the full canonical catalog, or `ops` for operator/admin workflows.
 - Result profile defaults only fill omitted `detail` values. Callers can still
   request `detail=standard` or `detail=full` explicitly when they need richer
   payloads. With the default compact MCP profile, omitted `search_indicator`
@@ -122,6 +126,10 @@ Remote manifest notes:
   `_nova_result_meta` with byte budget, omitted path evidence, and `next_offset`
   for paginated MCP responses when enabled.
 - Tool filter examples:
+  - Full backwards-compatible MCP catalog:
+    - `DBT_NOVA_TOOL_PROFILE=all`
+  - Operator/admin catalog:
+    - `DBT_NOVA_TOOL_PROFILE=ops`
   - Allowlist only (expose only discovery + entity lookup):
     - `DBT_NOVA_TOOL_ALLOWLIST=search,get_entity`
   - Denylist only (hosted discovery-only and non-admin posture):

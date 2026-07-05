@@ -69,6 +69,8 @@ pub fn exit_code(error: &DbtNovaError) -> i32 {
         DbtNovaError::EntityNotFound { .. }
         | DbtNovaError::AmbiguousName { .. }
         | DbtNovaError::ServerError(_)
+        | DbtNovaError::IoError { .. }
+        | DbtNovaError::JsonError { .. }
         | DbtNovaError::DatabricksError { .. }
         | DbtNovaError::TantivyError { .. }
         | DbtNovaError::GcpAuthError(_) => 3,

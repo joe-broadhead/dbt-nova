@@ -10,7 +10,9 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 dbt-nova = { path = ".." }
+flate2 = "1"
 serde_json = "1.0"
+tar = "0.4"
 tempfile = "3"
 
 [patch.crates-io]
@@ -26,6 +28,18 @@ doc = false
 [[bin]]
 name = "nova_meta_yaml"
 path = "fuzz_targets/nova_meta_yaml.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "sql_validation"
+path = "fuzz_targets/sql_validation.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "artifact_archive"
+path = "fuzz_targets/artifact_archive.rs"
 test = false
 doc = false
 

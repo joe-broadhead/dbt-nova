@@ -54,6 +54,22 @@ Keep private manifests, provider stdout/stderr, raw traces, and credentials out
 of public artifacts. The script captures only the Nova artifacts needed for a
 local hardening or release review.
 
+## Fuzzing and Scale Benches
+
+Monthly maintenance runs fuzz targets for manifest streaming parse,
+`meta.nova` YAML parsing, SQL validation, and artifact archive extraction.
+Seed corpora live under `fuzz/corpus/`; crash artifacts are uploaded from
+`fuzz/artifacts/` when a target fails. Keep seeds small, synthetic, and free of
+private manifest data.
+
+Search scale benches generate deterministic large manifests in-bench. Use
+`DBT_NOVA_BENCH_LARGE_ENTITY_COUNT` to resize the fixture locally. The
+benchmarks cover large build/search, full-store indicator inventory scans,
+checked archived entity access, and concurrent hybrid search plus cheap entity
+lookup. The archived-access bench is the guardrail for any future move away
+from repeated checked `rkyv::access`; do not introduce unchecked archived access
+without benchmark evidence and a local safety argument.
+
 ## MCP File Path Policy
 
 MCP file tools resolve local paths under the server working directory. This
@@ -157,6 +173,8 @@ Short fuzz runs are scheduled in CI on the first day of each month. To run local
 cargo install cargo-fuzz
 cargo fuzz run manifest_entity -- -max_total_time=120
 cargo fuzz run nova_meta_yaml -- -max_total_time=120
+cargo fuzz run sql_validation -- -max_total_time=120
+cargo fuzz run artifact_archive -- -max_total_time=120
 ```
 
 ## Coverage

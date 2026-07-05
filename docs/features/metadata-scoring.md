@@ -74,6 +74,16 @@ All scopes include `scoring_contract.schema_version:
 source code. The contract includes grade bands, description tiers, array-count
 tiers, canonical grain shape, and the primary-key integrity evidence rule.
 
+Nova also scores derived semantic metadata from dbt Semantic Layer / MetricFlow
+artifacts. Manifest `metrics` and `semantic_models` contribute Nova metric,
+measure, and grain signals even when the project has not duplicated them under
+`meta.nova`. Explicit `meta.nova` fields override or extend the derived values.
+
+If `catalog.json` is configured or auto-discovered, column quality scoring sees
+catalog-backed `data_type` values. Type mismatches, catalog-only columns, and
+declared columns absent from catalog remain visible in `catalog_drift` fields on
+`get_columns`/`get_context` payloads for governance follow-up.
+
 Entity and column responses include `diagnostics` when Nova can explain partial
 or missing credit. Diagnostics are deterministic JSON rows with `code`,
 `category`, `field`, observed values, expected thresholds, and a short message.

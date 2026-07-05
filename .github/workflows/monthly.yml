@@ -29,6 +29,14 @@ jobs:
           shared-key: monthly-fuzz-nightly
           cache-all-crates: true
 
+      - name: Restore fuzz corpus
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        with:
+          path: fuzz/corpus
+          key: monthly-fuzz-corpus-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            monthly-fuzz-corpus-${{ runner.os }}-
+
       - name: Install cargo-fuzz
         uses: taiki-e/install-action@288875dd3d64326724fa6d9593062d9f8ba0b131
         with:
@@ -36,13 +44,21 @@ jobs:
 
       - name: Run Fuzz Targets (short)
         run: |
-          for target in manifest_entity nova_meta_yaml; do
+          for target in manifest_entity nova_meta_yaml sql_validation artifact_archive; do
             cargo fuzz run \
               --fuzz-dir fuzz \
               --target x86_64-unknown-linux-gnu \
               "${target}" \
               -- -max_total_time=120
           done
+
+      - name: Upload fuzz artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts
+          if-no-files-found: ignore
 
   deny:
     runs-on: ubuntu-22.04
@@ -67,3 +83,24 @@ jobs:
 
       - name: Cargo Deny
         run: cargo deny check
+
+  bench-smoke:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      DBT_NOVA_STRICT_SCHEMA: "1"
+      DBT_NOVA_BENCH_LARGE_ENTITY_COUNT: "1000"
+      CARGO_BUILD_JOBS: "1"
+      RUSTFLAGS: "-C debuginfo=0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+
+      - name: Criterion smoke
+        run: cargo bench --locked --bench search_bench -- --quick

@@ -7,7 +7,9 @@ use blake3;
 
 use crate::error::{DbtNovaError, Result};
 use crate::params::DetailLevel;
-use crate::tools::catalog::MCP_TOOL_NAMES;
+use crate::tools::catalog::{
+    DEFAULT_MCP_TOOL_PROFILE, MCP_TOOL_NAMES, MCP_TOOL_PROFILE_NAMES, mcp_tool_profile_names,
+};
 
 use super::column_lineage::ColumnLineageConfig;
 use super::metadata_score::MetadataScoreConfig;
@@ -177,6 +179,8 @@ pub struct DbtNovaConfig {
     /// True when `manifest_path` was set explicitly by env/CLI/user config.
     #[serde(skip)]
     pub manifest_path_explicit: bool,
+    /// Optional dbt `catalog.json` path/URI for warehouse column metadata.
+    pub catalog_path: String,
     /// Optional manifest URI (file://, http(s)://, dbfs://, s3://, gs://)
     pub manifest_uri: String,
     /// Optional manifest cache directory (defaults under storage root)
@@ -265,6 +269,8 @@ pub struct DbtNovaConfig {
     pub tool_allowlist: String,
     /// Optional tool denylist (comma-separated exact MCP tool names)
     pub tool_denylist: String,
+    /// MCP tool profile (`agent`, `analyst`, `engineer`, `governance`, `ops`, or `all`)
+    pub tool_profile: String,
     /// Default result profile for non-MCP tool calls when detail is omitted
     pub result_profile: ResultProfile,
     /// Default result profile for MCP tool calls when detail is omitted
@@ -332,6 +338,7 @@ impl Default for DbtNovaConfig {
         Self {
             manifest_path: "manifest.json".to_string(),
             manifest_path_explicit: false,
+            catalog_path: String::new(),
             manifest_uri: String::new(),
             manifest_cache_dir: String::new(),
             recipes_dir: "analyses/recipes".to_string(),
@@ -376,6 +383,7 @@ impl Default for DbtNovaConfig {
             tool_rate_limit_window_secs: 60,
             tool_allowlist: String::new(),
             tool_denylist: String::new(),
+            tool_profile: DEFAULT_MCP_TOOL_PROFILE.to_string(),
             result_profile: ResultProfile::Standard,
             mcp_result_profile: ResultProfile::Compact,
             mcp_default_limit: 10,
@@ -595,7 +603,8 @@ impl DbtNovaConfig {
         let mut eligible = if let Some(allowlist) = self.parsed_tool_allowlist() {
             allowlist.into_iter().collect::<BTreeSet<_>>()
         } else {
-            MCP_TOOL_NAMES
+            mcp_tool_profile_names(&self.tool_profile)
+                .unwrap_or(&MCP_TOOL_NAMES)
                 .iter()
                 .map(|name| (*name).to_string())
                 .collect()
@@ -620,11 +629,20 @@ impl DbtNovaConfig {
             .filter(|name| !valid_names.contains(name.as_str()))
             .collect::<BTreeSet<_>>();
 
-        if invalid_allowlist.is_empty() && invalid_denylist.is_empty() {
+        let valid_profile = mcp_tool_profile_names(&self.tool_profile).is_some();
+
+        if invalid_allowlist.is_empty() && invalid_denylist.is_empty() && valid_profile {
             return Ok(());
         }
 
         let mut invalid_sections = Vec::new();
+        if !valid_profile {
+            invalid_sections.push(format!(
+                "DBT_NOVA_TOOL_PROFILE: {} (expected one of: {})",
+                self.tool_profile,
+                MCP_TOOL_PROFILE_NAMES.join(", ")
+            ));
+        }
         if !invalid_allowlist.is_empty() {
             invalid_sections.push(format!(
                 "DBT_NOVA_TOOL_ALLOWLIST: {}",
@@ -907,6 +925,7 @@ impl DbtNovaConfig {
         {
             self.manifest_path_explicit = true;
         }
+        set_string("DBT_NOVA_CATALOG_PATH", &mut self.catalog_path);
         set_string("DBT_NOVA_MANIFEST_URI", &mut self.manifest_uri);
         set_string("DBT_NOVA_MANIFEST_CACHE_DIR", &mut self.manifest_cache_dir);
         if let Some(v) = parse_u64("DBT_NOVA_MANIFEST_REFRESH_SECS") {
@@ -1110,6 +1129,9 @@ impl DbtNovaConfig {
         }
         if let Some(value) = env_string("DBT_NOVA_TOOL_DENYLIST") {
             self.tool_denylist = value;
+        }
+        if let Some(value) = env_string("DBT_NOVA_TOOL_PROFILE") {
+            self.tool_profile = value;
         }
         if let Some(value) = env_string("DBT_NOVA_RESULT_PROFILE") {
             if let Some(profile) = ResultProfile::parse(&value) {
@@ -2018,6 +2040,7 @@ mod tests {
         let vars = [
             ("DBT_NOVA_TOOL_ALLOWLIST", Some("search, get_entity")),
             ("DBT_NOVA_TOOL_DENYLIST", Some("execute_sql")),
+            ("DBT_NOVA_TOOL_PROFILE", Some("engineer")),
         ];
         let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
         for (key, value) in vars {
@@ -2056,6 +2079,7 @@ mod tests {
             config.parsed_tool_denylist(),
             vec!["execute_sql".to_string()]
         );
+        assert_eq!(config.tool_profile, "engineer");
     }
 
     #[test]
@@ -2283,6 +2307,21 @@ mod tests {
     }
 
     #[test]
+    fn validate_rejects_invalid_tool_profile() {
+        let config = DbtNovaConfig {
+            tool_profile: "everything".to_string(),
+            ..base_config()
+        };
+
+        let error = config
+            .validate()
+            .expect_err("invalid tool profile should fail validation");
+        let message = error.to_string();
+        assert!(message.contains("DBT_NOVA_TOOL_PROFILE: everything"));
+        assert!(message.contains("agent, analyst, engineer, governance, ops, all"));
+    }
+
+    #[test]
     fn empty_allowlist_is_treated_as_unset() {
         let config = DbtNovaConfig {
             tool_allowlist: "   ".to_string(),
@@ -2293,6 +2332,33 @@ mod tests {
         let resolved = config.resolved_mcp_tool_names();
         assert!(resolved.contains("search"));
         assert!(!resolved.contains("execute_sql"));
+    }
+
+    #[test]
+    fn default_tool_profile_is_lean_agent_catalog() {
+        let config = base_config();
+        let resolved = config.resolved_mcp_tool_names();
+
+        assert!(resolved.contains("search"));
+        assert!(resolved.contains("get_context"));
+        assert!(resolved.contains("search_recipes"));
+        assert!(!resolved.contains("execute_sql"));
+        assert!(!resolved.contains("run_eval"));
+        assert!(!resolved.contains("inspect_storage"));
+        assert!(resolved.len() < crate::tools::catalog::MCP_TOOL_COUNT);
+    }
+
+    #[test]
+    fn all_tool_profile_restores_full_catalog() {
+        let config = DbtNovaConfig {
+            tool_profile: "all".to_string(),
+            ..base_config()
+        };
+        let resolved = config.resolved_mcp_tool_names();
+
+        assert_eq!(resolved.len(), crate::tools::catalog::MCP_TOOL_COUNT);
+        assert!(resolved.contains("execute_sql"));
+        assert!(resolved.contains("run_eval"));
     }
 
     #[test]

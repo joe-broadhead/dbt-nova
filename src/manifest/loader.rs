@@ -18,7 +18,9 @@ use crate::manifest::rkyv_types::{PersistedIndexes, RKYV_SCHEMA_VERSION};
 use crate::manifest::search::{
     CompiledLayerRule, EntityCache, InUseLocks, ManifestSearch, compile_layer_rules,
 };
-use crate::manifest::source::{ManifestSignature, manifest_signature, resolve_manifest};
+use crate::manifest::source::{
+    ManifestResolution, ManifestSignature, manifest_signature, resolve_manifest,
+};
 use crate::manifest::store::EntityStore;
 use crate::manifest::tantivy_search::TantivySearcher;
 use crate::manifest::vector_search::{Reranker, SparseSearcher, VectorSearcher};
@@ -29,7 +31,10 @@ mod parse;
 mod runtime;
 mod storage;
 
-use parse::{ManifestAccumulator, map_set_to_vec, map_vec_to_set, parse_manifest_file};
+use parse::{
+    ManifestAccumulator, load_catalog_column_map, map_set_to_vec, map_vec_to_set,
+    parse_manifest_file,
+};
 #[cfg(test)]
 use runtime::has_apparent_malformed_ref;
 use runtime::{
@@ -117,6 +122,7 @@ struct PreparedManifestData {
 struct ManifestParseContext<'a> {
     path: &'a Path,
     source_uri: &'a str,
+    catalog_resolution: Option<&'a ManifestResolution>,
     load_start: Instant,
 }
 
@@ -145,6 +151,12 @@ struct AssembleContext {
     manifest_source_uri: String,
 }
 
+struct ResolvedManifestSources {
+    manifest_resolution: ManifestResolution,
+    manifest_path: PathBuf,
+    catalog_resolution: Option<ManifestResolution>,
+}
+
 impl ManifestSearch {
     /// Build in-memory search indexes from a dbt manifest file.
     #[instrument(level = "info", skip(config), fields(manifest_path = %config.manifest_path))]
@@ -157,15 +169,13 @@ impl ManifestSearch {
         let bootstrap_resolution = prepare_runtime_config(&mut config)?;
         let load_start = Instant::now();
 
-        let manifest_resolution = resolve_manifest(&config)?;
-        let manifest_path = manifest_resolution.local_path.clone();
-        info!(
-            source_uri = %manifest_resolution.source_uri,
-            cached = manifest_resolution.cached,
-            "resolved manifest source"
-        );
-        let mut storage =
-            prepare_storage(&config, &manifest_resolution, bootstrap_resolution.status)?;
+        let sources = resolve_manifest_sources(&config)?;
+        let mut storage = prepare_storage(
+            &config,
+            &sources.manifest_resolution,
+            sources.catalog_resolution.as_ref(),
+            bootstrap_resolution.status,
+        )?;
         let reused = prepare_reuse_state(&config, &storage)?;
         fs::create_dir_all(&reused.storage_dir)?;
         let in_use_locks = acquire_in_use_locks(&storage.instance_root, &reused.storage_dir)?;
@@ -180,8 +190,9 @@ impl ManifestSearch {
             reused.reuse_store,
             reused.entities,
             &ManifestParseContext {
-                path: &manifest_path,
-                source_uri: &manifest_resolution.source_uri,
+                path: &sources.manifest_path,
+                source_uri: &sources.manifest_resolution.source_uri,
+                catalog_resolution: sources.catalog_resolution.as_ref(),
                 load_start,
             },
         )?;
@@ -239,7 +250,7 @@ impl ManifestSearch {
                 cached_indexes,
                 search_backends,
                 in_use_locks,
-                manifest_source_uri: manifest_resolution.source_uri.clone(),
+                manifest_source_uri: sources.manifest_resolution.source_uri.clone(),
             }),
             entity_store_reused,
             tantivy_reused,
@@ -249,9 +260,33 @@ impl ManifestSearch {
     }
 }
 
+fn resolve_manifest_sources(config: &DbtNovaConfig) -> Result<ResolvedManifestSources> {
+    let manifest_resolution = resolve_manifest(config)?;
+    let manifest_path = manifest_resolution.local_path.clone();
+    info!(
+        source_uri = %manifest_resolution.source_uri,
+        cached = manifest_resolution.cached,
+        "resolved manifest source"
+    );
+    let catalog_resolution = resolve_catalog(config, &manifest_resolution)?;
+    if let Some(catalog_resolution) = catalog_resolution.as_ref() {
+        info!(
+            source_uri = %catalog_resolution.source_uri,
+            cached = catalog_resolution.cached,
+            "resolved catalog source"
+        );
+    }
+    Ok(ResolvedManifestSources {
+        manifest_resolution,
+        manifest_path,
+        catalog_resolution,
+    })
+}
+
 fn prepare_storage(
     config: &DbtNovaConfig,
     manifest_resolution: &crate::manifest::source::ManifestResolution,
+    catalog_resolution: Option<&crate::manifest::source::ManifestResolution>,
     bootstrap_status: JsonValue,
 ) -> Result<StoragePreparation> {
     let storage_root = config.storage_instances_dir()?;
@@ -281,6 +316,9 @@ fn prepare_storage(
             manifest_resolution.source_uri
         ))
     })?;
+    if let Some(catalog_resolution) = catalog_resolution {
+        apply_catalog_signature(&mut signature, catalog_resolution)?;
+    }
     signature.prune_fingerprint = config.manifest_prune_fingerprint();
     signature.search_index_fingerprint = config.search.index_fingerprint();
     let version_hash = scoped_manifest_hash(&signature);
@@ -331,6 +369,65 @@ fn prepare_storage(
         artifact_consumer_status,
         bootstrap_status,
     })
+}
+
+fn resolve_catalog(
+    config: &DbtNovaConfig,
+    manifest_resolution: &ManifestResolution,
+) -> Result<Option<ManifestResolution>> {
+    let explicit_catalog = config.catalog_path.trim();
+    if !explicit_catalog.is_empty() {
+        let mut catalog_config = config.clone();
+        catalog_config.manifest_uri = String::new();
+        catalog_config.manifest_path = explicit_catalog.to_string();
+        catalog_config.manifest_path_explicit = true;
+        return resolve_manifest(&catalog_config).map(Some).map_err(|err| {
+            DbtNovaError::ManifestError(format!("Failed to resolve catalog: {err}"))
+        });
+    }
+
+    let Some(manifest_dir) = manifest_resolution.local_path.parent() else {
+        return Ok(None);
+    };
+    let sibling_catalog = manifest_dir.join("catalog.json");
+    if !sibling_catalog.exists() {
+        return Ok(None);
+    }
+    Ok(Some(ManifestResolution {
+        local_path: sibling_catalog.clone(),
+        source_uri: sibling_catalog.to_string_lossy().to_string(),
+        cached: false,
+    }))
+}
+
+fn apply_catalog_signature(
+    signature: &mut ManifestSignature,
+    catalog_resolution: &ManifestResolution,
+) -> Result<()> {
+    let catalog_signature = manifest_signature(
+        &catalog_resolution.local_path,
+        &catalog_resolution.source_uri,
+    )
+    .map_err(|err| {
+        DbtNovaError::ManifestError(format!(
+            "Failed to read catalog file {}: {err}",
+            catalog_resolution.source_uri
+        ))
+    })?;
+    let payload = serde_json::json!({
+        "manifest_hash": signature.content_hash.as_str(),
+        "catalog_hash": catalog_signature.content_hash.as_str(),
+        "catalog_len": catalog_signature.len,
+        "catalog_source_uri": catalog_resolution.source_uri.as_str(),
+    });
+    signature.content_hash = blake3::hash(payload.to_string().as_bytes())
+        .to_hex()
+        .to_string();
+    signature.source_uri = format!(
+        "{} | catalog:{}",
+        signature.source_uri, catalog_resolution.source_uri
+    );
+    Ok(())
 }
 
 fn load_reusable_artifacts(
@@ -529,6 +626,10 @@ fn prepare_manifest_data(
     let mut cached_indexes =
         load_cached_indexes(storage_dir, signature, reuse_store, &mut accumulator);
     let indexes_reused = cached_indexes.used_cached_indexes;
+    let catalog_columns = parse_context
+        .catalog_resolution
+        .map(|resolution| load_catalog_column_map(&resolution.local_path))
+        .transpose()?;
 
     let parse_manifest = !reuse_store || !cached_indexes.used_cached_indexes;
     if parse_manifest {
@@ -537,6 +638,7 @@ fn prepare_manifest_data(
             source_uri,
             &config.manifest_prune_allow_ids,
             &config.manifest_prune_deny_ids,
+            catalog_columns.as_ref(),
             &mut accumulator,
             load_start,
         )?;
@@ -1385,7 +1487,7 @@ mod tests {
             source_uri: manifest_path.to_string_lossy().to_string(),
             cached: false,
         };
-        prepare_storage(&config, &resolution, JsonValue::Null)
+        prepare_storage(&config, &resolution, None, JsonValue::Null)
             .expect("scoped metadata hash should validate");
     }
 

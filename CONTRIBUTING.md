@@ -115,6 +115,9 @@ cargo llvm-cov --locked --all-features --workspace --summary-only --fail-under-l
 
 - **Cargo.lock** is committed (binary crate, reproducible builds).
 - **benches/** is committed (performance baselines).
+- Vendored crate upgrades must follow [vendor/PATCHES.md](vendor/PATCHES.md):
+  confirm each local patch is upstreamed or intentionally retained, then run the
+  linked tests/checks before opening a PR.
 
 ## Pull Request Checklist
 

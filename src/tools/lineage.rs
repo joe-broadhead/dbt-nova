@@ -87,7 +87,9 @@ impl ManifestSearch {
             }
             depth_reached = depth_reached.max(depth_used);
             if let Some(related) = map.get(&id) {
-                for rel_id in related {
+                let mut related_ids: Vec<&String> = related.iter().collect();
+                related_ids.sort_unstable();
+                for rel_id in related_ids {
                     if truncated {
                         break;
                     }

@@ -5,10 +5,12 @@ dbt-nova exposes two callable product surfaces:
 - MCP tools, used by MCP clients and hosted deployments.
 - CLI commands, used for one-shot local workflows and CI automation.
 
-The MCP catalog currently contains 53 MCP tools. `dbt-nova tool call` is the
-CLI bridge to that same canonical tool catalog. Other CLI leaf commands are
-tracked below so each capability is either MCP-equivalent, a known parity gap,
-explicitly safety-gated, or a lifecycle exception.
+The canonical MCP catalog currently contains 53 MCP tools. Runtime MCP exposure
+is profile-filtered by `DBT_NOVA_TOOL_PROFILE` (`agent` by default, `all` for
+the complete catalog). `dbt-nova tool call` is the CLI bridge to that same
+canonical catalog. Other CLI leaf commands are tracked below so each capability
+is either MCP-equivalent, a known parity gap, explicitly safety-gated, or a
+lifecycle exception.
 
 ## Policy
 
@@ -31,7 +33,7 @@ sets the documented opt-in environment variable for local execution or writes.
 | `manifest load` | `health` | Lifecycle exception | - | MCP server startup performs the initial manifest load; `health` reports the active loaded manifest and `reload_manifest` replaces it. |
 | `manifest reload` | `reload_manifest` | SafetyGated | - | MCP current-source reload is allowed; source, refresh, or storage changes require `DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD=1`. CLI `manifest reload` and CLI `tool call reload_manifest` are one-shot reloads. |
 | `manifest warm` | `warm_manifest` | SafetyGated | - | MCP semantic cache warmup requires `DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1` and uses the current manifest source. |
-| `tool call <tool_name>` | 53 MCP tools | Equivalent | - | CLI tool-call mode supports the canonical MCP tool catalog. |
+| `tool call <tool_name>` | 53 MCP tools | Equivalent | - | CLI tool-call mode supports the canonical MCP tool catalog; server exposure may be narrowed by tool profile, allowlist, or denylist. |
 | `audit agent-readiness` | `get_agent_readiness` | Equivalent | - | MCP returns the same `agent_readiness.v1` report without CLI file writes. |
 | `audit metadata-score` | `get_metadata_audit` | Equivalent | - | MCP returns the same metadata audit report without CLI file writes or exit semantics. |
 | `audit nova-meta` | `validate_nova_meta` | Equivalent | - | MCP returns the same nova-meta validation report with scoped local path access. |

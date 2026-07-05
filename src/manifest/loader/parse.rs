@@ -6,7 +6,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use serde::de::{self, DeserializeSeed, Deserializer, MapAccess, Visitor};
-use serde_json::Value as JsonValue;
+use serde_json::{Map as JsonMap, Value as JsonValue};
 use tracing::{info, warn};
 
 use crate::error::{DbtNovaError, Result};
@@ -30,6 +30,15 @@ pub(super) struct ManifestAccumulator {
     pub(super) child_map: HashMap<String, HashSet<String>>,
     pub(super) manifest_metadata: JsonValue,
 }
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct CatalogColumnInfo {
+    pub(super) data_type: Option<String>,
+    pub(super) comment: Option<String>,
+    pub(super) stats: Option<JsonValue>,
+}
+
+pub(super) type CatalogColumnMap = HashMap<String, HashMap<String, CatalogColumnInfo>>;
 
 pub(super) fn map_vec_to_set(
     map: HashMap<String, Vec<String>>,
@@ -186,6 +195,7 @@ struct EntitiesSeed<'a> {
     accumulator: &'a mut ManifestAccumulator,
     pruner: Option<&'a mut ManifestPruner>,
     forced_resource_type: Option<&'static str>,
+    catalog_columns: Option<&'a CatalogColumnMap>,
 }
 
 impl<'de> DeserializeSeed<'de> for EntitiesSeed<'_> {
@@ -199,6 +209,7 @@ impl<'de> DeserializeSeed<'de> for EntitiesSeed<'_> {
             accumulator: self.accumulator,
             pruner: self.pruner,
             forced_resource_type: self.forced_resource_type,
+            catalog_columns: self.catalog_columns,
         })
     }
 }
@@ -207,6 +218,7 @@ struct EntitiesVisitor<'a> {
     accumulator: &'a mut ManifestAccumulator,
     pruner: Option<&'a mut ManifestPruner>,
     forced_resource_type: Option<&'static str>,
+    catalog_columns: Option<&'a CatalogColumnMap>,
 }
 
 impl<'de> Visitor<'de> for EntitiesVisitor<'_> {
@@ -221,7 +233,7 @@ impl<'de> Visitor<'de> for EntitiesVisitor<'_> {
         M: MapAccess<'de>,
     {
         let mut pruner = self.pruner;
-        while let Some((unique_id, payload)) = map.next_entry::<String, JsonValue>()? {
+        while let Some((unique_id, mut payload)) = map.next_entry::<String, JsonValue>()? {
             let keep = match pruner.as_deref_mut() {
                 Some(matcher) => {
                     matcher.should_keep_entity(&unique_id, &payload, self.forced_resource_type)
@@ -230,6 +242,9 @@ impl<'de> Visitor<'de> for EntitiesVisitor<'_> {
             };
             if !keep {
                 continue;
+            }
+            if let Some(catalog_columns) = self.catalog_columns {
+                apply_catalog_columns(&mut payload, catalog_columns.get(&unique_id));
             }
             let entity = Entity::from_json(&unique_id, &payload);
             self.accumulator
@@ -258,6 +273,7 @@ impl<'de> Visitor<'de> for EntitiesVisitor<'_> {
 struct ManifestSeed<'a> {
     accumulator: &'a mut ManifestAccumulator,
     pruner: Option<&'a mut ManifestPruner>,
+    catalog_columns: Option<&'a CatalogColumnMap>,
 }
 
 impl<'de> DeserializeSeed<'de> for ManifestSeed<'_> {
@@ -270,6 +286,7 @@ impl<'de> DeserializeSeed<'de> for ManifestSeed<'_> {
         deserializer.deserialize_map(ManifestVisitor {
             accumulator: self.accumulator,
             pruner: self.pruner,
+            catalog_columns: self.catalog_columns,
         })
     }
 }
@@ -277,6 +294,55 @@ impl<'de> DeserializeSeed<'de> for ManifestSeed<'_> {
 struct ManifestVisitor<'a> {
     accumulator: &'a mut ManifestAccumulator,
     pruner: Option<&'a mut ManifestPruner>,
+    catalog_columns: Option<&'a CatalogColumnMap>,
+}
+
+fn visit_entities_section<'de, M>(
+    map: &mut M,
+    accumulator: &mut ManifestAccumulator,
+    pruner: Option<&mut ManifestPruner>,
+    forced_resource_type: Option<&'static str>,
+    catalog_columns: Option<&CatalogColumnMap>,
+) -> std::result::Result<(), M::Error>
+where
+    M: MapAccess<'de>,
+{
+    map.next_value_seed(EntitiesSeed {
+        accumulator,
+        pruner,
+        forced_resource_type,
+        catalog_columns,
+    })
+}
+
+enum ManifestEntitySection {
+    Nodes,
+    ForcedResourceType(&'static str),
+}
+
+impl ManifestEntitySection {
+    fn forced_resource_type(self) -> Option<&'static str> {
+        match self {
+            ManifestEntitySection::Nodes => None,
+            ManifestEntitySection::ForcedResourceType(resource_type) => Some(resource_type),
+        }
+    }
+}
+
+fn manifest_entity_section(key: &str) -> Option<ManifestEntitySection> {
+    match key {
+        "nodes" => Some(ManifestEntitySection::Nodes),
+        "sources" => Some(ManifestEntitySection::ForcedResourceType("source")),
+        "macros" => Some(ManifestEntitySection::ForcedResourceType("macro")),
+        "docs" => Some(ManifestEntitySection::ForcedResourceType("doc")),
+        "groups" => Some(ManifestEntitySection::ForcedResourceType("group")),
+        "exposures" => Some(ManifestEntitySection::ForcedResourceType("exposure")),
+        "metrics" => Some(ManifestEntitySection::ForcedResourceType("metric")),
+        "saved_queries" => Some(ManifestEntitySection::ForcedResourceType("saved_query")),
+        "semantic_models" => Some(ManifestEntitySection::ForcedResourceType("semantic_model")),
+        "unit_tests" => Some(ManifestEntitySection::ForcedResourceType("unit_test")),
+        _ => None,
+    }
 }
 
 impl<'de> Visitor<'de> for ManifestVisitor<'_> {
@@ -291,77 +357,17 @@ impl<'de> Visitor<'de> for ManifestVisitor<'_> {
         M: MapAccess<'de>,
     {
         while let Some(key) = map.next_key::<String>()? {
+            if let Some(section) = manifest_entity_section(&key) {
+                visit_entities_section(
+                    &mut map,
+                    self.accumulator,
+                    self.pruner.as_deref_mut(),
+                    section.forced_resource_type(),
+                    self.catalog_columns,
+                )?;
+                continue;
+            }
             match key.as_str() {
-                "nodes" => {
-                    map.next_value_seed(EntitiesSeed {
-                        accumulator: self.accumulator,
-                        pruner: self.pruner.as_deref_mut(),
-                        forced_resource_type: None,
-                    })?;
-                }
-                "sources" => {
-                    map.next_value_seed(EntitiesSeed {
-                        accumulator: self.accumulator,
-                        pruner: self.pruner.as_deref_mut(),
-                        forced_resource_type: Some("source"),
-                    })?;
-                }
-                "macros" => {
-                    map.next_value_seed(EntitiesSeed {
-                        accumulator: self.accumulator,
-                        pruner: self.pruner.as_deref_mut(),
-                        forced_resource_type: Some("macro"),
-                    })?;
-                }
-                "docs" => {
-                    map.next_value_seed(EntitiesSeed {
-                        accumulator: self.accumulator,
-                        pruner: self.pruner.as_deref_mut(),
-                        forced_resource_type: Some("doc"),
-                    })?;
-                }
-                "groups" => {
-                    map.next_value_seed(EntitiesSeed {
-                        accumulator: self.accumulator,
-                        pruner: self.pruner.as_deref_mut(),
-                        forced_resource_type: Some("group"),
-                    })?;
-                }
-                "exposures" => {
-                    map.next_value_seed(EntitiesSeed {
-                        accumulator: self.accumulator,
-                        pruner: self.pruner.as_deref_mut(),
-                        forced_resource_type: Some("exposure"),
-                    })?;
-                }
-                "metrics" => {
-                    map.next_value_seed(EntitiesSeed {
-                        accumulator: self.accumulator,
-                        pruner: self.pruner.as_deref_mut(),
-                        forced_resource_type: Some("metric"),
-                    })?;
-                }
-                "saved_queries" => {
-                    map.next_value_seed(EntitiesSeed {
-                        accumulator: self.accumulator,
-                        pruner: self.pruner.as_deref_mut(),
-                        forced_resource_type: Some("saved_query"),
-                    })?;
-                }
-                "semantic_models" => {
-                    map.next_value_seed(EntitiesSeed {
-                        accumulator: self.accumulator,
-                        pruner: self.pruner.as_deref_mut(),
-                        forced_resource_type: Some("semantic_model"),
-                    })?;
-                }
-                "unit_tests" => {
-                    map.next_value_seed(EntitiesSeed {
-                        accumulator: self.accumulator,
-                        pruner: self.pruner.as_deref_mut(),
-                        forced_resource_type: Some("unit_test"),
-                    })?;
-                }
                 "parent_map" => {
                     let value: Option<HashMap<String, Vec<String>>> = map.next_value()?;
                     if let Some(v) = value
@@ -548,11 +554,196 @@ fn prune_lineage_maps(accumulator: &mut ManifestAccumulator) {
     }
 }
 
+pub(super) fn load_catalog_column_map(catalog_path: &Path) -> Result<CatalogColumnMap> {
+    let file = File::open(catalog_path).map_err(|err| {
+        DbtNovaError::ManifestError(format!(
+            "Failed to read catalog file {}: {err}",
+            catalog_path.display()
+        ))
+    })?;
+    let catalog: JsonValue = serde_json::from_reader(BufReader::new(file)).map_err(|err| {
+        DbtNovaError::ManifestError(format!(
+            "Failed to parse catalog JSON {}: {err}",
+            catalog_path.display()
+        ))
+    })?;
+    Ok(catalog_column_map_from_json(&catalog))
+}
+
+fn catalog_column_map_from_json(catalog: &JsonValue) -> CatalogColumnMap {
+    let mut out = CatalogColumnMap::new();
+    for section in ["nodes", "sources"] {
+        let Some(entities) = catalog.get(section).and_then(JsonValue::as_object) else {
+            continue;
+        };
+        for (unique_id, entity) in entities {
+            let Some(columns) = entity.get("columns").and_then(JsonValue::as_object) else {
+                continue;
+            };
+            let mut column_map = HashMap::new();
+            for (column_name, column) in columns {
+                let info = CatalogColumnInfo {
+                    data_type: first_catalog_string(column, &["type", "data_type", "dtype"]),
+                    comment: first_catalog_string(column, &["comment", "description"]),
+                    stats: column.get("stats").cloned(),
+                };
+                column_map.insert(column_name.clone(), info);
+            }
+            if !column_map.is_empty() {
+                out.insert(unique_id.clone(), column_map);
+            }
+        }
+    }
+    out
+}
+
+fn first_catalog_string(value: &JsonValue, fields: &[&str]) -> Option<String> {
+    fields
+        .iter()
+        .find_map(|field| value.get(*field).and_then(JsonValue::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn apply_catalog_columns(
+    payload: &mut JsonValue,
+    catalog_columns: Option<&HashMap<String, CatalogColumnInfo>>,
+) {
+    let Some(catalog_columns) = catalog_columns else {
+        return;
+    };
+    let Some(payload_obj) = payload.as_object_mut() else {
+        return;
+    };
+    let columns = payload_obj
+        .entry("columns")
+        .or_insert_with(|| JsonValue::Object(JsonMap::new()));
+    let Some(columns_obj) = columns.as_object_mut() else {
+        return;
+    };
+
+    for (column_name, catalog_info) in catalog_columns {
+        let column = columns_obj
+            .entry(column_name.clone())
+            .or_insert_with(|| JsonValue::Object(JsonMap::new()));
+        apply_catalog_column_info(column_name, column, catalog_info);
+    }
+
+    for (column_name, column) in columns_obj {
+        if catalog_columns.contains_key(column_name) {
+            continue;
+        }
+        if let Some(obj) = column.as_object_mut() {
+            let manifest_data_type = obj
+                .get("data_type")
+                .and_then(JsonValue::as_str)
+                .map(str::to_string);
+            let mut drift = JsonMap::new();
+            drift.insert("missing_in_catalog".to_string(), JsonValue::Bool(true));
+            if let Some(manifest_data_type) = manifest_data_type {
+                drift.insert(
+                    "manifest_data_type".to_string(),
+                    JsonValue::String(manifest_data_type),
+                );
+            }
+            obj.insert("catalog_drift".to_string(), JsonValue::Object(drift));
+        }
+    }
+}
+
+fn apply_catalog_column_info(
+    column_name: &str,
+    column: &mut JsonValue,
+    catalog_info: &CatalogColumnInfo,
+) {
+    if !column.is_object() {
+        *column = JsonValue::Object(JsonMap::new());
+    }
+    let Some(obj) = column.as_object_mut() else {
+        return;
+    };
+    let catalog_only = obj.is_empty();
+    obj.entry("name".to_string())
+        .or_insert_with(|| JsonValue::String(column_name.to_string()));
+    let manifest_data_type = obj
+        .get("data_type")
+        .and_then(JsonValue::as_str)
+        .map(str::to_string);
+    if let Some(catalog_type) = catalog_info.data_type.as_ref() {
+        obj.insert(
+            "data_type".to_string(),
+            JsonValue::String(catalog_type.clone()),
+        );
+        obj.insert(
+            "catalog_data_type".to_string(),
+            JsonValue::String(catalog_type.clone()),
+        );
+        if let Some(manifest_type) = manifest_data_type.as_ref()
+            && manifest_type != catalog_type
+        {
+            obj.insert(
+                "manifest_data_type".to_string(),
+                JsonValue::String(manifest_type.clone()),
+            );
+        }
+    }
+    if let Some(comment) = catalog_info.comment.as_ref() {
+        obj.entry("description".to_string())
+            .or_insert_with(|| JsonValue::String(comment.clone()));
+        obj.insert(
+            "catalog_comment".to_string(),
+            JsonValue::String(comment.clone()),
+        );
+    }
+    if let Some(stats) = catalog_info.stats.as_ref() {
+        obj.insert("catalog_stats".to_string(), stats.clone());
+    }
+
+    let type_mismatch = catalog_info
+        .data_type
+        .as_ref()
+        .zip(manifest_data_type.as_ref())
+        .is_some_and(|(catalog_type, manifest_type)| catalog_type != manifest_type);
+
+    let mut catalog = JsonMap::new();
+    catalog.insert("present".to_string(), JsonValue::Bool(true));
+    catalog.insert(
+        "source".to_string(),
+        JsonValue::String("catalog.json".to_string()),
+    );
+    obj.insert("catalog".to_string(), JsonValue::Object(catalog));
+
+    if catalog_only || type_mismatch {
+        let mut drift = JsonMap::new();
+        if catalog_only {
+            drift.insert("catalog_only".to_string(), JsonValue::Bool(true));
+        }
+        if type_mismatch {
+            drift.insert("type_mismatch".to_string(), JsonValue::Bool(true));
+            if let Some(manifest_type) = manifest_data_type {
+                drift.insert(
+                    "manifest_data_type".to_string(),
+                    JsonValue::String(manifest_type),
+                );
+            }
+            if let Some(catalog_type) = catalog_info.data_type.as_ref() {
+                drift.insert(
+                    "catalog_data_type".to_string(),
+                    JsonValue::String(catalog_type.clone()),
+                );
+            }
+        }
+        obj.insert("catalog_drift".to_string(), JsonValue::Object(drift));
+    }
+}
+
 pub(super) fn parse_manifest_file(
     manifest_path: &Path,
     source_uri: &str,
     allow_ids: &[String],
     deny_ids: &[String],
+    catalog_columns: Option<&CatalogColumnMap>,
     accumulator: &mut ManifestAccumulator,
     load_start: Instant,
 ) -> Result<()> {
@@ -566,6 +757,7 @@ pub(super) fn parse_manifest_file(
     ManifestSeed {
         accumulator,
         pruner: pruner.as_mut(),
+        catalog_columns,
     }
     .deserialize(&mut deserializer)
     .map_err(|err| DbtNovaError::ManifestError(format!("Failed to parse manifest JSON: {err}")))?;
@@ -583,6 +775,7 @@ pub(super) fn parse_manifest_file(
 #[cfg(test)]
 mod tests {
     use super::{ManifestAccumulator, map_set_to_vec, parse_manifest_file};
+    use serde_json::Value as JsonValue;
     use std::collections::{HashMap, HashSet};
     use std::fs;
     use std::time::Instant;
@@ -667,7 +860,7 @@ mod tests {
         }"#;
 
         let temp = tempdir().expect("tempdir");
-        let manifest_path = temp.path().join("manifest.json");
+        let manifest_path = temp.path().join("nova_manifest.json");
         fs::write(&manifest_path, manifest).expect("write manifest");
         let mut accumulator = ManifestAccumulator::new(temp.path(), false).expect("accumulator");
         let allow_ids = vec!["model.pkg.base_a".to_string()];
@@ -678,6 +871,7 @@ mod tests {
             manifest_path.to_string_lossy().as_ref(),
             &allow_ids,
             &deny_ids,
+            None,
             &mut accumulator,
             Instant::now(),
         )
@@ -749,6 +943,7 @@ mod tests {
             manifest_path.to_string_lossy().as_ref(),
             &allow_ids,
             &deny_ids,
+            None,
             &mut accumulator,
             Instant::now(),
         )
@@ -756,5 +951,102 @@ mod tests {
 
         assert!(accumulator.seen_unique_ids.contains("model.pkg.base_a"));
         assert!(!accumulator.seen_unique_ids.contains("analysis.pkg.only_a"));
+    }
+
+    #[test]
+    fn parse_manifest_merges_catalog_column_reality() {
+        let manifest = r#"{
+          "metadata": { "dbt_version": "1.10.0" },
+          "nodes": {
+            "model.pkg.orders": {
+              "name": "orders",
+              "resource_type": "model",
+              "package_name": "pkg",
+              "columns": {
+                "amount": {"name": "amount", "data_type": "text"},
+                "declared_only": {"name": "declared_only", "data_type": "integer"}
+              },
+              "depends_on": { "nodes": [], "macros": [] }
+            }
+          },
+          "sources": {},
+          "macros": {},
+          "docs": {},
+          "groups": {},
+          "exposures": {},
+          "metrics": {},
+          "saved_queries": {},
+          "semantic_models": {},
+          "unit_tests": {}
+        }"#;
+        let catalog = serde_json::json!({
+            "nodes": {
+                "model.pkg.orders": {
+                    "columns": {
+                        "amount": {
+                            "type": "numeric",
+                            "comment": "Warehouse amount",
+                            "stats": {"has_stats": {"value": true}}
+                        },
+                        "catalog_only": {
+                            "type": "boolean",
+                            "comment": "Present in warehouse"
+                        }
+                    }
+                }
+            }
+        });
+
+        let temp = tempdir().expect("tempdir");
+        let manifest_path = temp.path().join("manifest.json");
+        let catalog_path = temp.path().join("catalog.json");
+        fs::write(&manifest_path, manifest).expect("write manifest");
+        fs::write(
+            &catalog_path,
+            serde_json::to_vec(&catalog).expect("serialize catalog"),
+        )
+        .expect("write catalog");
+        let catalog_columns = super::load_catalog_column_map(&catalog_path).expect("load catalog");
+        let mut accumulator = ManifestAccumulator::new(temp.path(), true).expect("accumulator");
+
+        parse_manifest_file(
+            &manifest_path,
+            manifest_path.to_string_lossy().as_ref(),
+            &[],
+            &[],
+            Some(&catalog_columns),
+            &mut accumulator,
+            Instant::now(),
+        )
+        .expect("parse manifest");
+
+        let store = accumulator.finish_store().expect("finish store");
+        let entity = store
+            .get_blocking("model.pkg.orders")
+            .expect("get entity")
+            .expect("orders entity");
+        let entity_json = entity.to_json_value();
+        let columns = entity_json
+            .get("columns")
+            .and_then(JsonValue::as_object)
+            .expect("columns");
+
+        assert_eq!(columns["amount"]["data_type"].as_str(), Some("numeric"));
+        assert_eq!(
+            columns["amount"]["manifest_data_type"].as_str(),
+            Some("text")
+        );
+        assert_eq!(
+            columns["amount"]["catalog_drift"]["type_mismatch"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            columns["catalog_only"]["catalog_drift"]["catalog_only"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(
+            columns["declared_only"]["catalog_drift"]["missing_in_catalog"].as_bool(),
+            Some(true)
+        );
     }
 }

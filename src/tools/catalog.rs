@@ -58,6 +58,253 @@ pub const MCP_TOOL_NAMES: [&str; 53] = [
 /// Canonical MCP tool count used by docs/tests.
 pub const MCP_TOOL_COUNT: usize = MCP_TOOL_NAMES.len();
 
+/// Default focused tool profile for agent sessions.
+pub const DEFAULT_MCP_TOOL_PROFILE: &str = "agent";
+
+/// Supported MCP tool profile names.
+pub const MCP_TOOL_PROFILE_NAMES: [&str; 6] =
+    ["agent", "analyst", "engineer", "governance", "ops", "all"];
+
+/// Lean default catalog for discovery, context, lineage, quality, and recipe lookup.
+pub const MCP_AGENT_TOOL_PROFILE: &[&str] = &[
+    "search",
+    "search_indicator",
+    "indicator_inventory",
+    "search_columns",
+    "column_inventory",
+    "compare_grains",
+    "find_entity_overlap",
+    "modelling_consistency_report",
+    "get_entity",
+    "list_entities",
+    "get_lineage",
+    "get_sql",
+    "get_columns",
+    "get_impact",
+    "validate_dag",
+    "show_metadata",
+    "health",
+    "list_tags",
+    "list_packages",
+    "list_databases",
+    "get_column_lineage",
+    "get_test_coverage",
+    "get_metadata_score",
+    "get_metadata_audit",
+    "get_agent_readiness",
+    "batch_get_entities",
+    "find_by_path",
+    "search_recipes",
+    "get_recipe",
+    "get_undocumented",
+    "get_context",
+];
+
+/// Analyst profile with read-only discovery plus SQL execution for trusted local sessions.
+pub const MCP_ANALYST_TOOL_PROFILE: &[&str] = &[
+    "search",
+    "search_indicator",
+    "indicator_inventory",
+    "search_columns",
+    "column_inventory",
+    "compare_grains",
+    "get_entity",
+    "list_entities",
+    "get_lineage",
+    "get_sql",
+    "get_columns",
+    "get_impact",
+    "show_metadata",
+    "health",
+    "list_tags",
+    "list_packages",
+    "list_databases",
+    "get_column_lineage",
+    "get_test_coverage",
+    "get_metadata_score",
+    "batch_get_entities",
+    "find_by_path",
+    "search_recipes",
+    "get_recipe",
+    "get_context",
+    "execute_sql",
+];
+
+/// Engineer profile adds validation, modelling, recipe execution, and metadata audit tools.
+pub const MCP_ENGINEER_TOOL_PROFILE: &[&str] = &[
+    "search",
+    "search_indicator",
+    "indicator_inventory",
+    "search_columns",
+    "column_inventory",
+    "compare_grains",
+    "find_entity_overlap",
+    "modelling_consistency_report",
+    "get_entity",
+    "list_entities",
+    "get_lineage",
+    "get_sql",
+    "get_columns",
+    "diff_entities",
+    "get_impact",
+    "validate_dag",
+    "validate_nova_meta",
+    "show_metadata",
+    "health",
+    "list_tags",
+    "list_packages",
+    "list_databases",
+    "get_column_lineage",
+    "get_test_coverage",
+    "get_metadata_score",
+    "get_metadata_audit",
+    "get_agent_readiness",
+    "batch_get_entities",
+    "find_by_path",
+    "search_recipes",
+    "get_recipe",
+    "run_recipe",
+    "get_undocumented",
+    "get_context",
+    "execute_sql",
+];
+
+/// Governance profile focuses on metadata, quality, readiness, and audit surfaces.
+pub const MCP_GOVERNANCE_TOOL_PROFILE: &[&str] = &[
+    "search",
+    "search_indicator",
+    "indicator_inventory",
+    "search_columns",
+    "column_inventory",
+    "compare_grains",
+    "find_entity_overlap",
+    "modelling_consistency_report",
+    "get_entity",
+    "list_entities",
+    "get_lineage",
+    "get_columns",
+    "get_impact",
+    "validate_dag",
+    "validate_nova_meta",
+    "show_metadata",
+    "health",
+    "list_tags",
+    "list_packages",
+    "list_databases",
+    "get_column_lineage",
+    "get_test_coverage",
+    "get_metadata_score",
+    "get_metadata_audit",
+    "get_agent_readiness",
+    "batch_get_entities",
+    "find_by_path",
+    "get_undocumented",
+    "get_context",
+];
+
+/// Operator profile exposes operational, eval, trace, config, and storage tools.
+pub const MCP_OPS_TOOL_PROFILE: &[&str] = &[
+    "health",
+    "show_metadata",
+    "reload_manifest",
+    "warm_manifest",
+    "show_config",
+    "validate_config",
+    "inspect_storage",
+    "prune_storage",
+    "cleanup_storage",
+    "validate_eval_suite",
+    "get_eval_gate",
+    "get_eval_history",
+    "compare_eval_runs",
+    "run_eval",
+    "init_eval_suite",
+    "run_agent_eval",
+    "inspect_tool_trace",
+    "summarize_tool_trace",
+    "redact_tool_trace",
+    "replay_tool_trace",
+];
+
+#[must_use]
+pub fn mcp_tool_profile_names(profile: &str) -> Option<&'static [&'static str]> {
+    match profile {
+        "agent" => Some(MCP_AGENT_TOOL_PROFILE),
+        "analyst" => Some(MCP_ANALYST_TOOL_PROFILE),
+        "engineer" => Some(MCP_ENGINEER_TOOL_PROFILE),
+        "governance" => Some(MCP_GOVERNANCE_TOOL_PROFILE),
+        "ops" => Some(MCP_OPS_TOOL_PROFILE),
+        "all" => Some(&MCP_TOOL_NAMES),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct McpBudgetableDataArrayField {
+    pub field: &'static str,
+    pub returned_count_field: Option<&'static str>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct McpResponseBudgetContract {
+    pub tool: &'static str,
+    pub data_array_fields: &'static [&'static str],
+}
+
+pub const MCP_BUDGETABLE_DATA_ARRAY_FIELDS: &[McpBudgetableDataArrayField] = &[
+    McpBudgetableDataArrayField {
+        field: "columns",
+        returned_count_field: None,
+    },
+    McpBudgetableDataArrayField {
+        field: "entities",
+        returned_count_field: Some("found_count"),
+    },
+    McpBudgetableDataArrayField {
+        field: "lineage",
+        returned_count_field: None,
+    },
+    McpBudgetableDataArrayField {
+        field: "edges",
+        returned_count_field: None,
+    },
+    McpBudgetableDataArrayField {
+        field: "not_found",
+        returned_count_field: Some("not_found_count"),
+    },
+    McpBudgetableDataArrayField {
+        field: "undocumented_columns",
+        returned_count_field: None,
+    },
+];
+
+pub const MCP_RESPONSE_BUDGET_CONTRACTS: &[McpResponseBudgetContract] = &[
+    McpResponseBudgetContract {
+        tool: "get_columns",
+        data_array_fields: &["columns"],
+    },
+    McpResponseBudgetContract {
+        tool: "batch_get_entities",
+        data_array_fields: &["entities", "not_found"],
+    },
+    McpResponseBudgetContract {
+        tool: "get_lineage",
+        data_array_fields: &["lineage"],
+    },
+    McpResponseBudgetContract {
+        tool: "get_impact",
+        data_array_fields: &["lineage"],
+    },
+    McpResponseBudgetContract {
+        tool: "get_column_lineage",
+        data_array_fields: &["edges"],
+    },
+    McpResponseBudgetContract {
+        tool: "get_undocumented",
+        data_array_fields: &["entities", "undocumented_columns"],
+    },
+];
+
 /// CLI/MCP parity state for a top-level CLI leaf command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CliMcpParityStatus {
@@ -278,7 +525,11 @@ mod tests {
 
     use crate::cli::args::Cli;
 
-    use super::{CLI_MCP_PARITY_MATRIX, CliMcpParityStatus, MCP_TOOL_COUNT, MCP_TOOL_NAMES};
+    use super::{
+        CLI_MCP_PARITY_MATRIX, CliMcpParityStatus, MCP_AGENT_TOOL_PROFILE,
+        MCP_BUDGETABLE_DATA_ARRAY_FIELDS, MCP_RESPONSE_BUDGET_CONTRACTS, MCP_TOOL_COUNT,
+        MCP_TOOL_NAMES, MCP_TOOL_PROFILE_NAMES, mcp_tool_profile_names,
+    };
 
     #[test]
     fn cli_mcp_parity_matrix_has_unique_cli_commands() {
@@ -320,6 +571,73 @@ mod tests {
                     entry.issue.is_some(),
                     "{} is a parity gap without an owning issue",
                     entry.cli_command
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn tool_profiles_reference_valid_mcp_tools() {
+        let valid_tools = MCP_TOOL_NAMES.iter().copied().collect::<BTreeSet<_>>();
+
+        for profile in MCP_TOOL_PROFILE_NAMES {
+            let tools = mcp_tool_profile_names(profile)
+                .unwrap_or_else(|| panic!("profile {profile} should resolve"));
+            assert!(!tools.is_empty(), "profile {profile} must expose tools");
+            for tool in tools {
+                assert!(
+                    valid_tools.contains(tool),
+                    "profile {profile} references unknown tool {tool}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn agent_tool_profile_is_lean_and_non_operational() {
+        let tools = MCP_AGENT_TOOL_PROFILE
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
+
+        assert!(tools.contains("search"));
+        assert!(tools.contains("get_context"));
+        assert!(tools.contains("search_recipes"));
+        assert!(!tools.contains("execute_sql"));
+        assert!(!tools.contains("run_eval"));
+        assert!(!tools.contains("inspect_storage"));
+        assert!(tools.len() < MCP_TOOL_COUNT);
+    }
+
+    #[test]
+    fn response_budget_contracts_reference_valid_tools_and_fields() {
+        let valid_tools = MCP_TOOL_NAMES.iter().copied().collect::<BTreeSet<_>>();
+        let budgetable_fields = MCP_BUDGETABLE_DATA_ARRAY_FIELDS
+            .iter()
+            .map(|field| field.field)
+            .collect::<BTreeSet<_>>();
+        let contract_tools = MCP_RESPONSE_BUDGET_CONTRACTS
+            .iter()
+            .map(|contract| contract.tool)
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(contract_tools.len(), MCP_RESPONSE_BUDGET_CONTRACTS.len());
+        for contract in MCP_RESPONSE_BUDGET_CONTRACTS {
+            assert!(
+                valid_tools.contains(contract.tool),
+                "budget contract references unknown MCP tool {}",
+                contract.tool
+            );
+            assert!(
+                !contract.data_array_fields.is_empty(),
+                "budget contract for {} must declare at least one field",
+                contract.tool
+            );
+            for field in contract.data_array_fields {
+                assert!(
+                    budgetable_fields.contains(field),
+                    "budget contract for {} references unregistered field {field}",
+                    contract.tool
                 );
             }
         }

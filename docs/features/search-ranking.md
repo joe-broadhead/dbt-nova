@@ -86,6 +86,26 @@ The complete raw `meta` and `columns.*.meta` payload remains available in
 If summary caps apply, the field sets `truncated: true` and includes
 `dropped_values` and/or `byte_truncated_values` counts.
 
+## MetricFlow Bridge
+
+Nova derives first-class indicator metadata from dbt Semantic Layer /
+MetricFlow artifacts when a manifest includes `metrics` or `semantic_models`
+without duplicate `meta.nova` annotations:
+
+- dbt `metric` entities become Nova metric indicators with name, label,
+  description, type, MetricFlow expression/type parameters, filters, and
+  canonical status.
+- dbt `semantic_model` measures become Nova measure indicators with aggregation,
+  expression/field, label/description, and derived grain from entities and
+  dimensions.
+- Explicit `meta.nova` remains authoritative and can override or extend the
+  derived metadata.
+
+This gives vanilla Semantic Layer projects useful `search_indicator`,
+`indicator_inventory`, analyst ranking, and metadata-score signal immediately.
+Full `meta.nova` is still the contract for Nova-specific governance,
+candidate-profile, domain, and recommendation metadata.
+
 ## Default Boosts (Config)
 
 These values are tuned for high signal with minimal noise:

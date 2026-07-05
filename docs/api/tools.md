@@ -1,6 +1,9 @@
 # Tools Reference
 
-This reference lists all 53 MCP tools exposed by dbt‑nova, grouped by category.
+This reference lists the canonical 53-tool MCP catalog, grouped by category.
+Runtime exposure is profile-filtered by `DBT_NOVA_TOOL_PROFILE`; the default
+`agent` profile is lean, while `DBT_NOVA_TOOL_PROFILE=all` exposes the full
+catalog for backwards-compatible local/operator use.
 All tools return the standard envelope described in [Response Format](response-format.md).
 For CLI equivalents and known parity gaps, see
 [MCP/CLI Parity](mcp-cli-parity.md).
@@ -144,7 +147,9 @@ with query tokens, retrievers used, and the active ranking config snapshot.
 
 ### `search_indicator`
 Search Nova measures and metrics directly, then return the parent execution
-entity and grain context.
+entity and grain context. Native dbt Semantic Layer / MetricFlow `metrics` and
+`semantic_models` are bridged into this indicator surface even when no
+hand-authored `meta.nova` block exists.
 
 Required:
 - `query`
@@ -207,6 +212,8 @@ entirely.
 ### `indicator_inventory`
 List Nova measures and metrics deterministically, with parent execution context.
 Use this when you need a flat semantic catalog instead of ranked search results.
+MetricFlow metrics and semantic-model measures are included as derived Nova
+indicators unless explicit `meta.nova` metadata overrides or extends them.
 
 Common:
 - `indicator_types` (`["metric"]`, `["measure"]`, or omitted for both)
@@ -530,6 +537,10 @@ Required:
 
 Notes:
 - Response includes `primary_key_columns` when columns are marked with `meta.primary_key: true`.
+- When `catalog.json` is configured or auto-discovered, column rows include
+  warehouse `data_type`, `catalog_data_type`, optional `catalog_stats`, and
+  `catalog_drift` fields for type mismatches, catalog-only columns, or declared
+  columns missing from the catalog.
 
 ### `get_sql`
 Return raw or compiled SQL.
