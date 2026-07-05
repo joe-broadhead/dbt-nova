@@ -52,8 +52,11 @@ use crate::params::{
 };
 use crate::responses::SuccessResponse;
 use crate::server::health::build_manifest_health_payload;
+use crate::tools::catalog::MCP_BUDGETABLE_DATA_ARRAY_FIELDS;
 use crate::utils::{ToolMetricsStore, ToolRateLimiter};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+
+type ToolCallResponse = std::result::Result<String, String>;
 
 /// Thin MCP server wrapper around the core `ManifestSearch`.
 #[derive(Clone)]
@@ -153,7 +156,12 @@ impl DbtNovaServer {
         self.acquire_sql_permit(searcher.config(), timeout).await
     }
 
-    async fn handle_async<F, Fut>(&self, tool: &'static str, persona: Option<&str>, f: F) -> String
+    async fn handle_async<F, Fut>(
+        &self,
+        tool: &'static str,
+        persona: Option<&str>,
+        f: F,
+    ) -> ToolCallResponse
     where
         F: FnOnce(Arc<ManifestSearch>) -> Fut,
         Fut: Future<Output = Result<serde_json::Value, DbtNovaError>>,
@@ -169,7 +177,7 @@ impl DbtNovaServer {
         tool: &'static str,
         persona: Option<&str>,
         f: F,
-    ) -> String
+    ) -> ToolCallResponse
     where
         F: FnOnce(Arc<ManifestSearch>) -> Fut,
         Fut: Future<Output = Result<(serde_json::Value, PaginationParams), DbtNovaError>>,
@@ -187,7 +195,7 @@ impl DbtNovaServer {
         tool: &'static str,
         persona: Option<&str>,
         f: F,
-    ) -> String
+    ) -> ToolCallResponse
     where
         F: FnOnce(Arc<ManifestSearch>) -> Fut,
         Fut: Future<Output = Result<(serde_json::Value, Option<PaginationParams>), DbtNovaError>>,
@@ -209,7 +217,7 @@ impl DbtNovaServer {
                     duration_ms,
                 );
                 self.record_metrics(tool, persona, duration_ms, success);
-                return out;
+                return Err(out);
             }
         };
 
@@ -231,7 +239,7 @@ impl DbtNovaServer {
                 duration_ms,
             );
             self.record_metrics(tool, persona, duration_ms, success);
-            return out;
+            return Err(out);
         }
 
         let config = searcher.config().clone();
@@ -260,7 +268,7 @@ impl DbtNovaServer {
             duration_ms,
         );
         self.record_metrics(tool, persona, duration_ms, success);
-        out
+        if success { Ok(out) } else { Err(out) }
     }
 }
 
@@ -557,16 +565,10 @@ fn compact_truncated_response(value: &serde_json::Value) -> serde_json::Value {
 }
 
 fn data_contains_collection_payload(data: &serde_json::Map<String, serde_json::Value>) -> bool {
-    [
-        "columns",
-        "entities",
-        "lineage",
-        "edges",
-        "not_found",
-        "undocumented_columns",
-    ]
-    .iter()
-    .any(|key| data.get(*key).is_some_and(serde_json::Value::is_array))
+    MCP_BUDGETABLE_DATA_ARRAY_FIELDS.iter().any(|field| {
+        data.get(field.field)
+            .is_some_and(serde_json::Value::is_array)
+    })
 }
 
 fn compact_collection_payload(
@@ -575,21 +577,20 @@ fn compact_collection_payload(
 ) {
     let mut compact = serde_json::Map::new();
 
-    for key in [
-        "columns",
-        "entities",
-        "lineage",
-        "edges",
-        "not_found",
-        "undocumented_columns",
-    ] {
-        if data.get(key).is_some_and(serde_json::Value::is_array) {
-            compact.insert(key.to_string(), serde_json::Value::Array(Vec::new()));
+    for field in MCP_BUDGETABLE_DATA_ARRAY_FIELDS {
+        if data
+            .get(field.field)
+            .is_some_and(serde_json::Value::is_array)
+        {
+            compact.insert(
+                field.field.to_string(),
+                serde_json::Value::Array(Vec::new()),
+            );
         }
-    }
-    for key in ["found_count", "not_found_count"] {
-        if data.contains_key(key) {
-            compact.insert(key.to_string(), serde_json::Value::from(0));
+        if let Some(count_field) = field.returned_count_field
+            && data.contains_key(count_field)
+        {
+            compact.insert(count_field.to_string(), serde_json::Value::from(0));
         }
     }
     if let Some(summary) = data
@@ -1053,7 +1054,7 @@ impl DbtNovaServer {
         tool: &'static str,
         persona: Option<&str>,
         f: F,
-    ) -> String
+    ) -> ToolCallResponse
     where
         F: FnOnce(Arc<ManifestSearch>) -> Fut,
         Fut: Future<Output = Result<serde_json::Value, DbtNovaError>>,
@@ -1069,7 +1070,7 @@ impl DbtNovaServer {
         tool: &'static str,
         persona: Option<&str>,
         f: F,
-    ) -> String
+    ) -> ToolCallResponse
     where
         F: FnOnce(Arc<ManifestSearch>) -> Fut,
         Fut: Future<Output = Result<(serde_json::Value, PaginationParams), DbtNovaError>>,
@@ -1087,7 +1088,7 @@ impl DbtNovaServer {
         tool: &'static str,
         persona: Option<&str>,
         f: F,
-    ) -> String
+    ) -> ToolCallResponse
     where
         F: FnOnce(Arc<ManifestSearch>) -> Fut,
         Fut: Future<Output = Result<(serde_json::Value, Option<PaginationParams>), DbtNovaError>>,
@@ -1106,7 +1107,7 @@ impl DbtNovaServer {
         };
         let permit = match Self::permit_from_result(permit_result) {
             Ok(permit) => permit,
-            Err(response) => return response,
+            Err(response) => return Err(response),
         };
         let result = self
             .handle_async_result(tool, persona, |searcher| async move {
@@ -1386,7 +1387,7 @@ impl DbtNovaServer {
         description = "Primary discovery tool. Use this to find entities by business terms, names, columns, tags, file paths, or SQL snippets. Start here when you don’t know the unique_id. Supports boolean operators and phrase queries. Returns ranked matches and highlights when enabled."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn search(&self, params: Parameters<SearchParams>) -> String {
+    async fn search(&self, params: Parameters<SearchParams>) -> ToolCallResponse {
         let persona = params.0.persona.clone();
         self.handle_bounded_search_paged("search", persona.as_deref(), |searcher| async move {
             let mut params = params.0;
@@ -1406,7 +1407,10 @@ impl DbtNovaServer {
         description = "Analyst-focused semantic discovery. Search Nova measures and metrics by business term, synonym, field, description, or expression, and return the parent execution entity, grain, and match evidence."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn search_indicator(&self, params: Parameters<SearchIndicatorParams>) -> String {
+    async fn search_indicator(
+        &self,
+        params: Parameters<SearchIndicatorParams>,
+    ) -> ToolCallResponse {
         let persona = params.0.persona.clone();
         self.handle_bounded_search_paged(
             "search_indicator",
@@ -1430,7 +1434,10 @@ impl DbtNovaServer {
         description = "Inventory tool for Nova measures and metrics. List canonical or all indicators with parent entity, grain, domains, and core definitions when you need a deterministic semantic catalog."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn indicator_inventory(&self, params: Parameters<IndicatorInventoryParams>) -> String {
+    async fn indicator_inventory(
+        &self,
+        params: Parameters<IndicatorInventoryParams>,
+    ) -> ToolCallResponse {
         self.handle_bounded_search_paged("indicator_inventory", None, |searcher| async move {
             let mut params = params.0;
             apply_mcp_pagination_defaults(&mut params.pagination, searcher.config());
@@ -1449,7 +1456,7 @@ impl DbtNovaServer {
         description = "Search columns by name, synonym, description, role, semantic_type, or example_values, and return the parent entity context for downstream modelling or analytics work."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn search_columns(&self, params: Parameters<SearchColumnsParams>) -> String {
+    async fn search_columns(&self, params: Parameters<SearchColumnsParams>) -> ToolCallResponse {
         self.handle_bounded_search_paged("search_columns", None, |searcher| async move {
             let mut params = params.0;
             apply_mcp_pagination_defaults(&mut params.pagination, searcher.config());
@@ -1468,7 +1475,10 @@ impl DbtNovaServer {
         description = "Inventory tool for columns. List columns across models or sources with role, semantic_type, synonyms, example values, and parent entity context."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn column_inventory(&self, params: Parameters<ColumnInventoryParams>) -> String {
+    async fn column_inventory(
+        &self,
+        params: Parameters<ColumnInventoryParams>,
+    ) -> ToolCallResponse {
         self.handle_bounded_search_paged("column_inventory", None, |searcher| async move {
             let mut params = params.0;
             apply_mcp_pagination_defaults(&mut params.pagination, searcher.config());
@@ -1487,7 +1497,7 @@ impl DbtNovaServer {
         description = "Compare effective grain between two entities, including time field, primary key, dimensions, and any grain variants sourced from entity-level or metric-level Nova metadata."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn compare_grains(&self, params: Parameters<CompareGrainsParams>) -> String {
+    async fn compare_grains(&self, params: Parameters<CompareGrainsParams>) -> ToolCallResponse {
         self.handle_bounded_search("compare_grains", None, |searcher| async move {
             searcher.compare_grains(&params.0).await
         })
@@ -1500,7 +1510,10 @@ impl DbtNovaServer {
         description = "Detect overlapping entities using shared domains, synonyms, indicator names, semantic types, and grain hints. Useful for cleanup, canonicalization, and architecture reviews."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn find_entity_overlap(&self, params: Parameters<FindEntityOverlapParams>) -> String {
+    async fn find_entity_overlap(
+        &self,
+        params: Parameters<FindEntityOverlapParams>,
+    ) -> ToolCallResponse {
         self.handle_bounded_search_paged("find_entity_overlap", None, |searcher| async move {
             let mut params = params.0;
             apply_mcp_pagination_defaults(&mut params.pagination, searcher.config());
@@ -1522,7 +1535,7 @@ impl DbtNovaServer {
     async fn modelling_consistency_report(
         &self,
         params: Parameters<ModellingConsistencyReportParams>,
-    ) -> String {
+    ) -> ToolCallResponse {
         self.handle_bounded_search_paged(
             "modelling_consistency_report",
             None,
@@ -1545,7 +1558,7 @@ impl DbtNovaServer {
         description = "Fetch the full manifest object for a single entity. Use after search to inspect config, SQL, tags, meta, docs, and relation info. Provide resource_type when names are ambiguous."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn get_entity(&self, params: Parameters<GetEntityParams>) -> String {
+    async fn get_entity(&self, params: Parameters<GetEntityParams>) -> ToolCallResponse {
         self.handle_async("get_entity", None, |searcher| async move {
             let mut params = params.0;
             apply_mcp_entity_detail_default(&mut params.detail, searcher.config());
@@ -1560,7 +1573,7 @@ impl DbtNovaServer {
         description = "Inventory tool. List entities of a specific type (model, source, macro, doc, test, seed, snapshot, analysis, exposure, metric, group). Filter by package, tags, or database.schema when you need a scoped catalog."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn list_entities(&self, params: Parameters<ListEntitiesParams>) -> String {
+    async fn list_entities(&self, params: Parameters<ListEntitiesParams>) -> ToolCallResponse {
         self.handle_async_paged("list_entities", None, |searcher| async move {
             let mut params = params.0;
             apply_mcp_entity_detail_default(&mut params.detail, searcher.config());
@@ -1580,7 +1593,7 @@ impl DbtNovaServer {
         description = "Dependency map for impact analysis. Use direction='upstream' to see inputs or 'downstream' to see impacted dependents. Set depth to limit traversal and resource_types to filter results."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn get_lineage(&self, params: Parameters<GetLineageParams>) -> String {
+    async fn get_lineage(&self, params: Parameters<GetLineageParams>) -> ToolCallResponse {
         self.handle_async("get_lineage", None, |searcher| async move {
             let mut params = params.0;
             apply_mcp_entity_detail_default(&mut params.detail, searcher.config());
@@ -1595,7 +1608,7 @@ impl DbtNovaServer {
         description = "Retrieve model SQL. Use compiled=true for rendered SQL (actual runtime query) and compiled=false for raw SQL with Jinja. Best used when validating logic or debugging."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn get_sql(&self, params: Parameters<GetSqlParams>) -> String {
+    async fn get_sql(&self, params: Parameters<GetSqlParams>) -> ToolCallResponse {
         self.handle_async("get_sql", None, |searcher| async move {
             searcher.get_sql(&params.0).await
         })
@@ -1608,7 +1621,7 @@ impl DbtNovaServer {
         description = "Schema inspection. Returns column names, descriptions, data types, and constraints for a model or source. Use for column discovery and documentation checks."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn get_columns(&self, params: Parameters<GetColumnsParams>) -> String {
+    async fn get_columns(&self, params: Parameters<GetColumnsParams>) -> ToolCallResponse {
         self.handle_async("get_columns", None, |searcher| async move {
             searcher.get_columns(&params.0).await
         })
@@ -1621,7 +1634,7 @@ impl DbtNovaServer {
         description = "Compare two entities side-by-side. Use to spot differences in columns, tags, or other fields when validating refactors or migrations."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn diff_entities(&self, params: Parameters<DiffEntitiesParams>) -> String {
+    async fn diff_entities(&self, params: Parameters<DiffEntitiesParams>) -> ToolCallResponse {
         self.handle_async("diff_entities", None, |searcher| async move {
             searcher.diff_entities(&params.0).await
         })
@@ -1634,7 +1647,7 @@ impl DbtNovaServer {
         description = "Quick blast-radius estimate. Returns downstream count and an impact score to gauge risk before making changes."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn get_impact(&self, params: Parameters<GetImpactParams>) -> String {
+    async fn get_impact(&self, params: Parameters<GetImpactParams>) -> ToolCallResponse {
         self.handle_async("get_impact", None, |searcher| async move {
             searcher.get_impact(&params.0).await
         })
@@ -1647,7 +1660,7 @@ impl DbtNovaServer {
         description = "Integrity check for the project DAG. Detects cycles and orphaned nodes. Run after adding or modifying dependencies."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn validate_dag(&self, params: Parameters<ValidateDagParams>) -> String {
+    async fn validate_dag(&self, params: Parameters<ValidateDagParams>) -> ToolCallResponse {
         self.handle_async("validate_dag", None, |searcher| async move {
             searcher.validate_dag(&params.0).await
         })
@@ -1660,7 +1673,10 @@ impl DbtNovaServer {
         description = "Validate meta.nova blocks in dbt project YAML using the same schema and semantic checks as audit nova-meta. Uses local server filesystem paths scoped under the server working directory."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn validate_nova_meta(&self, params: Parameters<ValidateNovaMetaParams>) -> String {
+    async fn validate_nova_meta(
+        &self,
+        params: Parameters<ValidateNovaMetaParams>,
+    ) -> ToolCallResponse {
         self.handle_async("validate_nova_meta", None, |_searcher| async move {
             build_nova_meta_tool_response(&params.0)
         })
@@ -1673,7 +1689,10 @@ impl DbtNovaServer {
         description = "Validate a local YAML/JSON eval suite file using the same schema checks as eval validate. Suite paths are scoped under the server working directory."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn validate_eval_suite(&self, params: Parameters<ValidateEvalSuiteParams>) -> String {
+    async fn validate_eval_suite(
+        &self,
+        params: Parameters<ValidateEvalSuiteParams>,
+    ) -> ToolCallResponse {
         self.handle_async("validate_eval_suite", None, |_searcher| async move {
             build_eval_validate_tool_response(&params.0)
         })
@@ -1686,7 +1705,7 @@ impl DbtNovaServer {
         description = "Read eval telemetry and return the same gate report data as eval gate --json for a suite name."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn get_eval_gate(&self, params: Parameters<GetEvalGateParams>) -> String {
+    async fn get_eval_gate(&self, params: Parameters<GetEvalGateParams>) -> ToolCallResponse {
         self.handle_async("get_eval_gate", None, |_searcher| async move {
             build_eval_gate_tool_response(&params.0)
         })
@@ -1699,7 +1718,7 @@ impl DbtNovaServer {
         description = "Read eval telemetry rows for a suite on or after a YYYY-MM-DD UTC date, matching eval history data without line-oriented CLI output."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn get_eval_history(&self, params: Parameters<GetEvalHistoryParams>) -> String {
+    async fn get_eval_history(&self, params: Parameters<GetEvalHistoryParams>) -> ToolCallResponse {
         self.handle_async("get_eval_history", None, |_searcher| async move {
             build_eval_history_tool_response(&params.0)
         })
@@ -1712,7 +1731,10 @@ impl DbtNovaServer {
         description = "Compare two local eval result directories or results.json files and return PR-ready Markdown plus structured pass-rate, case, and trace-counter deltas. Paths are scoped under the server working directory."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn compare_eval_runs(&self, params: Parameters<CompareEvalRunsParams>) -> String {
+    async fn compare_eval_runs(
+        &self,
+        params: Parameters<CompareEvalRunsParams>,
+    ) -> ToolCallResponse {
         self.handle_async("compare_eval_runs", None, |_searcher| async move {
             build_eval_compare_tool_response(&params.0)
         })
@@ -1725,7 +1747,7 @@ impl DbtNovaServer {
         description = "Run deterministic bridge eval assertions against the currently loaded MCP manifest. Disabled unless DBT_NOVA_MCP_ENABLE_EVAL_RUN=1 is set."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn run_eval(&self, params: Parameters<RunEvalParams>) -> String {
+    async fn run_eval(&self, params: Parameters<RunEvalParams>) -> ToolCallResponse {
         self.handle_async("run_eval", None, |searcher| async move {
             build_eval_run_tool_response(&searcher, &params.0).await
         })
@@ -1738,7 +1760,7 @@ impl DbtNovaServer {
         description = "Write a starter eval suite under the server working directory. Disabled unless DBT_NOVA_MCP_ENABLE_EVAL_WRITES=1 is set."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn init_eval_suite(&self, params: Parameters<InitEvalSuiteParams>) -> String {
+    async fn init_eval_suite(&self, params: Parameters<InitEvalSuiteParams>) -> ToolCallResponse {
         self.handle_async("init_eval_suite", None, |_searcher| async move {
             build_eval_init_tool_response(&params.0)
         })
@@ -1751,7 +1773,7 @@ impl DbtNovaServer {
         description = "Run provider-backed agent evals and score tool-use traces. Disabled unless DBT_NOVA_MCP_ENABLE_AGENT_EVAL=1 is set; custom provider commands also require DBT_NOVA_MCP_ENABLE_CUSTOM_AGENT_PROVIDER=1."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn run_agent_eval(&self, params: Parameters<RunAgentEvalParams>) -> String {
+    async fn run_agent_eval(&self, params: Parameters<RunAgentEvalParams>) -> ToolCallResponse {
         self.handle_async("run_agent_eval", None, |_searcher| async move {
             build_agent_eval_tool_response(&params.0).await
         })
@@ -1764,7 +1786,7 @@ impl DbtNovaServer {
         description = "Inspect a local Nova tool-call trace JSONL file and return rows, parse warnings, tool order, counts, response byte budgets, truncation, errors, and semantic-first signals. Trace paths are scoped under the server working directory."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn inspect_tool_trace(&self, params: Parameters<TraceInspectParams>) -> String {
+    async fn inspect_tool_trace(&self, params: Parameters<TraceInspectParams>) -> ToolCallResponse {
         self.handle_async("inspect_tool_trace", None, |_searcher| async move {
             build_trace_inspect_tool_response(&params.0)
         })
@@ -1777,7 +1799,10 @@ impl DbtNovaServer {
         description = "Summarize a local Nova tool-call trace JSONL file and optionally write a Markdown report. Report writes are disabled unless DBT_NOVA_MCP_ENABLE_TRACE_WRITES=1 is set."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn summarize_tool_trace(&self, params: Parameters<TraceSummarizeParams>) -> String {
+    async fn summarize_tool_trace(
+        &self,
+        params: Parameters<TraceSummarizeParams>,
+    ) -> ToolCallResponse {
         self.handle_async("summarize_tool_trace", None, |_searcher| async move {
             build_trace_summarize_tool_response(&params.0)
         })
@@ -1790,7 +1815,7 @@ impl DbtNovaServer {
         description = "Redact a local Nova tool-call trace JSONL file for safe sharing. Writes are disabled unless DBT_NOVA_MCP_ENABLE_TRACE_WRITES=1 is set."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn redact_tool_trace(&self, params: Parameters<TraceRedactParams>) -> String {
+    async fn redact_tool_trace(&self, params: Parameters<TraceRedactParams>) -> ToolCallResponse {
         self.handle_async("redact_tool_trace", None, |_searcher| async move {
             build_trace_redact_tool_response(&params.0)
         })
@@ -1803,7 +1828,7 @@ impl DbtNovaServer {
         description = "Replay supported deterministic Nova tool calls from a local trace JSONL file against the currently loaded MCP manifest. Unsupported, unsafe, under-specified, and execute_sql rows are skipped with explicit reasons."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn replay_tool_trace(&self, params: Parameters<TraceReplayParams>) -> String {
+    async fn replay_tool_trace(&self, params: Parameters<TraceReplayParams>) -> ToolCallResponse {
         self.handle_async("replay_tool_trace", None, |searcher| async move {
             build_trace_replay_tool_response(&searcher, &params.0).await
         })
@@ -1816,7 +1841,7 @@ impl DbtNovaServer {
         description = "Project overview. Returns manifest metadata (dbt version, project name, invocation info) plus entity counts by type."
     )]
     #[instrument(level = "info", skip(self))]
-    async fn show_metadata(&self) -> String {
+    async fn show_metadata(&self) -> ToolCallResponse {
         self.handle_async("show_metadata", None, |searcher| async move {
             searcher.show_metadata().await
         })
@@ -1829,7 +1854,7 @@ impl DbtNovaServer {
         description = "Health check for dbt-nova. Returns readiness state, manifest/cache diagnostics, refresh stats, tool latency metrics, and concurrency saturation for search and SQL execution."
     )]
     #[instrument(level = "info", skip(self))]
-    async fn health(&self) -> String {
+    async fn health(&self) -> ToolCallResponse {
         let mut payload = build_manifest_health_payload(&self.searcher).await.payload;
         let searcher = self.searcher.get().await.ok();
         if let Some(base) = payload.as_object_mut() {
@@ -1866,14 +1891,13 @@ impl DbtNovaServer {
         }
         let response = match serde_json::to_value(SuccessResponse::new(payload, 1)) {
             Ok(response) => response,
-            Err(err) => return Self::serialization_error_response(&err),
+            Err(err) => return Err(Self::serialization_error_response(&err)),
         };
         if let Some(searcher) = searcher.as_ref() {
             return Self::serialize_budgeted_value(response, searcher.config())
-                .unwrap_or_else(|err| Self::serialization_error_response(&err));
+                .map_err(|err| Self::serialization_error_response(&err));
         }
-        serde_json::to_string(&response)
-            .unwrap_or_else(|err| Self::serialization_error_response(&err))
+        serde_json::to_string(&response).map_err(|err| Self::serialization_error_response(&err))
     }
 
     /// Reload the manifest and rebuild indexes.
@@ -1882,7 +1906,7 @@ impl DbtNovaServer {
         description = "Reload the current manifest source and rebuild indexes in the background. Source, refresh, or storage changes require DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD=1."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn reload_manifest(&self, params: Parameters<ReloadManifestParams>) -> String {
+    async fn reload_manifest(&self, params: Parameters<ReloadManifestParams>) -> ToolCallResponse {
         let start = Instant::now();
         let mut success = false;
         let reload_params = params.0;
@@ -1925,7 +1949,7 @@ impl DbtNovaServer {
             elapsed_ms_to_u64(start.elapsed()),
             success,
         );
-        out
+        if success { Ok(out) } else { Err(out) }
     }
 
     /// Warm semantic caches for the current manifest source.
@@ -1934,7 +1958,7 @@ impl DbtNovaServer {
         description = "Warm vector/sparse/reranker semantic caches for the current manifest source. Disabled unless DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1 is set; read-only storage is rejected."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn warm_manifest(&self, params: Parameters<WarmManifestParams>) -> String {
+    async fn warm_manifest(&self, params: Parameters<WarmManifestParams>) -> ToolCallResponse {
         self.handle_async("warm_manifest", None, |searcher| async move {
             build_manifest_warm_tool_response(&searcher, &params.0).await
         })
@@ -1947,7 +1971,7 @@ impl DbtNovaServer {
         description = "Operator config inspection. Returns the active runtime configuration, or defaults when defaults=true. Secret credential values are not part of the persisted Nova config."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn show_config(&self, params: Parameters<ConfigShowParams>) -> String {
+    async fn show_config(&self, params: Parameters<ConfigShowParams>) -> ToolCallResponse {
         self.handle_async("show_config", None, |searcher| async move {
             build_config_show_tool_response(searcher.config(), &params.0)
         })
@@ -1960,7 +1984,7 @@ impl DbtNovaServer {
         description = "Operator config validation. Validates the active runtime configuration and returns the same JSON payload as config validate."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn validate_config(&self, params: Parameters<ConfigValidateParams>) -> String {
+    async fn validate_config(&self, params: Parameters<ConfigValidateParams>) -> ToolCallResponse {
         self.handle_async("validate_config", None, |searcher| async move {
             build_config_validate_tool_response(searcher.config(), &params.0)
         })
@@ -1973,7 +1997,7 @@ impl DbtNovaServer {
         description = "Operator storage inspection. Lists storage instances and metadata without mutating storage."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn inspect_storage(&self, params: Parameters<StorageInspectParams>) -> String {
+    async fn inspect_storage(&self, params: Parameters<StorageInspectParams>) -> ToolCallResponse {
         self.handle_async("inspect_storage", None, |searcher| async move {
             build_storage_inspect_tool_response(searcher.config(), &params.0)
         })
@@ -1986,7 +2010,7 @@ impl DbtNovaServer {
         description = "Operator storage pruning. Destructive; disabled unless DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1 is set."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn prune_storage(&self, params: Parameters<StoragePruneParams>) -> String {
+    async fn prune_storage(&self, params: Parameters<StoragePruneParams>) -> ToolCallResponse {
         self.handle_async("prune_storage", None, |searcher| async move {
             build_storage_prune_tool_response(searcher.config(), &params.0)
         })
@@ -1999,7 +2023,7 @@ impl DbtNovaServer {
         description = "Operator storage cleanup. Destructive; disabled unless DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1 is set."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn cleanup_storage(&self, params: Parameters<StorageCleanupParams>) -> String {
+    async fn cleanup_storage(&self, params: Parameters<StorageCleanupParams>) -> ToolCallResponse {
         self.handle_async("cleanup_storage", None, |searcher| async move {
             build_storage_cleanup_tool_response(searcher.config(), &params.0)
         })
@@ -2012,7 +2036,7 @@ impl DbtNovaServer {
         description = "Tag inventory. Lists all tags with counts so you can filter or audit by tag."
     )]
     #[instrument(level = "info", skip(self))]
-    async fn list_tags(&self) -> String {
+    async fn list_tags(&self) -> ToolCallResponse {
         self.handle_async("list_tags", None, |searcher| async move {
             searcher.list_tags().await
         })
@@ -2025,7 +2049,7 @@ impl DbtNovaServer {
         description = "Package inventory. Lists all packages with counts to help scope ownership or prioritize review."
     )]
     #[instrument(level = "info", skip(self))]
-    async fn list_packages(&self) -> String {
+    async fn list_packages(&self) -> ToolCallResponse {
         self.handle_async("list_packages", None, |searcher| async move {
             searcher.list_packages().await
         })
@@ -2038,7 +2062,7 @@ impl DbtNovaServer {
         description = "Storage inventory. Lists database.schema combinations with counts to help locate physical relations."
     )]
     #[instrument(level = "info", skip(self))]
-    async fn list_databases(&self) -> String {
+    async fn list_databases(&self) -> ToolCallResponse {
         self.handle_async("list_databases", None, |searcher| async move {
             searcher.list_databases().await
         })
@@ -2051,7 +2075,10 @@ impl DbtNovaServer {
         description = "Column-level lineage. Trace a column upstream (origins) or downstream (usage). Uses SQL parsing + heuristics. Use confidence=high for exact matches, medium (default) for SQL-based matches, low for fuzzy."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn get_column_lineage(&self, params: Parameters<GetColumnLineageParams>) -> String {
+    async fn get_column_lineage(
+        &self,
+        params: Parameters<GetColumnLineageParams>,
+    ) -> ToolCallResponse {
         self.handle_async("get_column_lineage", None, |searcher| async move {
             searcher.get_column_lineage(&params.0).await
         })
@@ -2064,7 +2091,10 @@ impl DbtNovaServer {
         description = "Quality signal. Returns schema/data tests, test type breakdown, coverage percentage, and gaps (missing PK tests or untested columns). Use before changes or audits."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn get_test_coverage(&self, params: Parameters<GetTestCoverageParams>) -> String {
+    async fn get_test_coverage(
+        &self,
+        params: Parameters<GetTestCoverageParams>,
+    ) -> ToolCallResponse {
         self.handle_async("get_test_coverage", None, |searcher| async move {
             searcher.get_test_coverage(&params.0).await
         })
@@ -2077,7 +2107,10 @@ impl DbtNovaServer {
         description = "Metadata quality scoring. Returns a 0-100 score with category breakdowns and recommendations for entities, columns, or project scope."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn get_metadata_score(&self, params: Parameters<GetMetadataScoreParams>) -> String {
+    async fn get_metadata_score(
+        &self,
+        params: Parameters<GetMetadataScoreParams>,
+    ) -> ToolCallResponse {
         self.handle_async_paged("get_metadata_score", None, |searcher| async move {
             let mut params = params.0;
             let pagination =
@@ -2096,7 +2129,10 @@ impl DbtNovaServer {
         description = "Metadata audit report. Runs the same report/gate logic as audit metadata-score without writing files or turning required failures into transport errors."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn get_metadata_audit(&self, params: Parameters<GetMetadataAuditParams>) -> String {
+    async fn get_metadata_audit(
+        &self,
+        params: Parameters<GetMetadataAuditParams>,
+    ) -> ToolCallResponse {
         self.handle_async("get_metadata_audit", None, |searcher| async move {
             build_metadata_audit_tool_response(&searcher, &params.0).await
         })
@@ -2109,7 +2145,10 @@ impl DbtNovaServer {
         description = "Agent readiness audit. Returns the same agent_readiness.v1 JSON report as the CLI audit command without writing files or applying CLI exit semantics."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn get_agent_readiness(&self, params: Parameters<GetAgentReadinessParams>) -> String {
+    async fn get_agent_readiness(
+        &self,
+        params: Parameters<GetAgentReadinessParams>,
+    ) -> ToolCallResponse {
         self.handle_async("get_agent_readiness", None, |searcher| async move {
             build_agent_readiness_tool_response(&searcher, &params.0).await
         })
@@ -2122,7 +2161,7 @@ impl DbtNovaServer {
         description = "Bulk fetch. Retrieve multiple entities by unique_id in one call to reduce round trips. Returns found entities and not_found ids."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn batch_get_entities(&self, params: Parameters<BatchGetParams>) -> String {
+    async fn batch_get_entities(&self, params: Parameters<BatchGetParams>) -> ToolCallResponse {
         self.handle_async("batch_get_entities", None, |searcher| async move {
             let mut params = params.0;
             apply_mcp_entity_detail_default(&mut params.detail, searcher.config());
@@ -2137,7 +2176,7 @@ impl DbtNovaServer {
         description = "Path-based lookup. Use glob patterns to find entities by file path (e.g., models/staging/**, models/*.sql). Useful when you know where code lives."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn find_by_path(&self, params: Parameters<FindByPathParams>) -> String {
+    async fn find_by_path(&self, params: Parameters<FindByPathParams>) -> ToolCallResponse {
         self.handle_async_paged("find_by_path", None, |searcher| async move {
             let mut params = params.0;
             apply_mcp_entity_detail_default(&mut params.detail, searcher.config());
@@ -2157,7 +2196,7 @@ impl DbtNovaServer {
         description = "Discover reusable analysis recipes. Use `topic` or `query` to narrow results; return query names for deterministic execution planning."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn search_recipes(&self, params: Parameters<SearchRecipesParams>) -> String {
+    async fn search_recipes(&self, params: Parameters<SearchRecipesParams>) -> ToolCallResponse {
         self.handle_async_paged("search_recipes", None, |searcher| async move {
             let mut params = params.0;
             apply_mcp_pagination_defaults(&mut params.pagination, searcher.config());
@@ -2176,7 +2215,7 @@ impl DbtNovaServer {
         description = "Load a recipe by id (directory path). Returns query files and metadata so agents can provide deterministic analysis flows."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn get_recipe(&self, params: Parameters<GetRecipeParams>) -> String {
+    async fn get_recipe(&self, params: Parameters<GetRecipeParams>) -> ToolCallResponse {
         self.handle_async("get_recipe", None, |searcher| async move {
             searcher.get_recipe(&params.0).await
         })
@@ -2189,10 +2228,10 @@ impl DbtNovaServer {
         description = "Execute a recipe's SQL files in deterministic order, reusing `search` and `execute_sql` controls."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn run_recipe(&self, params: Parameters<RunRecipeParams>) -> String {
+    async fn run_recipe(&self, params: Parameters<RunRecipeParams>) -> ToolCallResponse {
         let permit = match Self::permit_from_result(self.acquire_sql_permit_for_tool().await) {
             Ok(permit) => permit,
-            Err(response) => return response,
+            Err(response) => return Err(response),
         };
         let result = self
             .handle_async("run_recipe", None, |searcher| async move {
@@ -2209,7 +2248,10 @@ impl DbtNovaServer {
         description = "Documentation audit. Find entities missing descriptions and optionally undocumented columns. Use for governance or doc coverage checks."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn get_undocumented(&self, params: Parameters<GetUndocumentedParams>) -> String {
+    async fn get_undocumented(
+        &self,
+        params: Parameters<GetUndocumentedParams>,
+    ) -> ToolCallResponse {
         self.handle_async_paged("get_undocumented", None, |searcher| async move {
             let mut params = params.0;
             apply_mcp_pagination_defaults(&mut params.pagination, searcher.config());
@@ -2228,7 +2270,7 @@ impl DbtNovaServer {
         description = "One-shot context bundle. Returns lineage, columns, tests, docs, and summary stats for an entity. Use when an agent needs full context quickly."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn get_context(&self, params: Parameters<GetContextParams>) -> String {
+    async fn get_context(&self, params: Parameters<GetContextParams>) -> ToolCallResponse {
         self.handle_async("get_context", None, |searcher| async move {
             searcher.get_context(&params.0).await
         })
@@ -2241,10 +2283,10 @@ impl DbtNovaServer {
         description = "Run SQL against the configured warehouse provider. Supports provider diagnostics with preflight_only=true and optional catalog/schema/relation checks."
     )]
     #[instrument(level = "info", skip(self, params))]
-    async fn execute_sql(&self, params: Parameters<ExecuteSqlParams>) -> String {
+    async fn execute_sql(&self, params: Parameters<ExecuteSqlParams>) -> ToolCallResponse {
         let permit = match Self::permit_from_result(self.acquire_sql_permit_for_tool().await) {
             Ok(permit) => permit,
-            Err(response) => return response,
+            Err(response) => return Err(response),
         };
         let result = self
             .handle_async("execute_sql", None, |searcher| async move {
@@ -2344,6 +2386,17 @@ mod tests {
             .await
             .expect("fixture manifest should load");
         DbtNovaServer::new(handle)
+    }
+
+    fn tool_response_body(response: ToolCallResponse) -> String {
+        match response {
+            Ok(body) | Err(body) => body,
+        }
+    }
+
+    fn tool_response_json(response: ToolCallResponse) -> serde_json::Value {
+        let body = tool_response_body(response);
+        serde_json::from_str(&body).expect("tool response JSON")
     }
 
     #[test]
@@ -2901,8 +2954,7 @@ mod tests {
         let temp_dir = TempDir::new().expect("temp dir");
         let server = spawn_ready_server(temp_dir.path()).await;
 
-        let payload: serde_json::Value =
-            serde_json::from_str(&server.health().await).expect("health response JSON");
+        let payload = tool_response_json(server.health().await);
         assert_eq!(payload["success"], serde_json::json!(true));
         assert_eq!(payload["data"]["status"], serde_json::json!("ready"));
         assert!(payload["data"]["tool_metrics"].is_object());
@@ -2928,7 +2980,7 @@ mod tests {
             .expect("fixture manifest should load");
         let server = DbtNovaServer::new(handle);
 
-        let out = server.health().await;
+        let out = tool_response_body(server.health().await);
         let payload: serde_json::Value = serde_json::from_str(&out).expect("health response JSON");
 
         assert!(
@@ -2958,8 +3010,7 @@ mod tests {
             .expect("fixture manifest should still load");
         let server = DbtNovaServer::new(handle);
 
-        let payload: serde_json::Value =
-            serde_json::from_str(&server.health().await).expect("health response JSON");
+        let payload = tool_response_json(server.health().await);
         assert_eq!(payload["success"], serde_json::json!(true));
         assert_eq!(payload["data"]["status"], serde_json::json!("degraded"));
         assert_eq!(
@@ -2990,17 +3041,13 @@ mod tests {
             persona: Some("analyst".to_string()),
             ..SearchParams::default()
         };
-        let search_response: serde_json::Value =
-            serde_json::from_str(&server.search(Parameters(search_params)).await)
-                .expect("search response JSON");
+        let search_response = tool_response_json(server.search(Parameters(search_params)).await);
         assert_eq!(search_response["success"], serde_json::json!(true));
 
-        let list_tags_response: serde_json::Value =
-            serde_json::from_str(&server.list_tags().await).expect("list_tags response JSON");
+        let list_tags_response = tool_response_json(server.list_tags().await);
         assert_eq!(list_tags_response["success"], serde_json::json!(true));
 
-        let health_payload: serde_json::Value =
-            serde_json::from_str(&server.health().await).expect("health response JSON");
+        let health_payload = tool_response_json(server.health().await);
         let tool_metrics = &health_payload["data"]["tool_metrics"];
         assert!(tool_metrics["search"]["calls"].as_u64().unwrap_or(0) >= 1);
         assert!(
@@ -3027,8 +3074,8 @@ mod tests {
             .expect("fixture manifest should load");
         let server = DbtNovaServer::new(handle);
 
-        let response: serde_json::Value = serde_json::from_str(
-            &server
+        let response = tool_response_json(
+            server
                 .get_metadata_score(Parameters(GetMetadataScoreParams {
                     scope: Some("project".to_string()),
                     include_breakdown: false,
@@ -3037,8 +3084,7 @@ mod tests {
                     ..GetMetadataScoreParams::default()
                 }))
                 .await,
-        )
-        .expect("metadata score response JSON");
+        );
 
         assert_eq!(response["success"], serde_json::json!(true));
         assert_eq!(response["count"], serde_json::json!(2));
@@ -3062,8 +3108,8 @@ mod tests {
             .expect("fixture manifest should load");
         let server = DbtNovaServer::new(handle);
 
-        let response: serde_json::Value = serde_json::from_str(
-            &server
+        let response = tool_response_json(
+            server
                 .get_agent_readiness(Parameters(GetAgentReadinessParams {
                     personas_json: Some(r#"["engineer"]"#.to_string()),
                     eval_gate_json: Some(
@@ -3072,8 +3118,7 @@ mod tests {
                     ..GetAgentReadinessParams::default()
                 }))
                 .await,
-        )
-        .expect("agent readiness response JSON");
+        );
 
         assert_eq!(response["success"], serde_json::json!(true));
         assert_eq!(response["count"], serde_json::json!(1));
@@ -3104,8 +3149,8 @@ mod tests {
             .expect("fixture manifest should load");
         let server = DbtNovaServer::new(handle);
 
-        let response: serde_json::Value = serde_json::from_str(
-            &server
+        let response = tool_response_json(
+            server
                 .get_metadata_audit(Parameters(GetMetadataAuditParams {
                     resource_types_json: Some(r#"["model"]"#.to_string()),
                     personas_json: Some(r#"["engineer"]"#.to_string()),
@@ -3117,8 +3162,7 @@ mod tests {
                     ..GetMetadataAuditParams::default()
                 }))
                 .await,
-        )
-        .expect("metadata audit response JSON");
+        );
 
         assert_eq!(response["success"], serde_json::json!(true));
         assert_eq!(response["count"], serde_json::json!(1));
@@ -3176,8 +3220,8 @@ models:
             .expect("fixture manifest should load");
         let server = DbtNovaServer::new(handle);
 
-        let response: serde_json::Value = serde_json::from_str(
-            &server
+        let response = tool_response_json(
+            server
                 .validate_nova_meta(Parameters(ValidateNovaMetaParams {
                     project_dir: Some(project_relative),
                     paths: vec!["models/orders.yml".to_string()],
@@ -3186,8 +3230,7 @@ models:
                     column: None,
                 }))
                 .await,
-        )
-        .expect("nova-meta response JSON");
+        );
 
         assert_eq!(response["success"], serde_json::json!(true));
         assert_eq!(response["count"], serde_json::json!(1));
@@ -3236,14 +3279,13 @@ cases:
             .expect("fixture manifest should load");
         let server = DbtNovaServer::new(handle);
 
-        let response: serde_json::Value = serde_json::from_str(
-            &server
+        let response = tool_response_json(
+            server
                 .validate_eval_suite(Parameters(ValidateEvalSuiteParams {
                     suite: suite_path.display().to_string(),
                 }))
                 .await,
-        )
-        .expect("eval validation response JSON");
+        );
 
         assert_eq!(response["success"], serde_json::json!(true));
         assert_eq!(response["count"], serde_json::json!(1));
@@ -3277,15 +3319,14 @@ cases:
             .expect("fixture manifest should load");
         let server = DbtNovaServer::new(handle);
 
-        let response: serde_json::Value = serde_json::from_str(
-            &server
+        let response = tool_response_json(
+            server
                 .compare_eval_runs(Parameters(CompareEvalRunsParams {
                     before: before_dir.display().to_string(),
                     after: after_dir.display().to_string(),
                 }))
                 .await,
-        )
-        .expect("eval comparison response JSON");
+        );
 
         assert_eq!(response["success"], serde_json::json!(true));
         assert_eq!(
@@ -3312,15 +3353,14 @@ cases:
             .expect("fixture manifest should load");
         let server = DbtNovaServer::new(handle);
 
-        let response: serde_json::Value = serde_json::from_str(
-            &server
+        let response = tool_response_json(
+            server
                 .warm_manifest(Parameters(WarmManifestParams {
                     vector: true,
                     ..WarmManifestParams::default()
                 }))
                 .await,
-        )
-        .expect("warm response JSON");
+        );
 
         assert_eq!(response["success"], serde_json::json!(false));
         assert_eq!(response["error_code"], serde_json::json!("INVALID_PARAMS"));
@@ -3349,15 +3389,14 @@ cases:
             .expect("fixture manifest should load");
         let server = DbtNovaServer::new(handle);
 
-        let response: serde_json::Value = serde_json::from_str(
-            &server
+        let response = tool_response_json(
+            server
                 .reload_manifest(Parameters(ReloadManifestParams {
                     manifest_path: Some(fixture_manifest_path_string()),
                     ..ReloadManifestParams::default()
                 }))
                 .await,
-        )
-        .expect("reload response JSON");
+        );
 
         match original {
             Some(value) => {
@@ -3404,16 +3443,15 @@ cases:
             .expect("fixture manifest should load");
         let server = DbtNovaServer::new(handle);
 
-        let response: serde_json::Value = serde_json::from_str(
-            &server
+        let response = tool_response_json(
+            server
                 .validate_nova_meta(Parameters(ValidateNovaMetaParams {
                     project_dir: Some(project_relative),
                     paths: vec!["../Cargo.toml".to_string()],
                     ..ValidateNovaMetaParams::default()
                 }))
                 .await,
-        )
-        .expect("nova-meta error response JSON");
+        );
 
         assert_eq!(response["success"], serde_json::json!(false));
         assert_eq!(response["error_code"], serde_json::json!("INVALID_PARAMS"));
@@ -3478,12 +3516,11 @@ cases:
             .expect("first search permit")
             .expect("permit should be enabled");
 
-        let response: serde_json::Value = serde_json::from_str(
-            &server
+        let response = tool_response_json(
+            server
                 .indicator_inventory(Parameters(IndicatorInventoryParams::default()))
                 .await,
-        )
-        .expect("indicator inventory response JSON");
+        );
         assert_eq!(response["success"], serde_json::json!(false));
         assert!(
             response["error"]

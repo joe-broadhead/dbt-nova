@@ -23,8 +23,8 @@ This page documents practical limits and edge cases to consider in production.
   supported, key-pair auth currently requires an unencrypted RSA PEM key,
   workload identity federation is not implemented yet, and external browser SSO
   is local interactive only.
-- DuckDB provider is read-only and requires `DBT_NOVA_DUCKDB_PATH`; DuckDB `parameter_types` hints are not supported.
-- DuckDB uses a bounded per-process connection pool keyed by `(duckdb_path,file_search_path)`; tune with `DBT_NOVA_DUCKDB_POOL_MAX_SIZE` if needed.
+- DuckDB provider is read-only and requires `DBT_NOVA_DUCKDB_PATH`; DuckDB `parameter_types` hints are not supported. Ad-hoc file-scan functions in `execute_sql` text are rejected. Connection-level external access for trusted file-backed database objects is disabled by default and requires `DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS=true` plus `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH`.
+- DuckDB uses a bounded per-process connection pool keyed by `(duckdb_path,file_search_path,external_access)`; tune with `DBT_NOVA_DUCKDB_POOL_MAX_SIZE` if needed.
 - Object-level preflight checks (`preflight_catalog`, `preflight_schema`, `preflight_relation`) require non-empty probe results across providers.
 - Request limits are server-guarded: row/byte/chunk/poll values may be clamped by
   `DBT_NOVA_SQL_MAX_*` settings.

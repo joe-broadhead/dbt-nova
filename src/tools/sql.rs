@@ -5,28 +5,42 @@ use crate::error::{DbtNovaError, Result};
 use crate::manifest::search::ManifestSearch;
 use crate::params::ExecuteSqlParams;
 use crate::warehouse::resolve_sql_provider;
-use sqlparser::ast::Statement;
+use sqlparser::ast::{Expr, ObjectName, Query, SetExpr, Statement, TableFactor, Visit, Visitor};
 use sqlparser::dialect::{GenericDialect, SnowflakeDialect};
 use sqlparser::parser::Parser;
+use std::ops::ControlFlow;
 use tracing::{instrument, warn};
 
 const PROVIDER_DEFAULT_ROW_LIMIT: u64 = 1_000;
 const PROVIDER_DEFAULT_BYTE_LIMIT: u64 = 25_000_000;
 const PROVIDER_DEFAULT_MAX_CHUNKS: usize = 50;
-
-/// Validate SQL statements to only allow safe, read-only queries.
-///
-/// # Errors
-/// Returns an error if the statement is empty, invalid, or not permitted.
-pub(crate) fn validate_sql_statement(statement: &str) -> Result<()> {
-    validate_sql_statement_for_provider(statement, "generic")
-}
+const DUCKDB_EXTERNAL_ACCESS_FUNCTIONS: &[&str] = &[
+    "csv_scan",
+    "delta_scan",
+    "glob",
+    "iceberg_scan",
+    "parquet_scan",
+    "read_blob",
+    "read_csv",
+    "read_csv_auto",
+    "read_file",
+    "read_json",
+    "read_json_auto",
+    "read_json_objects",
+    "read_json_objects_auto",
+    "read_ndjson",
+    "read_ndjson_auto",
+    "read_ndjson_objects",
+    "read_ndjson_objects_auto",
+    "read_parquet",
+    "read_text",
+];
 
 /// Validate SQL statements for a specific provider dialect.
 ///
 /// # Errors
 /// Returns an error if the statement is empty, invalid, or not permitted.
-pub(crate) fn validate_sql_statement_for_provider(statement: &str, provider: &str) -> Result<()> {
+pub fn validate_sql_statement_for_provider(statement: &str, provider: &str) -> Result<()> {
     if statement.trim().is_empty() {
         return Err(DbtNovaError::InvalidParams(
             "statement cannot be empty".to_string(),
@@ -48,17 +62,28 @@ pub(crate) fn validate_sql_statement_for_provider(statement: &str, provider: &st
     }
     .map_err(|e| DbtNovaError::InvalidParams(format!("Invalid SQL syntax: {e}")))?;
 
-    if provider.eq_ignore_ascii_case("snowflake") && ast.len() > 1 {
-        reject_statement!(
-            "Snowflake provider does not support multi-statement execute_sql requests"
-        );
+    if ast.len() != 1 {
+        reject_statement!("execute_sql does not support multi-statement requests");
     }
+
+    let deny_duckdb_external_access =
+        provider.eq_ignore_ascii_case("duckdb") || provider.eq_ignore_ascii_case("generic");
 
     for stmt in &ast {
         match stmt {
-            Statement::Query(_) => {}
+            Statement::Query(query) => {
+                validate_query_body_is_read_only(query)?;
+                if deny_duckdb_external_access {
+                    validate_no_duckdb_external_access(stmt)?;
+                }
+            }
             Statement::Explain { statement, .. } => {
-                if !matches!(statement.as_ref(), Statement::Query(_)) {
+                if let Statement::Query(query) = statement.as_ref() {
+                    validate_query_body_is_read_only(query)?;
+                    if deny_duckdb_external_access {
+                        validate_no_duckdb_external_access(statement.as_ref())?;
+                    }
+                } else {
                     reject_statement!("Only EXPLAIN SELECT statements are allowed");
                 }
             }
@@ -92,6 +117,101 @@ pub(crate) fn validate_sql_statement_for_provider(statement: &str, provider: &st
     Ok(())
 }
 
+fn validate_query_body_is_read_only(query: &Query) -> Result<()> {
+    if let Some(with) = &query.with {
+        for cte in &with.cte_tables {
+            validate_query_body_is_read_only(&cte.query)?;
+        }
+    }
+
+    validate_set_expr_is_read_only(&query.body)
+}
+
+fn validate_set_expr_is_read_only(set_expr: &SetExpr) -> Result<()> {
+    match set_expr {
+        SetExpr::Select(select) => {
+            if select.into.is_some() {
+                return Err(DbtNovaError::InvalidParams(
+                    "SELECT INTO statements are not allowed".to_string(),
+                ));
+            }
+            Ok(())
+        }
+        SetExpr::Query(query) => validate_query_body_is_read_only(query),
+        SetExpr::SetOperation { left, right, .. } => {
+            validate_set_expr_is_read_only(left)?;
+            validate_set_expr_is_read_only(right)
+        }
+        SetExpr::Values(_) | SetExpr::Table(_) => Ok(()),
+        SetExpr::Insert(_) | SetExpr::Update(_) | SetExpr::Delete(_) | SetExpr::Merge(_) => Err(
+            DbtNovaError::InvalidParams("Only read-only SELECT queries are allowed".to_string()),
+        ),
+    }
+}
+
+struct DuckDbExternalAccessVisitor;
+
+impl Visitor for DuckDbExternalAccessVisitor {
+    type Break = String;
+
+    fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<Self::Break> {
+        if let Expr::Function(function) = expr
+            && let Some(function_name) = blocked_duckdb_external_function(&function.name)
+        {
+            return ControlFlow::Break(duckdb_external_access_message(function_name));
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn pre_visit_table_factor(&mut self, table_factor: &TableFactor) -> ControlFlow<Self::Break> {
+        match table_factor {
+            TableFactor::Table {
+                name,
+                args: Some(_),
+                ..
+            }
+            | TableFactor::Function { name, .. } => {
+                if let Some(function_name) = blocked_duckdb_external_function(name) {
+                    return ControlFlow::Break(duckdb_external_access_message(function_name));
+                }
+            }
+            TableFactor::TableFunction { expr, .. } => {
+                if let Expr::Function(function) = expr
+                    && let Some(function_name) = blocked_duckdb_external_function(&function.name)
+                {
+                    return ControlFlow::Break(duckdb_external_access_message(function_name));
+                }
+            }
+            _ => {}
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+fn validate_no_duckdb_external_access(statement: &Statement) -> Result<()> {
+    let mut visitor = DuckDbExternalAccessVisitor;
+    match statement.visit(&mut visitor) {
+        ControlFlow::Continue(()) => Ok(()),
+        ControlFlow::Break(message) => Err(DbtNovaError::InvalidParams(message)),
+    }
+}
+
+fn blocked_duckdb_external_function(name: &ObjectName) -> Option<&'static str> {
+    let leaf = name
+        .0
+        .iter()
+        .rev()
+        .find_map(|part| part.as_ident().map(|ident| ident.value.as_str()))?;
+    DUCKDB_EXTERNAL_ACCESS_FUNCTIONS
+        .iter()
+        .copied()
+        .find(|blocked| leaf.eq_ignore_ascii_case(blocked))
+}
+
+fn duckdb_external_access_message(function_name: &str) -> String {
+    format!("DuckDB external file access function '{function_name}' is not allowed in execute_sql")
+}
+
 impl ManifestSearch {
     fn apply_sql_limits(&self, params: &ExecuteSqlParams) -> ExecuteSqlParams {
         apply_sql_limits_with_config(params, self.config())
@@ -110,11 +230,7 @@ impl ManifestSearch {
             return provider.preflight(&bounded).await;
         }
         let statement = bounded.statement.trim();
-        if provider.name().eq_ignore_ascii_case("snowflake") {
-            validate_sql_statement_for_provider(statement, provider.name())?;
-        } else {
-            validate_sql_statement(statement)?;
-        }
+        validate_sql_statement_for_provider(statement, provider.name())?;
         provider.execute(&bounded).await
     }
 }
@@ -280,9 +396,93 @@ mod tests {
     }
 
     #[test]
+    fn validate_sql_statement_allows_read_only_query_matrix() {
+        let cases = [
+            "select * from orders",
+            "explain select * from orders",
+            "with recent as (select * from orders where order_date >= current_date - interval '7 days') select * from recent",
+            "select * from orders o join customers c on o.customer_id = c.customer_id",
+            "select * from (select customer_id, count(*) as order_count from orders group by customer_id) counts where order_count > 1",
+            "values (1), (2)",
+        ];
+
+        for sql in cases {
+            validate_sql_statement_for_provider(sql, "generic")
+                .unwrap_or_else(|err| panic!("expected read-only SQL to pass: {sql}: {err}"));
+        }
+    }
+
+    #[test]
+    fn validate_sql_statement_rejects_dangerous_matrix() {
+        let cases = [
+            "insert into orders values (1)",
+            "update orders set amount = 1",
+            "delete from orders",
+            "drop table orders",
+            "truncate table orders",
+            "alter table orders add column x int",
+            "create table backup as select * from orders",
+            "copy orders to '/tmp/orders.csv'",
+            "pragma version",
+            "set enable_external_access = true",
+            "/* hidden */ delete from orders",
+        ];
+
+        for sql in cases {
+            validate_sql_statement_for_provider(sql, "generic")
+                .expect_err("expected dangerous SQL to fail");
+        }
+    }
+
+    #[test]
     fn validate_sql_statement_rejects_snowflake_multi_statement() {
         let err = validate_sql_statement_for_provider("select 1; select 2", "snowflake")
             .expect_err("snowflake multi-statement should be rejected");
         assert!(err.to_string().contains("multi-statement"));
+    }
+
+    #[test]
+    fn validate_sql_statement_rejects_generic_multi_statement() {
+        let err = validate_sql_statement_for_provider("select 1; select 2", "databricks")
+            .expect_err("multi-statement requests should be rejected");
+        assert!(err.to_string().contains("multi-statement"));
+    }
+
+    #[test]
+    fn validate_sql_statement_rejects_duckdb_external_scan_functions() {
+        let cases = [
+            "select * from read_csv_auto('/tmp/orders.csv')",
+            "select * from parquet_scan('/tmp/orders.parquet')",
+            "select read_text('/tmp/secret.txt')",
+            "select * from read_csv('http://169.254.169.254/latest/meta-data/')",
+            "select * from read_json_objects_auto('/tmp/orders.json')",
+            "select * from read_ndjson_auto('/tmp/orders.ndjson')",
+            "explain select * from read_json_auto('/tmp/orders.json')",
+        ];
+
+        for sql in cases {
+            let err = validate_sql_statement_for_provider(sql, "duckdb")
+                .expect_err("DuckDB file scan functions should be rejected");
+            assert!(
+                err.to_string().contains("external file access"),
+                "unexpected error for {sql}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_sql_statement_allows_non_duckdb_read_csv_function_names() {
+        validate_sql_statement_for_provider("select read_csv(order_id) from orders", "databricks")
+            .expect("non-DuckDB providers may have unrelated UDF names");
+    }
+
+    #[test]
+    fn validate_sql_statement_rejects_select_into() {
+        let err = validate_sql_statement_for_provider(
+            "select * into backup_orders from orders",
+            "generic",
+        )
+        .expect_err("SELECT INTO should be rejected");
+        assert!(err.to_string().contains("SELECT INTO"));
     }
 }

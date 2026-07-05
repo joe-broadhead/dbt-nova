@@ -1,4 +1,5 @@
 use serde_json::{Value as JsonValue, json};
+use std::io::ErrorKind;
 use tantivy::TantivyError;
 use thiserror::Error;
 
@@ -34,6 +35,22 @@ pub enum DbtNovaError {
     #[error("Server error: {0}")]
     ServerError(String),
 
+    #[error("I/O error ({kind:?}): {message}")]
+    IoError {
+        kind: ErrorKind,
+        message: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("JSON error ({kind}): {message}")]
+    JsonError {
+        kind: &'static str,
+        message: String,
+        #[source]
+        source: serde_json::Error,
+    },
+
     #[error("Databricks error: {message}")]
     DatabricksError {
         message: String,
@@ -63,6 +80,8 @@ impl DbtNovaError {
             }
             DbtNovaError::ManifestError(_) => "INITIALIZATION_ERROR",
             DbtNovaError::ServerError(_)
+            | DbtNovaError::IoError { .. }
+            | DbtNovaError::JsonError { .. }
             | DbtNovaError::DatabricksError { .. }
             | DbtNovaError::TantivyError { .. }
             | DbtNovaError::GcpAuthError(_) => "SERVER_ERROR",
@@ -129,12 +148,20 @@ impl DbtNovaError {
                 "status": status,
                 "body": body,
             }),
-            DbtNovaError::TantivyError { kind, message: _ } => json!({
+            DbtNovaError::IoError { kind, .. } => json!({
                 "success": false,
                 "error": self.to_string(),
                 "error_code": self.error_code(),
-                "kind": kind,
+                "kind": io_error_kind_name(*kind),
             }),
+            DbtNovaError::TantivyError { kind, .. } | DbtNovaError::JsonError { kind, .. } => {
+                json!({
+                    "success": false,
+                    "error": self.to_string(),
+                    "error_code": self.error_code(),
+                    "kind": kind,
+                })
+            }
             DbtNovaError::GcpAuthError(_) => json!({
                 "success": false,
                 "error": self.to_string(),
@@ -161,13 +188,21 @@ impl DbtNovaError {
 
 impl From<std::io::Error> for DbtNovaError {
     fn from(err: std::io::Error) -> Self {
-        DbtNovaError::ServerError(err.to_string())
+        DbtNovaError::IoError {
+            kind: err.kind(),
+            message: err.to_string(),
+            source: err,
+        }
     }
 }
 
 impl From<serde_json::Error> for DbtNovaError {
     fn from(err: serde_json::Error) -> Self {
-        DbtNovaError::ServerError(err.to_string())
+        DbtNovaError::JsonError {
+            kind: serde_json_error_kind(&err),
+            message: err.to_string(),
+            source: err,
+        }
     }
 }
 
@@ -203,9 +238,45 @@ fn tantivy_error_kind(err: &TantivyError) -> &'static str {
     }
 }
 
+fn io_error_kind_name(kind: ErrorKind) -> &'static str {
+    match kind {
+        ErrorKind::NotFound => "not_found",
+        ErrorKind::PermissionDenied => "permission_denied",
+        ErrorKind::ConnectionRefused => "connection_refused",
+        ErrorKind::ConnectionReset => "connection_reset",
+        ErrorKind::ConnectionAborted => "connection_aborted",
+        ErrorKind::NotConnected => "not_connected",
+        ErrorKind::AddrInUse => "addr_in_use",
+        ErrorKind::AddrNotAvailable => "addr_not_available",
+        ErrorKind::BrokenPipe => "broken_pipe",
+        ErrorKind::AlreadyExists => "already_exists",
+        ErrorKind::WouldBlock => "would_block",
+        ErrorKind::InvalidInput => "invalid_input",
+        ErrorKind::InvalidData => "invalid_data",
+        ErrorKind::TimedOut => "timed_out",
+        ErrorKind::WriteZero => "write_zero",
+        ErrorKind::Interrupted => "interrupted",
+        ErrorKind::Unsupported => "unsupported",
+        ErrorKind::UnexpectedEof => "unexpected_eof",
+        ErrorKind::OutOfMemory => "out_of_memory",
+        _ => "other",
+    }
+}
+
+fn serde_json_error_kind(err: &serde_json::Error) -> &'static str {
+    match err.classify() {
+        serde_json::error::Category::Io => "io",
+        serde_json::error::Category::Syntax => "syntax",
+        serde_json::error::Category::Data => "data",
+        serde_json::error::Category::Eof => "eof",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::DbtNovaError;
+    use std::error::Error as _;
+    use std::io::ErrorKind;
     use tantivy::TantivyError;
 
     #[test]
@@ -242,5 +313,36 @@ mod tests {
             response.get("provider").and_then(|v| v.as_str()),
             Some("gcp")
         );
+    }
+
+    #[test]
+    fn io_error_conversion_preserves_source_and_kind() {
+        let err = DbtNovaError::from(std::io::Error::new(ErrorKind::PermissionDenied, "denied"));
+
+        assert!(err.source().is_some());
+        let response = err.to_response();
+        assert_eq!(
+            response.get("error_code").and_then(|v| v.as_str()),
+            Some("SERVER_ERROR")
+        );
+        assert_eq!(
+            response.get("kind").and_then(|v| v.as_str()),
+            Some("permission_denied")
+        );
+    }
+
+    #[test]
+    fn json_error_conversion_preserves_source_and_kind() {
+        let json_err =
+            serde_json::from_str::<serde_json::Value>("{").expect_err("invalid json should fail");
+        let err = DbtNovaError::from(json_err);
+
+        assert!(err.source().is_some());
+        let response = err.to_response();
+        assert_eq!(
+            response.get("error_code").and_then(|v| v.as_str()),
+            Some("SERVER_ERROR")
+        );
+        assert_eq!(response.get("kind").and_then(|v| v.as_str()), Some("eof"));
     }
 }

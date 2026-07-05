@@ -407,8 +407,9 @@ Required:
 - `DBT_NOVA_DUCKDB_PATH` (absolute path to a readable DuckDB file)
 
 Optional:
-- `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH` (DuckDB `file_search_path` for external file-backed objects/views)
-- `DBT_NOVA_DUCKDB_POOL_MAX_SIZE` (max pooled DuckDB connections per `(duckdb_path,file_search_path)` key; defaults to `DBT_NOVA_SQL_MAX_CONCURRENT`, then `10`)
+- `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH` (DuckDB `file_search_path` and `allowed_directories` bound used only with `DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS=true`)
+- `DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS` (opt in to connection-level external access for trusted file-backed database objects under the configured search path; default `false`; ad-hoc file-scan functions in `execute_sql` text remain rejected)
+- `DBT_NOVA_DUCKDB_POOL_MAX_SIZE` (max pooled DuckDB connections per `(duckdb_path,file_search_path,external_access)` key; defaults to `DBT_NOVA_SQL_MAX_CONCURRENT`, then `10`)
 - `DBT_NOVA_SQL_MAX_ROW_LIMIT` (default: `10000`)
 - `DBT_NOVA_SQL_MAX_BYTE_LIMIT` (default: `100000000`)
 - `DBT_NOVA_SQL_MAX_CHUNKS` (default: `100`)
@@ -420,6 +421,7 @@ Optional:
 
 DuckDB behavior notes:
 - `parameter_types` is not supported; pass scalar values via `parameters`.
+- Ad-hoc file-scan functions in `execute_sql` text are rejected even when connection-level external access is enabled.
 
 ### DuckDB Example (Codex CLI)
 
@@ -433,6 +435,7 @@ DBT_MANIFEST_PATH = "/path/to/manifest.json"
 DBT_NOVA_SQL_PROVIDER = "duckdb"
 DBT_NOVA_DUCKDB_PATH = "/absolute/path/to/analytics.duckdb"
 DBT_NOVA_DUCKDB_FILE_SEARCH_PATH = "/absolute/path/to/external/files"
+DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS = "true"
 DBT_NOVA_DUCKDB_POOL_MAX_SIZE = "10"
 DBT_NOVA_EMBEDDINGS_CACHE_DIR = "/Users/<you>/.dbt-nova/.fastembed_cache"
 ```

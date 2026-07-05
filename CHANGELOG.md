@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Hardened DuckDB `execute_sql` by disabling external file/table access by
+  default, requiring an explicit bounded `DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS`
+  opt-in, and rejecting DuckDB file-scan functions in SQL validation.
+- Added a global streamable HTTP request body cap
+  (`DBT_NOVA_HTTP_MAX_BODY_BYTES`) before the mounted MCP transport buffers
+  requests.
+- Moved indicator/column full-store scans off tokio worker threads, stabilized
+  lineage adjacency ordering, expanded fuzz/CI coverage, and removed the unused
+  direct `lru` dependency.
+- Added MCP tool profiles with a lean default `agent` catalog and
+  backwards-compatible `DBT_NOVA_TOOL_PROFILE=all`, plus protocol-level
+  `isError` signaling for failed tool calls while retaining Nova's structured
+  JSON error body.
+- Bridged dbt Semantic Layer / MetricFlow `metrics` and `semantic_models` into
+  Nova indicator discovery, analyst ranking, and metadata scoring without
+  requiring duplicate `meta.nova` annotations.
+- Added optional `catalog.json` ingestion via `DBT_NOVA_CATALOG_PATH` or local
+  sibling auto-discovery so column payloads use warehouse data types and expose
+  catalog drift signals.
+- Documented the exported schema typegen compatibility surface, vendored crate
+  patches, response-budget contracts, large-fixture/concurrency benches, and
+  benchmark-gated archived-access decision.
+
 ## [0.0.6] - 2026-07-04
 
 - Hardened OCI release images to upgrade pinned Debian runtime packages during

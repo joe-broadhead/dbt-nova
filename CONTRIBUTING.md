@@ -108,20 +108,23 @@ Recommended commands:
 ```bash
 cargo test --all-features
 cargo test --all-targets
-cargo llvm-cov --locked --all-features --workspace --summary-only --fail-under-lines 65
+cargo llvm-cov --locked --all-features --workspace --summary-only --fail-under-lines 70
 ```
 
 ## Versioned Artifacts
 
 - **Cargo.lock** is committed (binary crate, reproducible builds).
 - **benches/** is committed (performance baselines).
+- Vendored crate upgrades must follow [vendor/PATCHES.md](vendor/PATCHES.md):
+  confirm each local patch is upstreamed or intentionally retained, then run the
+  linked tests/checks before opening a PR.
 
 ## Pull Request Checklist
 
 Before submitting:
 
 - [ ] Tests pass (`cargo test --all-features`)
-- [ ] Coverage gate passes (`cargo llvm-cov --locked --all-features --workspace --summary-only --fail-under-lines 65`)
+- [ ] Coverage gate passes (`cargo llvm-cov --locked --all-features --workspace --summary-only --fail-under-lines 70`)
 - [ ] Lint passes (`cargo clippy --locked --all-targets --all-features -- -D warnings`)
 - [ ] Formatting is clean (`cargo fmt --check`)
 - [ ] Docs updated (if user-facing)

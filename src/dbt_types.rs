@@ -1,4 +1,11 @@
-// Generated at build time by build.rs (typify).
+//! Public schema-derived dbt/Nova type exports.
+//!
+//! Runtime manifest ingestion intentionally uses the streaming parser under
+//! `manifest::loader` so large manifests do not need to deserialize through this
+//! generated module. The `dbt_nova::dbt_types` export is kept as a compatibility
+//! surface for downstream tooling that wants Rust types generated from the
+//! checked-in dbt and Nova JSON schemas.
+
 use serde::{Deserialize, Serialize};
 
 #[allow(

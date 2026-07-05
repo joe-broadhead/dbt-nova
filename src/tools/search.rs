@@ -19,6 +19,7 @@ use crate::manifest::entity::{
 use crate::manifest::search::{
     ManifestSearch, NovaSemanticMatches, SemanticMatchType, match_nova_semantics,
 };
+use crate::manifest::store::EntityStore;
 use crate::manifest::tantivy_search::{SearchHit, SearchRequest, SearchScope, TantivySearcher};
 use crate::manifest::vector_search::embedding_text_from_archived;
 use crate::params::{
@@ -566,13 +567,15 @@ impl ManifestSearch {
         let deadline = SearchDeadline::from_config(&self.config.search);
         let (tokens, query_has_syntax, resource_filter, indicator_filter, persona) =
             self.prepare_indicator_search(params)?;
-        let mut rows = self.search_indicator_rows(
-            &tokens,
-            resource_filter.as_ref(),
-            indicator_filter.as_ref(),
-            params.explain,
-            deadline,
-        )?;
+        let mut rows = self
+            .search_indicator_rows_blocking(
+                tokens.clone(),
+                resource_filter.clone(),
+                indicator_filter.clone(),
+                params.explain,
+                deadline,
+            )
+            .await?;
         rows = self
             .rank_indicator_rows(params, query_has_syntax, persona, rows, deadline)
             .await?;
@@ -598,12 +601,14 @@ impl ManifestSearch {
         let deadline = SearchDeadline::from_config(&self.config.search);
         let resource_filter = normalized_resource_type_filter(&params.resource_types);
         let indicator_filter = normalized_indicator_type_filter(&params.indicator_types)?;
-        let rows = self.indicator_inventory_rows(
-            resource_filter.as_ref(),
-            indicator_filter.as_ref(),
-            params.canonical_only,
-            deadline,
-        )?;
+        let rows = self
+            .indicator_inventory_rows_blocking(
+                resource_filter.clone(),
+                indicator_filter.clone(),
+                params.canonical_only,
+                deadline,
+            )
+            .await?;
         let total = rows.len();
         let limit = self.page_limit(params.pagination.limit);
         let start = params.pagination.offset.min(total);
@@ -655,15 +660,16 @@ impl ManifestSearch {
         let resource_filter = normalized_resource_type_filter(&params.resource_types);
         let role_filter = normalized_value_filter(&params.roles);
         let semantic_type_filter = normalized_value_filter(&params.semantic_types);
-        let token_set: HashSet<&str> = tokens.iter().map(String::as_str).collect();
-        let mut rows = self.search_column_rows(
-            &token_set,
-            min_word_len,
-            resource_filter.as_ref(),
-            role_filter.as_ref(),
-            semantic_type_filter.as_ref(),
-            deadline,
-        )?;
+        let mut rows = self
+            .search_column_rows_blocking(
+                tokens,
+                min_word_len,
+                resource_filter.clone(),
+                role_filter.clone(),
+                semantic_type_filter.clone(),
+                deadline,
+            )
+            .await?;
         if let Some(min_score) = params.min_score {
             rows.retain(|row| row.score >= min_score);
         }
@@ -704,13 +710,15 @@ impl ManifestSearch {
         let resource_filter = normalized_resource_type_filter(&params.resource_types);
         let role_filter = normalized_value_filter(&params.roles);
         let semantic_type_filter = normalized_value_filter(&params.semantic_types);
-        let rows = self.column_inventory_rows(
-            resource_filter.as_ref(),
-            role_filter.as_ref(),
-            semantic_type_filter.as_ref(),
-            params.annotated_only,
-            deadline,
-        )?;
+        let rows = self
+            .column_inventory_rows_blocking(
+                resource_filter.clone(),
+                role_filter.clone(),
+                semantic_type_filter.clone(),
+                params.annotated_only,
+                deadline,
+            )
+            .await?;
         let total = rows.len();
         let limit = self.page_limit(params.pagination.limit);
         let start = params.pagination.offset.min(total);
@@ -1000,23 +1008,51 @@ impl ManifestSearch {
         Ok(rows)
     }
 
-    fn search_indicator_rows(
+    async fn search_indicator_rows_blocking(
         &self,
+        tokens: Vec<String>,
+        resource_filter: Option<HashSet<String>>,
+        indicator_filter: Option<HashSet<String>>,
+        include_explain: bool,
+        deadline: SearchDeadline,
+    ) -> Result<Vec<IndicatorSearchRow>> {
+        let entities = Arc::clone(&self.entities);
+        let search_config = self.config.search.clone();
+        tokio::task::spawn_blocking(move || {
+            Self::search_indicator_rows_from_store(
+                &entities,
+                &search_config,
+                &tokens,
+                resource_filter.as_ref(),
+                indicator_filter.as_ref(),
+                include_explain,
+                deadline,
+            )
+        })
+        .await
+        .map_err(|err| {
+            DbtNovaError::ServerError(format!("join failure while scanning indicators: {err}"))
+        })?
+    }
+
+    fn search_indicator_rows_from_store(
+        entities: &EntityStore,
+        search_config: &SearchConfig,
         tokens: &[String],
         resource_filter: Option<&HashSet<String>>,
         indicator_filter: Option<&HashSet<String>>,
         include_explain: bool,
         deadline: SearchDeadline,
     ) -> Result<Vec<IndicatorSearchRow>> {
-        let min_word_len = self.config.search.min_word_length.max(1);
+        let min_word_len = search_config.min_word_length.max(1);
         let token_set: HashSet<&str> = tokens.iter().map(String::as_str).collect();
         let query_token_count = token_set.len();
         let mut rows: Vec<IndicatorSearchRow> = Vec::new();
         let mut scanned = 0usize;
 
-        for unique_id in self.entities.ids() {
+        for unique_id in entities.ids() {
             check_scan_deadline(deadline, &mut scanned)?;
-            let Some(entity) = self.get_entity_archived(unique_id)? else {
+            let Some(entity) = entities.get_archived(unique_id)? else {
                 continue;
             };
             if !resource_type_allowed_for_search(entity.resource_type_str(), resource_filter) {
@@ -1035,7 +1071,7 @@ impl ManifestSearch {
                 nova,
                 &token_set,
                 min_word_len,
-                &self.config.search.metadata_support,
+                &search_config.metadata_support,
             );
             let context = IndicatorSearchContext {
                 unique_id,
@@ -1046,8 +1082,8 @@ impl ManifestSearch {
                 query_token_count,
                 min_word_len,
                 support_signals,
-                indicator_config: &self.config.search.indicator_ranking,
-                metadata_config: &self.config.search.metadata_support,
+                indicator_config: &search_config.indicator_ranking,
+                metadata_config: &search_config.metadata_support,
             };
 
             if indicator_type_selected(indicator_filter, "measure") {
@@ -1092,8 +1128,33 @@ impl ManifestSearch {
         Ok(rows)
     }
 
-    fn indicator_inventory_rows(
+    async fn indicator_inventory_rows_blocking(
         &self,
+        resource_filter: Option<HashSet<String>>,
+        indicator_filter: Option<HashSet<String>>,
+        canonical_only: bool,
+        deadline: SearchDeadline,
+    ) -> Result<Vec<IndicatorInventoryRow>> {
+        let entities = Arc::clone(&self.entities);
+        tokio::task::spawn_blocking(move || {
+            Self::indicator_inventory_rows_from_store(
+                &entities,
+                resource_filter.as_ref(),
+                indicator_filter.as_ref(),
+                canonical_only,
+                deadline,
+            )
+        })
+        .await
+        .map_err(|err| {
+            DbtNovaError::ServerError(format!(
+                "join failure while scanning indicator inventory: {err}"
+            ))
+        })?
+    }
+
+    fn indicator_inventory_rows_from_store(
+        entities: &EntityStore,
         resource_filter: Option<&HashSet<String>>,
         indicator_filter: Option<&HashSet<String>>,
         canonical_only: bool,
@@ -1102,9 +1163,9 @@ impl ManifestSearch {
         let mut rows = Vec::new();
         let mut scanned = 0usize;
 
-        for unique_id in self.entities.ids() {
+        for unique_id in entities.ids() {
             check_scan_deadline(deadline, &mut scanned)?;
-            let Some(entity) = self.get_entity_archived(unique_id)? else {
+            let Some(entity) = entities.get_archived(unique_id)? else {
                 continue;
             };
             if !resource_type_allowed_for_search(entity.resource_type_str(), resource_filter) {
@@ -1156,8 +1217,36 @@ impl ManifestSearch {
         Ok(rows)
     }
 
-    fn search_column_rows(
+    async fn search_column_rows_blocking(
         &self,
+        tokens: Vec<String>,
+        min_word_len: usize,
+        resource_filter: Option<HashSet<String>>,
+        role_filter: Option<HashSet<String>>,
+        semantic_type_filter: Option<HashSet<String>>,
+        deadline: SearchDeadline,
+    ) -> Result<Vec<ColumnSearchRow>> {
+        let entities = Arc::clone(&self.entities);
+        tokio::task::spawn_blocking(move || {
+            let token_set: HashSet<&str> = tokens.iter().map(String::as_str).collect();
+            Self::search_column_rows_from_store(
+                &entities,
+                &token_set,
+                min_word_len,
+                resource_filter.as_ref(),
+                role_filter.as_ref(),
+                semantic_type_filter.as_ref(),
+                deadline,
+            )
+        })
+        .await
+        .map_err(|err| {
+            DbtNovaError::ServerError(format!("join failure while scanning columns: {err}"))
+        })?
+    }
+
+    fn search_column_rows_from_store(
+        entities: &EntityStore,
         token_set: &HashSet<&str>,
         min_word_len: usize,
         resource_filter: Option<&HashSet<String>>,
@@ -1168,9 +1257,9 @@ impl ManifestSearch {
         let mut rows = Vec::new();
         let mut scanned = 0usize;
 
-        for unique_id in self.entities.ids() {
+        for unique_id in entities.ids() {
             check_scan_deadline(deadline, &mut scanned)?;
-            let Some(entity) = self.get_entity_archived(unique_id)? else {
+            let Some(entity) = entities.get_archived(unique_id)? else {
                 continue;
             };
             if !resource_type_allowed_for_search(entity.resource_type_str(), resource_filter) {
@@ -1207,8 +1296,35 @@ impl ManifestSearch {
         Ok(rows)
     }
 
-    fn column_inventory_rows(
+    async fn column_inventory_rows_blocking(
         &self,
+        resource_filter: Option<HashSet<String>>,
+        role_filter: Option<HashSet<String>>,
+        semantic_type_filter: Option<HashSet<String>>,
+        annotated_only: bool,
+        deadline: SearchDeadline,
+    ) -> Result<Vec<ColumnInventoryRow>> {
+        let entities = Arc::clone(&self.entities);
+        tokio::task::spawn_blocking(move || {
+            Self::column_inventory_rows_from_store(
+                &entities,
+                resource_filter.as_ref(),
+                role_filter.as_ref(),
+                semantic_type_filter.as_ref(),
+                annotated_only,
+                deadline,
+            )
+        })
+        .await
+        .map_err(|err| {
+            DbtNovaError::ServerError(format!(
+                "join failure while scanning column inventory: {err}"
+            ))
+        })?
+    }
+
+    fn column_inventory_rows_from_store(
+        entities: &EntityStore,
         resource_filter: Option<&HashSet<String>>,
         role_filter: Option<&HashSet<String>>,
         semantic_type_filter: Option<&HashSet<String>>,
@@ -1218,9 +1334,9 @@ impl ManifestSearch {
         let mut rows = Vec::new();
         let mut scanned = 0usize;
 
-        for unique_id in self.entities.ids() {
+        for unique_id in entities.ids() {
             check_scan_deadline(deadline, &mut scanned)?;
-            let Some(entity) = self.get_entity_archived(unique_id)? else {
+            let Some(entity) = entities.get_archived(unique_id)? else {
                 continue;
             };
             if !resource_type_allowed_for_search(entity.resource_type_str(), resource_filter) {
@@ -1303,165 +1419,31 @@ impl ManifestSearch {
         }
 
         let mut rankings: Vec<(&str, Vec<String>)> = Vec::new();
-        let mut indicator_parent_scores = HashMap::new();
+        rankings.push(("bm25", hits_to_ids(primary_results)));
 
-        let bm25_exact = run_tantivy_search(
-            self.tantivy.clone(),
-            self.config.search.clone(),
-            OwnedSearchRequest {
-                query_text: params.query.clone(),
-                resource_types: params.resource_types.clone(),
-                limit: fetch_limit,
-                min_score: params.min_score,
-                fuzzy: false,
-                include_highlights: false,
-                include_ngram_override: Some(false),
-                scope: SearchScope::Full,
-                persona,
-            },
-        )
-        .await?;
-        rankings.push(("bm25", hits_to_ids(&bm25_exact)));
+        let (ngram_ranking, fuzzy_ranking, vector_ranking, sparse_ranking, indicator_ranking) = tokio::try_join!(
+            self.fused_ngram_ranking(params, persona, query_has_syntax, fetch_limit),
+            self.fused_fuzzy_ranking(params, persona, fetch_limit),
+            self.fused_vector_ranking(params, fetch_limit, deadline),
+            self.fused_sparse_ranking(params, fetch_limit, deadline),
+            self.fused_indicator_ranking(params, persona, fetch_limit, deadline),
+        )?;
 
-        if self.config.search.enable_ngram && !query_has_syntax {
-            let ngram_hits = run_tantivy_search(
-                self.tantivy.clone(),
-                self.config.search.clone(),
-                OwnedSearchRequest {
-                    query_text: params.query.clone(),
-                    resource_types: params.resource_types.clone(),
-                    limit: fetch_limit,
-                    min_score: params.min_score,
-                    fuzzy: false,
-                    include_highlights: false,
-                    include_ngram_override: Some(true),
-                    scope: SearchScope::Full,
-                    persona,
-                },
-            )
-            .await?;
-            rankings.push(("ngram", hits_to_ids(&ngram_hits)));
+        if let Some(ranking) = ngram_ranking {
+            rankings.push(("ngram", ranking));
         }
-
-        if params.fuzzy {
-            let fuzzy_hits = run_tantivy_search(
-                self.tantivy.clone(),
-                self.config.search.clone(),
-                OwnedSearchRequest {
-                    query_text: params.query.clone(),
-                    resource_types: params.resource_types.clone(),
-                    limit: fetch_limit,
-                    min_score: params.min_score,
-                    fuzzy: true,
-                    include_highlights: false,
-                    include_ngram_override: Some(false),
-                    scope: SearchScope::Full,
-                    persona,
-                },
-            )
-            .await?;
-            rankings.push(("fuzzy", hits_to_ids(&fuzzy_hits)));
+        if let Some(ranking) = fuzzy_ranking {
+            rankings.push(("fuzzy", ranking));
         }
-
-        if self.config.search.enable_vector_search
-            && let Some(vector_search) = &self.vector_search
-        {
-            if self.vector_breaker.allow().await {
-                let vector_limit = self.config.search.vector_top_k.max(fetch_limit);
-                let query = params.query.clone();
-                let vector_search = Arc::clone(vector_search);
-                match run_semantic_blocking(
-                    deadline,
-                    "vector search",
-                    "query embedding",
-                    move || vector_search.search(&query, vector_limit),
-                )
-                .await?
-                {
-                    SemanticWorkResult::Completed(Ok(vector_hits)) => {
-                        self.vector_breaker.on_success().await;
-                        rankings.push(("vector", scores_to_ids(&vector_hits)));
-                    }
-                    SemanticWorkResult::Completed(Err(err)) => {
-                        self.vector_breaker.on_failure().await;
-                        warn!(error = %err, "vector search failed; skipping vector results");
-                    }
-                    SemanticWorkResult::SkippedDeadline => {
-                        debug!("vector retriever skipped because request deadline was exhausted");
-                    }
-                    SemanticWorkResult::TimedOut => {
-                        self.vector_breaker.on_failure().await;
-                        warn!("vector search timed out; skipping vector results");
-                    }
-                }
-            } else {
-                debug!("vector search circuit open; skipping vector retriever");
-            }
+        if let Some(ranking) = vector_ranking {
+            rankings.push(("vector", ranking));
         }
-
-        if self.config.search.enable_sparse_search
-            && let Some(sparse_search) = &self.sparse_search
-        {
-            if self.sparse_breaker.allow().await {
-                let sparse_limit = self.config.search.sparse_top_k.max(fetch_limit);
-                let query = params.query.clone();
-                let sparse_search = Arc::clone(sparse_search);
-                match run_semantic_blocking(
-                    deadline,
-                    "sparse search",
-                    "query embedding",
-                    move || sparse_search.search(&query, sparse_limit),
-                )
-                .await?
-                {
-                    SemanticWorkResult::Completed(Ok(sparse_hits)) => {
-                        self.sparse_breaker.on_success().await;
-                        rankings.push(("sparse", scores_to_ids(&sparse_hits)));
-                    }
-                    SemanticWorkResult::Completed(Err(err)) => {
-                        self.sparse_breaker.on_failure().await;
-                        warn!(error = %err, "sparse search failed; skipping sparse results");
-                    }
-                    SemanticWorkResult::SkippedDeadline => {
-                        debug!("sparse retriever skipped because request deadline was exhausted");
-                    }
-                    SemanticWorkResult::TimedOut => {
-                        self.sparse_breaker.on_failure().await;
-                        warn!("sparse search timed out; skipping sparse results");
-                    }
-                }
-            } else {
-                debug!("sparse search circuit open; skipping sparse retriever");
-            }
+        if let Some(ranking) = sparse_ranking {
+            rankings.push(("sparse", ranking));
         }
-
-        if persona == SearchPersona::Analyst {
-            let indicator_tokens =
-                tokenize_alnum_lowercase(&params.query, self.config.search.min_word_length.max(1));
-            let resource_filter = normalized_resource_type_filter(&params.resource_types);
-            let mut indicator_rows = self.search_indicator_rows(
-                &indicator_tokens,
-                resource_filter.as_ref(),
-                None,
-                false,
-                deadline,
-            )?;
-            if self.config.search.indicator_ranking.enable_parent_coherence
-                && indicator_rows.len() > 1
-            {
-                indicator_rows = apply_parent_coherence_bonus(
-                    indicator_rows,
-                    &self.config.search.indicator_ranking,
-                );
-            }
-            let indicator_ranking = dedupe_indicator_parent_ids(&indicator_rows, fetch_limit);
-            if !indicator_ranking.is_empty() {
-                rankings.push(("indicator", indicator_ranking));
-                indicator_parent_scores = normalized_indicator_parent_scores(
-                    &indicator_rows,
-                    &self.config.search.indicator_ranking,
-                );
-            }
+        let (indicator_ranking, indicator_parent_scores) = indicator_ranking;
+        if let Some(ranking) = indicator_ranking {
+            rankings.push(("indicator", ranking));
         }
 
         let fusion_limit = fetch_limit.max(1);
@@ -1489,6 +1471,191 @@ impl ManifestSearch {
             retrieval_explain,
             retrievers_used,
         })
+    }
+
+    async fn fused_ngram_ranking(
+        &self,
+        params: &SearchParams,
+        persona: SearchPersona,
+        query_has_syntax: bool,
+        fetch_limit: usize,
+    ) -> Result<Option<Vec<String>>> {
+        if !self.config.search.enable_ngram || query_has_syntax {
+            return Ok(None);
+        }
+        let hits = run_tantivy_search(
+            self.tantivy.clone(),
+            self.config.search.clone(),
+            OwnedSearchRequest {
+                query_text: params.query.clone(),
+                resource_types: params.resource_types.clone(),
+                limit: fetch_limit,
+                min_score: params.min_score,
+                fuzzy: false,
+                include_highlights: false,
+                include_ngram_override: Some(true),
+                scope: SearchScope::Full,
+                persona,
+            },
+        )
+        .await?;
+        Ok(Some(hits_to_ids(&hits)))
+    }
+
+    async fn fused_fuzzy_ranking(
+        &self,
+        params: &SearchParams,
+        persona: SearchPersona,
+        fetch_limit: usize,
+    ) -> Result<Option<Vec<String>>> {
+        if !params.fuzzy {
+            return Ok(None);
+        }
+        let hits = run_tantivy_search(
+            self.tantivy.clone(),
+            self.config.search.clone(),
+            OwnedSearchRequest {
+                query_text: params.query.clone(),
+                resource_types: params.resource_types.clone(),
+                limit: fetch_limit,
+                min_score: params.min_score,
+                fuzzy: true,
+                include_highlights: false,
+                include_ngram_override: Some(false),
+                scope: SearchScope::Full,
+                persona,
+            },
+        )
+        .await?;
+        Ok(Some(hits_to_ids(&hits)))
+    }
+
+    async fn fused_vector_ranking(
+        &self,
+        params: &SearchParams,
+        fetch_limit: usize,
+        deadline: SearchDeadline,
+    ) -> Result<Option<Vec<String>>> {
+        if !self.config.search.enable_vector_search {
+            return Ok(None);
+        }
+        let Some(vector_search) = &self.vector_search else {
+            return Ok(None);
+        };
+        if !self.vector_breaker.allow().await {
+            debug!("vector search circuit open; skipping vector retriever");
+            return Ok(None);
+        }
+        let vector_limit = self.config.search.vector_top_k.max(fetch_limit);
+        let query = params.query.clone();
+        let vector_search = Arc::clone(vector_search);
+        match run_semantic_blocking(deadline, "vector search", "query embedding", move || {
+            vector_search.search(&query, vector_limit)
+        })
+        .await?
+        {
+            SemanticWorkResult::Completed(Ok(vector_hits)) => {
+                self.vector_breaker.on_success().await;
+                Ok(Some(scores_to_ids(&vector_hits)))
+            }
+            SemanticWorkResult::Completed(Err(err)) => {
+                self.vector_breaker.on_failure().await;
+                warn!(error = %err, "vector search failed; skipping vector results");
+                Ok(None)
+            }
+            SemanticWorkResult::SkippedDeadline => {
+                debug!("vector retriever skipped because request deadline was exhausted");
+                Ok(None)
+            }
+            SemanticWorkResult::TimedOut => {
+                self.vector_breaker.on_failure().await;
+                warn!("vector search timed out; skipping vector results");
+                Ok(None)
+            }
+        }
+    }
+
+    async fn fused_sparse_ranking(
+        &self,
+        params: &SearchParams,
+        fetch_limit: usize,
+        deadline: SearchDeadline,
+    ) -> Result<Option<Vec<String>>> {
+        if !self.config.search.enable_sparse_search {
+            return Ok(None);
+        }
+        let Some(sparse_search) = &self.sparse_search else {
+            return Ok(None);
+        };
+        if !self.sparse_breaker.allow().await {
+            debug!("sparse search circuit open; skipping sparse retriever");
+            return Ok(None);
+        }
+        let sparse_limit = self.config.search.sparse_top_k.max(fetch_limit);
+        let query = params.query.clone();
+        let sparse_search = Arc::clone(sparse_search);
+        match run_semantic_blocking(deadline, "sparse search", "query embedding", move || {
+            sparse_search.search(&query, sparse_limit)
+        })
+        .await?
+        {
+            SemanticWorkResult::Completed(Ok(sparse_hits)) => {
+                self.sparse_breaker.on_success().await;
+                Ok(Some(scores_to_ids(&sparse_hits)))
+            }
+            SemanticWorkResult::Completed(Err(err)) => {
+                self.sparse_breaker.on_failure().await;
+                warn!(error = %err, "sparse search failed; skipping sparse results");
+                Ok(None)
+            }
+            SemanticWorkResult::SkippedDeadline => {
+                debug!("sparse retriever skipped because request deadline was exhausted");
+                Ok(None)
+            }
+            SemanticWorkResult::TimedOut => {
+                self.sparse_breaker.on_failure().await;
+                warn!("sparse search timed out; skipping sparse results");
+                Ok(None)
+            }
+        }
+    }
+
+    async fn fused_indicator_ranking(
+        &self,
+        params: &SearchParams,
+        persona: SearchPersona,
+        fetch_limit: usize,
+        deadline: SearchDeadline,
+    ) -> Result<(Option<Vec<String>>, HashMap<String, f32>)> {
+        if persona != SearchPersona::Analyst {
+            return Ok((None, HashMap::new()));
+        }
+        let indicator_tokens =
+            tokenize_alnum_lowercase(&params.query, self.config.search.min_word_length.max(1));
+        let resource_filter = normalized_resource_type_filter(&params.resource_types);
+        let mut indicator_rows = self
+            .search_indicator_rows_blocking(
+                indicator_tokens,
+                resource_filter,
+                None,
+                false,
+                deadline,
+            )
+            .await?;
+        if self.config.search.indicator_ranking.enable_parent_coherence && indicator_rows.len() > 1
+        {
+            indicator_rows =
+                apply_parent_coherence_bonus(indicator_rows, &self.config.search.indicator_ranking);
+        }
+        let ranking = dedupe_indicator_parent_ids(&indicator_rows, fetch_limit);
+        if ranking.is_empty() {
+            return Ok((None, HashMap::new()));
+        }
+        let scores = normalized_indicator_parent_scores(
+            &indicator_rows,
+            &self.config.search.indicator_ranking,
+        );
+        Ok((Some(ranking), scores))
     }
 
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]

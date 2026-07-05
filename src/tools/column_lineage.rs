@@ -109,7 +109,8 @@ impl ManifestSearch {
             };
             let current_json = current_entity.to_json_value();
 
-            let related_entities = manifest_map.get(&current_id).cloned().unwrap_or_default();
+            let mut related_entities = manifest_map.get(&current_id).cloned().unwrap_or_default();
+            related_entities.sort_unstable();
             for related_id in related_entities {
                 if truncated {
                     break;
@@ -206,6 +207,16 @@ impl ManifestSearch {
                 score_b
                     .partial_cmp(&score_a)
                     .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| {
+                        let id_a = a.get("unique_id").and_then(JsonValue::as_str).unwrap_or("");
+                        let id_b = b.get("unique_id").and_then(JsonValue::as_str).unwrap_or("");
+                        id_a.cmp(id_b)
+                    })
+                    .then_with(|| {
+                        let col_a = a.get("column").and_then(JsonValue::as_str).unwrap_or("");
+                        let col_b = b.get("column").and_then(JsonValue::as_str).unwrap_or("");
+                        col_a.cmp(col_b)
+                    })
             })
         });
 

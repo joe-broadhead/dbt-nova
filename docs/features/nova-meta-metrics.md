@@ -16,7 +16,13 @@ For the full field map and governance conventions, see
 
 Each metric is a dbt model (SQL file) plus a YAML schema entry.
 
-The `mart__...` model name used in examples is only a repo convention. Nova does not have special logic for model names that start with `mart__`; it keys off `meta.nova.metric` / `meta.nova.metrics` on any dbt `model`, while native dbt `metrics` from the manifest are separate `resource_type: metric` entities.
+The `mart__...` model name used in examples is only a repo convention. Nova
+does not have special logic for model names that start with `mart__`; it keys
+off `meta.nova.metric` / `meta.nova.metrics` on any dbt `model`. Native dbt
+Semantic Layer / MetricFlow `metrics` and `semantic_models` from the manifest
+are also bridged into Nova indicator discovery and scoring, with `meta.nova`
+available for Nova-specific governance, domains, candidate hints, and richer
+agent guidance.
 
 Metrics are **templates**, not hardcoded answers. Analysts adapt:
 - time window (weekly/monthly/YoY)

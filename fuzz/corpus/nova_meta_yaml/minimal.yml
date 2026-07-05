@@ -1,0 +1,11 @@
+models:
+  - name: orders
+    meta:
+      nova:
+        canonical: true
+        grain:
+          entities: [order]
+        measures:
+          - name: revenue
+            expr: revenue
+            agg: sum

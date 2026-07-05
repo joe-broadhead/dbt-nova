@@ -2,6 +2,15 @@
 
 dbt-nova streams the dbt manifest, stores rkyv-encoded `Entity` records (with a
 raw JSON payload string for fidelity), and builds/persists indexes for fast queries.
+During parsing, optional `catalog.json` column metadata is merged into entity
+payloads before storage so all tools see the same warehouse-real column types
+and drift signals. During entity normalization, native dbt MetricFlow
+`metrics`/`semantic_models` are derived into Nova indicator metadata before
+search and scoring consume the typed summary.
+
+`build.rs` also generates `dbt_nova::dbt_types` from the checked-in dbt and Nova
+JSON schemas. Those generated types are a public compatibility surface for
+downstream tooling; the runtime loader does not route manifests through them.
 
 ## Design Philosophy
 
@@ -27,7 +36,7 @@ flowchart TD
 
 ## Architecture Overview (Detailed)
 
-### Tool Map (53 MCP tools)
+### Tool Map (canonical 53 MCP tools, profile-filtered at runtime)
 
 <div class="diagram-large diagram-vertical" markdown>
 

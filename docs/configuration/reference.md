@@ -14,6 +14,7 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 
 - `DBT_MANIFEST_PATH` – path to `manifest.json` (default: `manifest.json`)
 - `DBT_NOVA_MANIFEST_URI` – optional manifest URI (`file://`, `http(s)://`, `dbfs://`, `s3://`, `gs://`)
+- `DBT_NOVA_CATALOG_PATH` – optional dbt `catalog.json` path/URI for warehouse column types and stats; when unset, a local sibling `catalog.json` next to the resolved manifest is loaded if present
 - `DBT_NOVA_MANIFEST_CACHE_DIR` – optional local cache dir for remote manifests (default: `<storage_root>/manifests`)
 - `DBT_NOVA_MANIFEST_REFRESH_SECS` – refresh interval for remote manifests (`0` = never refresh, default: `300`)
 - `DBT_NOVA_MANIFEST_MAX_BYTES` – max bytes allowed for remote manifest fetches (`0` = unlimited, default: `268435456`)
@@ -43,12 +44,14 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_HTTP_STATEFUL_MODE` – enable stateful streamable HTTP sessions (`true`|`false`, default: `true`)
 - `DBT_NOVA_HTTP_SSE_KEEP_ALIVE_SECS` – SSE keepalive interval for streamable HTTP mode (`0` disables keepalives, default: `15`)
 - `DBT_NOVA_HTTP_SSE_RETRY_SECS` – SSE retry hint for streamable HTTP mode (`0` disables retry hints, default: `3`)
+- `DBT_NOVA_HTTP_MAX_BODY_BYTES` – global streamable HTTP request body cap (`0` disables the in-process cap, default: `16777216`)
 - `DBT_NOVA_STRICT_SCHEMA` – fail build if schema files are missing or invalid (`true`|`false`, default: `false`; forced `true` in CI)
 - `DBT_NOVA_S3_MODE` – S3 fetch mode (`https` or `sdk`, default: `https`)
 - `DBT_NOVA_GCS_MODE` – GCS fetch mode (`https` or `sdk`, default: `https`)
 - `DBT_NOVA_RECIPES_DIR` – manifest `original_file_path` prefix used to discover recipe `analysis` nodes (default: `analyses/recipes`). Recipe SQL is resolved from manifest `compiled_code` (or `raw_code` fallback). Recipes are documented in [Analysis Recipes](../features/recipes.md).
 - `DBT_NOVA_LOG` / `RUST_LOG` – enable structured logs to stderr (e.g., `info`, `debug`, `trace`)
 - `DBT_NOVA_DISABLE_TOOL_SCHEMAS` – strip JSON schema hints from MCP tools (useful for strict clients like Gemini; see [MCP Clients](../getting-started/mcp-clients.md))
+- `DBT_NOVA_TOOL_PROFILE` – MCP tool profile (`agent`, `analyst`, `engineer`, `governance`, `ops`, or `all`; default: `agent`)
 - `DBT_NOVA_TOOL_ALLOWLIST` – optional comma-separated allowlist of exact MCP tool names to expose; when set, only these tools are eligible for exposure
 - `DBT_NOVA_TOOL_DENYLIST` – optional comma-separated denylist of exact MCP tool names to hide after allowlist processing
 - `DBT_NOVA_RESULT_PROFILE` – default detail profile when CLI/tool-call requests omit `detail` (`compact`, `standard`, or `full`; default: `standard`)
@@ -91,8 +94,9 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_SNOWFLAKE_MAX_POLL_SECONDS` – provider default polling duration before local cancellation (default: `600`)
 - `DBT_NOVA_SNOWFLAKE_MAX_CHUNKS` – provider default max result partitions fetched (default: `50`)
 - `DBT_NOVA_DUCKDB_PATH` – required DuckDB database file when `DBT_NOVA_SQL_PROVIDER=duckdb`
-- `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH` – optional DuckDB `file_search_path` used for external file-backed objects when `DBT_NOVA_SQL_PROVIDER=duckdb`
-- `DBT_NOVA_DUCKDB_POOL_MAX_SIZE` – optional max pooled DuckDB connections per `(duckdb_path,file_search_path)` key (default: falls back to `DBT_NOVA_SQL_MAX_CONCURRENT`, then `10`)
+- `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH` – optional DuckDB `file_search_path` and `allowed_directories` bound used only when `DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS=true`
+- `DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS` – opt in to connection-level DuckDB external access for trusted file-backed database objects under the configured `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH` (`true`|`false`, default: `false`); ad-hoc file-scan functions in `execute_sql` text remain rejected
+- `DBT_NOVA_DUCKDB_POOL_MAX_SIZE` – optional max pooled DuckDB connections per `(duckdb_path,file_search_path,external_access)` key (default: falls back to `DBT_NOVA_SQL_MAX_CONCURRENT`, then `10`)
 - `DATABRICKS_HOST` – Databricks workspace URL for `dbfs://` manifests and `execute_sql`
 - `DATABRICKS_ACCESS_TOKEN` – Databricks access token for `dbfs://` and `execute_sql`
 
@@ -108,8 +112,10 @@ Remote manifest notes:
 - To allow insecure `http://` prebuilt artifact URIs (not recommended), set `DBT_NOVA_ARTIFACT_ALLOW_HTTP=true`.
 - Remote artifact downloads and extraction are bounded by `DBT_NOVA_ARTIFACT_MAX_BYTES`, `DBT_NOVA_ARTIFACT_ARCHIVE_MAX_ENTRIES`, and `DBT_NOVA_ARTIFACT_ARCHIVE_MAX_UNCOMPRESSED_BYTES`.
 - Bootstrap precedence is deterministic: explicit env vars override bootstrap values, and bootstrap values override defaults.
-- Tool filtering precedence is deterministic: allowlist is applied first, then denylist; denylist wins when both include the same tool.
+- Optional `catalog.json` is treated as warehouse reality: catalog column types replace manifest-declared `columns.*.data_type`, while the original manifest type, catalog-only columns, missing-in-catalog columns, stats, and type mismatches are surfaced on column payloads as `catalog_*` and `catalog_drift` fields. Catalog content is part of the storage signature, so changing it rebuilds stored entities.
+- Tool profile precedence is deterministic: the selected profile provides the eligible catalog unless `DBT_NOVA_TOOL_ALLOWLIST` is set. Allowlist is applied first, then denylist; denylist wins when both include the same tool.
 - Tool filter names are strict and case-sensitive. Unknown names in either list fail startup validation with a hard error.
+- The default `agent` profile exposes a lean read-oriented discovery/context/lineage/quality/recipe catalog and omits operator, eval, trace, storage-admin, and SQL execution tools. Use `DBT_NOVA_TOOL_PROFILE=all` for the full canonical catalog, or `ops` for operator/admin workflows.
 - Result profile defaults only fill omitted `detail` values. Callers can still
   request `detail=standard` or `detail=full` explicitly when they need richer
   payloads. With the default compact MCP profile, omitted `search_indicator`
@@ -120,6 +126,10 @@ Remote manifest notes:
   `_nova_result_meta` with byte budget, omitted path evidence, and `next_offset`
   for paginated MCP responses when enabled.
 - Tool filter examples:
+  - Full backwards-compatible MCP catalog:
+    - `DBT_NOVA_TOOL_PROFILE=all`
+  - Operator/admin catalog:
+    - `DBT_NOVA_TOOL_PROFILE=ops`
   - Allowlist only (expose only discovery + entity lookup):
     - `DBT_NOVA_TOOL_ALLOWLIST=search,get_entity`
   - Denylist only (hosted discovery-only and non-admin posture):
@@ -136,6 +146,7 @@ Remote manifest notes:
   disabled by default and require `DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1`.
 - Published container images default to `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,reload_manifest,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest` so hosted image starts are discovery-only and non-admin unless an operator clears or customizes the denylist.
 - Streamable HTTP mode has **no built-in authentication**. Keep it bound to loopback for local use, or set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when an authenticating reverse proxy is enforcing access in front of dbt-nova. For hosted/proxied deployments, set `DBT_NOVA_HTTP_ALLOWED_HOSTS` to the public/proxy hostnames clients send in `Host`. Published container images do not set these acknowledgements by default.
+- Streamable HTTP mode applies a global request body cap before the mounted MCP transport reads request bodies. Keep `DBT_NOVA_HTTP_MAX_BODY_BYTES` bounded in hosted deployments unless an outer proxy enforces a stricter limit.
 - The MCP endpoint is mounted at `DBT_NOVA_HTTP_PATH`; plain probe endpoints are always available at `/healthz` and `/readyz`.
 
 Manifest pruning notes:
@@ -514,7 +525,7 @@ Supported providers:
   - OAuth token auth: `DBT_NOVA_SNOWFLAKE_AUTH=oauth` plus `DBT_NOVA_SNOWFLAKE_OAUTH_TOKEN`. Nova uses the supplied bearer token and does not mint or refresh OAuth tokens.
   - Programmatic access token auth: `DBT_NOVA_SNOWFLAKE_AUTH=pat` plus `DBT_NOVA_SNOWFLAKE_PAT`. PAT is inferred when `DBT_NOVA_SNOWFLAKE_AUTH` is omitted and `DBT_NOVA_SNOWFLAKE_PAT` is set.
   - External browser SSO auth: `DBT_NOVA_SNOWFLAKE_AUTH=externalbrowser` plus `DBT_NOVA_SNOWFLAKE_USER`; requires `DBT_NOVA_SNOWFLAKE_ACCOUNT` because browser SSO login needs the account name. This is local interactive auth only.
-- `duckdb`: requires `DBT_NOVA_DUCKDB_PATH` and executes queries against that file in read-only mode. Optional `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH` configures DuckDB `file_search_path` for external file-backed objects.
+- `duckdb`: requires `DBT_NOVA_DUCKDB_PATH` and executes queries against that file in read-only mode. Ad-hoc DuckDB file-scan functions in `execute_sql` text are rejected. Connection-level external access for trusted file-backed database objects is disabled by default; enabling it requires `DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS=true` and `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH`, which is applied as both the DuckDB `file_search_path` and an `allowed_directories` bound before configuration is locked.
 
 Databricks runtime tuning env vars:
 - `DATABRICKS_WAIT_TIMEOUT_S` (default: `10`)
@@ -549,7 +560,7 @@ at least one row.
 DuckDB notes:
 - Named parameters are supported and rewritten to positional binds.
 - `parameter_types` is not supported for DuckDB v1 (pass scalar values via `parameters` only).
-- Connections are pooled per process and per `(duckdb_path,file_search_path)` key.
+- Connections are pooled per process and per `(duckdb_path,file_search_path,external_access)` key.
 
 When provided by callers, `row_limit`, `byte_limit`, `max_chunks`, and
 `max_poll_seconds` are clamped to the configured `DBT_NOVA_SQL_MAX_*` values.

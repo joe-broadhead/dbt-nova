@@ -1,6 +1,8 @@
 # Tools Quick Reference
 
-One-page cheatsheet for all 53 dbt-nova MCP tools.
+One-page cheatsheet for the canonical catalog of 53 MCP tools. Runtime
+server exposure may be narrowed by `DBT_NOVA_TOOL_PROFILE`, allowlist, or
+denylist.
 
 ## Discovery
 

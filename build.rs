@@ -10,7 +10,9 @@ fn main() {
 
     let strict = strict_schema();
 
-    // Load dbt + Nova JSON Schemas used for type generation.
+    // Load dbt + Nova JSON Schemas used for the public `dbt_nova::dbt_types`
+    // compatibility module. Runtime manifest loading uses the streaming parser
+    // instead of these generated types.
     let dbt_schema = read_schema("schemas/dbt/manifest_v12.json", strict);
     let nova_schema = read_schema("schemas/nova/v0.json", strict);
 

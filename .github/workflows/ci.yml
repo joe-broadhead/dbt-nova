@@ -68,6 +68,32 @@ jobs:
       - name: Test
         run: cargo test --locked --all-features
 
+  macos-smoke:
+    runs-on: macos-14
+    timeout-minutes: 45
+    env:
+      DBT_NOVA_STRICT_SCHEMA: "1"
+      CARGO_BUILD_JOBS: "1"
+      RUSTFLAGS: "-C debuginfo=0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+
+      - name: Test native macOS library path
+        run: cargo test --locked --no-default-features --lib
+
+      - name: Smoke DuckDB provider on macOS
+        run: cargo test --locked --no-default-features --test duckdb_provider execute_sql_tool_path_uses_duckdb_provider
+
+      - name: Smoke CLI binary on macOS
+        run: cargo run --locked --no-default-features -- --version
+
   msrv:
     runs-on: ubuntu-22.04
     timeout-minutes: 45

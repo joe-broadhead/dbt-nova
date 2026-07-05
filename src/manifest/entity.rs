@@ -487,7 +487,11 @@ fn get_column_names(value: &serde_json::Value) -> Vec<String> {
         return Vec::new();
     };
     match columns.as_object() {
-        Some(map) => map.keys().cloned().collect(),
+        Some(map) => {
+            let mut names: Vec<String> = map.keys().cloned().collect();
+            names.sort_unstable();
+            names
+        }
         None => Vec::new(),
     }
 }
@@ -599,9 +603,14 @@ fn has_compiled_sql(value: &serde_json::Value) -> bool {
 
 #[allow(clippy::too_many_lines)]
 fn get_nova_meta(value: &serde_json::Value) -> Option<NovaMeta> {
-    let nova_json = entity_nova_meta_json(value);
-    let nova = nova_json.as_deref().and_then(JsonValue::as_object)?;
+    let explicit = entity_nova_meta_json(value)
+        .and_then(|nova_json| nova_json.as_ref().as_object().map(parse_nova_meta_object));
+    let derived = derive_metricflow_nova_meta(value);
+    merge_nova_meta(derived, explicit)
+}
 
+#[allow(clippy::too_many_lines)]
+fn parse_nova_meta_object(nova: &serde_json::Map<String, JsonValue>) -> NovaMeta {
     let role = nova
         .get("role")
         .and_then(|v| v.as_str())
@@ -728,7 +737,7 @@ fn get_nova_meta(value: &serde_json::Value) -> Option<NovaMeta> {
 
     let search = nova.get("search").and_then(parse_nova_search);
 
-    Some(NovaMeta {
+    NovaMeta {
         role,
         semantic_type,
         synonyms,
@@ -743,7 +752,7 @@ fn get_nova_meta(value: &serde_json::Value) -> Option<NovaMeta> {
         metrics,
         governance,
         search,
-    })
+    }
 }
 
 fn parse_nova_search(value: &JsonValue) -> Option<NovaSearchMeta> {
@@ -846,6 +855,269 @@ fn parse_metric(value: &JsonValue) -> Option<NovaMetric> {
     })
 }
 
+fn empty_nova_meta() -> NovaMeta {
+    NovaMeta {
+        role: None,
+        semantic_type: None,
+        synonyms: Vec::new(),
+        domains: Vec::new(),
+        use_cases: Vec::new(),
+        example_values: Vec::new(),
+        canonical: false,
+        tier: None,
+        grain: None,
+        measures: Vec::new(),
+        metric: None,
+        metrics: Vec::new(),
+        governance: None,
+        search: None,
+    }
+}
+
+fn merge_nova_meta(derived: Option<NovaMeta>, explicit: Option<NovaMeta>) -> Option<NovaMeta> {
+    match (derived, explicit) {
+        (None, None) => None,
+        (Some(meta), None) | (None, Some(meta)) => Some(meta),
+        (Some(mut base), Some(overlay)) => {
+            base.role = overlay.role.or(base.role);
+            base.semantic_type = overlay.semantic_type.or(base.semantic_type);
+            merge_unique_strings(&mut base.synonyms, overlay.synonyms);
+            merge_unique_strings(&mut base.domains, overlay.domains);
+            merge_unique_strings(&mut base.use_cases, overlay.use_cases);
+            merge_unique_strings(&mut base.example_values, overlay.example_values);
+            base.canonical = base.canonical || overlay.canonical;
+            base.tier = overlay.tier.or(base.tier);
+            base.grain = overlay.grain.or(base.grain);
+            base.measures = merge_measures(base.measures, overlay.measures);
+            base.metric = overlay.metric.or(base.metric);
+            base.metrics = merge_metrics(base.metrics, overlay.metrics);
+            base.governance = overlay.governance.or(base.governance);
+            base.search = overlay.search.or(base.search);
+            Some(base)
+        }
+    }
+}
+
+fn merge_unique_strings(base: &mut Vec<String>, overlay: Vec<String>) {
+    for value in overlay {
+        if !base.iter().any(|existing| existing == &value) {
+            base.push(value);
+        }
+    }
+}
+
+fn merge_measures(mut base: Vec<NovaMeasure>, overlay: Vec<NovaMeasure>) -> Vec<NovaMeasure> {
+    for measure in overlay {
+        if let Some(existing) = base
+            .iter_mut()
+            .find(|candidate| candidate.name == measure.name)
+        {
+            *existing = measure;
+        } else {
+            base.push(measure);
+        }
+    }
+    base
+}
+
+fn merge_metrics(mut base: Vec<NovaMetric>, overlay: Vec<NovaMetric>) -> Vec<NovaMetric> {
+    for metric in overlay {
+        if let Some(existing) = base
+            .iter_mut()
+            .find(|candidate| candidate.name == metric.name)
+        {
+            *existing = metric;
+        } else {
+            base.push(metric);
+        }
+    }
+    base
+}
+
+fn derive_metricflow_nova_meta(value: &JsonValue) -> Option<NovaMeta> {
+    match get_string(value, "resource_type").as_deref() {
+        Some("metric") => derive_metricflow_metric_nova_meta(value),
+        Some("semantic_model") => derive_metricflow_semantic_model_nova_meta(value),
+        _ => None,
+    }
+}
+
+fn derive_metricflow_metric_nova_meta(value: &JsonValue) -> Option<NovaMeta> {
+    let name = get_string(value, "name")?;
+    let mut meta = empty_nova_meta();
+    meta.role = Some("metric".to_string());
+    meta.semantic_type = get_string(value, "type").or_else(|| Some("metric".to_string()));
+    meta.canonical = true;
+    meta.synonyms = metricflow_synonyms(value, &name);
+    let metric = NovaMetric {
+        name,
+        description: first_string_field(value, &["description", "label"]),
+        expression: metricflow_metric_expression(value),
+        synonyms: meta.synonyms.clone(),
+        template: false,
+        grain: metricflow_grain_from_value(value),
+        recommended_filters: metricflow_recommended_filters(value),
+        canonical: true,
+    };
+    meta.metric = Some(metric);
+    Some(meta)
+}
+
+fn derive_metricflow_semantic_model_nova_meta(value: &JsonValue) -> Option<NovaMeta> {
+    let measures = value
+        .get("measures")
+        .and_then(JsonValue::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(metricflow_measure_from_value)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let grain = metricflow_semantic_model_grain(value);
+    if measures.is_empty() && grain.is_none() {
+        return None;
+    }
+    let mut meta = empty_nova_meta();
+    meta.role = Some("semantic_model".to_string());
+    meta.semantic_type = Some("semantic_model".to_string());
+    meta.canonical = true;
+    meta.measures = measures;
+    meta.grain = grain;
+    Some(meta)
+}
+
+fn metricflow_measure_from_value(value: &JsonValue) -> Option<NovaMeasure> {
+    let name = get_string(value, "name")?;
+    Some(NovaMeasure {
+        name: name.clone(),
+        measure_type: first_string_field(value, &["agg", "type"]),
+        expression: first_string_field(value, &["expr", "expression"])
+            .or_else(|| Some(name.clone())),
+        description: first_string_field(value, &["description", "label"]),
+        field: first_string_field(value, &["expr", "name"]),
+        synonyms: metricflow_synonyms(value, &name),
+        canonical: true,
+    })
+}
+
+fn metricflow_metric_expression(value: &JsonValue) -> Option<String> {
+    if let Some(expression) = first_string_field(value, &["expr", "expression", "sql"]) {
+        return Some(expression);
+    }
+    let type_params = value.get("type_params")?;
+    let metric_type = get_string(value, "type").unwrap_or_default();
+    if metric_type == "simple"
+        && let Some(measure) = type_params.get("measure")
+    {
+        return metricflow_named_reference(measure);
+    }
+    serde_json::to_string(type_params).ok()
+}
+
+fn metricflow_grain_from_value(value: &JsonValue) -> Option<NovaGrain> {
+    let grain = value.get("grain").and_then(parse_grain);
+    if grain.is_some() {
+        return grain;
+    }
+    value
+        .get("type_params")
+        .and_then(|type_params| type_params.get("grain"))
+        .and_then(parse_grain)
+}
+
+fn metricflow_semantic_model_grain(value: &JsonValue) -> Option<NovaGrain> {
+    let primary_key = value
+        .get("entities")
+        .and_then(JsonValue::as_array)
+        .map(|entities| {
+            entities
+                .iter()
+                .filter(|entity| {
+                    entity
+                        .get("type")
+                        .and_then(JsonValue::as_str)
+                        .is_some_and(|entity_type| entity_type == "primary")
+                })
+                .filter_map(metricflow_name_or_expr)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let mut dimensions = Vec::new();
+    let mut time_field = None;
+    if let Some(items) = value.get("dimensions").and_then(JsonValue::as_array) {
+        for dimension in items {
+            let Some(name_or_expr) = metricflow_name_or_expr(dimension) else {
+                continue;
+            };
+            let is_time = dimension
+                .get("type")
+                .and_then(JsonValue::as_str)
+                .is_some_and(|dimension_type| dimension_type == "time");
+            if is_time && time_field.is_none() {
+                time_field = Some(name_or_expr.clone());
+            }
+            dimensions.push(name_or_expr);
+        }
+    }
+    if primary_key.is_empty() && time_field.is_none() && dimensions.is_empty() {
+        return None;
+    }
+    Some(NovaGrain {
+        primary_key,
+        time_field,
+        dimensions,
+    })
+}
+
+fn metricflow_recommended_filters(value: &JsonValue) -> Vec<NovaRecommendedFilter> {
+    value
+        .get("filter")
+        .and_then(|filter| first_string_field(filter, &["where_sql_template", "sql"]))
+        .map(|field| NovaRecommendedFilter {
+            field,
+            operator: None,
+            values: Vec::new(),
+            label: Some("MetricFlow filter".to_string()),
+        })
+        .into_iter()
+        .collect()
+}
+
+fn metricflow_named_reference(value: &JsonValue) -> Option<String> {
+    value
+        .as_str()
+        .map(str::to_string)
+        .or_else(|| first_string_field(value, &["name", "expr"]))
+}
+
+fn metricflow_name_or_expr(value: &JsonValue) -> Option<String> {
+    first_string_field(value, &["expr", "name"])
+}
+
+fn metricflow_synonyms(value: &JsonValue, canonical_name: &str) -> Vec<String> {
+    let mut synonyms = value
+        .get("synonyms")
+        .map(extract_string_array)
+        .unwrap_or_default();
+    if let Some(label) = get_string(value, "label")
+        && label != canonical_name
+        && !synonyms.iter().any(|candidate| candidate == &label)
+    {
+        synonyms.push(label);
+    }
+    synonyms
+}
+
+fn first_string_field(value: &JsonValue, fields: &[&str]) -> Option<String> {
+    fields
+        .iter()
+        .find_map(|field| value.get(*field).and_then(JsonValue::as_str))
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -903,6 +1175,87 @@ mod tests {
 
         let meta = get_nova_meta(&entity).expect("expected nova meta");
         assert!(meta.search.is_none());
+    }
+
+    #[test]
+    fn get_nova_meta_derives_metricflow_metric() {
+        let entity = serde_json::json!({
+            "resource_type": "metric",
+            "name": "gross_revenue",
+            "label": "Gross revenue",
+            "description": "Total gross revenue",
+            "type": "simple",
+            "type_params": {
+                "measure": {"name": "order_total"}
+            }
+        });
+
+        let meta = get_nova_meta(&entity).expect("expected derived nova meta");
+        let metric = meta.metric.expect("expected derived metric");
+
+        assert_eq!(meta.role.as_deref(), Some("metric"));
+        assert_eq!(metric.name, "gross_revenue");
+        assert_eq!(metric.expression.as_deref(), Some("order_total"));
+        assert_eq!(metric.synonyms, vec!["Gross revenue".to_string()]);
+        assert!(metric.canonical);
+    }
+
+    #[test]
+    fn get_nova_meta_derives_metricflow_semantic_model_measures() {
+        let entity = serde_json::json!({
+            "resource_type": "semantic_model",
+            "name": "orders_semantic",
+            "entities": [
+                {"name": "order", "type": "primary", "expr": "order_id"}
+            ],
+            "dimensions": [
+                {"name": "ordered_at", "type": "time", "expr": "ordered_at"},
+                {"name": "country", "type": "categorical"}
+            ],
+            "measures": [
+                {"name": "gross_revenue", "agg": "sum", "expr": "gross_amount", "label": "Gross revenue"}
+            ]
+        });
+
+        let meta = get_nova_meta(&entity).expect("expected derived nova meta");
+
+        assert_eq!(meta.role.as_deref(), Some("semantic_model"));
+        assert_eq!(meta.measures.len(), 1);
+        assert_eq!(meta.measures[0].measure_type.as_deref(), Some("sum"));
+        assert_eq!(meta.measures[0].field.as_deref(), Some("gross_amount"));
+        let grain = meta.grain.expect("expected derived grain");
+        assert_eq!(grain.primary_key, vec!["order_id".to_string()]);
+        assert_eq!(grain.time_field.as_deref(), Some("ordered_at"));
+        assert_eq!(
+            grain.dimensions,
+            vec!["ordered_at".to_string(), "country".to_string()]
+        );
+    }
+
+    #[test]
+    fn explicit_nova_meta_overlays_metricflow_derivation() {
+        let entity = serde_json::json!({
+            "resource_type": "metric",
+            "name": "gross_revenue",
+            "label": "Gross revenue",
+            "type": "simple",
+            "type_params": {"measure": {"name": "order_total"}},
+            "meta": {
+                "nova": {
+                    "role": "kpi",
+                    "metrics": [
+                        {"name": "net_revenue", "expression": "gross_revenue - discounts"}
+                    ]
+                }
+            }
+        });
+
+        let meta = get_nova_meta(&entity).expect("expected merged nova meta");
+
+        assert_eq!(meta.role.as_deref(), Some("kpi"));
+        assert_eq!(meta.metric.expect("derived metric").name, "gross_revenue");
+        assert_eq!(meta.metrics.len(), 1);
+        assert_eq!(meta.metrics[0].name, "net_revenue");
     }
 
     #[test]

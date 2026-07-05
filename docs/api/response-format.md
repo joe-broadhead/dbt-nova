@@ -116,6 +116,12 @@ For `search`, `include_sql=false` will omit raw/compiled SQL from full payloads.
 }
 ```
 
+For MCP clients, tool failures also set the protocol-level `isError` flag while
+retaining this structured JSON body in `content[0].text`. This applies to hard
+failures such as `NOT_FOUND`/`INVALID_PARAMS` and retryable states such as
+`INDEX_BUILDING` or `RATE_LIMITED`, so clients can rely on MCP error handling
+without losing Nova's machine-readable envelope.
+
 Some tools (for example `run_recipe` preflight validation) also return a
 structured `details` object on `INVALID_PARAMS` responses:
 

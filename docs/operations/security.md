@@ -25,6 +25,19 @@ with a configuration error.
 Storage path checks prevent traversal, and checksums validate entity store integrity.
 See [Configuration](../configuration/reference.md) for full limits.
 
+## DuckDB SQL Sandbox
+
+DuckDB `execute_sql` runs read-only queries and, by default, disables
+connection-level external access before locking connection configuration.
+Ad-hoc file and URI scan functions such as `read_csv`, `read_parquet`,
+`read_json`, `read_text`, `read_blob`, `glob`, and related scan aliases are
+rejected during SQL validation even though they parse as queries.
+
+Trusted local file-backed DuckDB use cases can opt into external access only by
+setting `DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS=true` together with
+`DBT_NOVA_DUCKDB_FILE_SEARCH_PATH`; keep this disabled for untrusted MCP clients
+and hosted endpoints.
+
 ## Hosted HTTP Authentication Posture
 
 `streamable_http` mode exposes the full MCP tool surface, including any configured
@@ -84,6 +97,7 @@ Runtime enforcement:
 
 - Non-loopback `streamable_http` binds fail validation unless `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true`.
 - Streamable HTTP requests are rejected when their `Host` header is outside the transport loopback defaults and `DBT_NOVA_HTTP_ALLOWED_HOSTS`.
+- Streamable HTTP request bodies are capped by `DBT_NOVA_HTTP_MAX_BODY_BYTES` before the MCP transport buffers them.
 - Successful `streamable_http` startup logs a warning that the transport has no built-in auth.
 
 ## Advisory Exceptions

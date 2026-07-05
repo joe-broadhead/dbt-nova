@@ -169,7 +169,6 @@ fn dbfs_manifest_rejects_legacy_token_env() {
 }
 
 #[test]
-#[ignore = "requires local socket bind timing behavior; run explicitly in environments that allow loopback bind"]
 fn http_manifest_times_out_without_cache() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral localhost port");
     let addr = listener.local_addr().expect("local addr");

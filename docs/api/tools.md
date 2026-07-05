@@ -1,6 +1,9 @@
 # Tools Reference
 
-This reference lists all 53 MCP tools exposed by dbt‑nova, grouped by category.
+This reference lists the canonical 53-tool MCP catalog, grouped by category.
+Runtime exposure is profile-filtered by `DBT_NOVA_TOOL_PROFILE`; the default
+`agent` profile is lean, while `DBT_NOVA_TOOL_PROFILE=all` exposes the full
+catalog for backwards-compatible local/operator use.
 All tools return the standard envelope described in [Response Format](response-format.md).
 For CLI equivalents and known parity gaps, see
 [MCP/CLI Parity](mcp-cli-parity.md).
@@ -144,7 +147,9 @@ with query tokens, retrievers used, and the active ranking config snapshot.
 
 ### `search_indicator`
 Search Nova measures and metrics directly, then return the parent execution
-entity and grain context.
+entity and grain context. Native dbt Semantic Layer / MetricFlow `metrics` and
+`semantic_models` are bridged into this indicator surface even when no
+hand-authored `meta.nova` block exists.
 
 Required:
 - `query`
@@ -207,6 +212,8 @@ entirely.
 ### `indicator_inventory`
 List Nova measures and metrics deterministically, with parent execution context.
 Use this when you need a flat semantic catalog instead of ranked search results.
+MetricFlow metrics and semantic-model measures are included as derived Nova
+indicators unless explicit `meta.nova` metadata overrides or extends them.
 
 Common:
 - `indicator_types` (`["metric"]`, `["measure"]`, or omitted for both)
@@ -530,6 +537,10 @@ Required:
 
 Notes:
 - Response includes `primary_key_columns` when columns are marked with `meta.primary_key: true`.
+- When `catalog.json` is configured or auto-discovered, column rows include
+  warehouse `data_type`, `catalog_data_type`, optional `catalog_stats`, and
+  `catalog_drift` fields for type mismatches, catalog-only columns, or declared
+  columns missing from the catalog.
 
 ### `get_sql`
 Return raw or compiled SQL.
@@ -1085,8 +1096,8 @@ Notes:
 - Databricks supports named parameters and preflight checks.
 - BigQuery provider is available via `DBT_NOVA_SQL_PROVIDER=bigquery` and supports named scalar parameters with optional `parameter_types`.
 - Snowflake provider is available via `DBT_NOVA_SQL_PROVIDER=snowflake`; named parameters are rewritten to SQL API positional binds and null values require explicit `parameter_types`.
-- DuckDB provider is available via `DBT_NOVA_SQL_PROVIDER=duckdb`; named parameters are supported, but `parameter_types` is not.
-- DuckDB reuses pooled read-only connections per `(duckdb_path,file_search_path)` key (`DBT_NOVA_DUCKDB_POOL_MAX_SIZE`).
+- DuckDB provider is available via `DBT_NOVA_SQL_PROVIDER=duckdb`; named parameters are supported, but `parameter_types` is not. Ad-hoc DuckDB file-scan functions in `execute_sql` text are rejected. Connection-level external access for trusted file-backed database objects is disabled unless `DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS=true` is paired with `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH`.
+- DuckDB reuses pooled read-only connections per `(duckdb_path,file_search_path,external_access)` key (`DBT_NOVA_DUCKDB_POOL_MAX_SIZE`).
 - Object-level preflight checks (`preflight_catalog`, `preflight_schema`, `preflight_relation`) require a non-empty probe result across providers; missing/inaccessible targets return `ok=false`.
 - BigQuery credentials can come from OAuth token env vars, `GOOGLE_APPLICATION_CREDENTIALS`, or gcloud ADC (same auth family used by GCS SDK mode).
 - Snowflake credentials can use key-pair JWT, a supplied OAuth bearer token, a Snowflake programmatic access token, or local interactive external browser SSO (`DBT_NOVA_SNOWFLAKE_AUTH=externalbrowser`). Snowflake SQL API workload identity federation is not implemented yet.
