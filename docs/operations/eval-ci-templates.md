@@ -38,8 +38,8 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     env:
-      DBT_NOVA_INSTALL_REF: v0.0.5
-      DBT_NOVA_VERSION: v0.0.5
+      DBT_NOVA_INSTALL_REF: v0.0.6
+      DBT_NOVA_VERSION: v0.0.6
       DBT_NOVA_VERIFY_SIGNATURE: "1"
       NOVA_EVAL_SUITE: evals/analyst-smoke.yml
       NOVA_EVAL_NAME: analyst-smoke
@@ -158,8 +158,8 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     env:
-      DBT_NOVA_INSTALL_REF: v0.0.5
-      DBT_NOVA_VERSION: v0.0.5
+      DBT_NOVA_INSTALL_REF: v0.0.6
+      DBT_NOVA_VERSION: v0.0.6
       DBT_NOVA_VERIFY_SIGNATURE: "1"
       NOVA_AGENT_SUITE: evals/analyst-agent.yml
       NOVA_AGENT_NAME: analyst-agent-smoke

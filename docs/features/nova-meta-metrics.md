@@ -88,6 +88,33 @@ meta:
 - **Deterministic grouping**: group by all grain fields.
 - **No joins/windowing**: keep metrics simple and owned by a single canonical model.
 
+## Cross-Grain KPIs
+
+Some business KPIs combine measures from different fact tables or natural
+grains, such as revenue per session, cost per acquisition, or return rate. Nova
+should make those KPIs discoverable only when there is a deterministic execution
+surface. Do not encode a cross-grain KPI only as `meta.nova` metadata and expect
+an agent to infer the raw fact-table join.
+
+For cross-grain KPIs, prefer one of these surfaces:
+
+- a dbt model at the intended analysis grain;
+- an existing `meta.nova` measure or metric on a queryable dbt artifact;
+- a dbt Semantic Layer / MetricFlow artifact;
+- an OSI semantic artifact when the artifact is scoped and deterministic;
+- a saved query or Nova recipe for report-shaped outputs.
+
+`composite_metrics` and `NovaMetric.derivation` graphs are not part of the
+current Nova schema. They should not be used as metadata-only substitutes for a
+queryable surface. Nova-native composite metrics may be revisited later only if
+Nova owns a narrow SQL compiler, validation, explainability, and fail-closed
+behavior.
+
+Agent guidance: if a KPI crosses grain boundaries and no deterministic surface
+exists, treat it as non-queryable context. Ask for or propose a dbt model,
+semantic-layer metric, OSI artifact, saved query, or recipe instead of joining
+heterogeneous facts from metric names alone.
+
 ### SQL Example
 
 `models/marts/product/mart__conversion_rate/mart__conversion_rate.sql`
