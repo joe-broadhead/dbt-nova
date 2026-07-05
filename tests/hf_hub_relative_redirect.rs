@@ -6,7 +6,6 @@ use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
-#[ignore = "requires local socket bind for wiremock; run explicitly in environments that allow loopback bind"]
 async fn sync_api_download_handles_relative_redirect_locations() {
     let server = MockServer::start().await;
     let model_path = "/test-model/resolve/main/onnx/model.onnx";

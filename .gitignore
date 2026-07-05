@@ -17,5 +17,6 @@ tests/fixtures/*.duckdb
 .codex
 
 /fuzz/target
+/fuzz/Cargo.lock
 /fuzz/corpus
 /fuzz/artifacts

@@ -25,6 +25,7 @@ fn lock_env() -> std::sync::MutexGuard<'static, ()> {
 struct EnvGuard {
     old_duckdb_path: Option<String>,
     old_file_search_path: Option<String>,
+    old_allow_external_access: Option<String>,
 }
 
 impl Drop for EnvGuard {
@@ -49,13 +50,32 @@ impl Drop for EnvGuard {
                 unsafe { std::env::remove_var("DBT_NOVA_DUCKDB_FILE_SEARCH_PATH") };
             }
         }
+        match &self.old_allow_external_access {
+            Some(value) => {
+                // SAFETY: tests serialize env mutation through `ENV_MUTEX`.
+                unsafe { std::env::set_var("DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS", value) };
+            }
+            None => {
+                // SAFETY: tests serialize env mutation through `ENV_MUTEX`.
+                unsafe { std::env::remove_var("DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS") };
+            }
+        }
     }
 }
 
 fn configure_duckdb_env(path: Option<&Path>, file_search_path: Option<&str>) -> EnvGuard {
+    configure_duckdb_env_with_external_access(path, file_search_path, false)
+}
+
+fn configure_duckdb_env_with_external_access(
+    path: Option<&Path>,
+    file_search_path: Option<&str>,
+    allow_external_access: bool,
+) -> EnvGuard {
     let guard = EnvGuard {
         old_duckdb_path: std::env::var("DBT_NOVA_DUCKDB_PATH").ok(),
         old_file_search_path: std::env::var("DBT_NOVA_DUCKDB_FILE_SEARCH_PATH").ok(),
+        old_allow_external_access: std::env::var("DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS").ok(),
     };
 
     match path {
@@ -77,6 +97,13 @@ fn configure_duckdb_env(path: Option<&Path>, file_search_path: Option<&str>) -> 
             // SAFETY: tests serialize env mutation through `ENV_MUTEX`.
             unsafe { std::env::remove_var("DBT_NOVA_DUCKDB_FILE_SEARCH_PATH") };
         }
+    }
+    if allow_external_access {
+        // SAFETY: tests serialize env mutation through `ENV_MUTEX`.
+        unsafe { std::env::set_var("DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS", "true") };
+    } else {
+        // SAFETY: tests serialize env mutation through `ENV_MUTEX`.
+        unsafe { std::env::remove_var("DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS") };
     }
 
     guard
@@ -265,7 +292,7 @@ fn duckdb_execute_rejects_parameter_types() {
 }
 
 #[test]
-fn duckdb_execute_external_file_query_honors_file_search_path() {
+fn duckdb_execute_external_file_query_requires_bounded_external_access_opt_in() {
     let _env_lock = lock_env();
     let (temp_dir, db_path) = create_fixture_database();
     let (external_dir, _csv_path) = create_external_csv(&temp_dir);
@@ -285,12 +312,32 @@ fn duckdb_execute_external_file_query_honors_file_search_path() {
     }
 
     let file_search_path = external_dir.to_string_lossy().to_string();
-    let _env_guard = configure_duckdb_env(Some(&db_path), Some(file_search_path.as_str()));
+    {
+        let _env_guard = configure_duckdb_env(Some(&db_path), Some(file_search_path.as_str()));
+        let err = runtime
+            .block_on(DUCKDB_PROVIDER.execute(&params))
+            .expect_err("query should fail without explicit external-access opt-in");
+        assert!(
+            err.to_string().contains("external access")
+                || err.to_string().contains("External access")
+                || err
+                    .to_string()
+                    .contains("file system operations are disabled"),
+            "expected external access to stay disabled, got: {err}"
+        );
+    }
+
+    let _env_guard = configure_duckdb_env_with_external_access(
+        Some(&db_path),
+        Some(file_search_path.as_str()),
+        true,
+    );
     let payload = runtime
         .block_on(DUCKDB_PROVIDER.execute(&params))
-        .expect("query should succeed when file_search_path is configured");
+        .expect("query should succeed when bounded external access is explicitly enabled");
     assert_eq!(payload["success"], json!(true));
     assert_eq!(payload["data"]["provider"], json!("duckdb"));
+    assert_eq!(payload["data"]["external_access"], json!(true));
     assert_eq!(payload["data"]["rows"].as_array().map_or(0, Vec::len), 1);
 }
 

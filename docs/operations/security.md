@@ -84,6 +84,7 @@ Runtime enforcement:
 
 - Non-loopback `streamable_http` binds fail validation unless `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true`.
 - Streamable HTTP requests are rejected when their `Host` header is outside the transport loopback defaults and `DBT_NOVA_HTTP_ALLOWED_HOSTS`.
+- Streamable HTTP request bodies are capped by `DBT_NOVA_HTTP_MAX_BODY_BYTES` before the MCP transport buffers them.
 - Successful `streamable_http` startup logs a warning that the transport has no built-in auth.
 
 ## Advisory Exceptions

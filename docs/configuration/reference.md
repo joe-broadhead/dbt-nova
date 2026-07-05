@@ -43,6 +43,7 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_HTTP_STATEFUL_MODE` – enable stateful streamable HTTP sessions (`true`|`false`, default: `true`)
 - `DBT_NOVA_HTTP_SSE_KEEP_ALIVE_SECS` – SSE keepalive interval for streamable HTTP mode (`0` disables keepalives, default: `15`)
 - `DBT_NOVA_HTTP_SSE_RETRY_SECS` – SSE retry hint for streamable HTTP mode (`0` disables retry hints, default: `3`)
+- `DBT_NOVA_HTTP_MAX_BODY_BYTES` – global streamable HTTP request body cap (`0` disables the in-process cap, default: `16777216`)
 - `DBT_NOVA_STRICT_SCHEMA` – fail build if schema files are missing or invalid (`true`|`false`, default: `false`; forced `true` in CI)
 - `DBT_NOVA_S3_MODE` – S3 fetch mode (`https` or `sdk`, default: `https`)
 - `DBT_NOVA_GCS_MODE` – GCS fetch mode (`https` or `sdk`, default: `https`)
@@ -91,8 +92,9 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_SNOWFLAKE_MAX_POLL_SECONDS` – provider default polling duration before local cancellation (default: `600`)
 - `DBT_NOVA_SNOWFLAKE_MAX_CHUNKS` – provider default max result partitions fetched (default: `50`)
 - `DBT_NOVA_DUCKDB_PATH` – required DuckDB database file when `DBT_NOVA_SQL_PROVIDER=duckdb`
-- `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH` – optional DuckDB `file_search_path` used for external file-backed objects when `DBT_NOVA_SQL_PROVIDER=duckdb`
-- `DBT_NOVA_DUCKDB_POOL_MAX_SIZE` – optional max pooled DuckDB connections per `(duckdb_path,file_search_path)` key (default: falls back to `DBT_NOVA_SQL_MAX_CONCURRENT`, then `10`)
+- `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH` – optional DuckDB `file_search_path` and `allowed_directories` bound used only when `DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS=true`
+- `DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS` – opt in to connection-level DuckDB external access for trusted file-backed database objects under the configured `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH` (`true`|`false`, default: `false`); ad-hoc file-scan functions in `execute_sql` text remain rejected
+- `DBT_NOVA_DUCKDB_POOL_MAX_SIZE` – optional max pooled DuckDB connections per `(duckdb_path,file_search_path,external_access)` key (default: falls back to `DBT_NOVA_SQL_MAX_CONCURRENT`, then `10`)
 - `DATABRICKS_HOST` – Databricks workspace URL for `dbfs://` manifests and `execute_sql`
 - `DATABRICKS_ACCESS_TOKEN` – Databricks access token for `dbfs://` and `execute_sql`
 
@@ -136,6 +138,7 @@ Remote manifest notes:
   disabled by default and require `DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1`.
 - Published container images default to `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,reload_manifest,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest` so hosted image starts are discovery-only and non-admin unless an operator clears or customizes the denylist.
 - Streamable HTTP mode has **no built-in authentication**. Keep it bound to loopback for local use, or set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when an authenticating reverse proxy is enforcing access in front of dbt-nova. For hosted/proxied deployments, set `DBT_NOVA_HTTP_ALLOWED_HOSTS` to the public/proxy hostnames clients send in `Host`. Published container images do not set these acknowledgements by default.
+- Streamable HTTP mode applies a global request body cap before the mounted MCP transport reads request bodies. Keep `DBT_NOVA_HTTP_MAX_BODY_BYTES` bounded in hosted deployments unless an outer proxy enforces a stricter limit.
 - The MCP endpoint is mounted at `DBT_NOVA_HTTP_PATH`; plain probe endpoints are always available at `/healthz` and `/readyz`.
 
 Manifest pruning notes:
@@ -514,7 +517,7 @@ Supported providers:
   - OAuth token auth: `DBT_NOVA_SNOWFLAKE_AUTH=oauth` plus `DBT_NOVA_SNOWFLAKE_OAUTH_TOKEN`. Nova uses the supplied bearer token and does not mint or refresh OAuth tokens.
   - Programmatic access token auth: `DBT_NOVA_SNOWFLAKE_AUTH=pat` plus `DBT_NOVA_SNOWFLAKE_PAT`. PAT is inferred when `DBT_NOVA_SNOWFLAKE_AUTH` is omitted and `DBT_NOVA_SNOWFLAKE_PAT` is set.
   - External browser SSO auth: `DBT_NOVA_SNOWFLAKE_AUTH=externalbrowser` plus `DBT_NOVA_SNOWFLAKE_USER`; requires `DBT_NOVA_SNOWFLAKE_ACCOUNT` because browser SSO login needs the account name. This is local interactive auth only.
-- `duckdb`: requires `DBT_NOVA_DUCKDB_PATH` and executes queries against that file in read-only mode. Optional `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH` configures DuckDB `file_search_path` for external file-backed objects.
+- `duckdb`: requires `DBT_NOVA_DUCKDB_PATH` and executes queries against that file in read-only mode. Ad-hoc DuckDB file-scan functions in `execute_sql` text are rejected. Connection-level external access for trusted file-backed database objects is disabled by default; enabling it requires `DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS=true` and `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH`, which is applied as both the DuckDB `file_search_path` and an `allowed_directories` bound before configuration is locked.
 
 Databricks runtime tuning env vars:
 - `DATABRICKS_WAIT_TIMEOUT_S` (default: `10`)
@@ -549,7 +552,7 @@ at least one row.
 DuckDB notes:
 - Named parameters are supported and rewritten to positional binds.
 - `parameter_types` is not supported for DuckDB v1 (pass scalar values via `parameters` only).
-- Connections are pooled per process and per `(duckdb_path,file_search_path)` key.
+- Connections are pooled per process and per `(duckdb_path,file_search_path,external_access)` key.
 
 When provided by callers, `row_limit`, `byte_limit`, `max_chunks`, and
 `max_poll_seconds` are clamped to the configured `DBT_NOVA_SQL_MAX_*` values.

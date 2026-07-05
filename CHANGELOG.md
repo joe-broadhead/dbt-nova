@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Hardened DuckDB `execute_sql` by disabling external file/table access by
+  default, requiring an explicit bounded `DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS`
+  opt-in, and rejecting DuckDB file-scan functions in SQL validation.
+- Added a global streamable HTTP request body cap
+  (`DBT_NOVA_HTTP_MAX_BODY_BYTES`) before the mounted MCP transport buffers
+  requests.
+- Moved indicator/column full-store scans off tokio worker threads, stabilized
+  lineage adjacency ordering, expanded fuzz/CI coverage, and removed the unused
+  direct `lru` dependency.
+
 ## [0.0.6] - 2026-07-04
 
 - Hardened OCI release images to upgrade pinned Debian runtime packages during

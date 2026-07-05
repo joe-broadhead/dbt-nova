@@ -39,6 +39,7 @@
   "http_stateful_mode": true,
   "http_sse_keep_alive_secs": 15,
   "http_sse_retry_secs": 3,
+  "http_max_body_bytes": 16777216,
   "tool_rate_limits": "search=60,execute_sql=20,default=120",
   "tool_rate_limit_window_secs": 60,
   "tool_allowlist": "",

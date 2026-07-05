@@ -43,7 +43,11 @@ pub(super) fn map_set_to_vec(
     map: HashMap<String, HashSet<String>>,
 ) -> HashMap<String, Vec<String>> {
     map.into_iter()
-        .map(|(k, v)| (k, v.into_iter().collect()))
+        .map(|(k, v)| {
+            let mut values: Vec<String> = v.into_iter().collect();
+            values.sort_unstable();
+            (k, values)
+        })
         .collect()
 }
 
@@ -578,10 +582,34 @@ pub(super) fn parse_manifest_file(
 
 #[cfg(test)]
 mod tests {
-    use super::{ManifestAccumulator, parse_manifest_file};
+    use super::{ManifestAccumulator, map_set_to_vec, parse_manifest_file};
+    use std::collections::{HashMap, HashSet};
     use std::fs;
     use std::time::Instant;
     use tempfile::tempdir;
+
+    #[test]
+    fn map_set_to_vec_sorts_adjacency_for_stable_lineage() {
+        let map = HashMap::from([(
+            "model.pkg.orders".to_string(),
+            HashSet::from([
+                "model.pkg.stg_payments".to_string(),
+                "model.pkg.stg_customers".to_string(),
+                "model.pkg.stg_orders".to_string(),
+            ]),
+        )]);
+
+        let sorted = map_set_to_vec(map);
+
+        assert_eq!(
+            sorted.get("model.pkg.orders").expect("adjacency"),
+            &vec![
+                "model.pkg.stg_customers".to_string(),
+                "model.pkg.stg_orders".to_string(),
+                "model.pkg.stg_payments".to_string(),
+            ]
+        );
+    }
 
     #[test]
     fn parse_manifest_prunes_by_allow_and_strict_analysis_dependencies() {

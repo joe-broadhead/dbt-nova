@@ -1,6 +1,6 @@
 //! Tests for SQL tools and statement validation.
 use super::common::*;
-use crate::tools::sql::validate_sql_statement;
+use crate::tools::sql::validate_sql_statement_for_provider;
 
 // Get SQL Tests
 #[tokio::test(flavor = "multi_thread")]
@@ -62,9 +62,11 @@ async fn test_get_sql_not_found() {
 
 #[test]
 fn test_sql_validation_allows_select() {
-    assert!(validate_sql_statement("SELECT * FROM some_table").is_ok());
-    assert!(validate_sql_statement("SELECT a, b FROM t WHERE x = 1").is_ok());
-    assert!(validate_sql_statement("EXPLAIN SELECT * FROM t").is_ok());
+    assert!(validate_sql_statement_for_provider("SELECT * FROM some_table", "generic").is_ok());
+    assert!(
+        validate_sql_statement_for_provider("SELECT a, b FROM t WHERE x = 1", "generic").is_ok()
+    );
+    assert!(validate_sql_statement_for_provider("EXPLAIN SELECT * FROM t", "generic").is_ok());
 }
 
 #[test]
@@ -82,7 +84,7 @@ fn test_sql_validation_blocks_dangerous() {
 
     for stmt in dangerous {
         assert!(
-            validate_sql_statement(stmt).is_err(),
+            validate_sql_statement_for_provider(stmt, "generic").is_err(),
             "Should block: {stmt}"
         );
     }

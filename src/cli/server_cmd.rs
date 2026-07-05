@@ -9,6 +9,7 @@ use rmcp::transport::{
 use serde_json::json;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
+use tower_http::limit::RequestBodyLimitLayer;
 use tracing::{error, info, warn};
 
 use crate::cli::args::{ServerStartArgs, ServerTransportArg};
@@ -30,6 +31,7 @@ struct HttpServerSettings {
     stateful_mode: bool,
     sse_keep_alive_secs: u64,
     sse_retry_secs: u64,
+    max_body_bytes: usize,
     allowed_hosts: Vec<String>,
 }
 
@@ -47,6 +49,7 @@ impl HttpServerSettings {
             stateful_mode: config.http_stateful_mode,
             sse_keep_alive_secs: config.http_sse_keep_alive_secs,
             sse_retry_secs: config.http_sse_retry_secs,
+            max_body_bytes: config.http_max_body_bytes,
             allowed_hosts: parse_http_allowed_hosts(&config.http_allowed_hosts),
         }
     }
@@ -247,6 +250,11 @@ async fn serve_streamable_http(
     } else {
         base_app.nest_service(settings.path.as_str(), service)
     };
+    let app = if settings.max_body_bytes > 0 {
+        app.layer(RequestBodyLimitLayer::new(settings.max_body_bytes))
+    } else {
+        app
+    };
 
     let bind_host = settings.host.clone();
     let bind_port = settings.port;
@@ -265,6 +273,7 @@ async fn serve_streamable_http(
         bind_addr = %local_addr,
         http_path = %settings.path,
         stateful_mode = settings.stateful_mode,
+        max_body_bytes = settings.max_body_bytes,
         "dbt-nova HTTP server listening"
     );
 
@@ -582,6 +591,7 @@ mod tests {
 
         let settings = HttpServerSettings::from_config(&config);
 
+        assert_eq!(settings.max_body_bytes, 16 * 1024 * 1024);
         assert_eq!(
             settings.allowed_hosts,
             vec![
@@ -724,6 +734,43 @@ mod tests {
             "unexpected body: {body}"
         );
         assert!(body.contains(r#""id":1"#), "unexpected body: {body}");
+    }
+
+    #[tokio::test]
+    async fn http_transport_rejects_oversized_request_body() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let port = next_test_port().await;
+        let shutdown = CancellationToken::new();
+        let mut config = http_test_config(&temp_dir, fixture_manifest_path_string(), port);
+        config.http_max_body_bytes = 32;
+
+        let server_task = tokio::spawn(start_with_config_and_shutdown(config, shutdown.clone()));
+        let client = Client::new();
+        let _liveness = wait_for_http_status(
+            &client,
+            &format!("http://127.0.0.1:{port}/healthz"),
+            reqwest::StatusCode::OK,
+            Some("ok"),
+        )
+        .await;
+
+        let response = client
+            .post(format!("http://127.0.0.1:{port}/mcp"))
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#)
+            .send()
+            .await
+            .expect("HTTP request should succeed");
+
+        shutdown.cancel();
+        let join_result = server_task.await.expect("server task");
+        assert!(
+            join_result.is_ok(),
+            "server should shut down cleanly: {join_result:?}"
+        );
+
+        assert_eq!(response.status(), reqwest::StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     #[tokio::test]

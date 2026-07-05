@@ -33,12 +33,14 @@ static DUCKDB_POOL_REGISTRY: OnceLock<RwLock<HashMap<DuckDbPoolKey, Arc<DuckDbCo
 struct DuckDbConfig {
     path: PathBuf,
     file_search_path: Option<String>,
+    allow_external_access: bool,
 }
 
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
 struct DuckDbPoolKey {
     path: PathBuf,
     file_search_path: Option<String>,
+    allow_external_access: bool,
 }
 
 impl DuckDbPoolKey {
@@ -46,6 +48,7 @@ impl DuckDbPoolKey {
         Self {
             path: config.path.clone(),
             file_search_path: config.file_search_path.clone(),
+            allow_external_access: config.allow_external_access,
         }
     }
 }
@@ -156,10 +159,18 @@ impl DuckDbConfig {
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty());
+        let allow_external_access =
+            parse_bool_env("DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS").unwrap_or(false);
+        if allow_external_access && file_search_path.is_none() {
+            return Err(DbtNovaError::InvalidParams(
+                "DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS=true requires DBT_NOVA_DUCKDB_FILE_SEARCH_PATH so external reads are bounded to an operator-approved directory".to_string(),
+            ));
+        }
 
         Ok(Self {
             path,
             file_search_path,
+            allow_external_access,
         })
     }
 }
@@ -241,6 +252,25 @@ fn sql_string_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
+fn sql_string_array_literal(values: &[&str]) -> String {
+    let literals = values
+        .iter()
+        .map(|value| sql_string_literal(value))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{literals}]")
+}
+
+fn parse_bool_env(key: &str) -> Option<bool> {
+    env::var(key)
+        .ok()
+        .and_then(|value| match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "y" | "on" => Some(true),
+            "0" | "false" | "no" | "n" | "off" => Some(false),
+            _ => None,
+        })
+}
+
 fn open_connection(config: &DuckDbConfig) -> Result<Connection> {
     let open_config = Config::default()
         .access_mode(AccessMode::ReadOnly)
@@ -251,17 +281,32 @@ fn open_connection(config: &DuckDbConfig) -> Result<Connection> {
     let connection = Connection::open_with_flags(&config.path, open_config)
         .map_err(|err| duckdb_runtime_error(format!("failed to open database: {err}")))?;
 
-    if let Some(file_search_path) = &config.file_search_path {
-        let statement = format!(
-            "SET file_search_path = {}",
-            sql_string_literal(file_search_path)
-        );
-        connection.execute_batch(&statement).map_err(|err| {
-            duckdb_runtime_error(format!(
-                "failed to apply DBT_NOVA_DUCKDB_FILE_SEARCH_PATH: {err}"
-            ))
-        })?;
+    if config.allow_external_access {
+        if let Some(file_search_path) = &config.file_search_path {
+            let allowed_directories = sql_string_array_literal(&[file_search_path.as_str()]);
+            let statement = format!(
+                "SET allowed_directories = {allowed_directories}; SET file_search_path = {}",
+                sql_string_literal(file_search_path)
+            );
+            connection.execute_batch(&statement).map_err(|err| {
+                duckdb_runtime_error(format!(
+                    "failed to apply DBT_NOVA_DUCKDB_FILE_SEARCH_PATH external-access bounds: {err}"
+                ))
+            })?;
+        }
+    } else {
+        connection
+            .execute_batch("SET enable_external_access = false")
+            .map_err(|err| {
+                duckdb_runtime_error(format!("failed to disable DuckDB external access: {err}"))
+            })?;
     }
+
+    connection
+        .execute_batch("SET lock_configuration = true")
+        .map_err(|err| {
+            duckdb_runtime_error(format!("failed to lock DuckDB configuration: {err}"))
+        })?;
 
     Ok(connection)
 }
@@ -631,6 +676,7 @@ fn execute_duckdb_sync_with_connection(
         "provider": "duckdb",
         "duckdb_path": config.path.display().to_string(),
         "file_search_path": config.file_search_path,
+        "external_access": config.allow_external_access,
         "columns": columns,
         "column_types": column_types,
         "rows": rows,
@@ -852,6 +898,10 @@ fn preflight_duckdb_sync_with_connection(
             .clone()
             .map_or(Value::Null, Value::String),
     );
+    metadata.insert(
+        "external_access".to_string(),
+        Value::Bool(config.allow_external_access),
+    );
     build_preflight_response("duckdb", metadata, report)
 }
 
@@ -859,6 +909,7 @@ fn missing_configuration_preflight_payload(message: &str) -> Result<Value> {
     let mut metadata = JsonMap::new();
     metadata.insert("duckdb_path".to_string(), Value::Null);
     metadata.insert("file_search_path".to_string(), Value::Null);
+    metadata.insert("external_access".to_string(), Value::Bool(false));
     build_configuration_failure_response(
         "duckdb",
         metadata,
@@ -879,6 +930,10 @@ fn configuration_failure_preflight_payload(config: &DuckDbConfig, message: &str)
             .file_search_path
             .clone()
             .map_or(Value::Null, Value::String),
+    );
+    metadata.insert(
+        "external_access".to_string(),
+        Value::Bool(config.allow_external_access),
     );
     build_configuration_failure_response(
         "duckdb",
@@ -1101,6 +1156,7 @@ mod tests {
         let config = DuckDbConfig {
             path: PathBuf::from("/tmp/example.duckdb"),
             file_search_path: Some("/tmp/data".to_string()),
+            allow_external_access: true,
         };
         let payload = configuration_failure_preflight_payload(&config, "open failed")
             .expect("payload should serialize");

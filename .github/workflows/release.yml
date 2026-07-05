@@ -163,6 +163,15 @@ jobs:
           TARGET_TRIPLE: ${{ matrix.target }}
         run: cargo build --locked --release --all-features --target "${TARGET_TRIPLE}"
 
+      - name: Smoke native release binary
+        shell: bash
+        env:
+          TARGET_TRIPLE: ${{ matrix.target }}
+          BIN_EXT: ${{ matrix.ext }}
+        run: |
+          set -euo pipefail
+          "target/${TARGET_TRIPLE}/release/dbt-nova${BIN_EXT}" --version
+
       - name: Package
         shell: bash
         env:

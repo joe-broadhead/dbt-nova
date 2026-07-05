@@ -255,6 +255,8 @@ pub struct DbtNovaConfig {
     pub http_sse_keep_alive_secs: u64,
     /// SSE retry hint in seconds for hosted HTTP mode (0 = disable)
     pub http_sse_retry_secs: u64,
+    /// Maximum inbound HTTP request body bytes for hosted mode (0 = unlimited)
+    pub http_max_body_bytes: usize,
     /// Per-tool rate limits (comma-separated, e.g. "`search=60,execute_sql=30,default=120`")
     pub tool_rate_limits: String,
     /// Rate limit window size in seconds
@@ -369,6 +371,7 @@ impl Default for DbtNovaConfig {
             http_stateful_mode: true,
             http_sse_keep_alive_secs: 15,
             http_sse_retry_secs: 3,
+            http_max_body_bytes: 16 * 1024 * 1024,
             tool_rate_limits: "search=60,execute_sql=20,default=120".to_string(),
             tool_rate_limit_window_secs: 60,
             tool_allowlist: String::new(),
@@ -1061,6 +1064,9 @@ impl DbtNovaConfig {
         }
         if let Some(value) = parse_u64("DBT_NOVA_HTTP_SSE_RETRY_SECS") {
             self.http_sse_retry_secs = value;
+        }
+        if let Some(value) = parse_usize("DBT_NOVA_HTTP_MAX_BODY_BYTES") {
+            self.http_max_body_bytes = value;
         }
 
         self.apply_http_platform_port_fallback(
@@ -1968,6 +1974,42 @@ mod tests {
             config.http_allowed_hosts,
             "nova.example.com,nova.example.com:443"
         );
+    }
+
+    #[test]
+    fn from_env_reads_http_max_body_bytes() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [("DBT_NOVA_HTTP_MAX_BODY_BYTES", Some("4096"))];
+        let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let config = DbtNovaConfig::from_env();
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        assert_eq!(config.http_max_body_bytes, 4096);
     }
 
     #[test]

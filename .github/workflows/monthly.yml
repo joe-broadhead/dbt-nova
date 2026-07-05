@@ -36,11 +36,13 @@ jobs:
 
       - name: Run Fuzz Targets (short)
         run: |
-          cargo fuzz run \
-            --fuzz-dir fuzz \
-            --target x86_64-unknown-linux-gnu \
-            manifest_entity \
-            -- -max_total_time=60
+          for target in manifest_entity nova_meta_yaml; do
+            cargo fuzz run \
+              --fuzz-dir fuzz \
+              --target x86_64-unknown-linux-gnu \
+              "${target}" \
+              -- -max_total_time=120
+          done
 
   deny:
     runs-on: ubuntu-22.04

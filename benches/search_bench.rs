@@ -8,7 +8,9 @@ use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use std::time::Duration;
 use tokio::runtime::Runtime;
 
-use dbt_nova::params::{DetailLevel, GetLineageParams, SearchParams};
+use dbt_nova::params::{
+    DetailLevel, GetLineageParams, IndicatorInventoryParams, SearchColumnsParams, SearchParams,
+};
 
 #[path = "../tests/support/fixtures.rs"]
 mod fixtures;
@@ -52,11 +54,40 @@ fn bench_lineage(c: &mut Criterion) {
     });
 }
 
+fn bench_indicator_inventory(c: &mut Criterion) {
+    let env = fixtures::load_fixture("nova_manifest.json").unwrap();
+    let rt = Runtime::new().unwrap();
+    let params = IndicatorInventoryParams::default();
+
+    c.bench_function("indicator_inventory_scan", |b| {
+        b.iter(|| {
+            rt.block_on(env.indicator_inventory(black_box(&params)))
+                .expect("indicator inventory failed");
+        })
+    });
+}
+
+fn bench_search_columns(c: &mut Criterion) {
+    let env = fixtures::load_fixture("nova_manifest.json").unwrap();
+    let rt = Runtime::new().unwrap();
+    let params = SearchColumnsParams {
+        query: "customer revenue".to_string(),
+        ..Default::default()
+    };
+
+    c.bench_function("search_columns_scan", |b| {
+        b.iter(|| {
+            rt.block_on(env.search_columns(black_box(&params)))
+                .expect("column search failed");
+        })
+    });
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
         .sample_size(50)
         .measurement_time(Duration::from_secs(7));
-    targets = bench_search, bench_lineage
+    targets = bench_search, bench_lineage, bench_indicator_inventory, bench_search_columns
 }
 criterion_main!(benches);

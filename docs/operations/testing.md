@@ -155,7 +155,8 @@ Short fuzz runs are scheduled in CI on the first day of each month. To run local
 
 ```bash
 cargo install cargo-fuzz
-cargo fuzz run manifest_entity -- -max_total_time=60
+cargo fuzz run manifest_entity -- -max_total_time=120
+cargo fuzz run nova_meta_yaml -- -max_total_time=120
 ```
 
 ## Coverage
