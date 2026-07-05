@@ -137,27 +137,26 @@ Minimal MCP client config:
 
 Install `cosign` first when using the release installer examples below; they
 require signed checksum verification. For trusted development-only installs
-without `cosign` on `v0.0.5`, omit `DBT_NOVA_VERIFY_SIGNATURE=1`. The next
-installer also accepts `DBT_NOVA_VERIFY_SIGNATURE=auto` for opportunistic
-verification.
+without `cosign`, use `DBT_NOVA_VERIFY_SIGNATURE=auto` instead of the strict
+`DBT_NOVA_VERIFY_SIGNATURE=1` examples.
 
 ```bash
 # Install (recommended: slim + non-interactive)
 # Public repo (unauthenticated)
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.5/scripts/install.sh | \
-  DBT_NOVA_VERSION=v0.0.5 DBT_NOVA_VERIFY_SIGNATURE=1 bash -s -- --slim --non-interactive
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
+  DBT_NOVA_VERSION=v0.0.6 DBT_NOVA_VERIFY_SIGNATURE=1 bash -s -- --slim --non-interactive
 
 # Private repo (authenticated)
 GH_TOKEN="$(gh auth token)"
 curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
-  https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.5/scripts/install.sh | \
-  DBT_NOVA_VERSION=v0.0.5 DBT_NOVA_VERIFY_SIGNATURE=1 DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --slim --non-interactive
+  https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
+  DBT_NOVA_VERSION=v0.0.6 DBT_NOVA_VERIFY_SIGNATURE=1 DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --slim --non-interactive
 
 # Optional: pre-warm model files during install before enabling semantic layers
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.5/scripts/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
   DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/.fastembed_cache" \
   DBT_NOVA_WARMUP_REQUIRED_MODELS=3 \
-  DBT_NOVA_VERSION=v0.0.5 DBT_NOVA_VERIFY_SIGNATURE=1 bash -s -- --slim --warm-models --non-interactive
+  DBT_NOVA_VERSION=v0.0.6 DBT_NOVA_VERIFY_SIGNATURE=1 bash -s -- --slim --warm-models --non-interactive
 
 # Optional: enforce SHA-256 verification during direct HF fallback warmup
 # cp scripts/warm_models.checksums.example /path/to/checksums.txt
@@ -166,11 +165,11 @@ curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.5/scrip
 #   bash scripts/warm_models.sh
 
 # Optional: install all built-in persona skills to ~/.agents/skills
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.5/scripts/install.sh | \
-  DBT_NOVA_VERSION=v0.0.5 DBT_NOVA_VERIFY_SIGNATURE=1 bash -s -- --slim --install-skills --non-interactive
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
+  DBT_NOVA_VERSION=v0.0.6 DBT_NOVA_VERIFY_SIGNATURE=1 bash -s -- --slim --install-skills --non-interactive
 
 # Optional: install a single standalone skill
-# DBT_NOVA_VERSION=v0.0.5 DBT_NOVA_VERIFY_SIGNATURE=1 bash -s -- --slim --install-skills --skill analyst --non-interactive
+# DBT_NOVA_VERSION=v0.0.6 DBT_NOVA_VERIFY_SIGNATURE=1 bash -s -- --slim --install-skills --skill analyst --non-interactive
 
 export DBT_MANIFEST_PATH=/path/to/manifest.json
 export DBT_NOVA_PRUNE_ALLOW_IDS='["model.my_proj.fct_orders","model.my_proj.dim_*"]'
@@ -205,9 +204,8 @@ switch to strict read-only reuse.
 Producer (reusable workflow):
 
 Set `<nova-ref>` to a release tag or full commit SHA that includes the workflow
-inputs you use. `v0.0.5` supports the basic producer flow; runner override
-inputs require a newer release or immutable commit SHA until the next release is
-cut.
+inputs you use. `v0.0.6` includes the runner override inputs; use `v0.0.6`, a
+newer release tag, or an immutable commit SHA when passing them.
 
 ```yaml
 jobs:

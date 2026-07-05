@@ -22,10 +22,10 @@ Install `cosign` first when using the strict release installer example below.
 If you installed with:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.5/scripts/install.sh | \
+curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
   DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/.fastembed_cache" \
   DBT_NOVA_WARMUP_REQUIRED_MODELS=3 \
-  DBT_NOVA_VERSION=v0.0.5 DBT_NOVA_VERIFY_SIGNATURE=1 bash -s -- --slim --warm-models --non-interactive
+  DBT_NOVA_VERSION=v0.0.6 DBT_NOVA_VERIFY_SIGNATURE=1 bash -s -- --slim --warm-models --non-interactive
 ```
 
 use that exact same `DBT_NOVA_EMBEDDINGS_CACHE_DIR` path in your MCP client env.

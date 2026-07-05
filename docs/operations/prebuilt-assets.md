@@ -43,9 +43,9 @@ Create a workflow in the downstream repo that calls Nova's reusable producer.
 
 The examples below use `<nova-ref>` as a placeholder. For production, replace
 it with either a release tag or an immutable commit SHA and keep `installer_ref`
-aligned with the workflow ref. `v0.0.5` supports the basic producer flow; runner
-override inputs require a newer release or immutable commit SHA until the next
-release is cut. Reusable workflows reject branch-like installer refs unless
+aligned with the workflow ref. `v0.0.6` includes the runner override inputs; use
+`v0.0.6`, a newer release tag, or an immutable commit SHA when passing them.
+Reusable workflows reject branch-like installer refs unless
 `allow_mutable_installer_ref: true` is set for a trusted development run.
 
 ```yaml
