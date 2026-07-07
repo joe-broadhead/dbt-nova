@@ -140,8 +140,10 @@ tag or immutable commit.
 
 ## Thresholds And Blocking
 
-Thresholds are optional JSON. Default thresholds are advisory so the command can
-produce evidence without failing valid manifests.
+Thresholds are optional JSON. Default score thresholds are advisory; modelling
+blockers are treated as true blockers, while high-severity modelling count
+thresholds remain advisory so the command can produce evidence without making
+all modelling findings CI-blocking.
 
 ```json
 {
@@ -150,6 +152,10 @@ produce evidence without failing valid manifests.
     "engineer": { "min_score": 70, "severity": "advisory" },
     "analyst": { "min_score": 65, "severity": "advisory" },
     "governance": { "min_score": 65, "severity": "advisory" }
+  },
+  "modelling": {
+    "max_blockers": { "value": 0, "severity": "required" },
+    "max_high": { "value": 10, "severity": "advisory" }
   }
 }
 ```
@@ -157,6 +163,9 @@ produce evidence without failing valid manifests.
 Set `severity` to `required` for a threshold that should create a blocker.
 `--fail-on-blockers` turns blockers into a failing CLI exit after reports have
 been written.
+Modelling thresholds can also be supplied through
+`DBT_NOVA_AGENT_READINESS_MODELLING_MAX_BLOCKERS`,
+`DBT_NOVA_AGENT_READINESS_MODELLING_MAX_HIGH`, and their `*_REQUIRED` flags.
 
 The recommended rollout is:
 
@@ -197,11 +206,14 @@ Blocking findings come from:
 
 - required `overall_score` threshold misses (`overall_threshold_missed`)
 - required persona threshold misses (`persona_threshold_missed`)
+- deterministic agent-modelling blocker findings (`agent_modelling_blocker`)
+- required agent-modelling count threshold misses
 - blocked eval gate evidence (`eval_gate_blocked`)
 
 Advisory improvement findings can include missed advisory thresholds, missing
 or unavailable eval gate evidence, low-scoring entity metadata, signal gaps such
-as missing owners or primary-key evidence, and ambiguous indicator metadata.
+as missing owners or primary-key evidence, ambiguous indicator metadata, and
+high/medium agent-modelling findings.
 Missing eval evidence is a next action by default; it is not a blocker unless a
 provided eval gate report is blocked.
 
@@ -258,7 +270,7 @@ JSON reports use `schema_version: "agent_readiness.v1"` and include:
 - per-persona project metadata scores and threshold status
 - compact triage fields in `summary`: score/grade buckets, worst entities by
   persona, category weak spots, repeated recommendation fields, estimated point
-  impact, and drill-down hints
+  impact, agent-modelling counts/top codes, and drill-down hints
 - blocking findings and improvement findings
 - lowest-scoring or signal-poor entity findings with top recommendations and
   metadata score diagnostics

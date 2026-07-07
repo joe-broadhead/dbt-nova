@@ -15,7 +15,10 @@ use crate::manifest::entity::{
     ArchivedEntity, column_nova_meta_json, column_primary_key_bool, entity_nova_meta_json,
 };
 use crate::manifest::search::ManifestSearch;
-use crate::params::{GetAgentReadinessParams, GetMetadataScoreParams};
+use crate::params::{
+    GetAgentReadinessParams, GetMetadataScoreParams, ModellingConsistencyReportParams,
+    PaginationParams,
+};
 use crate::responses::SuccessResponse;
 use crate::tools::metadata_score::{grade_from_score, metadata_score_scoring_contract};
 use crate::utils::{SearchPersona, sanitize_uri};
@@ -35,6 +38,8 @@ const DEFAULT_RESOURCE_TYPE_PRIORITY: [&str; 3] = ["model", "source", "metric"];
 const MAX_ENTITY_FINDINGS: usize = 20;
 const MAX_ENTITY_RECOMMENDATIONS: usize = 5;
 const MAX_INDICATOR_FINDINGS: usize = 25;
+const MAX_MODELLING_READINESS_FINDINGS: usize = 12;
+const MAX_MODELLING_NEXT_ACTIONS: usize = 3;
 const MAX_SUGGESTED_META_PATCHES: usize = 40;
 const MAX_GOLDEN_QUESTION_SEEDS: usize = 16;
 const MAX_MARKDOWN_META_PATCHES: usize = 10;
@@ -107,6 +112,7 @@ struct ReadinessSummary {
     category_weak_spots: JsonValue,
     top_recommendation_fields: JsonValue,
     drill_down_hints: JsonValue,
+    agent_modelling: JsonValue,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -252,6 +258,12 @@ struct AppliedThreshold {
     severity: ThresholdSeverity,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct AppliedCountThreshold {
+    value: usize,
+    severity: ThresholdSeverity,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 enum ThresholdSeverity {
@@ -273,6 +285,22 @@ impl Default for ThresholdRule {
         Self {
             min_score: None,
             min_grade: None,
+            severity: ThresholdSeverity::Advisory,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct CountThresholdRule {
+    value: usize,
+    severity: ThresholdSeverity,
+}
+
+impl Default for CountThresholdRule {
+    fn default() -> Self {
+        Self {
+            value: 0,
             severity: ThresholdSeverity::Advisory,
         }
     }
@@ -300,9 +328,17 @@ impl PersonaThresholdConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
+struct ModellingThresholdConfig {
+    max_blockers: Option<CountThresholdRule>,
+    max_high: Option<CountThresholdRule>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 struct ReadinessThresholdConfig {
     overall: Option<ThresholdRule>,
     persona: PersonaThresholdConfig,
+    modelling: ModellingThresholdConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -317,6 +353,57 @@ struct EntityScoreAccumulator {
     name: Option<String>,
     resource_type: Option<String>,
     persona_scores: BTreeMap<String, u8>,
+}
+
+struct AgentModellingReadinessResult {
+    summary: JsonValue,
+    next_actions: Vec<ReadinessNextAction>,
+}
+
+struct ReadinessSummaryInput {
+    target_count: usize,
+    scored_count: usize,
+    blocker_count: usize,
+    improvement_count: usize,
+    indicator_count: usize,
+    ambiguous_indicator_count: usize,
+    suggested_meta_patch_count: usize,
+    golden_question_seed_count: usize,
+    triage_summary: ReadinessTriageSummary,
+    agent_modelling_summary: JsonValue,
+}
+
+struct NextActionInput<'a> {
+    overall_score: u8,
+    eval_status: &'a EvalReadinessStatus,
+    blocking_findings: &'a [ReadinessFinding],
+    improvement_findings: &'a [ReadinessFinding],
+    ambiguous_indicator_count: usize,
+    suggested_meta_patch_count: usize,
+    golden_question_seed_count: usize,
+    modelling_next_actions: &'a [ReadinessNextAction],
+}
+
+struct ReadinessFinalSectionInput<'a> {
+    overall_score: u8,
+    eval_status: &'a EvalReadinessStatus,
+    blocking_findings: &'a [ReadinessFinding],
+    improvement_findings: &'a [ReadinessFinding],
+    target_count: usize,
+    scored_count: usize,
+    persona_scores: &'a BTreeMap<String, PersonaReadinessScore>,
+    indicator_count: usize,
+    ambiguous_indicator_count: usize,
+    suggested_meta_patch_count: usize,
+    golden_question_seed_count: usize,
+    agent_modelling: AgentModellingReadinessResult,
+}
+
+struct ReadinessFinalSections {
+    readiness_band: &'static str,
+    gate_status: &'static str,
+    summary: ReadinessSummary,
+    next_actions: Vec<ReadinessNextAction>,
 }
 
 /// Runs the `audit agent-readiness` CLI command.
@@ -520,6 +607,7 @@ async fn build_agent_readiness_report(
     search: &ManifestSearch,
     inputs: &ReadinessInputs,
 ) -> Result<AgentReadinessReport> {
+    let effective_thresholds = effective_readiness_thresholds(search, &inputs.thresholds);
     let resource_types = default_resource_types(search);
     let target_ids = selected_entity_ids(search, &resource_types)?;
     let target_count = target_ids.len();
@@ -561,53 +649,44 @@ async fn build_agent_readiness_report(
         ambiguous_indicator_count,
         &mut improvement_findings,
     );
+    let agent_modelling = build_agent_modelling_readiness_result(
+        search,
+        &effective_thresholds.modelling,
+        &mut blocking_findings,
+        &mut improvement_findings,
+    )
+    .await?;
     let suggested_meta_patches =
         build_suggested_meta_patches(search, &entity_findings, &indicator_findings)?;
     let golden_question_seeds =
         build_golden_question_seeds(search, &target_ids, &entity_findings, &indicator_findings)?;
 
-    let readiness_band = readiness_band(overall_score, !blocking_findings.is_empty());
-    let gate_status = gate_status(
-        !blocking_findings.is_empty(),
-        !improvement_findings.is_empty(),
-    );
-    let next_actions = build_next_actions(
+    let final_sections = build_readiness_final_sections(ReadinessFinalSectionInput {
         overall_score,
-        &inputs.eval_status,
-        &blocking_findings,
-        &improvement_findings,
+        eval_status: &inputs.eval_status,
+        blocking_findings: &blocking_findings,
+        improvement_findings: &improvement_findings,
+        target_count,
+        scored_count: entity_scores.len(),
+        persona_scores: &persona_scores,
+        indicator_count,
         ambiguous_indicator_count,
-        suggested_meta_patches.len(),
-        golden_question_seeds.len(),
-    );
-    let triage_summary = build_readiness_triage_summary(&persona_scores);
+        suggested_meta_patch_count: suggested_meta_patches.len(),
+        golden_question_seed_count: golden_question_seeds.len(),
+        agent_modelling,
+    });
 
     Ok(AgentReadinessReport {
         schema_version: "agent_readiness.v1",
         generated_at_ms: current_timestamp_ms(),
         manifest: build_manifest_summary(search),
-        config: build_config_summary(search, inputs, &resource_types),
+        config: build_config_summary(search, inputs, &resource_types, &effective_thresholds),
         scoring_contract: metadata_score_scoring_contract(),
         overall_score,
         grade: grade.to_string(),
-        readiness_band,
-        gate_status,
-        summary: ReadinessSummary {
-            target_count,
-            scored_count: entity_scores.len(),
-            blocker_count: blocking_findings.len(),
-            improvement_count: improvement_findings.len(),
-            indicator_count,
-            ambiguous_indicator_count,
-            suggested_meta_patch_count: suggested_meta_patches.len(),
-            golden_question_seed_count: golden_question_seeds.len(),
-            score_buckets: triage_summary.score_buckets,
-            grade_buckets: triage_summary.grade_buckets,
-            worst_entities_by_persona: triage_summary.worst_entities_by_persona,
-            category_weak_spots: triage_summary.category_weak_spots,
-            top_recommendation_fields: triage_summary.top_recommendation_fields,
-            drill_down_hints: triage_summary.drill_down_hints,
-        },
+        readiness_band: final_sections.readiness_band,
+        gate_status: final_sections.gate_status,
+        summary: final_sections.summary,
         persona_scores,
         blocking_findings,
         improvement_findings,
@@ -616,7 +695,7 @@ async fn build_agent_readiness_report(
         suggested_meta_patches,
         golden_question_seeds,
         eval_status: inputs.eval_status.clone(),
-        next_actions,
+        next_actions: final_sections.next_actions,
     })
 }
 
@@ -699,6 +778,7 @@ fn build_config_summary(
     search: &ManifestSearch,
     inputs: &ReadinessInputs,
     resource_types: &[String],
+    thresholds: &ReadinessThresholdConfig,
 ) -> ReadinessConfigSummary {
     ReadinessConfigSummary {
         personas: inputs.personas.clone(),
@@ -706,8 +786,360 @@ fn build_config_summary(
         metadata_only: true,
         read_only: search.config().storage_read_only,
         storage_instance_id: search.config().storage_instance_id.clone(),
-        thresholds: inputs.thresholds.clone(),
+        thresholds: thresholds.clone(),
     }
+}
+
+fn build_readiness_final_sections(input: ReadinessFinalSectionInput<'_>) -> ReadinessFinalSections {
+    let has_blockers = !input.blocking_findings.is_empty();
+    let has_improvements = !input.improvement_findings.is_empty();
+    let readiness_band = readiness_band(input.overall_score, has_blockers);
+    let gate_status = gate_status(has_blockers, has_improvements);
+    let next_actions = build_next_actions(&NextActionInput {
+        overall_score: input.overall_score,
+        eval_status: input.eval_status,
+        blocking_findings: input.blocking_findings,
+        improvement_findings: input.improvement_findings,
+        ambiguous_indicator_count: input.ambiguous_indicator_count,
+        suggested_meta_patch_count: input.suggested_meta_patch_count,
+        golden_question_seed_count: input.golden_question_seed_count,
+        modelling_next_actions: &input.agent_modelling.next_actions,
+    });
+    let triage_summary = build_readiness_triage_summary(input.persona_scores);
+    let summary = build_readiness_summary(ReadinessSummaryInput {
+        target_count: input.target_count,
+        scored_count: input.scored_count,
+        blocker_count: input.blocking_findings.len(),
+        improvement_count: input.improvement_findings.len(),
+        indicator_count: input.indicator_count,
+        ambiguous_indicator_count: input.ambiguous_indicator_count,
+        suggested_meta_patch_count: input.suggested_meta_patch_count,
+        golden_question_seed_count: input.golden_question_seed_count,
+        triage_summary,
+        agent_modelling_summary: input.agent_modelling.summary,
+    });
+
+    ReadinessFinalSections {
+        readiness_band,
+        gate_status,
+        summary,
+        next_actions,
+    }
+}
+
+fn build_readiness_summary(input: ReadinessSummaryInput) -> ReadinessSummary {
+    ReadinessSummary {
+        target_count: input.target_count,
+        scored_count: input.scored_count,
+        blocker_count: input.blocker_count,
+        improvement_count: input.improvement_count,
+        indicator_count: input.indicator_count,
+        ambiguous_indicator_count: input.ambiguous_indicator_count,
+        suggested_meta_patch_count: input.suggested_meta_patch_count,
+        golden_question_seed_count: input.golden_question_seed_count,
+        score_buckets: input.triage_summary.score_buckets,
+        grade_buckets: input.triage_summary.grade_buckets,
+        worst_entities_by_persona: input.triage_summary.worst_entities_by_persona,
+        category_weak_spots: input.triage_summary.category_weak_spots,
+        top_recommendation_fields: input.triage_summary.top_recommendation_fields,
+        drill_down_hints: input.triage_summary.drill_down_hints,
+        agent_modelling: input.agent_modelling_summary,
+    }
+}
+
+fn effective_readiness_thresholds(
+    search: &ManifestSearch,
+    inputs: &ReadinessThresholdConfig,
+) -> ReadinessThresholdConfig {
+    let mut thresholds = inputs.clone();
+    let modelling = &search.config().agent_readiness.modelling;
+    thresholds
+        .modelling
+        .max_blockers
+        .get_or_insert_with(|| CountThresholdRule {
+            value: modelling.max_blockers,
+            severity: count_threshold_severity(modelling.max_blockers_required),
+        });
+    thresholds
+        .modelling
+        .max_high
+        .get_or_insert_with(|| CountThresholdRule {
+            value: modelling.max_high,
+            severity: count_threshold_severity(modelling.max_high_required),
+        });
+    thresholds
+}
+
+fn count_threshold_severity(required: bool) -> ThresholdSeverity {
+    if required {
+        ThresholdSeverity::Required
+    } else {
+        ThresholdSeverity::Advisory
+    }
+}
+
+async fn build_agent_modelling_readiness_result(
+    search: &ManifestSearch,
+    thresholds: &ModellingThresholdConfig,
+    blocking_findings: &mut Vec<ReadinessFinding>,
+    improvement_findings: &mut Vec<ReadinessFinding>,
+) -> Result<AgentModellingReadinessResult> {
+    let response = search
+        .modelling_consistency_report(&ModellingConsistencyReportParams {
+            resource_types: Vec::new(),
+            pagination: PaginationParams {
+                limit: Some(1),
+                offset: 0,
+            },
+            min_score: None,
+        })
+        .await?;
+    let data = response.get("data").ok_or_else(|| {
+        DbtNovaError::ServerError("modelling consistency response missing data".to_string())
+    })?;
+    let summary = data
+        .get("summary")
+        .and_then(|summary| summary.get("agent_modelling"))
+        .cloned()
+        .unwrap_or_else(default_agent_modelling_summary);
+    let findings = data
+        .get("agent_modelling_findings")
+        .and_then(JsonValue::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    apply_agent_modelling_findings(&findings, blocking_findings, improvement_findings);
+    apply_agent_modelling_thresholds(
+        &summary,
+        thresholds,
+        blocking_findings,
+        improvement_findings,
+    );
+    let next_actions = build_agent_modelling_next_actions(&findings);
+
+    Ok(AgentModellingReadinessResult {
+        summary,
+        next_actions,
+    })
+}
+
+fn default_agent_modelling_summary() -> JsonValue {
+    json!({
+        "total": 0,
+        "blockers": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "truncated": false,
+        "top_codes": [],
+        "top_categories": []
+    })
+}
+
+fn apply_agent_modelling_findings(
+    findings: &[JsonValue],
+    blocking_findings: &mut Vec<ReadinessFinding>,
+    improvement_findings: &mut Vec<ReadinessFinding>,
+) {
+    let mut emitted = 0;
+    for finding in findings {
+        if emitted >= MAX_MODELLING_READINESS_FINDINGS {
+            break;
+        }
+        match agent_modelling_finding_severity(finding) {
+            Some("blocker") => {
+                blocking_findings.push(agent_modelling_readiness_finding(
+                    finding,
+                    "blocker",
+                    "agent_modelling_blocker",
+                ));
+                emitted += 1;
+            }
+            Some("high") => {
+                improvement_findings.push(agent_modelling_readiness_finding(
+                    finding,
+                    "improvement",
+                    "agent_modelling_high",
+                ));
+                emitted += 1;
+            }
+            Some("medium") => {
+                improvement_findings.push(agent_modelling_readiness_finding(
+                    finding,
+                    "improvement",
+                    "agent_modelling_medium",
+                ));
+                emitted += 1;
+            }
+            _ => {}
+        }
+    }
+}
+
+fn agent_modelling_readiness_finding(
+    finding: &JsonValue,
+    severity: &'static str,
+    code: &'static str,
+) -> ReadinessFinding {
+    let finding_code = agent_modelling_finding_code(finding).unwrap_or("unknown");
+    let finding_category = finding
+        .get("category")
+        .and_then(JsonValue::as_str)
+        .unwrap_or("modelling");
+    let finding_severity = agent_modelling_finding_severity(finding).unwrap_or("unknown");
+    let message = finding
+        .get("message")
+        .and_then(JsonValue::as_str)
+        .map_or_else(
+            || format!("Agent modelling finding `{finding_code}` requires review"),
+            ToString::to_string,
+        );
+
+    ReadinessFinding {
+        severity,
+        category: "modelling",
+        code,
+        message,
+        evidence: json!({
+            "agent_modelling_code": finding_code,
+            "agent_modelling_category": finding_category,
+            "agent_modelling_severity": finding_severity,
+            "entities": finding.get("entities").cloned().unwrap_or_else(|| json!([])),
+            "indicators": finding.get("indicators").cloned().unwrap_or_else(|| json!([])),
+            "finding_evidence": finding.get("evidence").cloned().unwrap_or(JsonValue::Null),
+            "drill_down_hints": finding.get("drill_down_hints").cloned().unwrap_or_else(|| json!([]))
+        }),
+    }
+}
+
+fn apply_agent_modelling_thresholds(
+    summary: &JsonValue,
+    thresholds: &ModellingThresholdConfig,
+    blocking_findings: &mut Vec<ReadinessFinding>,
+    improvement_findings: &mut Vec<ReadinessFinding>,
+) {
+    if let Some(rule) = thresholds.max_blockers.as_ref() {
+        apply_agent_modelling_count_threshold(
+            "blockers",
+            "agent_modelling_blocker_threshold_missed",
+            summary_usize(summary, "blockers"),
+            rule,
+            summary,
+            blocking_findings,
+            improvement_findings,
+        );
+    }
+    if let Some(rule) = thresholds.max_high.as_ref() {
+        apply_agent_modelling_count_threshold(
+            "high",
+            "agent_modelling_high_threshold_missed",
+            summary_usize(summary, "high"),
+            rule,
+            summary,
+            blocking_findings,
+            improvement_findings,
+        );
+    }
+}
+
+fn apply_agent_modelling_count_threshold(
+    label: &'static str,
+    code: &'static str,
+    actual: usize,
+    threshold: &CountThresholdRule,
+    summary: &JsonValue,
+    blocking_findings: &mut Vec<ReadinessFinding>,
+    improvement_findings: &mut Vec<ReadinessFinding>,
+) {
+    if actual <= threshold.value {
+        return;
+    }
+    let gate = count_threshold_gate(threshold.severity);
+    let finding = ReadinessFinding {
+        severity: threshold_gate_to_finding_severity(gate),
+        category: "modelling",
+        code,
+        message: format!(
+            "agent modelling {label} count {actual} exceeded threshold {}",
+            threshold.value
+        ),
+        evidence: json!({
+            "count": actual,
+            "threshold": applied_count_threshold(threshold),
+            "agent_modelling_summary": summary
+        }),
+    };
+    push_threshold_finding(gate, finding, blocking_findings, improvement_findings);
+}
+
+fn count_threshold_gate(severity: ThresholdSeverity) -> &'static str {
+    match severity {
+        ThresholdSeverity::Required => "required_fail",
+        ThresholdSeverity::Advisory => "advisory_fail",
+    }
+}
+
+fn applied_count_threshold(rule: &CountThresholdRule) -> AppliedCountThreshold {
+    AppliedCountThreshold {
+        value: rule.value,
+        severity: rule.severity,
+    }
+}
+
+fn build_agent_modelling_next_actions(findings: &[JsonValue]) -> Vec<ReadinessNextAction> {
+    findings
+        .iter()
+        .filter(|finding| {
+            matches!(
+                agent_modelling_finding_severity(finding),
+                Some("blocker" | "high" | "medium")
+            )
+        })
+        .take(MAX_MODELLING_NEXT_ACTIONS)
+        .map(|finding| {
+            let severity = agent_modelling_finding_severity(finding).unwrap_or("unknown");
+            let code = agent_modelling_finding_code(finding).unwrap_or("unknown");
+            let message = finding
+                .get("message")
+                .and_then(JsonValue::as_str)
+                .unwrap_or("Review the modelling finding.");
+            ReadinessNextAction {
+                priority: if severity == "blocker" { 1 } else { 2 },
+                category: "modelling",
+                action: format!("Resolve agent modelling finding `{code}`: {message}"),
+                evidence: agent_modelling_next_action_evidence(finding),
+            }
+        })
+        .collect()
+}
+
+fn agent_modelling_next_action_evidence(finding: &JsonValue) -> String {
+    let severity = agent_modelling_finding_severity(finding).unwrap_or("unknown");
+    let code = agent_modelling_finding_code(finding).unwrap_or("unknown");
+    let entity = finding
+        .get("entities")
+        .and_then(JsonValue::as_array)
+        .and_then(|entities| entities.first())
+        .and_then(|entity| entity.get("unique_id"))
+        .and_then(JsonValue::as_str)
+        .unwrap_or("unknown_entity");
+    format!("{severity}:{code}; entity={entity}")
+}
+
+fn agent_modelling_finding_severity(finding: &JsonValue) -> Option<&str> {
+    finding.get("severity").and_then(JsonValue::as_str)
+}
+
+fn agent_modelling_finding_code(finding: &JsonValue) -> Option<&str> {
+    finding.get("code").and_then(JsonValue::as_str)
+}
+
+fn summary_usize(summary: &JsonValue, key: &str) -> usize {
+    summary
+        .get(key)
+        .and_then(JsonValue::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(0)
 }
 
 async fn score_project_personas(
@@ -2748,78 +3180,77 @@ fn readiness_recommendation_from_json(value: &JsonValue) -> ReadinessRecommendat
     }
 }
 
-fn build_next_actions(
-    overall_score: u8,
-    eval_status: &EvalReadinessStatus,
-    blocking_findings: &[ReadinessFinding],
-    improvement_findings: &[ReadinessFinding],
-    ambiguous_indicator_count: usize,
-    suggested_meta_patch_count: usize,
-    golden_question_seed_count: usize,
-) -> Vec<ReadinessNextAction> {
+fn build_next_actions(input: &NextActionInput<'_>) -> Vec<ReadinessNextAction> {
     let mut actions = Vec::new();
-    if !blocking_findings.is_empty() {
+    if !input.blocking_findings.is_empty() {
         actions.push(ReadinessNextAction {
             priority: 1,
             category: "blockers",
             action:
                 "Resolve blocking readiness findings before treating this manifest as launch-ready"
                     .to_string(),
-            evidence: format!("{} blocker(s) detected", blocking_findings.len()),
+            evidence: format!("{} blocker(s) detected", input.blocking_findings.len()),
         });
     }
-    if eval_status.status == "not_supplied" {
+    if input.eval_status.status == "not_supplied" {
         actions.push(ReadinessNextAction {
             priority: 2,
             category: "eval_gate",
             action: "Run dbt-nova eval gate <SUITE> --json and pass the result with --eval-gate-file or --eval-gate-json".to_string(),
             evidence: "no eval gate report supplied".to_string(),
         });
-    } else if eval_status.status == "blocked" {
+    } else if input.eval_status.status == "blocked" {
         actions.push(ReadinessNextAction {
             priority: 1,
             category: "eval_gate",
             action: "Rerun or fix the blocked eval suite before relying on agent workflows"
                 .to_string(),
-            evidence: eval_status.message.clone(),
+            evidence: input.eval_status.message.clone(),
         });
-    } else if eval_status.status == "unavailable" {
+    } else if input.eval_status.status == "unavailable" {
         actions.push(ReadinessNextAction {
             priority: 2,
             category: "eval_gate",
             action: "Provide a valid dbt-nova eval gate JSON report before treating eval evidence as current".to_string(),
-            evidence: eval_status.message.clone(),
+            evidence: input.eval_status.message.clone(),
         });
     }
-    if ambiguous_indicator_count > 0 {
+    if input.ambiguous_indicator_count > 0 {
         actions.push(ReadinessNextAction {
             priority: 2,
             category: "indicator_metadata",
             action:
                 "Add explicit expression, field, and grain metadata to ambiguous Nova indicators"
                     .to_string(),
-            evidence: format!("{ambiguous_indicator_count} ambiguous indicator definition(s)"),
+            evidence: format!(
+                "{} ambiguous indicator definition(s)",
+                input.ambiguous_indicator_count
+            ),
         });
     }
-    if suggested_meta_patch_count > 0 {
+    actions.extend(input.modelling_next_actions.iter().cloned());
+    if input.suggested_meta_patch_count > 0 {
         actions.push(ReadinessNextAction {
             priority: 2,
             category: "remediation",
             action: "Review suggested_meta_patches and promote safe changes into dbt YAML"
                 .to_string(),
-            evidence: format!("{suggested_meta_patch_count} advisory patch suggestion(s)"),
+            evidence: format!(
+                "{} advisory patch suggestion(s)",
+                input.suggested_meta_patch_count
+            ),
         });
     }
-    if golden_question_seed_count > 0 {
+    if input.golden_question_seed_count > 0 {
         actions.push(ReadinessNextAction {
             priority: 3,
             category: "eval_seed",
             action: "Review golden_question_seeds and copy approved cases into an eval suite"
                 .to_string(),
-            evidence: format!("{golden_question_seed_count} draft eval seed(s)"),
+            evidence: format!("{} draft eval seed(s)", input.golden_question_seed_count),
         });
     }
-    if overall_score < 85 || !improvement_findings.is_empty() {
+    if input.overall_score < 85 || !input.improvement_findings.is_empty() {
         actions.push(ReadinessNextAction {
             priority: 3,
             category: "metadata_quality",
@@ -2828,7 +3259,8 @@ fn build_next_actions(
                     .to_string(),
             evidence: format!(
                 "overall score {overall_score}; {} improvement finding(s)",
-                improvement_findings.len()
+                input.improvement_findings.len(),
+                overall_score = input.overall_score
             ),
         });
     }
@@ -3355,6 +3787,33 @@ mod tests {
     }
 
     #[test]
+    fn parse_thresholds_accepts_modelling_count_rules() {
+        let thresholds: ReadinessThresholdConfig = parse_json_input(
+            Some(
+                r#"{
+                  "modelling": {
+                    "max_blockers": {"value": 0, "severity": "required"},
+                    "max_high": {"value": 3, "severity": "advisory"}
+                  }
+                }"#,
+            ),
+            None,
+            super::DEFAULT_THRESHOLDS_JSON,
+        )
+        .expect("thresholds");
+
+        let max_blockers = thresholds
+            .modelling
+            .max_blockers
+            .expect("max blockers threshold");
+        assert_eq!(max_blockers.value, 0);
+        assert_eq!(max_blockers.severity, ThresholdSeverity::Required);
+        let max_high = thresholds.modelling.max_high.expect("max high threshold");
+        assert_eq!(max_high.value, 3);
+        assert_eq!(max_high.severity, ThresholdSeverity::Advisory);
+    }
+
+    #[test]
     fn parse_readiness_inputs_preserves_persona_order() {
         let args = AgentReadinessArgs {
             personas_json: Some(r#"["engineer","analyst","engineer","governance"]"#.to_string()),
@@ -3468,6 +3927,93 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn agent_readiness_includes_agent_modelling_summary_and_findings() {
+        let report = readiness_report_for_fixture(
+            "agent_modelling_findings.json",
+            "agent-readiness-modeling",
+        )
+        .await;
+
+        let agent_modelling = &report.summary.agent_modelling;
+        assert!(
+            agent_modelling["blockers"]
+                .as_u64()
+                .is_some_and(|count| count > 0)
+        );
+        assert!(
+            agent_modelling["high"]
+                .as_u64()
+                .is_some_and(|count| count > 0)
+        );
+        assert!(
+            report.blocking_findings.iter().any(|finding| {
+                finding.category == "modelling" && finding.code == "agent_modelling_blocker"
+            }),
+            "expected modelling blocker in {:#?}",
+            report.blocking_findings
+        );
+        assert!(
+            report.improvement_findings.iter().any(|finding| {
+                finding.category == "modelling"
+                    && matches!(
+                        finding.code,
+                        "agent_modelling_high" | "agent_modelling_medium"
+                    )
+            }),
+            "expected modelling improvement in {:#?}",
+            report.improvement_findings
+        );
+        assert!(
+            report
+                .next_actions
+                .iter()
+                .any(|action| action.category == "modelling"),
+            "expected modelling next action in {:#?}",
+            report.next_actions
+        );
+        assert_eq!(report.readiness_band, "blocked");
+        assert_eq!(report.gate_status, "fail");
+    }
+
+    #[tokio::test]
+    async fn agent_readiness_modelling_high_threshold_can_be_advisory() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let args = AgentReadinessArgs {
+            manifest_path: Some(fixture_path_string("agent_modelling_findings.json")),
+            storage_instance_id: Some("agent-readiness-modeling-advisory".to_string()),
+            cleanup_storage_on_start: true,
+            thresholds_json: Some(
+                r#"{
+                  "modelling": {
+                    "max_blockers": {"value": 999, "severity": "advisory"},
+                    "max_high": {"value": 0, "severity": "advisory"}
+                  }
+                }"#
+                .to_string(),
+            ),
+            ..AgentReadinessArgs::default()
+        };
+        let inputs = super::parse_readiness_inputs(&args).expect("inputs");
+        let mut config = build_agent_readiness_load_config(&args).expect("config");
+        config.storage_dir = temp_dir.path().to_string_lossy().to_string();
+        let loaded = execute_manifest_load(config).await.expect("load");
+        let report = build_agent_readiness_report(&loaded.search, &inputs)
+            .await
+            .expect("report");
+
+        let threshold_finding = report
+            .improvement_findings
+            .iter()
+            .find(|finding| finding.code == "agent_modelling_high_threshold_missed")
+            .expect("advisory high threshold finding");
+        assert_eq!(threshold_finding.severity, "improvement");
+        assert_eq!(
+            threshold_finding.evidence["threshold"]["severity"],
+            json!("advisory")
+        );
+    }
+
+    #[tokio::test]
     async fn agent_readiness_tool_response_uses_report_contract() {
         let temp_dir = TempDir::new().expect("temp dir");
         let args = AgentReadinessArgs {
@@ -3576,6 +4122,7 @@ mod tests {
                 category_weak_spots: json!([]),
                 top_recommendation_fields: json!([]),
                 drill_down_hints: json!([]),
+                agent_modelling: json!({}),
             },
             persona_scores: markdown_fixture_persona_scores(),
             blocking_findings: vec![ReadinessFinding {

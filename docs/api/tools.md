@@ -794,7 +794,10 @@ reviewable dbt metadata remediation and draft `golden_question_seeds` for eval
 authoring. Suggested patches never edit files, and generated seeds should be
 reviewed before becoming CI gates. Reports also include the shared metadata
 `scoring_contract` and compact `summary` triage fields for score buckets, weak
-spots, repeated fields, and drill-down hints.
+spots, repeated fields, agent-modelling counts/top codes, and drill-down hints.
+Deterministic modelling blockers are returned as readiness blockers; high and
+medium modelling findings and advisory count threshold misses are returned as
+improvements, while required count threshold misses are blockers.
 
 Large reports use the standard MCP response-budget behavior; check
 `_nova_result_meta.truncated` when response budgeting is enabled.
