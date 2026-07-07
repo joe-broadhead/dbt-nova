@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documented the v1 decision to keep agent-modelling audits on
   `modelling_consistency_report` and defer a standalone `dbt-nova audit
   modelling` wrapper until a separate report/CI contract is needed.
+- Updated `crossbeam-epoch` to address `RUSTSEC-2026-0204` and restore the
+  supply-chain advisory gate.
 - Added response-only indicator execution metadata to `search_indicator` and
   `indicator_inventory` so agents can distinguish relation-backed,
   Semantic Layer-backed, and metadata-only indicators before execution.
