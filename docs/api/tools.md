@@ -151,6 +151,12 @@ entity and grain context. Native dbt Semantic Layer / MetricFlow `metrics` and
 `semantic_models` are bridged into this indicator surface even when no
 hand-authored `meta.nova` block exists.
 
+Each indicator row includes response-only execution metadata:
+`indicator_source` (`nova_meta`, `dbt_metric`, or `dbt_semantic_model`),
+`execution_surface` (`relation`, `semantic_layer`, or `metadata_only`),
+`queryable`, `queryable_via` (`relation_name`, `metricflow`, or `none`), and an
+optional `execution_note`.
+
 Required:
 - `query`
 
@@ -189,6 +195,10 @@ Example response shape:
       "parent_name": "orders_semantic_templates",
       "parent_resource_type": "model",
       "relation_name": "analytics.dbt_test.orders_semantic_templates",
+      "indicator_source": "nova_meta",
+      "execution_surface": "relation",
+      "queryable": true,
+      "queryable_via": "relation_name",
       "domains": ["commerce"],
       "grain": {
         "time_field": "order_date",
@@ -214,6 +224,7 @@ List Nova measures and metrics deterministically, with parent execution context.
 Use this when you need a flat semantic catalog instead of ranked search results.
 MetricFlow metrics and semantic-model measures are included as derived Nova
 indicators unless explicit `meta.nova` metadata overrides or extends them.
+Execution metadata uses the same response-only fields as `search_indicator`.
 
 Common:
 - `indicator_types` (`["metric"]`, `["measure"]`, or omitted for both)
@@ -244,6 +255,10 @@ Example response shape:
       "parent_name": "fact_orders_canonical",
       "parent_resource_type": "model",
       "relation_name": "analytics.dbt_test.fact_orders_canonical",
+      "indicator_source": "nova_meta",
+      "execution_surface": "relation",
+      "queryable": true,
+      "queryable_via": "relation_name",
       "domains": ["commerce"],
       "grain": {
         "time_field": "order_date",

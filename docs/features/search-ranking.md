@@ -106,6 +106,10 @@ This gives vanilla Semantic Layer projects useful `search_indicator`,
 Full `meta.nova` is still the contract for Nova-specific governance,
 candidate-profile, domain, and recommendation metadata.
 
+Indicator search and inventory rows also expose execution metadata so agents can
+distinguish relation-backed `meta.nova` indicators from MetricFlow-backed
+metrics/measures and metadata-only definitions before attempting SQL execution.
+
 ## Default Boosts (Config)
 
 These values are tuned for high signal with minimal noise:

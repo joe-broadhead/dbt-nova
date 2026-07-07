@@ -8,8 +8,8 @@ use std::fs;
 use std::path::Path;
 
 use dbt_nova::params::{
-    GetColumnsParams, GetMetadataScoreParams, IndicatorInventoryParams, PaginationParams,
-    SearchIndicatorParams,
+    DetailLevel, GetColumnsParams, GetMetadataScoreParams, IndicatorInventoryParams,
+    PaginationParams, SearchIndicatorParams,
 };
 use dbt_nova::{DbtNovaConfig, ManifestSearch};
 use support_json::json;
@@ -38,7 +38,42 @@ fn load_searcher(
 async fn metricflow_metrics_are_discoverable_without_nova_meta() {
     let manifest = r#"{
       "metadata": {"dbt_version": "1.10.0"},
-      "nodes": {},
+      "nodes": {
+        "model.pkg.orders_relation": {
+          "name": "orders_relation",
+          "resource_type": "model",
+          "package_name": "pkg",
+          "relation_name": "analytics.pkg.orders_relation",
+          "columns": {},
+          "depends_on": {"nodes": [], "macros": []},
+          "meta": {
+            "nova": {
+              "metrics": [
+                {
+                  "name": "relation_average_order_value",
+                  "expression": "sum(amount) / nullif(count(distinct order_id), 0)"
+                }
+              ]
+            }
+          }
+        },
+        "analysis.pkg.revenue_note": {
+          "name": "revenue_note",
+          "resource_type": "analysis",
+          "package_name": "pkg",
+          "depends_on": {"nodes": [], "macros": []},
+          "meta": {
+            "nova": {
+              "metrics": [
+                {
+                  "name": "metadata_only_revenue",
+                  "description": "Revenue definition without a deterministic execution surface"
+                }
+              ]
+            }
+          }
+        }
+      },
       "sources": {},
       "macros": {},
       "docs": {},
@@ -87,18 +122,65 @@ async fn metricflow_metrics_are_discoverable_without_nova_meta() {
             .await,
     );
     let inventory_rows = inventory["data"].as_array().expect("inventory rows");
+    let gross_revenue = inventory_rows
+        .iter()
+        .find(|row| row["indicator_name"] == "gross_revenue" && row["indicator_type"] == "metric")
+        .expect("metricflow metric should be inventoried");
+    assert_eq!(gross_revenue["indicator_source"], "dbt_metric");
+    assert_eq!(gross_revenue["execution_surface"], "semantic_layer");
+    assert_eq!(gross_revenue["queryable"].as_bool(), Some(true));
+    assert_eq!(gross_revenue["queryable_via"], "metricflow");
     assert!(
-        inventory_rows.iter().any(
-            |row| row["indicator_name"] == "gross_revenue" && row["indicator_type"] == "metric"
-        ),
-        "metricflow metric should be inventoried: {inventory}"
+        gross_revenue["execution_note"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("MetricFlow"),
+        "metricflow metric should explain the semantic-layer execution path: {inventory}"
+    );
+
+    let order_total = inventory_rows
+        .iter()
+        .find(|row| row["indicator_name"] == "order_total" && row["indicator_type"] == "measure")
+        .expect("semantic model measure should be inventoried");
+    assert_eq!(order_total["indicator_source"], "dbt_semantic_model");
+    assert_eq!(order_total["execution_surface"], "semantic_layer");
+    assert_eq!(order_total["queryable"].as_bool(), Some(true));
+    assert_eq!(order_total["queryable_via"], "metricflow");
+
+    let relation_metric = inventory_rows
+        .iter()
+        .find(|row| {
+            row["indicator_name"] == "relation_average_order_value"
+                && row["indicator_type"] == "metric"
+        })
+        .expect("relation-backed nova metric should be inventoried");
+    assert_eq!(relation_metric["indicator_source"], "nova_meta");
+    assert_eq!(relation_metric["execution_surface"], "relation");
+    assert_eq!(relation_metric["queryable"].as_bool(), Some(true));
+    assert_eq!(relation_metric["queryable_via"], "relation_name");
+    assert_eq!(
+        relation_metric["relation_name"],
+        "analytics.pkg.orders_relation"
     );
     assert!(
-        inventory_rows
-            .iter()
-            .any(|row| row["indicator_name"] == "order_total"
-                && row["indicator_type"] == "measure"),
-        "semantic model measure should be inventoried: {inventory}"
+        relation_metric.get("execution_note").is_none(),
+        "relation-backed nova metric should not need an execution note: {inventory}"
+    );
+
+    let metadata_only_metric = inventory_rows
+        .iter()
+        .find(|row| row["indicator_name"] == "metadata_only_revenue")
+        .expect("metadata-only nova metric should be inventoried");
+    assert_eq!(metadata_only_metric["indicator_source"], "nova_meta");
+    assert_eq!(metadata_only_metric["execution_surface"], "metadata_only");
+    assert_eq!(metadata_only_metric["queryable"].as_bool(), Some(false));
+    assert_eq!(metadata_only_metric["queryable_via"], "none");
+    assert!(
+        metadata_only_metric["execution_note"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("No deterministic relation"),
+        "metadata-only rows should explain why they are not queryable: {inventory}"
     );
 
     let search = json(
@@ -109,20 +191,20 @@ async fn metricflow_metrics_are_discoverable_without_nova_meta() {
                     limit: Some(5),
                     offset: 0,
                 },
+                detail: Some(DetailLevel::Compact),
                 ..Default::default()
             })
             .await,
     );
-    assert!(
-        search["data"]
-            .as_array()
-            .expect("search rows")
-            .iter()
-            .any(
-                |row| row["indicator_name"] == "gross_revenue" && row["indicator_type"] == "metric"
-            ),
-        "metricflow metric should be searchable: {search}"
-    );
+    let search_rows = search["data"].as_array().expect("search rows");
+    let gross_revenue_search = search_rows
+        .iter()
+        .find(|row| row["indicator_name"] == "gross_revenue" && row["indicator_type"] == "metric")
+        .expect("metricflow metric should be searchable");
+    assert_eq!(gross_revenue_search["indicator_source"], "dbt_metric");
+    assert_eq!(gross_revenue_search["execution_surface"], "semantic_layer");
+    assert_eq!(gross_revenue_search["queryable"].as_bool(), Some(true));
+    assert_eq!(gross_revenue_search["queryable_via"], "metricflow");
 
     let score = json(
         searcher
