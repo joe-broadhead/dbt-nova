@@ -99,6 +99,20 @@ available:
 Use advisory thresholds while establishing a baseline. Tighten only the checks
 that have proven stable for the project.
 
+## CLI Surface Decision
+
+Nova intentionally does not add a standalone `dbt-nova audit modelling` command
+for v1. The canonical audit surface is:
+
+- MCP: `modelling_consistency_report`
+- CLI: `dbt-nova tool call modelling_consistency_report`
+- CI/readiness gates: `dbt-nova audit agent-readiness`
+
+This keeps the finding contract in one report while it stabilizes. Add a
+dedicated CLI audit wrapper later only if teams need a separate JSON/Markdown
+report contract, exit-code semantics, or CI artifact shape that cannot be served
+by `tool call modelling_consistency_report` plus agent readiness.
+
 ## CI Example
 
 Run an advisory modelling report in CI and publish it as an artifact:

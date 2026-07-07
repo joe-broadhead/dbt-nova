@@ -8,7 +8,8 @@ Nova's agent modelling findings answer one narrow question:
 > the right business surfaces without guessing?
 
 This contract extends `modelling_consistency_report`. It is not a new MCP tool,
-a dbt-project-evaluator clone, a SQL compiler, or a CI gate by default.
+a standalone `dbt-nova audit modelling` command, a dbt-project-evaluator clone,
+a SQL compiler, or a CI gate by default.
 
 ## Compatibility
 
@@ -288,9 +289,9 @@ The following are not required for v1 default-on behavior:
   findings.
 - Warehouse-query-backed checks. V1 uses manifest plus optional `catalog.json`
   only.
-- CI blocking thresholds. `modelling_consistency_report` reports findings;
-  readiness integration can map severe findings later, but CI remains advisory
-  unless a user opts into a gate.
+- Standalone modelling-audit CLI wrapper. `modelling_consistency_report`
+  reports findings through MCP and `dbt-nova tool call`; agent readiness owns
+  report-file and blocker exit-code semantics for v1.
 
 ## Readiness Mapping
 
@@ -304,4 +305,3 @@ When `get_agent_readiness` consumes these findings:
 Readiness should carry bounded modelling summary counts and at most the top
 severe findings. It must not generate suggested metadata patches that invent
 unknown business truth.
-
