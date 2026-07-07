@@ -61,6 +61,7 @@ Each finding must be deterministic and serializable as:
   "evidence": {
     "execution_surface": "metadata_only",
     "queryable": false,
+    "direct_sql_queryable": false,
     "queryable_via": "none"
   },
   "recommendation": "Move the indicator to a queryable dbt model, expose it through dbt Semantic Layer / MetricFlow, or mark the entity as non-analyst-facing.",

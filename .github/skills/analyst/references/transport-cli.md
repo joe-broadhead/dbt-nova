@@ -35,7 +35,7 @@ For KPI, metric, measure, rate, funnel, or conversion questions, run
 no relevant governed indicator or no credible semantic parent. Keep the
 `search_indicator` command and rejection reason as final-answer evidence when
 fallback is used. Inspect `indicator_source`, `execution_surface`, `queryable`,
-and `queryable_via` before execution.
+`direct_sql_queryable`, and `queryable_via` before execution.
 
 ## CLI guardrails
 
@@ -77,11 +77,12 @@ dbt-nova tool call search_indicator \
 For rate, conversion, funnel, or ratio questions, request metric indicators
 first and copy any returned metric `expression` exactly into downstream SQL.
 If the compact indicator row is relation-backed (`execution_surface: "relation"`,
-`queryable: true`, `queryable_via: "relation_name"`) and includes
-`relation_name`, `grain`, and `expression`, do not run schema-inspection SQL
-before execution. If the row is Semantic Layer-backed, use the configured
-MetricFlow path. If it is metadata-only or not queryable, report the execution
-blocker instead of writing inferred SQL.
+`queryable: true`, `direct_sql_queryable: true`,
+`queryable_via: "relation_name"`) and includes `relation_name`, `grain`, and
+`expression`, do not run schema-inspection SQL before execution. If the row is
+Semantic Layer-backed, use the configured MetricFlow path. If it is
+metadata-only or not queryable, report the execution blocker instead of writing
+inferred SQL.
 
 Compact entity inspection:
 

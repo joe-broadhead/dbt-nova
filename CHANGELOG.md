@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added response-only `direct_sql_queryable` metadata to `search_indicator` and
+  `indicator_inventory` so agents can distinguish relation-backed SQL surfaces
+  from Semantic Layer-backed indicators that require MetricFlow/dbt Semantic
+  Layer execution.
 - Added agent modelling audit docs, API guidance, and packaged skill updates so
   agents use relation-backed, Semantic Layer-backed, and metadata-only indicator
   surfaces correctly.

@@ -46,7 +46,7 @@ Signals:
 
 Signals:
 - `search_indicator` returns `execution_surface: "semantic_layer"` but the plan
-  tries to query `relation_name` directly
+  tries to query `relation_name` directly despite `direct_sql_queryable: false`
 - MetricFlow measure references are not resolved before using the metric
 - the refactor plan mixes Semantic Layer ownership with dbt relation ownership
   without an explicit boundary

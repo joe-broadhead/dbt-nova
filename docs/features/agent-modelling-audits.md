@@ -23,6 +23,7 @@ response-only execution metadata:
 - `indicator_source`: `nova_meta`, `dbt_metric`, or `dbt_semantic_model`
 - `execution_surface`: `relation`, `semantic_layer`, or `metadata_only`
 - `queryable`: boolean
+- `direct_sql_queryable`: boolean
 - `queryable_via`: `relation_name`, `metricflow`, or `none`
 - `execution_note`: optional guidance
 
@@ -31,7 +32,8 @@ Treat those fields as the first execution gate:
 - Relation-backed indicators can be queried through the returned
   `relation_name` when the grain and fields fit the question.
 - Semantic-layer-backed indicators require the configured dbt Semantic Layer /
-  MetricFlow execution path. Do not pretend they are relation-backed just
+  MetricFlow execution path. They return `queryable: true` and
+  `direct_sql_queryable: false`; do not pretend they are relation-backed just
   because they are discoverable in Nova.
 - Metadata-only indicators are context. They are not safe query surfaces for
   SQL execution or agent-inferred joins.
@@ -63,6 +65,77 @@ The report adds:
 `summary.agent_modelling` includes total counts by severity plus top codes and
 categories. Findings are sorted by severity, category, code, entity, indicator,
 and message so repeated runs are stable.
+
+## Output Examples
+
+A clean project still includes the agent-modelling section so CI and agent
+clients can rely on a stable response shape:
+
+```json
+{
+  "agent_modelling_schema_version": "agent_modelling.v1",
+  "agent_modelling_finding_count": 0,
+  "agent_modelling_findings": [],
+  "summary": {
+    "agent_modelling": {
+      "total": 0,
+      "blockers": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "truncated": false,
+      "top_codes": [],
+      "top_categories": []
+    }
+  }
+}
+```
+
+A problematic metadata-only cross-grain KPI returns deterministic evidence and
+a remediation path instead of asking the agent to infer a raw fact-table join:
+
+```json
+{
+  "agent_modelling_finding_count": 1,
+  "agent_modelling_findings": [
+    {
+      "code": "ratio_like_metric_without_deterministic_surface",
+      "severity": "blocker",
+      "category": "cross_grain",
+      "message": "Ratio-like indicator `revenue_per_session` has no deterministic execution surface.",
+      "evidence": {
+        "execution_surface": "metadata_only",
+        "queryable": false,
+        "direct_sql_queryable": false,
+        "queryable_via": "none"
+      },
+      "recommendation": "Move the KPI to a queryable dbt relation, dbt Semantic Layer / MetricFlow metric, saved query, or recipe before agents use it for analysis."
+    }
+  ],
+  "summary": {
+    "agent_modelling": {
+      "total": 1,
+      "blockers": 1,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "truncated": false,
+      "top_codes": [
+        {
+          "code": "ratio_like_metric_without_deterministic_surface",
+          "count": 1
+        }
+      ],
+      "top_categories": [
+        {
+          "category": "cross_grain",
+          "count": 1
+        }
+      ]
+    }
+  }
+}
+```
 
 ## Severity Semantics
 

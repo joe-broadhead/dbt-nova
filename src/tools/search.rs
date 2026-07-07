@@ -2221,6 +2221,7 @@ struct IndicatorExecutionMetadata {
     indicator_source: &'static str,
     execution_surface: &'static str,
     queryable: bool,
+    direct_sql_queryable: bool,
     queryable_via: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     execution_note: Option<&'static str>,
@@ -2893,6 +2894,7 @@ fn indicator_execution_metadata(entity: &ArchivedEntity) -> IndicatorExecutionMe
             indicator_source: "nova_meta",
             execution_surface: "relation",
             queryable: true,
+            direct_sql_queryable: true,
             queryable_via: "relation_name",
             execution_note: None,
         },
@@ -2900,6 +2902,7 @@ fn indicator_execution_metadata(entity: &ArchivedEntity) -> IndicatorExecutionMe
             indicator_source: "nova_meta",
             execution_surface: "metadata_only",
             queryable: false,
+            direct_sql_queryable: false,
             queryable_via: "none",
             execution_note: Some(
                 "No deterministic relation or Semantic Layer execution surface is available.",
@@ -2913,6 +2916,7 @@ fn semantic_layer_indicator_execution(source: &'static str) -> IndicatorExecutio
         indicator_source: source,
         execution_surface: "semantic_layer",
         queryable: true,
+        direct_sql_queryable: false,
         queryable_via: "metricflow",
         execution_note: Some("Use MetricFlow or the dbt Semantic Layer for execution."),
     }
@@ -4185,6 +4189,7 @@ mod candidate_tests {
             indicator_source: "nova_meta",
             execution_surface: "metadata_only",
             queryable: false,
+            direct_sql_queryable: false,
             queryable_via: "none",
             execution_note: Some(
                 "No deterministic relation or Semantic Layer execution surface is available.",
