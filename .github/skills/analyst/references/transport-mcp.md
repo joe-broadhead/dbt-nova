@@ -30,6 +30,8 @@ Use this reference when the client exposes `mcp__nova__*` tools directly.
      values such as country, channel, segment, device, or market labels
    - set `include_support_signals: false` only when the top rows already
      provide enough evidence and no filter-value mapping is needed
+   - inspect `indicator_source`, `execution_surface`, `queryable`, and
+     `queryable_via` before execution
 3. `indicator_inventory` when comparing KPI families
 4. `search` for supporting entity discovery when the ask is not yet KPI-shaped
    or semantic discovery produced an explicit fallback reason.
@@ -106,8 +108,12 @@ KPI resolution:
 
 For rate, conversion, funnel, or ratio questions, request metric indicators
 first and copy any returned metric `expression` exactly into downstream SQL.
-If the compact indicator row includes `relation_name`, `grain`, and
-`expression`, do not run schema-inspection SQL before execution.
+If the compact indicator row is relation-backed (`execution_surface: "relation"`,
+`queryable: true`, `queryable_via: "relation_name"`) and includes
+`relation_name`, `grain`, and `expression`, do not run schema-inspection SQL
+before execution. If the row is Semantic Layer-backed, use the configured
+MetricFlow path. If it is metadata-only or not queryable, report the execution
+blocker instead of writing inferred SQL.
 
 Compact entity inspection:
 

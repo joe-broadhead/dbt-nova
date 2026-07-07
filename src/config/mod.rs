@@ -17,6 +17,7 @@ pub use column_lineage::{
     ColumnLineageConfig, ColumnMatchingConfig, ConfidenceTier, MatchingStrategy,
 };
 pub use core::{
+    AgentModellingAuditConfig, AgentReadinessConfig, AgentReadinessModellingConfig,
     ArtifactFetchPolicy, DbtNovaConfig, GovernanceGateConfig, ResultProfile, ServerTransport,
 };
 pub use metadata_score::{

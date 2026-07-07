@@ -14,7 +14,8 @@ Use this reference when you are working through the local `dbt-nova` CLI.
 
 Common mappings:
 - baseline discovery: `tool call search`, `find_by_path`, `list_entities`
-- overlap and consistency: `find_entity_overlap`, `modelling_consistency_report`
+- overlap and consistency: `find_entity_overlap`,
+  `modelling_consistency_report` with agent-modelling findings
 - repeated-concept discovery: `search_indicator`, `indicator_inventory`, `search_columns`, `column_inventory`
 - contract checks: `get_entity`, `get_context`, `get_columns`
 - side-by-side comparisons: `compare_grains`, `diff_entities`

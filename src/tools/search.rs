@@ -2216,6 +2216,16 @@ struct IndicatorGrainSummary {
     dimensions: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize)]
+struct IndicatorExecutionMetadata {
+    indicator_source: &'static str,
+    execution_surface: &'static str,
+    queryable: bool,
+    queryable_via: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    execution_note: Option<&'static str>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct IndicatorSearchRow {
     indicator_name: String,
@@ -2234,6 +2244,8 @@ struct IndicatorSearchRow {
     parent_resource_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     relation_name: Option<String>,
+    #[serde(flatten)]
+    execution: IndicatorExecutionMetadata,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     domains: Vec<String>,
     grain: IndicatorGrainSummary,
@@ -2265,6 +2277,8 @@ struct IndicatorInventoryRow {
     parent_resource_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     relation_name: Option<String>,
+    #[serde(flatten)]
+    execution: IndicatorExecutionMetadata,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     domains: Vec<String>,
     grain: IndicatorGrainSummary,
@@ -2677,6 +2691,7 @@ fn build_measure_indicator_row(
     matched: &crate::manifest::search::SemanticPreviewItem,
 ) -> IndicatorSearchRow {
     let explain_payload = indicator_match_explain(context, measure.name.as_str(), matched);
+    let execution = indicator_execution_metadata(context.entity);
     IndicatorSearchRow {
         indicator_name: measure.name.as_str().to_string(),
         indicator_type: "measure".to_string(),
@@ -2710,6 +2725,7 @@ fn build_measure_indicator_row(
             .unwrap_or("unknown")
             .to_string(),
         relation_name: context.entity.relation_name_str().map(str::to_string),
+        execution,
         domains: context
             .nova
             .domains
@@ -2729,6 +2745,7 @@ fn build_measure_inventory_row(
     measure: &ArchivedNovaMeasure,
     canonical: bool,
 ) -> IndicatorInventoryRow {
+    let execution = indicator_execution_metadata(entity);
     IndicatorInventoryRow {
         indicator_name: measure.name.as_str().to_string(),
         indicator_type: "measure".to_string(),
@@ -2763,6 +2780,7 @@ fn build_measure_inventory_row(
         parent_name: entity.name_str().unwrap_or(unique_id).to_string(),
         parent_resource_type: entity.resource_type_str().unwrap_or("unknown").to_string(),
         relation_name: entity.relation_name_str().map(str::to_string),
+        execution,
         domains: nova
             .domains
             .iter()
@@ -2780,6 +2798,7 @@ fn build_metric_indicator_row(
     let preferred_grain = metric.grain.as_ref().or(context.nova.grain.as_ref());
     let explain_payload =
         indicator_match_explain_with_grain(context, metric.name.as_str(), matched, preferred_grain);
+    let execution = indicator_execution_metadata(context.entity);
     IndicatorSearchRow {
         indicator_name: metric.name.as_str().to_string(),
         indicator_type: "metric".to_string(),
@@ -2809,6 +2828,7 @@ fn build_metric_indicator_row(
             .unwrap_or("unknown")
             .to_string(),
         relation_name: context.entity.relation_name_str().map(str::to_string),
+        execution,
         domains: context
             .nova
             .domains
@@ -2828,6 +2848,7 @@ fn build_metric_inventory_row(
     metric: &ArchivedNovaMetric,
     canonical: bool,
 ) -> IndicatorInventoryRow {
+    let execution = indicator_execution_metadata(entity);
     IndicatorInventoryRow {
         indicator_name: metric.name.as_str().to_string(),
         indicator_type: "metric".to_string(),
@@ -2854,12 +2875,46 @@ fn build_metric_inventory_row(
         parent_name: entity.name_str().unwrap_or(unique_id).to_string(),
         parent_resource_type: entity.resource_type_str().unwrap_or("unknown").to_string(),
         relation_name: entity.relation_name_str().map(str::to_string),
+        execution,
         domains: nova
             .domains
             .iter()
             .map(|value| value.as_str().to_string())
             .collect(),
         grain: grain_summary(metric.grain.as_ref().or(nova.grain.as_ref())),
+    }
+}
+
+fn indicator_execution_metadata(entity: &ArchivedEntity) -> IndicatorExecutionMetadata {
+    match entity.resource_type_str() {
+        Some("metric") => semantic_layer_indicator_execution("dbt_metric"),
+        Some("semantic_model") => semantic_layer_indicator_execution("dbt_semantic_model"),
+        _ if entity.relation_name_str().is_some() => IndicatorExecutionMetadata {
+            indicator_source: "nova_meta",
+            execution_surface: "relation",
+            queryable: true,
+            queryable_via: "relation_name",
+            execution_note: None,
+        },
+        _ => IndicatorExecutionMetadata {
+            indicator_source: "nova_meta",
+            execution_surface: "metadata_only",
+            queryable: false,
+            queryable_via: "none",
+            execution_note: Some(
+                "No deterministic relation or Semantic Layer execution surface is available.",
+            ),
+        },
+    }
+}
+
+fn semantic_layer_indicator_execution(source: &'static str) -> IndicatorExecutionMetadata {
+    IndicatorExecutionMetadata {
+        indicator_source: source,
+        execution_surface: "semantic_layer",
+        queryable: true,
+        queryable_via: "metricflow",
+        execution_note: Some("Use MetricFlow or the dbt Semantic Layer for execution."),
     }
 }
 
@@ -4125,6 +4180,18 @@ fn persona_semantic_match_multiplier(persona: SearchPersona, config: &SearchConf
 mod candidate_tests {
     use super::*;
 
+    fn test_indicator_execution_metadata() -> IndicatorExecutionMetadata {
+        IndicatorExecutionMetadata {
+            indicator_source: "nova_meta",
+            execution_surface: "metadata_only",
+            queryable: false,
+            queryable_via: "none",
+            execution_note: Some(
+                "No deterministic relation or Semantic Layer execution surface is available.",
+            ),
+        }
+    }
+
     #[test]
     fn candidate_false_multiplier_deboosts_analyst_only_by_default() {
         let config = SearchConfig::default();
@@ -4213,6 +4280,7 @@ mod candidate_tests {
             parent_name: "orders_semantic_templates".to_string(),
             parent_resource_type: "model".to_string(),
             relation_name: None,
+            execution: test_indicator_execution_metadata(),
             domains: vec!["commerce".to_string()],
             grain: IndicatorGrainSummary {
                 primary_key: Vec::new(),
@@ -4246,6 +4314,7 @@ mod candidate_tests {
                 parent_name: "one".to_string(),
                 parent_resource_type: "model".to_string(),
                 relation_name: None,
+                execution: test_indicator_execution_metadata(),
                 domains: Vec::new(),
                 grain: IndicatorGrainSummary {
                     primary_key: Vec::new(),
@@ -4268,6 +4337,7 @@ mod candidate_tests {
                 parent_name: "two".to_string(),
                 parent_resource_type: "model".to_string(),
                 relation_name: None,
+                execution: test_indicator_execution_metadata(),
                 domains: Vec::new(),
                 grain: IndicatorGrainSummary {
                     primary_key: Vec::new(),
@@ -4290,6 +4360,7 @@ mod candidate_tests {
                 parent_name: "three".to_string(),
                 parent_resource_type: "model".to_string(),
                 relation_name: None,
+                execution: test_indicator_execution_metadata(),
                 domains: Vec::new(),
                 grain: IndicatorGrainSummary {
                     primary_key: Vec::new(),
@@ -4332,6 +4403,7 @@ mod candidate_tests {
                 parent_name: "sales".to_string(),
                 parent_resource_type: "model".to_string(),
                 relation_name: None,
+                execution: test_indicator_execution_metadata(),
                 domains: Vec::new(),
                 grain: IndicatorGrainSummary {
                     primary_key: Vec::new(),
@@ -4354,6 +4426,7 @@ mod candidate_tests {
                 parent_name: "sales".to_string(),
                 parent_resource_type: "model".to_string(),
                 relation_name: None,
+                execution: test_indicator_execution_metadata(),
                 domains: Vec::new(),
                 grain: IndicatorGrainSummary {
                     primary_key: Vec::new(),
@@ -4393,6 +4466,7 @@ mod candidate_tests {
                 parent_name: "fact_orders".to_string(),
                 parent_resource_type: "model".to_string(),
                 relation_name: None,
+                execution: test_indicator_execution_metadata(),
                 domains: vec!["commerce".to_string()],
                 grain: IndicatorGrainSummary {
                     primary_key: vec!["order_id".to_string()],
@@ -4424,6 +4498,7 @@ mod candidate_tests {
                 parent_name: "fact_orders".to_string(),
                 parent_resource_type: "model".to_string(),
                 relation_name: None,
+                execution: test_indicator_execution_metadata(),
                 domains: vec!["commerce".to_string()],
                 grain: IndicatorGrainSummary {
                     primary_key: vec!["order_id".to_string()],
@@ -4455,6 +4530,7 @@ mod candidate_tests {
                 parent_name: "promotions".to_string(),
                 parent_resource_type: "model".to_string(),
                 relation_name: None,
+                execution: test_indicator_execution_metadata(),
                 domains: vec!["promotions".to_string()],
                 grain: IndicatorGrainSummary {
                     primary_key: Vec::new(),
@@ -4510,6 +4586,7 @@ mod candidate_tests {
                 parent_name: "fact_orders".to_string(),
                 parent_resource_type: "model".to_string(),
                 relation_name: None,
+                execution: test_indicator_execution_metadata(),
                 domains: vec!["commerce".to_string()],
                 grain: IndicatorGrainSummary {
                     primary_key: Vec::new(),
@@ -4541,6 +4618,7 @@ mod candidate_tests {
                 parent_name: "fact_orders".to_string(),
                 parent_resource_type: "model".to_string(),
                 relation_name: None,
+                execution: test_indicator_execution_metadata(),
                 domains: vec!["commerce".to_string()],
                 grain: IndicatorGrainSummary {
                     primary_key: Vec::new(),

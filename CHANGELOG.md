@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added agent modelling audit docs, API guidance, and packaged skill updates so
+  agents use relation-backed, Semantic Layer-backed, and metadata-only indicator
+  surfaces correctly.
+- Documented the v1 decision to keep agent-modelling audits on
+  `modelling_consistency_report` and defer a standalone `dbt-nova audit
+  modelling` wrapper until a separate report/CI contract is needed.
+- Updated `crossbeam-epoch` to address `RUSTSEC-2026-0204` and restore the
+  supply-chain advisory gate.
+- Added response-only indicator execution metadata to `search_indicator` and
+  `indicator_inventory` so agents can distinguish relation-backed,
+  Semantic Layer-backed, and metadata-only indicators before execution.
+- Documented the accepted v1 agent modelling finding contract, including
+  severity semantics, bounded summaries, rule requirements, and deferred
+  default-off checks.
+- Added the empty `agent_modelling_findings` framework and bounded summary
+  fields to `modelling_consistency_report`.
+- Added deterministic agent-modelling findings for duplicate/canonical
+  indicator ambiguity, non-queryable indicator parents, metric output/grain
+  mismatches, missing metric time fields, multi-grain entities, and
+  semantic-model grain gaps.
+- Added catalog and semantic artifact integrity findings for indicator-field
+  catalog drift, catalog-missing fields, catalog-only measure-like columns, and
+  unresolved MetricFlow measure references.
+- Added cross-grain, multi-fact, canonical primary-key, and analyst-surface
+  layering findings to the v1 agent modelling audit response.
+- Added search ambiguity, column semantic drift, and governance findings for
+  analyst-facing surfaces to the v1 agent modelling audit response.
+- Added conservative agent-modelling audit configuration defaults and env vars,
+  including bounded findings, readiness thresholds, and SQL-shape checks
+  defaulting off.
+- Fed severe agent-modelling findings into agent readiness with additive
+  `summary.agent_modelling` counts, mapped blockers/improvements, and modelling
+  next actions.
 - Hardened DuckDB `execute_sql` by disabling external file/table access by
   default, requiring an explicit bounded `DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS`
   opt-in, and rejecting DuckDB file-scan functions in SQL validation.

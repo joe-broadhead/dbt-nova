@@ -121,6 +121,12 @@ exists, treat it as non-queryable context. Ask for or propose a dbt model,
 semantic-layer metric, OSI artifact, saved query, or recipe instead of joining
 heterogeneous facts from metric names alone.
 
+Run [Agent Modelling Audits](agent-modelling-audits.md) when cross-grain KPIs
+are added or reviewed. The audit flags ratio-like and cross-grain indicators
+that have no deterministic execution surface so teams can move them to a
+queryable dbt relation, configured Semantic Layer path, saved query, or recipe
+before agents use them for analysis.
+
 ### SQL Example
 
 `models/marts/product/mart__conversion_rate/mart__conversion_rate.sql`

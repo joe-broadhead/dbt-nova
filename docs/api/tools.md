@@ -151,6 +151,18 @@ entity and grain context. Native dbt Semantic Layer / MetricFlow `metrics` and
 `semantic_models` are bridged into this indicator surface even when no
 hand-authored `meta.nova` block exists.
 
+Each indicator row includes response-only execution metadata:
+`indicator_source` (`nova_meta`, `dbt_metric`, or `dbt_semantic_model`),
+`execution_surface` (`relation`, `semantic_layer`, or `metadata_only`),
+`queryable`, `queryable_via` (`relation_name`, `metricflow`, or `none`), and an
+optional `execution_note`.
+
+Use those fields as the execution gate. Relation-backed indicators can be
+queried through the returned `relation_name` after the grain and fields fit the
+question. Semantic Layer-backed indicators require the configured dbt Semantic
+Layer / MetricFlow execution path. Metadata-only indicators are context only;
+they are not safe SQL surfaces and should not trigger inferred joins.
+
 Required:
 - `query`
 
@@ -189,6 +201,10 @@ Example response shape:
       "parent_name": "orders_semantic_templates",
       "parent_resource_type": "model",
       "relation_name": "analytics.dbt_test.orders_semantic_templates",
+      "indicator_source": "nova_meta",
+      "execution_surface": "relation",
+      "queryable": true,
+      "queryable_via": "relation_name",
       "domains": ["commerce"],
       "grain": {
         "time_field": "order_date",
@@ -214,6 +230,8 @@ List Nova measures and metrics deterministically, with parent execution context.
 Use this when you need a flat semantic catalog instead of ranked search results.
 MetricFlow metrics and semantic-model measures are included as derived Nova
 indicators unless explicit `meta.nova` metadata overrides or extends them.
+Execution metadata uses the same response-only fields and execution-surface gate
+as `search_indicator`.
 
 Common:
 - `indicator_types` (`["metric"]`, `["measure"]`, or omitted for both)
@@ -244,6 +262,10 @@ Example response shape:
       "parent_name": "fact_orders_canonical",
       "parent_resource_type": "model",
       "relation_name": "analytics.dbt_test.fact_orders_canonical",
+      "indicator_source": "nova_meta",
+      "execution_surface": "relation",
+      "queryable": true,
+      "queryable_via": "relation_name",
       "domains": ["commerce"],
       "grain": {
         "time_field": "order_date",
@@ -361,7 +383,8 @@ Common:
 ```
 
 ### `modelling_consistency_report`
-Audit project-level overlap, duplicate indicators, canonical conflicts, and grain drift.
+Audit project-level overlap, duplicate indicators, canonical conflicts, grain
+drift, and deterministic agent-modelling risks.
 
 Common:
 - `resource_types`
@@ -374,8 +397,28 @@ Common:
 
 Responses include a compact `summary` with section counts, top duplicate
 indicator groups, top canonical conflicts, overlap evidence category counts,
-bounded overlap examples, multi-grain entity highlights, and drill-down hints.
-The existing detail arrays remain paged by `limit` and `offset`.
+bounded overlap examples, multi-grain entity highlights, `agent_modelling`
+finding counts, and drill-down hints. The existing detail arrays remain paged
+by `limit` and `offset`.
+
+The report includes `agent_modelling_schema_version` set to
+`"agent_modelling.v1"`, `agent_modelling_finding_count`, and
+`agent_modelling_findings`. Findings currently cover duplicate/canonical
+indicator ambiguity, non-queryable indicator parents, metric output/grain field
+issues, missing metric time fields, multi-grain entities, and semantic-model
+primary/time grain gaps, catalog drift on indicator fields, catalog-only
+measure-like columns, unresolved MetricFlow measure references,
+cross-grain/multi-fact risks, missing canonical primary keys, and
+analyst-surface layering, semantic-label, column-semantic, and governance risks.
+Deterministic manifest, metadata, and catalog checks are enabled by default;
+use `DBT_NOVA_AGENT_MODELLING_AUDIT_ENABLED=false` to suppress
+`agent_modelling_findings`, `DBT_NOVA_AGENT_MODELLING_MAX_FINDINGS` to bound
+retained findings, and keep SQL-shape checks opt-in with
+`DBT_NOVA_AGENT_MODELLING_ENABLE_SQL_SHAPE_CHECKS=true`.
+
+See [Agent Modelling Audits](../features/agent-modelling-audits.md) for the
+finding contract, execution-surface policy, readiness integration, and CI
+examples.
 
 ### `get_entity`
 Fetch a single entity by `unique_id` or name.
@@ -763,7 +806,13 @@ reviewable dbt metadata remediation and draft `golden_question_seeds` for eval
 authoring. Suggested patches never edit files, and generated seeds should be
 reviewed before becoming CI gates. Reports also include the shared metadata
 `scoring_contract` and compact `summary` triage fields for score buckets, weak
-spots, repeated fields, and drill-down hints.
+spots, repeated fields, agent-modelling counts/top codes, and drill-down hints.
+Deterministic modelling blockers are returned as readiness blockers; high and
+medium modelling findings and advisory count threshold misses are returned as
+improvements, while required count threshold misses are blockers.
+
+See [Agent Modelling Audits](../features/agent-modelling-audits.md) for the
+modelling finding contract and execution-surface rules.
 
 Large reports use the standard MCP response-budget behavior; check
 `_nova_result_meta.truncated` when response budgeting is enabled.

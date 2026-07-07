@@ -128,6 +128,7 @@ nav:
     - Analysis Recipes: features/recipes.md
     - Column Lineage: features/column-lineage.md
     - Agent Readiness Audit: features/agent-readiness.md
+    - Agent Modelling Audits: features/agent-modelling-audits.md
     - Metadata Audit: features/metadata-audit.md
     - Metadata Scoring: features/metadata-scoring.md
     - Search Ranking: features/search-ranking.md
@@ -151,6 +152,7 @@ nav:
     - Architecture: development/architecture.md
     - Negative Results Log: development/negative-results.md
     - Agent Tokenomics Plan: development/agent-tokenomics-plan.md
+    - Agent Modelling Finding Contract: development/agent-modelling-findings-contract.md
     - OpenCode Reference Pack Design (Not Shipped): development/opencode-reference-pack.md
     - CI & Automation: development/ci.md
     - Release: development/release.md

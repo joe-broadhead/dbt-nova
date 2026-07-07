@@ -22,6 +22,11 @@ Operations that read local files, write reports, execute provider commands,
 mutate storage, or warm caches need explicit MCP safety semantics before they
 are exposed to hosted or remote clients.
 
+Agent-modelling audits are intentionally handled by
+`modelling_consistency_report` through MCP and `dbt-nova tool call`. There is no
+separate `dbt-nova audit modelling` leaf in v1; readiness owns the report-file
+and blocker exit-code workflow.
+
 `SafetyGated` means the MCP tool exists but rejects by default until an operator
 sets the documented opt-in environment variable for local execution or writes.
 

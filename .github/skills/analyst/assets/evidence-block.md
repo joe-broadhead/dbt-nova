@@ -16,6 +16,7 @@
 - Validated filter values:
 
 - Indicator definition source:
+- Indicator execution surface / queryable via:
 - Semantic discovery:
 - Raw-search fallback reason:
 - Execution method:

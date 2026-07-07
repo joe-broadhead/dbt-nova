@@ -1,4 +1,19 @@
 {
+  "agent_modelling_audit": {
+    "enable_sql_shape_checks": false,
+    "enabled": true,
+    "max_findings": 100,
+    "source_fanout_threshold": 20,
+    "too_many_parents_threshold": 7
+  },
+  "agent_readiness": {
+    "modelling": {
+      "max_blockers": 0,
+      "max_blockers_required": true,
+      "max_high": 10,
+      "max_high_required": false
+    }
+  },
   "artifact_allow_http": false,
   "artifact_archive_max_entries": 200000,
   "artifact_archive_max_uncompressed_bytes": 10737418240,

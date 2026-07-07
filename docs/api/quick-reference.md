@@ -9,8 +9,8 @@ denylist.
 | Tool | Purpose | Key Parameters |
 |------|---------|----------------|
 | `search` | Full-text and hybrid search | `query`, `persona`, `resource_types`, `detail`, `include_highlights`, `include_sql` |
-| `search_indicator` | Resolve Nova measures/metrics to execution parents | `query`, `indicator_types`, `resource_types`, `detail`, `group_mode`, `limit` |
-| `indicator_inventory` | List Nova measures and metrics deterministically | `indicator_types`, `resource_types`, `canonical_only`, `limit`, `offset` |
+| `search_indicator` | Resolve Nova measures/metrics to execution parents and surfaces | `query`, `indicator_types`, `resource_types`, `detail`, `group_mode`, `limit` |
+| `indicator_inventory` | List Nova measures and metrics with execution surfaces | `indicator_types`, `resource_types`, `canonical_only`, `limit`, `offset` |
 | `search_columns` | Search columns by names and semantic hints | `query`, `resource_types`, `roles`, `semantic_types`, `limit`, `offset` |
 | `column_inventory` | List columns with semantic context | `resource_types`, `roles`, `semantic_types`, `limit`, `offset` |
 | `get_entity` | Fetch single entity by ID or name | `id_or_name` (`unique_id` alias), `resource_type`, `detail` |
@@ -59,7 +59,7 @@ denylist.
 |------|---------|----------------|
 | `compare_grains` | Compare grain metadata between two entities | `entity1`, `entity2`, `entity1_resource_type`, `entity2_resource_type` |
 | `find_entity_overlap` | Detect overlapping entities using semantic evidence | `resource_types`, `package`, `min_overlap_score`, `limit`, `offset` |
-| `modelling_consistency_report` | Audit duplicate indicators, conflicts, and grain drift | `resource_types`, `package`, `limit`, `offset` |
+| `modelling_consistency_report` | Audit duplicate indicators, grain drift, and agent-modelling risks | `resource_types`, `package`, `limit`, `offset` |
 
 ## Validation
 
@@ -142,4 +142,5 @@ denylist.
 
 - [Tools Reference](tools.md) - Full documentation for each tool
 - [Response Format](response-format.md) - Understanding API responses
+- [Agent Modelling Audits](../features/agent-modelling-audits.md) - Indicator execution surfaces and modelling findings
 - [Personas](../personas/overview.md) - Persona-specific workflows

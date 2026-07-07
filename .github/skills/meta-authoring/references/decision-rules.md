@@ -46,6 +46,11 @@ A strong metric normally has:
 - `canonical: true` only on the preferred repeated KPI definition
 
 Never set both `metric` and `metrics` on the same entity.
+Metrics should describe reusable templates on a queryable artifact. A
+cross-grain KPI needs a deterministic execution surface: a dbt relation,
+configured Semantic Layer metric, saved query, or recipe. Do not use
+metadata-only formulas, vague derivation graphs, or proposed `composite_metrics`
+as substitutes for an executable surface.
 
 ## Column Metadata
 
@@ -96,4 +101,6 @@ For authored repeated business terms:
 2. confirm the preferred entity or indicator ranks ahead of helper variants
 3. inspect the surfaced contract with `get_entity` or `get_context`
 4. confirm referenced fields exist with `get_columns`
-5. confirm metadata score improves or the tradeoff is intentional
+5. confirm indicator execution metadata is relation-backed, Semantic
+   Layer-backed through the configured path, or intentionally context-only
+6. confirm metadata score improves or the tradeoff is intentional

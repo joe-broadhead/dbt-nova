@@ -145,6 +145,23 @@ dbt-nova tool call search_indicator \
   --json
 ```
 
+### Run agent-modelling audits
+
+Agent-modelling findings are intentionally exposed through the existing
+modelling report tool instead of a standalone `dbt-nova audit modelling`
+wrapper:
+
+```bash
+dbt-nova tool call modelling_consistency_report \
+  --manifest-path /path/to/target/manifest.json \
+  --params-json '{"resource_types":["model","metric","semantic_model"],"limit":25}' \
+  --json
+```
+
+Use `audit agent-readiness` when you need readiness blockers, Markdown/JSON
+report files, or `--fail-on-blockers` CI behavior from the same modelling
+findings.
+
 ### Inspect, summarize, and redact tool traces
 
 ```bash
