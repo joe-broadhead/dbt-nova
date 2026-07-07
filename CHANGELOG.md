@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added response-only indicator execution metadata to `search_indicator` and
   `indicator_inventory` so agents can distinguish relation-backed,
   Semantic Layer-backed, and metadata-only indicators before execution.
+- Documented the accepted v1 agent modelling finding contract, including
+  severity semantics, bounded summaries, rule requirements, and deferred
+  default-off checks.
 - Hardened DuckDB `execute_sql` by disabling external file/table access by
   default, requiring an explicit bounded `DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS`
   opt-in, and rejecting DuckDB file-scan functions in SQL validation.

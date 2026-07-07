@@ -151,6 +151,7 @@ nav:
     - Architecture: development/architecture.md
     - Negative Results Log: development/negative-results.md
     - Agent Tokenomics Plan: development/agent-tokenomics-plan.md
+    - Agent Modelling Finding Contract: development/agent-modelling-findings-contract.md
     - OpenCode Reference Pack Design (Not Shipped): development/opencode-reference-pack.md
     - CI & Automation: development/ci.md
     - Release: development/release.md
