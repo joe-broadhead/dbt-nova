@@ -888,6 +888,9 @@ async fn build_agent_modelling_readiness_result(
         .modelling_consistency_report(&ModellingConsistencyReportParams {
             resource_types: Vec::new(),
             pagination: PaginationParams {
+                // Agent modelling findings are bounded independently by
+                // `agent_modelling_audit.max_findings`; keep the legacy
+                // overlap/duplicate report payload minimal for readiness.
                 limit: Some(1),
                 offset: 0,
             },

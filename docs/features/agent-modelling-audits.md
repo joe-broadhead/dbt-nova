@@ -64,6 +64,76 @@ The report adds:
 categories. Findings are sorted by severity, category, code, entity, indicator,
 and message so repeated runs are stable.
 
+## Output Examples
+
+A clean project still includes the agent-modelling section so CI and agent
+clients can rely on a stable response shape:
+
+```json
+{
+  "agent_modelling_schema_version": "agent_modelling.v1",
+  "agent_modelling_finding_count": 0,
+  "agent_modelling_findings": [],
+  "summary": {
+    "agent_modelling": {
+      "total": 0,
+      "blockers": 0,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "truncated": false,
+      "top_codes": [],
+      "top_categories": []
+    }
+  }
+}
+```
+
+A problematic metadata-only cross-grain KPI returns deterministic evidence and
+a remediation path instead of asking the agent to infer a raw fact-table join:
+
+```json
+{
+  "agent_modelling_finding_count": 1,
+  "agent_modelling_findings": [
+    {
+      "code": "ratio_like_metric_without_deterministic_surface",
+      "severity": "blocker",
+      "category": "cross_grain",
+      "message": "Ratio-like indicator `revenue_per_session` has no deterministic execution surface.",
+      "evidence": {
+        "execution_surface": "metadata_only",
+        "queryable": false,
+        "queryable_via": "none"
+      },
+      "recommendation": "Move the KPI to a queryable dbt relation, dbt Semantic Layer / MetricFlow metric, saved query, or recipe before agents use it for analysis."
+    }
+  ],
+  "summary": {
+    "agent_modelling": {
+      "total": 1,
+      "blockers": 1,
+      "high": 0,
+      "medium": 0,
+      "low": 0,
+      "truncated": false,
+      "top_codes": [
+        {
+          "code": "ratio_like_metric_without_deterministic_surface",
+          "count": 1
+        }
+      ],
+      "top_categories": [
+        {
+          "category": "cross_grain",
+          "count": 1
+        }
+      ]
+    }
+  }
+}
+```
+
 ## Severity Semantics
 
 - `blocker`: the surface is unsafe or ambiguous for agent execution. Examples
