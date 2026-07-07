@@ -1101,9 +1101,15 @@ fn build_agent_modelling_findings(
     multi_grain_entity_rows: &[MultiGrainEntityRow],
 ) -> Result<Vec<AgentModellingFinding>> {
     let mut findings = Vec::new();
+    let semantic_model_measure_names = semantic_model_measure_names(entities)?;
     collect_duplicate_indicator_findings(duplicate_indicator_rows, &mut findings);
     collect_multi_grain_entity_findings(entities, multi_grain_entity_rows, &mut findings)?;
-    collect_entity_agent_modelling_findings(entities, profiles, &mut findings)?;
+    collect_entity_agent_modelling_findings(
+        entities,
+        profiles,
+        &semantic_model_measure_names,
+        &mut findings,
+    )?;
     Ok(findings)
 }
 
@@ -1209,20 +1215,55 @@ fn collect_multi_grain_entity_findings(
 fn collect_entity_agent_modelling_findings(
     entities: &EntityStore,
     profiles: &[EntityOverlapProfile],
+    semantic_model_measure_names: &BTreeSet<String>,
     findings: &mut Vec<AgentModellingFinding>,
 ) -> Result<()> {
     for profile in profiles {
         let Some(entity) = entities.get_archived(&profile.unique_id)? else {
             continue;
         };
+        let nova = entity.nova_meta();
+        if let Some(nova) = nova {
+            collect_indicator_parent_not_queryable_findings(
+                &profile.unique_id,
+                entity,
+                nova,
+                findings,
+            );
+            collect_metric_surface_findings(&profile.unique_id, entity, nova, findings);
+            collect_semantic_model_grain_findings(&profile.unique_id, entity, nova, findings);
+        }
+        collect_catalog_integrity_findings(&profile.unique_id, entity, nova, findings);
+        collect_semantic_metric_reference_findings(
+            &profile.unique_id,
+            entity,
+            semantic_model_measure_names,
+            findings,
+        );
+    }
+    Ok(())
+}
+
+fn semantic_model_measure_names(entities: &EntityStore) -> Result<BTreeSet<String>> {
+    let mut names = BTreeSet::new();
+    for unique_id in entities.ids() {
+        let Some(entity) = entities.get_archived(unique_id)? else {
+            continue;
+        };
+        if entity.resource_type_str() != Some("semantic_model") {
+            continue;
+        }
         let Some(nova) = entity.nova_meta() else {
             continue;
         };
-        collect_indicator_parent_not_queryable_findings(&profile.unique_id, entity, nova, findings);
-        collect_metric_surface_findings(&profile.unique_id, entity, nova, findings);
-        collect_semantic_model_grain_findings(&profile.unique_id, entity, nova, findings);
+        names.extend(
+            nova.measures
+                .iter()
+                .map(|measure| normalize_value(measure.name.as_str()))
+                .filter(|value| !value.is_empty()),
+        );
     }
-    Ok(())
+    Ok(names)
 }
 
 fn collect_indicator_parent_not_queryable_findings(
@@ -1407,6 +1448,186 @@ fn collect_semantic_model_grain_findings(
     }
 }
 
+fn collect_catalog_integrity_findings(
+    unique_id: &str,
+    entity: &ArchivedEntity,
+    nova: Option<&ArchivedNovaMeta>,
+    findings: &mut Vec<AgentModellingFinding>,
+) {
+    let entity_json = entity.to_json_value();
+    let Some(columns) = entity_json.get("columns").and_then(JsonValue::as_object) else {
+        return;
+    };
+    if let Some(nova) = nova {
+        collect_catalog_indicator_field_findings(unique_id, entity, nova, columns, findings);
+    }
+    collect_catalog_only_candidate_measure_columns(unique_id, entity, columns, findings);
+}
+
+fn collect_catalog_indicator_field_findings(
+    unique_id: &str,
+    entity: &ArchivedEntity,
+    nova: &ArchivedNovaMeta,
+    columns: &serde_json::Map<String, JsonValue>,
+    findings: &mut Vec<AgentModellingFinding>,
+) {
+    for measure in nova.measures.iter() {
+        let Some(field) = measure.field.as_ref().map(ArchivedString::as_str) else {
+            continue;
+        };
+        let Some(column) = columns.get(field) else {
+            continue;
+        };
+        let Some(drift) = column.get("catalog_drift").and_then(JsonValue::as_object) else {
+            continue;
+        };
+        if drift
+            .get("type_mismatch")
+            .and_then(JsonValue::as_bool)
+            .unwrap_or(false)
+        {
+            findings.push(AgentModellingFinding {
+                code: "catalog_type_drift_on_indicator_field",
+                severity: AgentModellingSeverity::Medium,
+                category: "catalog_reality",
+                message: format!(
+                    "Measure `{}` uses field `{field}` with manifest/catalog type drift.",
+                    measure.name.as_str()
+                ),
+                entities: vec![modeling_entity_ref(unique_id, entity)],
+                indicators: vec![ModelingIndicatorRef {
+                    indicator_name: measure.name.as_str().to_string(),
+                    indicator_type: "measure".to_string(),
+                    parent_unique_id: unique_id.to_string(),
+                    source: Some(indicator_source_for_entity(entity).to_string()),
+                }],
+                evidence: json!({
+                    "field": field,
+                    "manifest_data_type": drift.get("manifest_data_type"),
+                    "catalog_data_type": drift.get("catalog_data_type")
+                }),
+                recommendation: "Update dbt column metadata or investigate warehouse schema drift before relying on this measure.".to_string(),
+                drill_down_hints: entity_columns_drill_down_hints(unique_id),
+            });
+        }
+        if drift
+            .get("missing_in_catalog")
+            .and_then(JsonValue::as_bool)
+            .unwrap_or(false)
+        {
+            findings.push(AgentModellingFinding {
+                code: "catalog_missing_indicator_field",
+                severity: AgentModellingSeverity::High,
+                category: "catalog_reality",
+                message: format!(
+                    "Measure `{}` uses field `{field}` that is missing from catalog reality.",
+                    measure.name.as_str()
+                ),
+                entities: vec![modeling_entity_ref(unique_id, entity)],
+                indicators: vec![ModelingIndicatorRef {
+                    indicator_name: measure.name.as_str().to_string(),
+                    indicator_type: "measure".to_string(),
+                    parent_unique_id: unique_id.to_string(),
+                    source: Some(indicator_source_for_entity(entity).to_string()),
+                }],
+                evidence: json!({
+                    "field": field,
+                    "manifest_data_type": drift.get("manifest_data_type"),
+                    "missing_in_catalog": true
+                }),
+                recommendation: "The dbt manifest declares an indicator field that is absent from catalog reality. Refresh or repair dbt docs or the warehouse schema.".to_string(),
+                drill_down_hints: entity_columns_drill_down_hints(unique_id),
+            });
+        }
+    }
+}
+
+fn collect_catalog_only_candidate_measure_columns(
+    unique_id: &str,
+    entity: &ArchivedEntity,
+    columns: &serde_json::Map<String, JsonValue>,
+    findings: &mut Vec<AgentModellingFinding>,
+) {
+    if !entity_is_analyst_facing(entity) {
+        return;
+    }
+    for (column_name, column) in columns {
+        let catalog_only = column
+            .get("catalog_drift")
+            .and_then(|drift| drift.get("catalog_only"))
+            .and_then(JsonValue::as_bool)
+            .unwrap_or(false);
+        if !catalog_only {
+            continue;
+        }
+        let data_type = column
+            .get("data_type")
+            .and_then(JsonValue::as_str)
+            .or_else(|| column.get("catalog_data_type").and_then(JsonValue::as_str));
+        if !data_type.is_some_and(is_measure_like_data_type) {
+            continue;
+        }
+        findings.push(AgentModellingFinding {
+            code: "catalog_only_candidate_measure_column",
+            severity: AgentModellingSeverity::Low,
+            category: "catalog_reality",
+            message: format!(
+                "Catalog-only column `{column_name}` looks measure-like on an analyst-facing entity."
+            ),
+            entities: vec![modeling_entity_ref(unique_id, entity)],
+            indicators: Vec::new(),
+            evidence: json!({
+                "column_name": column_name,
+                "catalog_data_type": data_type,
+                "catalog_only": true
+            }),
+            recommendation: "Consider documenting this warehouse-only measure-like column in dbt if analysts should use it.".to_string(),
+            drill_down_hints: entity_columns_drill_down_hints(unique_id),
+        });
+    }
+}
+
+fn collect_semantic_metric_reference_findings(
+    unique_id: &str,
+    entity: &ArchivedEntity,
+    semantic_model_measure_names: &BTreeSet<String>,
+    findings: &mut Vec<AgentModellingFinding>,
+) {
+    if entity.resource_type_str() != Some("metric") {
+        return;
+    }
+    let entity_json = entity.to_json_value();
+    let measure_refs = metricflow_measure_references(&entity_json);
+    let missing = measure_refs
+        .into_iter()
+        .filter(|name| !semantic_model_measure_names.contains(&normalize_value(name)))
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return;
+    }
+    let metric_name = entity.name_str().unwrap_or(unique_id);
+    findings.push(AgentModellingFinding {
+        code: "semantic_metric_unresolved_measure_ref",
+        severity: AgentModellingSeverity::High,
+        category: "semantic_artifact_integrity",
+        message: format!(
+            "dbt metric `{metric_name}` references measure(s) that are absent from semantic models."
+        ),
+        entities: vec![modeling_entity_ref(unique_id, entity)],
+        indicators: entity
+            .nova_meta()
+            .and_then(|nova| nova.metric.as_ref())
+            .map(|metric| vec![modeling_metric_ref(unique_id, entity, metric.name.as_str())])
+            .unwrap_or_default(),
+        evidence: json!({
+            "missing_measure_refs": missing,
+            "semantic_model_measure_count": semantic_model_measure_names.len()
+        }),
+        recommendation: "Fix the dbt semantic metric reference or ensure the referenced semantic model measure is present in the manifest.".to_string(),
+        drill_down_hints: entity_drill_down_hints(unique_id),
+    });
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IndicatorExecutionSurface {
     Relation,
@@ -1498,6 +1719,53 @@ fn grain_field_names(grain: &ArchivedNovaGrain) -> Vec<String> {
             .map(str::to_string),
     );
     fields.into_iter().collect()
+}
+
+fn is_measure_like_data_type(data_type: &str) -> bool {
+    let normalized = data_type.trim().to_lowercase();
+    [
+        "int", "integer", "bigint", "smallint", "numeric", "decimal", "number", "float", "double",
+        "real",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+fn metricflow_measure_references(entity_json: &JsonValue) -> Vec<String> {
+    let mut refs = BTreeSet::new();
+    let Some(type_params) = entity_json.get("type_params") else {
+        return Vec::new();
+    };
+    collect_metricflow_named_reference(type_params.get("measure"), &mut refs);
+    collect_metricflow_named_reference(type_params.get("numerator"), &mut refs);
+    collect_metricflow_named_reference(type_params.get("denominator"), &mut refs);
+    if let Some(measures) = type_params.get("measures").and_then(JsonValue::as_array) {
+        for measure in measures {
+            collect_metricflow_named_reference(Some(measure), &mut refs);
+        }
+    }
+    refs.into_iter().collect()
+}
+
+fn collect_metricflow_named_reference(value: Option<&JsonValue>, refs: &mut BTreeSet<String>) {
+    match value {
+        Some(JsonValue::String(name)) if !name.trim().is_empty() => {
+            refs.insert(name.trim().to_string());
+        }
+        Some(JsonValue::Object(object)) => {
+            if let Some(name) = object.get("name").and_then(JsonValue::as_str)
+                && !name.trim().is_empty()
+            {
+                refs.insert(name.trim().to_string());
+            }
+        }
+        Some(JsonValue::Array(items)) => {
+            for item in items {
+                collect_metricflow_named_reference(Some(item), refs);
+            }
+        }
+        Some(_) | None => {}
+    }
 }
 
 fn indicator_source_for_entity(entity: &ArchivedEntity) -> &'static str {

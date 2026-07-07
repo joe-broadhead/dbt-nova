@@ -398,7 +398,8 @@ The report includes `agent_modelling_schema_version` set to
 `agent_modelling_findings`. Findings currently cover duplicate/canonical
 indicator ambiguity, non-queryable indicator parents, metric output/grain field
 issues, missing metric time fields, multi-grain entities, and semantic-model
-primary/time grain gaps.
+primary/time grain gaps, catalog drift on indicator fields, catalog-only
+measure-like columns, and unresolved MetricFlow measure references.
 
 ### `get_entity`
 Fetch a single entity by `unique_id` or name.
