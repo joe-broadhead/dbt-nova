@@ -154,14 +154,15 @@ hand-authored `meta.nova` block exists.
 Each indicator row includes response-only execution metadata:
 `indicator_source` (`nova_meta`, `dbt_metric`, or `dbt_semantic_model`),
 `execution_surface` (`relation`, `semantic_layer`, or `metadata_only`),
-`queryable`, `queryable_via` (`relation_name`, `metricflow`, or `none`), and an
-optional `execution_note`.
+`queryable`, `direct_sql_queryable`, `queryable_via` (`relation_name`,
+`metricflow`, or `none`), and an optional `execution_note`.
 
 Use those fields as the execution gate. Relation-backed indicators can be
 queried through the returned `relation_name` after the grain and fields fit the
 question. Semantic Layer-backed indicators require the configured dbt Semantic
-Layer / MetricFlow execution path. Metadata-only indicators are context only;
-they are not safe SQL surfaces and should not trigger inferred joins.
+Layer / MetricFlow execution path and are not directly queryable through Nova
+SQL. Metadata-only indicators are context only; they are not safe SQL surfaces
+and should not trigger inferred joins.
 
 Required:
 - `query`
@@ -204,6 +205,7 @@ Example response shape:
       "indicator_source": "nova_meta",
       "execution_surface": "relation",
       "queryable": true,
+      "direct_sql_queryable": true,
       "queryable_via": "relation_name",
       "domains": ["commerce"],
       "grain": {
@@ -265,6 +267,7 @@ Example response shape:
       "indicator_source": "nova_meta",
       "execution_surface": "relation",
       "queryable": true,
+      "direct_sql_queryable": true,
       "queryable_via": "relation_name",
       "domains": ["commerce"],
       "grain": {

@@ -23,6 +23,7 @@ response-only execution metadata:
 - `indicator_source`: `nova_meta`, `dbt_metric`, or `dbt_semantic_model`
 - `execution_surface`: `relation`, `semantic_layer`, or `metadata_only`
 - `queryable`: boolean
+- `direct_sql_queryable`: boolean
 - `queryable_via`: `relation_name`, `metricflow`, or `none`
 - `execution_note`: optional guidance
 
@@ -31,7 +32,8 @@ Treat those fields as the first execution gate:
 - Relation-backed indicators can be queried through the returned
   `relation_name` when the grain and fields fit the question.
 - Semantic-layer-backed indicators require the configured dbt Semantic Layer /
-  MetricFlow execution path. Do not pretend they are relation-backed just
+  MetricFlow execution path. They return `queryable: true` and
+  `direct_sql_queryable: false`; do not pretend they are relation-backed just
   because they are discoverable in Nova.
 - Metadata-only indicators are context. They are not safe query surfaces for
   SQL execution or agent-inferred joins.
@@ -104,6 +106,7 @@ a remediation path instead of asking the agent to infer a raw fact-table join:
       "evidence": {
         "execution_surface": "metadata_only",
         "queryable": false,
+        "direct_sql_queryable": false,
         "queryable_via": "none"
       },
       "recommendation": "Move the KPI to a queryable dbt relation, dbt Semantic Layer / MetricFlow metric, saved query, or recipe before agents use it for analysis."

@@ -31,8 +31,8 @@ If classification is ambiguous, inspect context and lineage before editing. Do n
 For business terms such as GMV, AOV, sessions, orders, customers, margin, conversion, or product counts:
 - search indicators by term and synonym
 - inventory canonical indicators
-- inspect `execution_surface`, `queryable`, and `queryable_via` before treating
-  an indicator as executable
+- inspect `execution_surface`, `queryable`, `direct_sql_queryable`, and
+  `queryable_via` before treating an indicator as executable
 - inspect candidate entities and grains
 - compare grains when two definitions look equivalent
 - use overlap or consistency reports when the concept appears broadly

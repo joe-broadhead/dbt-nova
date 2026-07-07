@@ -144,6 +144,7 @@ async fn metricflow_metrics_are_discoverable_without_nova_meta() {
     assert_eq!(gross_revenue["indicator_source"], "dbt_metric");
     assert_eq!(gross_revenue["execution_surface"], "semantic_layer");
     assert_eq!(gross_revenue["queryable"].as_bool(), Some(true));
+    assert_eq!(gross_revenue["direct_sql_queryable"].as_bool(), Some(false));
     assert_eq!(gross_revenue["queryable_via"], "metricflow");
     assert!(
         gross_revenue["execution_note"]
@@ -162,6 +163,10 @@ async fn metricflow_metrics_are_discoverable_without_nova_meta() {
     assert_eq!(revenue_per_session["indicator_source"], "dbt_metric");
     assert_eq!(revenue_per_session["execution_surface"], "semantic_layer");
     assert_eq!(revenue_per_session["queryable"].as_bool(), Some(true));
+    assert_eq!(
+        revenue_per_session["direct_sql_queryable"].as_bool(),
+        Some(false)
+    );
     assert_eq!(revenue_per_session["queryable_via"], "metricflow");
 
     let order_total = inventory_rows
@@ -171,6 +176,7 @@ async fn metricflow_metrics_are_discoverable_without_nova_meta() {
     assert_eq!(order_total["indicator_source"], "dbt_semantic_model");
     assert_eq!(order_total["execution_surface"], "semantic_layer");
     assert_eq!(order_total["queryable"].as_bool(), Some(true));
+    assert_eq!(order_total["direct_sql_queryable"].as_bool(), Some(false));
     assert_eq!(order_total["queryable_via"], "metricflow");
 
     let relation_metric = inventory_rows
@@ -183,6 +189,10 @@ async fn metricflow_metrics_are_discoverable_without_nova_meta() {
     assert_eq!(relation_metric["indicator_source"], "nova_meta");
     assert_eq!(relation_metric["execution_surface"], "relation");
     assert_eq!(relation_metric["queryable"].as_bool(), Some(true));
+    assert_eq!(
+        relation_metric["direct_sql_queryable"].as_bool(),
+        Some(true)
+    );
     assert_eq!(relation_metric["queryable_via"], "relation_name");
     assert_eq!(
         relation_metric["relation_name"],
@@ -200,6 +210,10 @@ async fn metricflow_metrics_are_discoverable_without_nova_meta() {
     assert_eq!(metadata_only_metric["indicator_source"], "nova_meta");
     assert_eq!(metadata_only_metric["execution_surface"], "metadata_only");
     assert_eq!(metadata_only_metric["queryable"].as_bool(), Some(false));
+    assert_eq!(
+        metadata_only_metric["direct_sql_queryable"].as_bool(),
+        Some(false)
+    );
     assert_eq!(metadata_only_metric["queryable_via"], "none");
     assert!(
         metadata_only_metric["execution_note"]
@@ -230,6 +244,10 @@ async fn metricflow_metrics_are_discoverable_without_nova_meta() {
     assert_eq!(gross_revenue_search["indicator_source"], "dbt_metric");
     assert_eq!(gross_revenue_search["execution_surface"], "semantic_layer");
     assert_eq!(gross_revenue_search["queryable"].as_bool(), Some(true));
+    assert_eq!(
+        gross_revenue_search["direct_sql_queryable"].as_bool(),
+        Some(false)
+    );
     assert_eq!(gross_revenue_search["queryable_via"], "metricflow");
 
     let ratio_search = json(
@@ -260,6 +278,10 @@ async fn metricflow_metrics_are_discoverable_without_nova_meta() {
     assert_eq!(
         revenue_per_session_search["queryable"].as_bool(),
         Some(true)
+    );
+    assert_eq!(
+        revenue_per_session_search["direct_sql_queryable"].as_bool(),
+        Some(false)
     );
     assert_eq!(revenue_per_session_search["queryable_via"], "metricflow");
 

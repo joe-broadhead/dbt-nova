@@ -38,12 +38,12 @@ When choosing where semantics live, ask:
 `search_indicator` and `indicator_inventory` return execution metadata that
 must shape architecture decisions:
 
-- `execution_surface: "relation"` with `queryable_via: "relation_name"` means
-  the indicator can be queried through the returned relation after grain and
-  field checks.
-- `execution_surface: "semantic_layer"` with `queryable_via: "metricflow"`
-  belongs to the configured dbt Semantic Layer / MetricFlow execution path, not
-  ad hoc SQL against a relation.
+- `execution_surface: "relation"` with `direct_sql_queryable: true` and
+  `queryable_via: "relation_name"` means the indicator can be queried through
+  the returned relation after grain and field checks.
+- `execution_surface: "semantic_layer"` with `direct_sql_queryable: false` and
+  `queryable_via: "metricflow"` belongs to the configured dbt Semantic Layer /
+  MetricFlow execution path, not ad hoc SQL against a relation.
 - `execution_surface: "metadata_only"` or `queryable: false` is context only.
   Move the KPI to a dbt model, semantic metric, saved query, or recipe before
   calling it executable.
