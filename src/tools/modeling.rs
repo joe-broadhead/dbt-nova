@@ -11,6 +11,7 @@ use crate::manifest::entity::{
     ArchivedEntity, ArchivedNovaGrain, ArchivedNovaMeta, ArchivedNovaMetric,
 };
 use crate::manifest::search::ManifestSearch;
+use crate::manifest::store::EntityStore;
 use crate::params::{
     CompareGrainsParams, FindEntityOverlapParams, ModellingConsistencyReportParams,
 };
@@ -151,7 +152,12 @@ impl ManifestSearch {
             section_offset,
             section_limit,
         );
-        let mut agent_modelling_findings_all = build_agent_modelling_findings(&profiles);
+        let mut agent_modelling_findings_all = build_agent_modelling_findings(
+            &self.entities,
+            &profiles,
+            &duplicate_indicator_rows,
+            &multi_grain_entity_rows_all,
+        )?;
         sort_agent_modelling_findings(&mut agent_modelling_findings_all);
         let agent_modelling_finding_count = agent_modelling_findings_all.len();
         let agent_modelling_findings_truncated =
@@ -428,6 +434,15 @@ struct ModellingReportPage {
 struct AgentModellingSummaryInput<'a> {
     findings: &'a [AgentModellingFinding],
     truncated: bool,
+}
+
+struct MetricSurfaceContext<'a> {
+    unique_id: &'a str,
+    entity: &'a ArchivedEntity,
+    nova: &'a ArchivedNovaMeta,
+    semantic_metric_parent: bool,
+    relation_backed: bool,
+    column_names: &'a BTreeSet<String>,
 }
 
 #[derive(Clone)]
@@ -1080,9 +1095,607 @@ fn build_modelling_consistency_summary(
 }
 
 fn build_agent_modelling_findings(
-    _profiles: &[EntityOverlapProfile],
-) -> Vec<AgentModellingFinding> {
-    Vec::new()
+    entities: &EntityStore,
+    profiles: &[EntityOverlapProfile],
+    duplicate_indicator_rows: &[DuplicateIndicatorRow],
+    multi_grain_entity_rows: &[MultiGrainEntityRow],
+) -> Result<Vec<AgentModellingFinding>> {
+    let mut findings = Vec::new();
+    collect_duplicate_indicator_findings(duplicate_indicator_rows, &mut findings);
+    collect_multi_grain_entity_findings(entities, multi_grain_entity_rows, &mut findings)?;
+    collect_entity_agent_modelling_findings(entities, profiles, &mut findings)?;
+    Ok(findings)
+}
+
+fn collect_duplicate_indicator_findings(
+    duplicate_indicator_rows: &[DuplicateIndicatorRow],
+    findings: &mut Vec<AgentModellingFinding>,
+) {
+    for row in duplicate_indicator_rows {
+        if row.canonical_parent_count > 1 {
+            let severity = if row.inconsistent_grains {
+                AgentModellingSeverity::Blocker
+            } else {
+                AgentModellingSeverity::High
+            };
+            findings.push(AgentModellingFinding {
+                code: "duplicate_canonical_indicator",
+                severity,
+                category: "indicator_resolution",
+                message: format!(
+                    "Indicator `{}` has {} canonical parents.",
+                    row.indicator_name, row.canonical_parent_count
+                ),
+                entities: duplicate_parent_entity_refs(&row.parents),
+                indicators: duplicate_indicator_refs(row),
+                evidence: json!({
+                    "indicator_name": &row.indicator_name,
+                    "indicator_type": &row.indicator_type,
+                    "parent_count": row.parent_count,
+                    "canonical_parent_count": row.canonical_parent_count,
+                    "inconsistent_grains": row.inconsistent_grains,
+                    "grain_variant_count": row.grain_signatures.len()
+                }),
+                recommendation: "Choose one canonical execution surface for this business indicator at this grain. If both are legitimate, rename or domain-scope one indicator.".to_string(),
+                drill_down_hints: duplicate_indicator_drill_down_hints(row),
+            });
+        } else if row.parent_count > 1 && row.canonical_parent_count == 0 {
+            findings.push(AgentModellingFinding {
+                code: "duplicate_indicator_without_canonical_parent",
+                severity: AgentModellingSeverity::Medium,
+                category: "indicator_resolution",
+                message: format!(
+                    "Indicator `{}` has multiple parents but no canonical parent.",
+                    row.indicator_name
+                ),
+                entities: duplicate_parent_entity_refs(&row.parents),
+                indicators: duplicate_indicator_refs(row),
+                evidence: json!({
+                    "indicator_name": &row.indicator_name,
+                    "indicator_type": &row.indicator_type,
+                    "parent_count": row.parent_count,
+                    "canonical_parent_count": row.canonical_parent_count,
+                    "inconsistent_grains": row.inconsistent_grains,
+                    "grain_variant_count": row.grain_signatures.len()
+                }),
+                recommendation: "Mark one parent indicator canonical or clarify names so agents can choose a preferred definition.".to_string(),
+                drill_down_hints: duplicate_indicator_drill_down_hints(row),
+            });
+        }
+    }
+}
+
+fn collect_multi_grain_entity_findings(
+    entities: &EntityStore,
+    multi_grain_entity_rows: &[MultiGrainEntityRow],
+    findings: &mut Vec<AgentModellingFinding>,
+) -> Result<()> {
+    for row in multi_grain_entity_rows {
+        let entity = entities.get_archived(&row.entity.unique_id)?;
+        let analyst_facing = entity.is_some_and(entity_is_analyst_facing);
+        findings.push(AgentModellingFinding {
+            code: "entity_multiple_grain_variants",
+            severity: if analyst_facing {
+                AgentModellingSeverity::High
+            } else {
+                AgentModellingSeverity::Medium
+            },
+            category: "grain_safety",
+            message: format!(
+                "Entity `{}` has {} declared grain variants.",
+                row.entity.unique_id, row.grain_variant_count
+            ),
+            entities: vec![modeling_entity_ref_from_entity_ref(&row.entity)],
+            indicators: Vec::new(),
+            evidence: json!({
+                "grain_variant_count": row.grain_variant_count,
+                "analyst_facing": analyst_facing,
+                "variant_sources": row.grain_variants.iter().flat_map(|variant| variant.sources.iter()).take(10).collect::<Vec<_>>()
+            }),
+            recommendation: "Separate base entity grain from metric-specific grain, or split metrics into clearer execution surfaces.".to_string(),
+            drill_down_hints: vec![json!({
+                "purpose": "inspect_multi_grain_entity",
+                "tool": "get_entity",
+                "arguments": {
+                    "id_or_name": &row.entity.unique_id,
+                    "detail": "standard"
+                }
+            })],
+        });
+    }
+    Ok(())
+}
+
+fn collect_entity_agent_modelling_findings(
+    entities: &EntityStore,
+    profiles: &[EntityOverlapProfile],
+    findings: &mut Vec<AgentModellingFinding>,
+) -> Result<()> {
+    for profile in profiles {
+        let Some(entity) = entities.get_archived(&profile.unique_id)? else {
+            continue;
+        };
+        let Some(nova) = entity.nova_meta() else {
+            continue;
+        };
+        collect_indicator_parent_not_queryable_findings(&profile.unique_id, entity, nova, findings);
+        collect_metric_surface_findings(&profile.unique_id, entity, nova, findings);
+        collect_semantic_model_grain_findings(&profile.unique_id, entity, nova, findings);
+    }
+    Ok(())
+}
+
+fn collect_indicator_parent_not_queryable_findings(
+    unique_id: &str,
+    entity: &ArchivedEntity,
+    nova: &ArchivedNovaMeta,
+    findings: &mut Vec<AgentModellingFinding>,
+) {
+    let execution = execution_surface(entity);
+    if execution != IndicatorExecutionSurface::MetadataOnly {
+        return;
+    }
+    for indicator in indicator_refs_for_entity(unique_id, entity, nova) {
+        findings.push(AgentModellingFinding {
+            code: "indicator_parent_not_queryable",
+            severity: AgentModellingSeverity::Blocker,
+            category: "queryability",
+            message: format!(
+                "Indicator `{}` is attached to metadata-only parent `{unique_id}`.",
+                indicator.indicator_name
+            ),
+            entities: vec![modeling_entity_ref(unique_id, entity)],
+            indicators: vec![indicator],
+            evidence: json!({
+                "execution_surface": execution.as_str(),
+                "queryable": execution.queryable(),
+                "queryable_via": execution.queryable_via()
+            }),
+            recommendation: "Move the indicator to a queryable dbt model, expose it through dbt Semantic Layer / MetricFlow, or mark the entity as non-analyst-facing.".to_string(),
+            drill_down_hints: entity_drill_down_hints(unique_id),
+        });
+    }
+}
+
+fn collect_metric_surface_findings(
+    unique_id: &str,
+    entity: &ArchivedEntity,
+    nova: &ArchivedNovaMeta,
+    findings: &mut Vec<AgentModellingFinding>,
+) {
+    let resource_type = entity.resource_type_str();
+    let semantic_metric_parent = resource_type == Some("metric");
+    let relation_backed = entity.relation_name_str().is_some();
+    let column_names = normalized_entity_column_names(entity);
+    let context = MetricSurfaceContext {
+        unique_id,
+        entity,
+        nova,
+        semantic_metric_parent,
+        relation_backed,
+        column_names: &column_names,
+    };
+
+    if let Some(metric) = nova.metric.as_ref() {
+        collect_single_metric_surface_findings(&context, metric, findings);
+    }
+    for metric in nova.metrics.iter() {
+        collect_single_metric_surface_findings(&context, metric, findings);
+    }
+}
+
+fn collect_single_metric_surface_findings(
+    context: &MetricSurfaceContext<'_>,
+    metric: &ArchivedNovaMetric,
+    findings: &mut Vec<AgentModellingFinding>,
+) {
+    let effective_grain = metric.grain.as_ref().or(context.nova.grain.as_ref());
+    if !context.semantic_metric_parent && effective_grain.and_then(grain_time_field).is_none() {
+        findings.push(metric_missing_time_field_finding(
+            context.unique_id,
+            context.entity,
+            metric,
+        ));
+    }
+
+    if !context.relation_backed {
+        return;
+    }
+
+    let metric_name = metric.name.as_str();
+    if !metric.template && !context.column_names.contains(&normalize_value(metric_name)) {
+        findings.push(AgentModellingFinding {
+            code: "metric_output_column_missing",
+            severity: AgentModellingSeverity::Medium,
+            category: "queryability",
+            message: format!(
+                "Relation-backed metric `{metric_name}` is not exposed as an output column."
+            ),
+            entities: vec![modeling_entity_ref(context.unique_id, context.entity)],
+            indicators: vec![modeling_metric_ref(
+                context.unique_id,
+                context.entity,
+                metric_name,
+            )],
+            evidence: json!({
+                "metric_name": metric_name,
+                "relation_name": context.entity.relation_name_str(),
+                "template": metric.template,
+                "column_present": false
+            }),
+            recommendation: "Expose the metric value as a column named after the metric, or mark the metric as a template if it is not a direct output.".to_string(),
+            drill_down_hints: entity_columns_drill_down_hints(context.unique_id),
+        });
+    }
+
+    if let Some(grain) = effective_grain {
+        let missing_fields = grain_field_names(grain)
+            .into_iter()
+            .filter(|field| !context.column_names.contains(&normalize_value(field)))
+            .collect::<Vec<_>>();
+        if !missing_fields.is_empty() {
+            findings.push(AgentModellingFinding {
+                code: "metric_grain_field_not_in_output",
+                severity: AgentModellingSeverity::High,
+                category: "grain_safety",
+                message: format!(
+                    "Relation-backed metric `{metric_name}` declares grain fields missing from output columns."
+                ),
+                entities: vec![modeling_entity_ref(context.unique_id, context.entity)],
+                indicators: vec![modeling_metric_ref(
+                    context.unique_id,
+                    context.entity,
+                    metric_name,
+                )],
+                evidence: json!({
+                    "metric_name": metric_name,
+                    "missing_fields": missing_fields,
+                    "relation_name": context.entity.relation_name_str()
+                }),
+                recommendation: "Ensure every declared grain field is present on the relation-backed metric model.".to_string(),
+                drill_down_hints: entity_columns_drill_down_hints(context.unique_id),
+            });
+        }
+    }
+}
+
+fn collect_semantic_model_grain_findings(
+    unique_id: &str,
+    entity: &ArchivedEntity,
+    nova: &ArchivedNovaMeta,
+    findings: &mut Vec<AgentModellingFinding>,
+) {
+    if entity.resource_type_str() != Some("semantic_model") || nova.measures.is_empty() {
+        return;
+    }
+    let primary_key = nova
+        .grain
+        .as_ref()
+        .is_some_and(|grain| !grain.primary_key.is_empty());
+    let time_field = nova.grain.as_ref().and_then(grain_time_field).is_some();
+    if !primary_key {
+        findings.push(AgentModellingFinding {
+            code: "semantic_model_missing_primary_entity",
+            severity: AgentModellingSeverity::Medium,
+            category: "grain_safety",
+            message: format!("Semantic model `{unique_id}` has measures but no primary entity."),
+            entities: vec![modeling_entity_ref(unique_id, entity)],
+            indicators: semantic_model_measure_refs(unique_id, entity, nova),
+            evidence: json!({
+                "measure_count": nova.measures.len(),
+                "primary_entity_present": false
+            }),
+            recommendation: "Add a primary entity to the semantic model so agents can reason about row identity and joinability.".to_string(),
+            drill_down_hints: entity_drill_down_hints(unique_id),
+        });
+    }
+    if !time_field {
+        findings.push(AgentModellingFinding {
+            code: "semantic_model_missing_time_dimension",
+            severity: AgentModellingSeverity::High,
+            category: "grain_safety",
+            message: format!("Semantic model `{unique_id}` has measures but no time dimension."),
+            entities: vec![modeling_entity_ref(unique_id, entity)],
+            indicators: semantic_model_measure_refs(unique_id, entity, nova),
+            evidence: json!({
+                "measure_count": nova.measures.len(),
+                "time_dimension_present": false
+            }),
+            recommendation: "Add a time dimension to the semantic model, or mark the measures as non-temporal if they cannot support period analysis.".to_string(),
+            drill_down_hints: entity_drill_down_hints(unique_id),
+        });
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IndicatorExecutionSurface {
+    Relation,
+    SemanticLayer,
+    MetadataOnly,
+}
+
+impl IndicatorExecutionSurface {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Relation => "relation",
+            Self::SemanticLayer => "semantic_layer",
+            Self::MetadataOnly => "metadata_only",
+        }
+    }
+
+    fn queryable(self) -> bool {
+        !matches!(self, Self::MetadataOnly)
+    }
+
+    fn queryable_via(self) -> &'static str {
+        match self {
+            Self::Relation => "relation_name",
+            Self::SemanticLayer => "metricflow",
+            Self::MetadataOnly => "none",
+        }
+    }
+}
+
+fn execution_surface(entity: &ArchivedEntity) -> IndicatorExecutionSurface {
+    match entity.resource_type_str() {
+        Some("metric" | "semantic_model") => IndicatorExecutionSurface::SemanticLayer,
+        _ if entity.relation_name_str().is_some() => IndicatorExecutionSurface::Relation,
+        _ => IndicatorExecutionSurface::MetadataOnly,
+    }
+}
+
+fn entity_is_analyst_facing(entity: &ArchivedEntity) -> bool {
+    if matches!(entity.resource_type_str(), Some("test" | "macro")) {
+        return false;
+    }
+    let Some(nova) = entity.nova_meta() else {
+        return entity.relation_name_str().is_some();
+    };
+    if let Some(candidates) = nova
+        .search
+        .as_ref()
+        .and_then(|search| search.candidates.as_ref())
+        && !candidates.analyst
+    {
+        return false;
+    }
+    nova.canonical
+        || nova.metric.is_some()
+        || !nova.metrics.is_empty()
+        || !nova.measures.is_empty()
+        || entity.relation_name_str().is_some()
+}
+
+fn normalized_entity_column_names(entity: &ArchivedEntity) -> BTreeSet<String> {
+    entity
+        .column_names_iter()
+        .map(normalize_value)
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+fn grain_time_field(grain: &ArchivedNovaGrain) -> Option<&str> {
+    grain.time_field.as_ref().map(ArchivedString::as_str)
+}
+
+fn grain_field_names(grain: &ArchivedNovaGrain) -> Vec<String> {
+    let mut fields = BTreeSet::new();
+    fields.extend(
+        grain
+            .primary_key
+            .iter()
+            .map(ArchivedString::as_str)
+            .map(str::to_string),
+    );
+    if let Some(time_field) = grain_time_field(grain) {
+        fields.insert(time_field.to_string());
+    }
+    fields.extend(
+        grain
+            .dimensions
+            .iter()
+            .map(ArchivedString::as_str)
+            .map(str::to_string),
+    );
+    fields.into_iter().collect()
+}
+
+fn indicator_source_for_entity(entity: &ArchivedEntity) -> &'static str {
+    match entity.resource_type_str() {
+        Some("metric") => "dbt_metric",
+        Some("semantic_model") => "dbt_semantic_model",
+        _ => "nova_meta",
+    }
+}
+
+fn modeling_entity_ref(unique_id: &str, entity: &ArchivedEntity) -> ModelingEntityRef {
+    ModelingEntityRef {
+        unique_id: unique_id.to_string(),
+        name: entity.name_str().unwrap_or(unique_id).to_string(),
+        resource_type: entity.resource_type_str().unwrap_or("unknown").to_string(),
+        relation_name: entity.relation_name_str().map(str::to_string),
+    }
+}
+
+fn modeling_entity_ref_from_entity_ref(entity: &EntityRef) -> ModelingEntityRef {
+    ModelingEntityRef {
+        unique_id: entity.unique_id.clone(),
+        name: entity.name.clone(),
+        resource_type: entity.resource_type.clone(),
+        relation_name: entity.relation_name.clone(),
+    }
+}
+
+fn duplicate_parent_entity_refs(parents: &[DuplicateIndicatorParent]) -> Vec<ModelingEntityRef> {
+    parents
+        .iter()
+        .take(8)
+        .map(|parent| ModelingEntityRef {
+            unique_id: parent.unique_id.clone(),
+            name: parent.name.clone(),
+            resource_type: parent.resource_type.clone(),
+            relation_name: parent.relation_name.clone(),
+        })
+        .collect()
+}
+
+fn duplicate_indicator_refs(row: &DuplicateIndicatorRow) -> Vec<ModelingIndicatorRef> {
+    row.parents
+        .iter()
+        .take(8)
+        .map(|parent| ModelingIndicatorRef {
+            indicator_name: row.indicator_name.clone(),
+            indicator_type: row.indicator_type.clone(),
+            parent_unique_id: parent.unique_id.clone(),
+            source: Some(indicator_source_for_resource_type(&parent.resource_type).to_string()),
+        })
+        .collect()
+}
+
+fn indicator_source_for_resource_type(resource_type: &str) -> &'static str {
+    match resource_type {
+        "metric" => "dbt_metric",
+        "semantic_model" => "dbt_semantic_model",
+        _ => "nova_meta",
+    }
+}
+
+fn modeling_metric_ref(
+    unique_id: &str,
+    entity: &ArchivedEntity,
+    metric_name: &str,
+) -> ModelingIndicatorRef {
+    ModelingIndicatorRef {
+        indicator_name: metric_name.to_string(),
+        indicator_type: "metric".to_string(),
+        parent_unique_id: unique_id.to_string(),
+        source: Some(indicator_source_for_entity(entity).to_string()),
+    }
+}
+
+fn indicator_refs_for_entity(
+    unique_id: &str,
+    entity: &ArchivedEntity,
+    nova: &ArchivedNovaMeta,
+) -> Vec<ModelingIndicatorRef> {
+    let source = Some(indicator_source_for_entity(entity).to_string());
+    let mut indicators = Vec::new();
+    indicators.extend(nova.measures.iter().map(|measure| ModelingIndicatorRef {
+        indicator_name: measure.name.as_str().to_string(),
+        indicator_type: "measure".to_string(),
+        parent_unique_id: unique_id.to_string(),
+        source: source.clone(),
+    }));
+    if let Some(metric) = nova.metric.as_ref() {
+        indicators.push(ModelingIndicatorRef {
+            indicator_name: metric.name.as_str().to_string(),
+            indicator_type: "metric".to_string(),
+            parent_unique_id: unique_id.to_string(),
+            source: source.clone(),
+        });
+    }
+    indicators.extend(nova.metrics.iter().map(|metric| ModelingIndicatorRef {
+        indicator_name: metric.name.as_str().to_string(),
+        indicator_type: "metric".to_string(),
+        parent_unique_id: unique_id.to_string(),
+        source: source.clone(),
+    }));
+    indicators
+}
+
+fn semantic_model_measure_refs(
+    unique_id: &str,
+    entity: &ArchivedEntity,
+    nova: &ArchivedNovaMeta,
+) -> Vec<ModelingIndicatorRef> {
+    nova.measures
+        .iter()
+        .take(8)
+        .map(|measure| ModelingIndicatorRef {
+            indicator_name: measure.name.as_str().to_string(),
+            indicator_type: "measure".to_string(),
+            parent_unique_id: unique_id.to_string(),
+            source: Some(indicator_source_for_entity(entity).to_string()),
+        })
+        .collect()
+}
+
+fn metric_missing_time_field_finding(
+    unique_id: &str,
+    entity: &ArchivedEntity,
+    metric: &ArchivedNovaMetric,
+) -> AgentModellingFinding {
+    let metric_name = metric.name.as_str();
+    AgentModellingFinding {
+        code: "metric_missing_time_field",
+        severity: AgentModellingSeverity::High,
+        category: "grain_safety",
+        message: format!("Metric `{metric_name}` has no effective time field."),
+        entities: vec![modeling_entity_ref(unique_id, entity)],
+        indicators: vec![modeling_metric_ref(unique_id, entity, metric_name)],
+        evidence: json!({
+            "metric_name": metric_name,
+            "time_field_present": false,
+            "parent_resource_type": entity.resource_type_str().unwrap_or("unknown")
+        }),
+        recommendation: "Add `meta.nova.metric.grain.time_field` or expose the metric through a semantic artifact with a valid time dimension.".to_string(),
+        drill_down_hints: entity_drill_down_hints(unique_id),
+    }
+}
+
+fn entity_drill_down_hints(unique_id: &str) -> Vec<JsonValue> {
+    vec![json!({
+        "purpose": "inspect_entity",
+        "tool": "get_entity",
+        "arguments": {
+            "id_or_name": unique_id,
+            "detail": "standard"
+        }
+    })]
+}
+
+fn entity_columns_drill_down_hints(unique_id: &str) -> Vec<JsonValue> {
+    vec![
+        json!({
+            "purpose": "inspect_entity",
+            "tool": "get_entity",
+            "arguments": {
+                "id_or_name": unique_id,
+                "detail": "standard"
+            }
+        }),
+        json!({
+            "purpose": "inspect_columns",
+            "tool": "get_columns",
+            "arguments": {
+                "id_or_name": unique_id
+            }
+        }),
+    ]
+}
+
+fn duplicate_indicator_drill_down_hints(row: &DuplicateIndicatorRow) -> Vec<JsonValue> {
+    let mut hints = vec![json!({
+        "purpose": "search_indicator",
+        "tool": "search_indicator",
+        "arguments": {
+            "query": &row.indicator_name,
+            "indicator_types": [&row.indicator_type],
+            "limit": 5,
+            "detail": "compact"
+        }
+    })];
+    if row.parents.len() >= 2 {
+        hints.push(json!({
+            "purpose": "compare_top_parent_grains",
+            "tool": "compare_grains",
+            "arguments": {
+                "entity1": &row.parents[0].unique_id,
+                "entity2": &row.parents[1].unique_id
+            }
+        }));
+    }
+    hints
 }
 
 fn truncate_agent_modelling_findings(

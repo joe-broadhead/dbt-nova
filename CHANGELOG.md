@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default-off checks.
 - Added the empty `agent_modelling_findings` framework and bounded summary
   fields to `modelling_consistency_report`.
+- Added deterministic agent-modelling findings for duplicate/canonical
+  indicator ambiguity, non-queryable indicator parents, metric output/grain
+  mismatches, missing metric time fields, multi-grain entities, and
+  semantic-model grain gaps.
 - Hardened DuckDB `execute_sql` by disabling external file/table access by
   default, requiring an explicit bounded `DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS`
   opt-in, and rejecting DuckDB file-scan functions in SQL validation.

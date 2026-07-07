@@ -22,6 +22,20 @@ fn result_rows(result: &JsonValue) -> Vec<&JsonValue> {
         .unwrap_or_default()
 }
 
+fn finding_mentions_entity(finding: &JsonValue, unique_id: &str) -> bool {
+    finding["entities"].as_array().is_some_and(|entities| {
+        entities
+            .iter()
+            .any(|entity| entity["unique_id"] == unique_id)
+    })
+}
+
+fn finding_code_present(findings: &[&JsonValue], code: &str) -> bool {
+    findings
+        .iter()
+        .any(|finding| finding["code"].as_str() == Some(code))
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_compare_grains_matches_entity_and_metric_grain() {
     let searcher = modeling_env();
@@ -124,21 +138,27 @@ async fn test_modelling_consistency_report_surfaces_duplicate_indicators() {
         data["agent_modelling_schema_version"].as_str(),
         Some("agent_modelling.v1")
     );
-    assert_eq!(data["agent_modelling_finding_count"].as_u64(), Some(0));
     assert!(
-        data["agent_modelling_findings"]
-            .as_array()
-            .is_some_and(Vec::is_empty)
+        data["agent_modelling_finding_count"]
+            .as_u64()
+            .is_some_and(|count| count > 0)
+    );
+    let agent_modelling_findings = data["agent_modelling_findings"]
+        .as_array()
+        .expect("agent modelling findings");
+    assert_eq!(
+        data["agent_modelling_finding_count"].as_u64(),
+        Some(agent_modelling_findings.len() as u64)
+    );
+    assert!(
+        summary["section_counts"]["agent_modelling_findings"]
+            .as_u64()
+            .is_some_and(|count| count > 0)
     );
     assert_eq!(
-        summary["section_counts"]["agent_modelling_findings"].as_u64(),
-        Some(0)
+        summary["agent_modelling"]["total"].as_u64(),
+        data["agent_modelling_finding_count"].as_u64()
     );
-    assert_eq!(summary["agent_modelling"]["total"].as_u64(), Some(0));
-    assert_eq!(summary["agent_modelling"]["blockers"].as_u64(), Some(0));
-    assert_eq!(summary["agent_modelling"]["high"].as_u64(), Some(0));
-    assert_eq!(summary["agent_modelling"]["medium"].as_u64(), Some(0));
-    assert_eq!(summary["agent_modelling"]["low"].as_u64(), Some(0));
     assert_eq!(
         summary["agent_modelling"]["truncated"].as_bool(),
         Some(false)
@@ -146,12 +166,12 @@ async fn test_modelling_consistency_report_surfaces_duplicate_indicators() {
     assert!(
         summary["agent_modelling"]["top_codes"]
             .as_array()
-            .is_some_and(Vec::is_empty)
+            .is_some_and(|rows| !rows.is_empty())
     );
     assert!(
         summary["agent_modelling"]["top_categories"]
             .as_array()
-            .is_some_and(Vec::is_empty)
+            .is_some_and(|rows| !rows.is_empty())
     );
     assert!(
         summary["section_counts"]["duplicate_indicators"]
@@ -193,6 +213,104 @@ async fn test_modelling_consistency_report_surfaces_duplicate_indicators() {
         .and_then(JsonValue::as_array)
         .expect("overlap_candidates");
     assert!(!overlap_candidates.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_agent_modelling_findings_cover_indicator_queryability_and_grain_rules() {
+    let searcher = get_searcher_with_fixture("agent_modelling_findings.json");
+    let result = searcher
+        .modelling_consistency_report(&ModellingConsistencyReportParams {
+            resource_types: vec![],
+            pagination: PaginationParams {
+                limit: Some(100),
+                offset: 0,
+            },
+            min_score: None,
+        })
+        .await
+        .json();
+
+    let data = result.get("data").expect("data");
+    let findings = data["agent_modelling_findings"]
+        .as_array()
+        .expect("agent modelling findings")
+        .iter()
+        .collect::<Vec<_>>();
+
+    for code in [
+        "duplicate_canonical_indicator",
+        "duplicate_indicator_without_canonical_parent",
+        "indicator_parent_not_queryable",
+        "metric_output_column_missing",
+        "metric_grain_field_not_in_output",
+        "metric_missing_time_field",
+        "entity_multiple_grain_variants",
+        "semantic_model_missing_primary_entity",
+        "semantic_model_missing_time_dimension",
+    ] {
+        assert!(
+            finding_code_present(&findings, code),
+            "expected finding code {code} in {findings:#?}"
+        );
+    }
+
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding["evidence"].is_object())
+    );
+    assert!(findings.iter().all(|finding| {
+        finding["recommendation"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    }));
+    assert!(findings.iter().all(|finding| {
+        finding["drill_down_hints"]
+            .as_array()
+            .is_some_and(|hints| !hints.is_empty())
+    }));
+
+    let duplicate_canonical = findings
+        .iter()
+        .find(|finding| finding["code"] == "duplicate_canonical_indicator")
+        .expect("duplicate canonical finding");
+    assert_eq!(duplicate_canonical["severity"].as_str(), Some("blocker"));
+    assert_eq!(
+        duplicate_canonical["evidence"]["inconsistent_grains"].as_bool(),
+        Some(true)
+    );
+
+    let not_queryable = findings
+        .iter()
+        .find(|finding| finding["code"] == "indicator_parent_not_queryable")
+        .expect("not queryable finding");
+    assert_eq!(not_queryable["severity"].as_str(), Some("blocker"));
+    assert_eq!(
+        not_queryable["evidence"]["queryable"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        not_queryable["evidence"]["queryable_via"].as_str(),
+        Some("none")
+    );
+
+    assert!(
+        !findings.iter().any(|finding| {
+            finding["severity"] == "blocker"
+                && finding_mentions_entity(finding, "model.pkg.clean_metric_model")
+        }),
+        "clean relation-backed metric model should not trigger blockers: {findings:#?}"
+    );
+    assert!(
+        !findings.iter().any(|finding| {
+            finding_mentions_entity(finding, "metric.pkg.semantic_revenue")
+                && matches!(
+                    finding["code"].as_str(),
+                    Some("indicator_parent_not_queryable" | "metric_missing_time_field")
+                )
+        }),
+        "semantic-layer-backed MetricFlow metric should not look relation-backed or time-field broken: {findings:#?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

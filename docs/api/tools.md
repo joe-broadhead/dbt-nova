@@ -395,8 +395,10 @@ by `limit` and `offset`.
 
 The report includes `agent_modelling_schema_version` set to
 `"agent_modelling.v1"`, `agent_modelling_finding_count`, and
-`agent_modelling_findings`. The initial framework serializes an empty findings
-array until individual deterministic rules are enabled.
+`agent_modelling_findings`. Findings currently cover duplicate/canonical
+indicator ambiguity, non-queryable indicator parents, metric output/grain field
+issues, missing metric time fields, multi-grain entities, and semantic-model
+primary/time grain gaps.
 
 ### `get_entity`
 Fetch a single entity by `unique_id` or name.

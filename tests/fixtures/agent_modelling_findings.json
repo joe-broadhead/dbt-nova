@@ -1,0 +1,232 @@
+{
+  "metadata": {"dbt_version": "1.10.0"},
+  "nodes": {
+    "model.pkg.clean_metric_model": {
+      "name": "clean_metric_model",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.clean_metric_model",
+      "columns": {
+        "clean_revenue": {"name": "clean_revenue"},
+        "order_id": {"name": "order_id"},
+        "order_date": {"name": "order_date"}
+      },
+      "depends_on": {"nodes": [], "macros": []},
+      "meta": {
+        "nova": {
+          "metrics": [
+            {
+              "name": "clean_revenue",
+              "canonical": true,
+              "grain": {
+                "primary_key": ["order_id"],
+                "time_field": "order_date"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "model.pkg.dup_orders": {
+      "name": "dup_orders",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.dup_orders",
+      "columns": {
+        "shared_revenue": {"name": "shared_revenue"},
+        "order_id": {"name": "order_id"},
+        "order_date": {"name": "order_date"}
+      },
+      "depends_on": {"nodes": [], "macros": []},
+      "meta": {
+        "nova": {
+          "metrics": [
+            {
+              "name": "shared_revenue",
+              "canonical": true,
+              "grain": {
+                "primary_key": ["order_id"],
+                "time_field": "order_date"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "model.pkg.dup_sessions": {
+      "name": "dup_sessions",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.dup_sessions",
+      "columns": {
+        "shared_revenue": {"name": "shared_revenue"},
+        "session_id": {"name": "session_id"},
+        "session_date": {"name": "session_date"}
+      },
+      "depends_on": {"nodes": [], "macros": []},
+      "meta": {
+        "nova": {
+          "metrics": [
+            {
+              "name": "shared_revenue",
+              "canonical": true,
+              "grain": {
+                "primary_key": ["session_id"],
+                "time_field": "session_date"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "model.pkg.uncurated_a": {
+      "name": "uncurated_a",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.uncurated_a",
+      "columns": {
+        "uncurated_revenue": {"name": "uncurated_revenue"},
+        "order_date": {"name": "order_date"}
+      },
+      "depends_on": {"nodes": [], "macros": []},
+      "meta": {
+        "nova": {
+          "metrics": [
+            {
+              "name": "uncurated_revenue",
+              "grain": {"time_field": "order_date"}
+            }
+          ]
+        }
+      }
+    },
+    "model.pkg.uncurated_b": {
+      "name": "uncurated_b",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.uncurated_b",
+      "columns": {
+        "uncurated_revenue": {"name": "uncurated_revenue"},
+        "order_date": {"name": "order_date"}
+      },
+      "depends_on": {"nodes": [], "macros": []},
+      "meta": {
+        "nova": {
+          "metrics": [
+            {
+              "name": "uncurated_revenue",
+              "grain": {"time_field": "order_date"}
+            }
+          ]
+        }
+      }
+    },
+    "analysis.pkg.metadata_only_metric": {
+      "name": "metadata_only_metric",
+      "resource_type": "analysis",
+      "package_name": "pkg",
+      "depends_on": {"nodes": [], "macros": []},
+      "meta": {
+        "nova": {
+          "metrics": [
+            {
+              "name": "metadata_only_ratio",
+              "expression": "revenue / sessions"
+            }
+          ]
+        }
+      }
+    },
+    "model.pkg.bad_metric_model": {
+      "name": "bad_metric_model",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.bad_metric_model",
+      "columns": {
+        "order_date": {"name": "order_date"}
+      },
+      "depends_on": {"nodes": [], "macros": []},
+      "meta": {
+        "nova": {
+          "metrics": [
+            {
+              "name": "bad_metric",
+              "grain": {
+                "time_field": "order_date",
+                "dimensions": ["country_code"]
+              }
+            }
+          ]
+        }
+      }
+    },
+    "model.pkg.multi_grain_model": {
+      "name": "multi_grain_model",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.multi_grain_model",
+      "columns": {
+        "multi_grain_metric": {"name": "multi_grain_metric"},
+        "order_id": {"name": "order_id"},
+        "order_date": {"name": "order_date"},
+        "session_id": {"name": "session_id"},
+        "session_date": {"name": "session_date"}
+      },
+      "depends_on": {"nodes": [], "macros": []},
+      "meta": {
+        "nova": {
+          "grain": {
+            "primary_key": ["order_id"],
+            "time_field": "order_date"
+          },
+          "metrics": [
+            {
+              "name": "multi_grain_metric",
+              "grain": {
+                "primary_key": ["session_id"],
+                "time_field": "session_date"
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "sources": {},
+  "macros": {},
+  "docs": {},
+  "groups": {},
+  "exposures": {},
+  "metrics": {
+    "metric.pkg.semantic_revenue": {
+      "name": "semantic_revenue",
+      "resource_type": "metric",
+      "package_name": "pkg",
+      "label": "Semantic revenue",
+      "type": "simple",
+      "type_params": {"measure": {"name": "semantic_revenue_measure"}}
+    }
+  },
+  "saved_queries": {},
+  "semantic_models": {
+    "semantic_model.pkg.broken_semantic": {
+      "name": "broken_semantic",
+      "resource_type": "semantic_model",
+      "package_name": "pkg",
+      "measures": [
+        {"name": "broken_measure", "agg": "sum", "expr": "amount"}
+      ]
+    },
+    "semantic_model.pkg.clean_semantic": {
+      "name": "clean_semantic",
+      "resource_type": "semantic_model",
+      "package_name": "pkg",
+      "entities": [{"name": "order", "type": "primary", "expr": "order_id"}],
+      "dimensions": [{"name": "ordered_at", "type": "time", "expr": "ordered_at"}],
+      "measures": [
+        {"name": "semantic_revenue_measure", "agg": "sum", "expr": "amount"}
+      ]
+    }
+  },
+  "unit_tests": {}
+}
