@@ -19,9 +19,7 @@ use crate::responses::SuccessResponse;
 use crate::utils::tokenize_alnum_lowercase;
 
 const AGENT_MODELLING_SCHEMA_VERSION: &str = "agent_modelling.v1";
-const AGENT_MODELLING_MAX_FINDINGS: usize = 100;
 const AGENT_MODELLING_TOP_BUCKETS: usize = 5;
-const AGENT_SURFACE_TOO_MANY_PARENTS_THRESHOLD: usize = 7;
 const AGENT_MODELLING_SEVERITY_ORDER: [AgentModellingSeverity; 4] = [
     AgentModellingSeverity::Blocker,
     AgentModellingSeverity::High,
@@ -153,18 +151,25 @@ impl ManifestSearch {
             section_offset,
             section_limit,
         );
-        let mut agent_modelling_findings_all = build_agent_modelling_findings(
-            self,
-            &profiles,
-            &duplicate_indicator_rows,
-            &multi_grain_entity_rows_all,
-        )?;
+        let mut agent_modelling_findings_all = if self.config.agent_modelling_audit.enabled {
+            build_agent_modelling_findings(
+                self,
+                &profiles,
+                &duplicate_indicator_rows,
+                &multi_grain_entity_rows_all,
+            )?
+        } else {
+            Vec::new()
+        };
         sort_agent_modelling_findings(&mut agent_modelling_findings_all);
+        let agent_modelling_max_findings = self.config.agent_modelling_audit.max_findings;
         let agent_modelling_finding_count = agent_modelling_findings_all.len();
         let agent_modelling_findings_truncated =
-            agent_modelling_finding_count > AGENT_MODELLING_MAX_FINDINGS;
-        let agent_modelling_findings =
-            truncate_agent_modelling_findings(&agent_modelling_findings_all);
+            agent_modelling_finding_count > agent_modelling_max_findings;
+        let agent_modelling_findings = truncate_agent_modelling_findings(
+            &agent_modelling_findings_all,
+            agent_modelling_max_findings,
+        );
         let summary = build_modelling_consistency_summary(
             params,
             ModellingReportPage {
@@ -1767,7 +1772,12 @@ fn collect_parent_lineage_findings(
     }
 
     let parent_count = direct_parent_ids(context.search, unique_id).len();
-    if parent_count >= AGENT_SURFACE_TOO_MANY_PARENTS_THRESHOLD {
+    let threshold = context
+        .search
+        .config
+        .agent_modelling_audit
+        .too_many_parents_threshold;
+    if parent_count >= threshold {
         findings.push(AgentModellingFinding {
             code: "agent_surface_too_many_parents",
             severity: AgentModellingSeverity::Medium,
@@ -1780,7 +1790,7 @@ fn collect_parent_lineage_findings(
                 .unwrap_or_default(),
             evidence: json!({
                 "direct_parent_count": parent_count,
-                "threshold": AGENT_SURFACE_TOO_MANY_PARENTS_THRESHOLD,
+                "threshold": threshold,
                 "direct_parents": direct_parent_refs(context, unique_id)?
             }),
             recommendation: "Split the model into clearer intermediate concepts, or document why this wide analyst surface is intentionally curated.".to_string(),
@@ -2949,12 +2959,9 @@ fn duplicate_indicator_drill_down_hints(row: &DuplicateIndicatorRow) -> Vec<Json
 
 fn truncate_agent_modelling_findings(
     findings: &[AgentModellingFinding],
+    limit: usize,
 ) -> Vec<AgentModellingFinding> {
-    findings
-        .iter()
-        .take(AGENT_MODELLING_MAX_FINDINGS)
-        .cloned()
-        .collect()
+    findings.iter().take(limit).cloned().collect()
 }
 
 fn sort_agent_modelling_findings(findings: &mut [AgentModellingFinding]) {
@@ -3518,7 +3525,8 @@ mod tests {
 
     #[test]
     fn agent_modelling_findings_truncate_after_sorting() {
-        let mut findings = (0..AGENT_MODELLING_MAX_FINDINGS)
+        let limit = crate::config::AgentModellingAuditConfig::default().max_findings;
+        let mut findings = (0..limit)
             .map(|index| {
                 agent_finding(
                     "low_code",
@@ -3540,11 +3548,11 @@ mod tests {
         ));
 
         sort_agent_modelling_findings(&mut findings);
-        let truncated = findings.len() > AGENT_MODELLING_MAX_FINDINGS;
-        let bounded = truncate_agent_modelling_findings(&findings);
+        let truncated = findings.len() > limit;
+        let bounded = truncate_agent_modelling_findings(&findings, limit);
 
         assert!(truncated);
-        assert_eq!(bounded.len(), AGENT_MODELLING_MAX_FINDINGS);
+        assert_eq!(bounded.len(), limit);
         assert!(matches!(
             bounded[0].severity,
             AgentModellingSeverity::Blocker

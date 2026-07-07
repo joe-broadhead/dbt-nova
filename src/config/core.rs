@@ -88,6 +88,89 @@ impl GovernanceGateConfig {
     }
 }
 
+/// Runtime controls for deterministic agent-modelling audit findings.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct AgentModellingAuditConfig {
+    /// Whether deterministic manifest/metadata/catalog agent-modelling findings are emitted.
+    pub enabled: bool,
+    /// Maximum agent-modelling findings retained in `modelling_consistency_report`.
+    pub max_findings: usize,
+    /// Direct-parent count at which analyst-facing surfaces are flagged as too wide.
+    pub too_many_parents_threshold: usize,
+    /// Source fanout threshold reserved for future source-shape checks.
+    pub source_fanout_threshold: usize,
+    /// Whether optional SQL-shape checks are allowed to run.
+    pub enable_sql_shape_checks: bool,
+}
+
+impl Default for AgentModellingAuditConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_findings: 100,
+            too_many_parents_threshold: 7,
+            source_fanout_threshold: 20,
+            enable_sql_shape_checks: false,
+        }
+    }
+}
+
+impl AgentModellingAuditConfig {
+    fn validate(&self) -> Result<()> {
+        if self.max_findings == 0 {
+            return Err(DbtNovaError::InvalidParams(
+                "agent_modelling_audit.max_findings must be greater than 0".to_string(),
+            ));
+        }
+        if self.too_many_parents_threshold == 0 {
+            return Err(DbtNovaError::InvalidParams(
+                "agent_modelling_audit.too_many_parents_threshold must be greater than 0"
+                    .to_string(),
+            ));
+        }
+        if self.source_fanout_threshold == 0 {
+            return Err(DbtNovaError::InvalidParams(
+                "agent_modelling_audit.source_fanout_threshold must be greater than 0".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Agent-readiness thresholds for modelling findings.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(default)]
+pub struct AgentReadinessConfig {
+    /// Modelling finding thresholds used by agent-readiness integration.
+    pub modelling: AgentReadinessModellingConfig,
+}
+
+/// Agent-readiness thresholds for deterministic modelling findings.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct AgentReadinessModellingConfig {
+    /// Maximum blocker findings allowed before readiness fails.
+    pub max_blockers: usize,
+    /// Maximum high-severity findings allowed before advisory/required threshold triggers.
+    pub max_high: usize,
+    /// Whether exceeding `max_blockers` is required/failing instead of advisory.
+    pub max_blockers_required: bool,
+    /// Whether exceeding `max_high` is required/failing instead of advisory.
+    pub max_high_required: bool,
+}
+
+impl Default for AgentReadinessModellingConfig {
+    fn default() -> Self {
+        Self {
+            max_blockers: 0,
+            max_high: 10,
+            max_blockers_required: true,
+            max_high_required: false,
+        }
+    }
+}
+
 /// Fetch policy for remote prebuilt artifact materialization.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -323,6 +406,10 @@ pub struct DbtNovaConfig {
     pub governance_required_fields: HashMap<String, Vec<String>>,
     /// Governance gate threshold policy for persona payloads
     pub governance_gate: GovernanceGateConfig,
+    /// Runtime controls for deterministic agent-modelling audit findings.
+    pub agent_modelling_audit: AgentModellingAuditConfig,
+    /// Agent readiness thresholds for deterministic modelling findings.
+    pub agent_readiness: AgentReadinessConfig,
     /// Days after which provenance timestamps are marked stale.
     pub provenance_stale_after_days: u64,
     /// Runtime bootstrap resolution status (not user-configurable).
@@ -410,6 +497,8 @@ impl Default for DbtNovaConfig {
             layer_rules: Vec::new(),
             governance_required_fields: default_governance_required_fields(),
             governance_gate: GovernanceGateConfig::default(),
+            agent_modelling_audit: AgentModellingAuditConfig::default(),
+            agent_readiness: AgentReadinessConfig::default(),
             provenance_stale_after_days: 30,
             bootstrap_status: None,
             env_errors: Vec::new(),
@@ -692,6 +781,7 @@ impl DbtNovaConfig {
             ));
         }
         self.validate_result_profile_config()?;
+        self.agent_modelling_audit.validate()?;
 
         if self.entity_cache_size == 0 {
             warn!("entity cache disabled (entity_cache_size=0)");
@@ -910,6 +1000,7 @@ impl DbtNovaConfig {
         config.apply_lineage_and_cache_env();
         config.apply_recipe_env();
         config.apply_governance_env();
+        config.apply_agent_modelling_env();
 
         config.column_lineage = ColumnLineageConfig::from_env();
         config.search = SearchConfig::from_env();
@@ -1305,6 +1396,37 @@ impl DbtNovaConfig {
             self.provenance_stale_after_days = value;
         }
     }
+
+    fn apply_agent_modelling_env(&mut self) {
+        if let Some(value) = parse_bool("DBT_NOVA_AGENT_MODELLING_AUDIT_ENABLED") {
+            self.agent_modelling_audit.enabled = value;
+        }
+        if let Some(value) = parse_usize("DBT_NOVA_AGENT_MODELLING_MAX_FINDINGS") {
+            self.agent_modelling_audit.max_findings = value;
+        }
+        if let Some(value) = parse_usize("DBT_NOVA_AGENT_MODELLING_TOO_MANY_PARENTS_THRESHOLD") {
+            self.agent_modelling_audit.too_many_parents_threshold = value;
+        }
+        if let Some(value) = parse_usize("DBT_NOVA_AGENT_MODELLING_SOURCE_FANOUT_THRESHOLD") {
+            self.agent_modelling_audit.source_fanout_threshold = value;
+        }
+        if let Some(value) = parse_bool("DBT_NOVA_AGENT_MODELLING_ENABLE_SQL_SHAPE_CHECKS") {
+            self.agent_modelling_audit.enable_sql_shape_checks = value;
+        }
+        if let Some(value) = parse_usize("DBT_NOVA_AGENT_READINESS_MODELLING_MAX_BLOCKERS") {
+            self.agent_readiness.modelling.max_blockers = value;
+        }
+        if let Some(value) = parse_usize("DBT_NOVA_AGENT_READINESS_MODELLING_MAX_HIGH") {
+            self.agent_readiness.modelling.max_high = value;
+        }
+        if let Some(value) = parse_bool("DBT_NOVA_AGENT_READINESS_MODELLING_MAX_BLOCKERS_REQUIRED")
+        {
+            self.agent_readiness.modelling.max_blockers_required = value;
+        }
+        if let Some(value) = parse_bool("DBT_NOVA_AGENT_READINESS_MODELLING_MAX_HIGH_REQUIRED") {
+            self.agent_readiness.modelling.max_high_required = value;
+        }
+    }
 }
 
 fn canonical_prune_patterns(patterns: &[String]) -> Vec<String> {
@@ -1453,6 +1575,126 @@ mod tests {
         assert_eq!(config.mcp_result_profile, ResultProfile::Compact);
         assert_eq!(config.mcp_default_limit, 10);
         assert_eq!(config.mcp_max_page_size, 100);
+    }
+
+    #[test]
+    fn default_agent_modelling_audit_config_is_conservative() {
+        let config = DbtNovaConfig::default();
+
+        assert!(config.agent_modelling_audit.enabled);
+        assert_eq!(config.agent_modelling_audit.max_findings, 100);
+        assert_eq!(config.agent_modelling_audit.too_many_parents_threshold, 7);
+        assert_eq!(config.agent_modelling_audit.source_fanout_threshold, 20);
+        assert!(!config.agent_modelling_audit.enable_sql_shape_checks);
+        assert_eq!(config.agent_readiness.modelling.max_blockers, 0);
+        assert_eq!(config.agent_readiness.modelling.max_high, 10);
+        assert!(config.agent_readiness.modelling.max_blockers_required);
+        assert!(!config.agent_readiness.modelling.max_high_required);
+    }
+
+    #[test]
+    fn from_env_reads_agent_modelling_audit_settings() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [
+            ("DBT_NOVA_AGENT_MODELLING_AUDIT_ENABLED", Some("false")),
+            ("DBT_NOVA_AGENT_MODELLING_MAX_FINDINGS", Some("25")),
+            (
+                "DBT_NOVA_AGENT_MODELLING_TOO_MANY_PARENTS_THRESHOLD",
+                Some("11"),
+            ),
+            (
+                "DBT_NOVA_AGENT_MODELLING_SOURCE_FANOUT_THRESHOLD",
+                Some("40"),
+            ),
+            (
+                "DBT_NOVA_AGENT_MODELLING_ENABLE_SQL_SHAPE_CHECKS",
+                Some("true"),
+            ),
+            ("DBT_NOVA_AGENT_READINESS_MODELLING_MAX_BLOCKERS", Some("2")),
+            ("DBT_NOVA_AGENT_READINESS_MODELLING_MAX_HIGH", Some("12")),
+            (
+                "DBT_NOVA_AGENT_READINESS_MODELLING_MAX_BLOCKERS_REQUIRED",
+                Some("false"),
+            ),
+            (
+                "DBT_NOVA_AGENT_READINESS_MODELLING_MAX_HIGH_REQUIRED",
+                Some("true"),
+            ),
+        ];
+        let previous = vars.map(|(key, _)| (key, std::env::var(key).ok()));
+        for (key, value) in vars {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        let config = DbtNovaConfig::from_env();
+
+        for (key, value) in previous {
+            match value {
+                Some(value) => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::set_var(key, value) };
+                }
+                None => {
+                    // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                    unsafe { std::env::remove_var(key) };
+                }
+            }
+        }
+
+        assert!(!config.agent_modelling_audit.enabled);
+        assert_eq!(config.agent_modelling_audit.max_findings, 25);
+        assert_eq!(config.agent_modelling_audit.too_many_parents_threshold, 11);
+        assert_eq!(config.agent_modelling_audit.source_fanout_threshold, 40);
+        assert!(config.agent_modelling_audit.enable_sql_shape_checks);
+        assert_eq!(config.agent_readiness.modelling.max_blockers, 2);
+        assert_eq!(config.agent_readiness.modelling.max_high, 12);
+        assert!(!config.agent_readiness.modelling.max_blockers_required);
+        assert!(config.agent_readiness.modelling.max_high_required);
+    }
+
+    #[test]
+    fn validate_rejects_invalid_agent_modelling_audit_thresholds() {
+        let mut config = base_config();
+        config.agent_modelling_audit.max_findings = 0;
+        let error = config
+            .validate()
+            .expect_err("zero max findings should fail validation");
+        assert!(
+            error
+                .to_string()
+                .contains("agent_modelling_audit.max_findings")
+        );
+
+        let mut config = base_config();
+        config.agent_modelling_audit.too_many_parents_threshold = 0;
+        let error = config
+            .validate()
+            .expect_err("zero parent threshold should fail validation");
+        assert!(
+            error
+                .to_string()
+                .contains("agent_modelling_audit.too_many_parents_threshold")
+        );
+
+        let mut config = base_config();
+        config.agent_modelling_audit.source_fanout_threshold = 0;
+        let error = config
+            .validate()
+            .expect_err("zero source fanout threshold should fail validation");
+        assert!(
+            error
+                .to_string()
+                .contains("agent_modelling_audit.source_fanout_threshold")
+        );
     }
 
     #[test]

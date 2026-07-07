@@ -1,6 +1,7 @@
 //! Tests for overlap, grain, and modelling consistency tooling.
 use super::common::*;
 use crate::config::SearchConfig;
+use std::path::Path;
 
 fn modeling_env() -> TestSearchEnv {
     get_searcher_with_fixture_config(
@@ -526,6 +527,73 @@ async fn test_agent_modelling_findings_cover_indicator_queryability_and_grain_ru
                 && finding_mentions_entity(finding, "model.pkg.governed_customer_surface")
         }),
         "entity-level governance should cover PII-like columns: {findings:#?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_modelling_consistency_report_can_disable_agent_modelling_audit() {
+    let manifest_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/agent_modelling_findings.json");
+    let guard = tempfile::TempDir::new().expect("test temp dir");
+    let mut config = DbtNovaConfig {
+        manifest_path: manifest_path.to_string_lossy().to_string(),
+        search: SearchConfig {
+            enable_vector_search: false,
+            enable_sparse_search: false,
+            enable_reranker: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    config.storage_dir = guard.path().to_string_lossy().to_string();
+    config.storage_instance_id = "tests-audit-disabled".to_string();
+    config.storage_max_instances = 1;
+    config.cleanup_storage_on_start = true;
+    config.agent_modelling_audit.enabled = false;
+    let searcher = ManifestSearch::new(config)
+        .expect("Failed to load fixture manifest")
+        .search;
+
+    let result = searcher
+        .modelling_consistency_report(&ModellingConsistencyReportParams {
+            resource_types: vec![],
+            pagination: PaginationParams {
+                limit: Some(100),
+                offset: 0,
+            },
+            min_score: None,
+        })
+        .await
+        .json();
+
+    let data = result.get("data").expect("data");
+    let summary = data.get("summary").expect("summary");
+    assert_eq!(data["agent_modelling_finding_count"].as_u64(), Some(0));
+    assert_eq!(
+        data["agent_modelling_findings"]
+            .as_array()
+            .expect("agent modelling findings")
+            .len(),
+        0
+    );
+    assert_eq!(
+        summary["section_counts"]["agent_modelling_findings"].as_u64(),
+        Some(0)
+    );
+    assert_eq!(summary["agent_modelling"]["total"].as_u64(), Some(0));
+    assert_eq!(
+        summary["agent_modelling"]["truncated"].as_bool(),
+        Some(false)
+    );
+    assert!(
+        data["duplicate_indicator_count"]
+            .as_u64()
+            .is_some_and(|count| count > 0)
+    );
+    assert!(
+        data["duplicate_indicators"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty())
     );
 }
 

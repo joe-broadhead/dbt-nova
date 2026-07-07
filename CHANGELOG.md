@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   layering findings to the v1 agent modelling audit response.
 - Added search ambiguity, column semantic drift, and governance findings for
   analyst-facing surfaces to the v1 agent modelling audit response.
+- Added conservative agent-modelling audit configuration defaults and env vars,
+  including bounded findings, readiness thresholds, and SQL-shape checks
+  defaulting off.
 - Hardened DuckDB `execute_sql` by disabling external file/table access by
   default, requiring an explicit bounded `DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS`
   opt-in, and rejecting DuckDB file-scan functions in SQL validation.

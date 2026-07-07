@@ -402,6 +402,11 @@ primary/time grain gaps, catalog drift on indicator fields, catalog-only
 measure-like columns, unresolved MetricFlow measure references,
 cross-grain/multi-fact risks, missing canonical primary keys, and
 analyst-surface layering, semantic-label, column-semantic, and governance risks.
+Deterministic manifest, metadata, and catalog checks are enabled by default;
+use `DBT_NOVA_AGENT_MODELLING_AUDIT_ENABLED=false` to suppress
+`agent_modelling_findings`, `DBT_NOVA_AGENT_MODELLING_MAX_FINDINGS` to bound
+retained findings, and keep SQL-shape checks opt-in with
+`DBT_NOVA_AGENT_MODELLING_ENABLE_SQL_SHAPE_CHECKS=true`.
 
 ### `get_entity`
 Fetch a single entity by `unique_id` or name.
