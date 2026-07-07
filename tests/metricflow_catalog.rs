@@ -88,6 +88,18 @@ async fn metricflow_metrics_are_discoverable_without_nova_meta() {
           "description": "Total gross revenue",
           "type": "simple",
           "type_params": {"measure": {"name": "order_total"}}
+        },
+        "metric.pkg.revenue_per_session": {
+          "name": "revenue_per_session",
+          "resource_type": "metric",
+          "package_name": "pkg",
+          "label": "Revenue per session",
+          "description": "Revenue divided by sessions",
+          "type": "ratio",
+          "type_params": {
+            "numerator": {"name": "order_total"},
+            "denominator": {"name": "sessions"}
+          }
         }
       },
       "saved_queries": {},
@@ -98,7 +110,10 @@ async fn metricflow_metrics_are_discoverable_without_nova_meta() {
           "package_name": "pkg",
           "entities": [{"name": "order", "type": "primary", "expr": "order_id"}],
           "dimensions": [{"name": "ordered_at", "type": "time", "expr": "ordered_at"}],
-          "measures": [{"name": "order_total", "agg": "sum", "expr": "amount", "label": "Order total"}]
+          "measures": [
+            {"name": "order_total", "agg": "sum", "expr": "amount", "label": "Order total"},
+            {"name": "sessions", "agg": "sum", "expr": "session_count", "label": "Sessions"}
+          ]
         }
       },
       "unit_tests": {}
@@ -137,6 +152,17 @@ async fn metricflow_metrics_are_discoverable_without_nova_meta() {
             .contains("MetricFlow"),
         "metricflow metric should explain the semantic-layer execution path: {inventory}"
     );
+
+    let revenue_per_session = inventory_rows
+        .iter()
+        .find(|row| {
+            row["indicator_name"] == "revenue_per_session" && row["indicator_type"] == "metric"
+        })
+        .expect("MetricFlow ratio metric should be inventoried");
+    assert_eq!(revenue_per_session["indicator_source"], "dbt_metric");
+    assert_eq!(revenue_per_session["execution_surface"], "semantic_layer");
+    assert_eq!(revenue_per_session["queryable"].as_bool(), Some(true));
+    assert_eq!(revenue_per_session["queryable_via"], "metricflow");
 
     let order_total = inventory_rows
         .iter()
@@ -205,6 +231,37 @@ async fn metricflow_metrics_are_discoverable_without_nova_meta() {
     assert_eq!(gross_revenue_search["execution_surface"], "semantic_layer");
     assert_eq!(gross_revenue_search["queryable"].as_bool(), Some(true));
     assert_eq!(gross_revenue_search["queryable_via"], "metricflow");
+
+    let ratio_search = json(
+        searcher
+            .search_indicator(&SearchIndicatorParams {
+                query: "revenue per session".to_string(),
+                pagination: PaginationParams {
+                    limit: Some(5),
+                    offset: 0,
+                },
+                detail: Some(DetailLevel::Compact),
+                ..Default::default()
+            })
+            .await,
+    );
+    let ratio_search_rows = ratio_search["data"].as_array().expect("ratio search rows");
+    let revenue_per_session_search = ratio_search_rows
+        .iter()
+        .find(|row| {
+            row["indicator_name"] == "revenue_per_session" && row["indicator_type"] == "metric"
+        })
+        .expect("MetricFlow ratio metric should be searchable");
+    assert_eq!(revenue_per_session_search["indicator_source"], "dbt_metric");
+    assert_eq!(
+        revenue_per_session_search["execution_surface"],
+        "semantic_layer"
+    );
+    assert_eq!(
+        revenue_per_session_search["queryable"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(revenue_per_session_search["queryable_via"], "metricflow");
 
     let score = json(
         searcher
