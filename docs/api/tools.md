@@ -401,7 +401,7 @@ issues, missing metric time fields, multi-grain entities, and semantic-model
 primary/time grain gaps, catalog drift on indicator fields, catalog-only
 measure-like columns, unresolved MetricFlow measure references,
 cross-grain/multi-fact risks, missing canonical primary keys, and
-analyst-surface layering risks.
+analyst-surface layering, semantic-label, column-semantic, and governance risks.
 
 ### `get_entity`
 Fetch a single entity by `unique_id` or name.

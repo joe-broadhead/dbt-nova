@@ -258,6 +258,11 @@ async fn test_agent_modelling_findings_cover_indicator_queryability_and_grain_ru
         "entity_multiple_grain_variants",
         "semantic_model_missing_primary_entity",
         "semantic_model_missing_time_dimension",
+        "semantic_label_collision",
+        "column_semantic_role_conflict",
+        "column_name_semantic_drift",
+        "analyst_surface_missing_governance",
+        "pii_like_column_without_governance",
         "canonical_entity_missing_primary_key",
         "multi_fact_metric_model",
         "ratio_like_metric_without_deterministic_surface",
@@ -311,6 +316,89 @@ async fn test_agent_modelling_findings_cover_indicator_queryability_and_grain_ru
     assert_eq!(
         not_queryable["evidence"]["queryable_via"].as_str(),
         Some("none")
+    );
+
+    let semantic_label_collision = findings
+        .iter()
+        .find(|finding| {
+            finding["code"] == "semantic_label_collision"
+                && finding["evidence"]["label"] == "shared_revenue"
+        })
+        .expect("semantic label collision for shared_revenue");
+    assert_eq!(semantic_label_collision["severity"].as_str(), Some("high"));
+    assert_eq!(
+        semantic_label_collision["evidence"]["canonical_count"].as_u64(),
+        Some(2)
+    );
+    assert!(
+        semantic_label_collision["drill_down_hints"]
+            .as_array()
+            .is_some_and(|hints| hints.iter().any(|hint| hint["tool"] == "search_indicator"))
+    );
+
+    let role_conflict = findings
+        .iter()
+        .find(|finding| {
+            finding["code"] == "column_semantic_role_conflict"
+                && finding["evidence"]["semantic_type"] == "country_code"
+        })
+        .expect("country_code role conflict");
+    assert_eq!(role_conflict["severity"].as_str(), Some("medium"));
+    assert!(
+        role_conflict["evidence"]["roles"]
+            .as_array()
+            .is_some_and(|roles| roles.iter().any(|role| role == "dimension")
+                && roles.iter().any(|role| role == "identifier"))
+    );
+
+    let column_drift = findings
+        .iter()
+        .find(|finding| {
+            finding["code"] == "column_name_semantic_drift"
+                && finding["evidence"]["column_name"] == "status"
+        })
+        .expect("status semantic drift");
+    assert_eq!(column_drift["severity"].as_str(), Some("medium"));
+    assert!(
+        column_drift["evidence"]["semantic_types"]
+            .as_array()
+            .is_some_and(|types| types
+                .iter()
+                .any(|semantic_type| semantic_type == "order_status")
+                && types
+                    .iter()
+                    .any(|semantic_type| semantic_type == "payment_status"))
+    );
+
+    let missing_governance = finding_for_entity(
+        &findings,
+        "analyst_surface_missing_governance",
+        "model.pkg.column_semantics_orders",
+    );
+    assert_eq!(missing_governance["severity"].as_str(), Some("medium"));
+    assert_eq!(
+        missing_governance["evidence"]["governance_present"].as_bool(),
+        Some(false)
+    );
+
+    let pii_without_governance = finding_for_entity(
+        &findings,
+        "pii_like_column_without_governance",
+        "model.pkg.column_semantics_orders",
+    );
+    assert_eq!(pii_without_governance["severity"].as_str(), Some("medium"));
+    assert_eq!(
+        pii_without_governance["evidence"]["column_name"].as_str(),
+        Some("customer_email")
+    );
+    assert_eq!(
+        pii_without_governance["evidence"]["pii_signal"].as_str(),
+        Some("email")
+    );
+    assert!(
+        pii_without_governance["drill_down_hints"]
+            .as_array()
+            .is_some_and(|hints| hints.iter().any(|hint| hint["tool"] == "get_columns"))
     );
 
     let canonical_no_pk = finding_for_entity(
@@ -431,6 +519,13 @@ async fn test_agent_modelling_findings_cover_indicator_queryability_and_grain_ru
                 )
         }),
         "semantic-layer ratio metric should not trigger metadata-only or unresolved-reference findings: {findings:#?}"
+    );
+    assert!(
+        !findings.iter().any(|finding| {
+            finding["code"] == "pii_like_column_without_governance"
+                && finding_mentions_entity(finding, "model.pkg.governed_customer_surface")
+        }),
+        "entity-level governance should cover PII-like columns: {findings:#?}"
     );
 }
 

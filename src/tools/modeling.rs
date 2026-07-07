@@ -8,7 +8,7 @@ use tracing::instrument;
 
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::entity::{
-    ArchivedEntity, ArchivedNovaGrain, ArchivedNovaMeta, ArchivedNovaMetric,
+    ArchivedEntity, ArchivedNovaGrain, ArchivedNovaMeta, ArchivedNovaMetric, column_nova_meta_json,
 };
 use crate::manifest::search::ManifestSearch;
 use crate::manifest::store::EntityStore;
@@ -1114,6 +1114,8 @@ fn build_agent_modelling_findings(
         semantic_metric_names: semantic_metric_names(&search.entities)?,
     };
     collect_duplicate_indicator_findings(duplicate_indicator_rows, &mut findings);
+    collect_semantic_label_collision_findings(&context, profiles, &mut findings)?;
+    collect_column_semantic_ambiguity_findings(&context, profiles, &mut findings)?;
     collect_multi_grain_entity_findings(&search.entities, multi_grain_entity_rows, &mut findings)?;
     collect_entity_agent_modelling_findings(&context, profiles, &mut findings)?;
     Ok(findings)
@@ -1248,6 +1250,7 @@ fn collect_entity_agent_modelling_findings(
             collect_helper_layer_findings(context, &profile.unique_id, entity, nova, findings);
         }
         collect_parent_lineage_findings(context, &profile.unique_id, entity, findings)?;
+        collect_governance_findings(&profile.unique_id, entity, nova, findings);
         collect_catalog_integrity_findings(&profile.unique_id, entity, nova, findings);
         collect_semantic_metric_reference_findings(
             &profile.unique_id,
@@ -1311,6 +1314,96 @@ fn semantic_metric_names(entities: &EntityStore) -> Result<BTreeSet<String>> {
         }
     }
     Ok(names)
+}
+
+fn collect_semantic_label_collision_findings(
+    context: &AgentModellingContext<'_>,
+    profiles: &[EntityOverlapProfile],
+    findings: &mut Vec<AgentModellingFinding>,
+) -> Result<()> {
+    let mut by_label = BTreeMap::<String, BTreeMap<String, SemanticLabelRef>>::new();
+    for profile in profiles {
+        let Some(entity) = context.search.entities.get_archived(&profile.unique_id)? else {
+            continue;
+        };
+        let Some(nova) = entity.nova_meta() else {
+            continue;
+        };
+        index_entity_indicator_labels(&mut by_label, &profile.unique_id, entity, nova);
+    }
+
+    for (label, refs_by_key) in by_label {
+        let refs = refs_by_key.into_values().collect::<Vec<_>>();
+        if refs.len() <= 1 {
+            continue;
+        }
+        let canonical_count = refs.iter().filter(|entry| entry.canonical).count();
+        let severity = if canonical_count > 1 {
+            AgentModellingSeverity::High
+        } else {
+            AgentModellingSeverity::Medium
+        };
+        findings.push(AgentModellingFinding {
+            code: "semantic_label_collision",
+            severity,
+            category: "indicator_resolution",
+            message: format!("Semantic label `{label}` maps to multiple indicators."),
+            entities: semantic_label_entities(&refs),
+            indicators: semantic_label_indicators(&refs),
+            evidence: json!({
+                "label": label,
+                "refs": refs.iter().map(|entry| entry.ref_key.as_str()).collect::<Vec<_>>(),
+                "canonical_count": canonical_count
+            }),
+            recommendation: "Use domain-scoped names/synonyms such as gross_revenue, net_revenue, web_revenue, or finance_revenue.".to_string(),
+            drill_down_hints: semantic_label_drill_down_hints(&label),
+        });
+    }
+    Ok(())
+}
+
+fn collect_column_semantic_ambiguity_findings(
+    context: &AgentModellingContext<'_>,
+    profiles: &[EntityOverlapProfile],
+    findings: &mut Vec<AgentModellingFinding>,
+) -> Result<()> {
+    let mut by_semantic_type = BTreeMap::<String, Vec<ColumnSemanticRef>>::new();
+    let mut by_column_name = BTreeMap::<String, Vec<ColumnSemanticRef>>::new();
+    for profile in profiles {
+        let Some(entity) = context.search.entities.get_archived(&profile.unique_id)? else {
+            continue;
+        };
+        let analyst_facing = entity_is_analyst_facing(entity);
+        for column in entity.column_meta() {
+            let Some(semantic_type) = column
+                .semantic_type
+                .as_ref()
+                .map(|value| normalize_value(value.as_str()))
+                .filter(|value| !value.is_empty())
+            else {
+                continue;
+            };
+            let column_ref = ColumnSemanticRef {
+                entity: modeling_entity_ref(&profile.unique_id, entity),
+                column_name: column.name.as_str().to_string(),
+                role: column.role.as_ref().map(|role| role.as_str().to_string()),
+                semantic_type: semantic_type.clone(),
+                analyst_facing,
+            };
+            by_semantic_type
+                .entry(semantic_type)
+                .or_default()
+                .push(column_ref.clone());
+            by_column_name
+                .entry(normalize_value(column.name.as_str()))
+                .or_default()
+                .push(column_ref);
+        }
+    }
+
+    collect_column_role_conflict_findings(by_semantic_type, findings);
+    collect_column_name_drift_findings(by_column_name, findings);
+    Ok(())
 }
 
 fn collect_indicator_parent_not_queryable_findings(
@@ -1746,6 +1839,70 @@ fn collect_helper_layer_findings(
     }
 }
 
+fn collect_governance_findings(
+    unique_id: &str,
+    entity: &ArchivedEntity,
+    nova: Option<&ArchivedNovaMeta>,
+    findings: &mut Vec<AgentModellingFinding>,
+) {
+    if !entity_is_analyst_facing(entity) {
+        return;
+    }
+    let entity_governance_present = nova.is_some_and(|nova| nova.governance.is_some());
+    if !entity_governance_present {
+        findings.push(AgentModellingFinding {
+            code: "analyst_surface_missing_governance",
+            severity: AgentModellingSeverity::Medium,
+            category: "governance",
+            message: format!("Analyst-facing entity `{unique_id}` has no Nova governance block."),
+            entities: vec![modeling_entity_ref(unique_id, entity)],
+            indicators: nova
+                .map(|nova| indicator_refs_for_entity(unique_id, entity, nova))
+                .unwrap_or_default(),
+            evidence: json!({
+                "governance_present": false,
+                "analyst_facing": true
+            }),
+            recommendation: "Add `meta.nova.governance.sensitivity`, `pii`, and compliance fields for analyst-facing surfaces.".to_string(),
+            drill_down_hints: entity_drill_down_hints(unique_id),
+        });
+    }
+
+    let entity_json = entity.to_json_value();
+    let Some(columns) = entity_json.get("columns").and_then(JsonValue::as_object) else {
+        return;
+    };
+    for (column_name, column) in columns {
+        let Some(pii_signal) = pii_like_column_signal(column_name) else {
+            continue;
+        };
+        let column_governance_present = column_governance_present(column);
+        if entity_governance_present || column_governance_present {
+            continue;
+        }
+        findings.push(AgentModellingFinding {
+            code: "pii_like_column_without_governance",
+            severity: AgentModellingSeverity::Medium,
+            category: "governance",
+            message: format!(
+                "PII-like column `{column_name}` appears on analyst-facing entity `{unique_id}` without governance classification."
+            ),
+            entities: vec![modeling_entity_ref(unique_id, entity)],
+            indicators: nova
+                .map(|nova| indicator_refs_for_entity(unique_id, entity, nova))
+                .unwrap_or_default(),
+            evidence: json!({
+                "column_name": column_name,
+                "pii_signal": pii_signal,
+                "entity_governance_present": entity_governance_present,
+                "column_governance_present": column_governance_present
+            }),
+            recommendation: "Classify PII at entity or column level so agents can apply governance caveats.".to_string(),
+            drill_down_hints: entity_columns_drill_down_hints(unique_id),
+        });
+    }
+}
+
 fn collect_catalog_integrity_findings(
     unique_id: &str,
     entity: &ArchivedEntity,
@@ -2025,6 +2182,223 @@ struct FactLikeParent {
     grain_signatures: Vec<String>,
 }
 
+#[derive(Clone)]
+struct SemanticLabelRef {
+    entity: ModelingEntityRef,
+    indicator: ModelingIndicatorRef,
+    canonical: bool,
+    ref_key: String,
+}
+
+#[derive(Clone)]
+struct ColumnSemanticRef {
+    entity: ModelingEntityRef,
+    column_name: String,
+    role: Option<String>,
+    semantic_type: String,
+    analyst_facing: bool,
+}
+
+fn index_entity_indicator_labels(
+    by_label: &mut BTreeMap<String, BTreeMap<String, SemanticLabelRef>>,
+    unique_id: &str,
+    entity: &ArchivedEntity,
+    nova: &ArchivedNovaMeta,
+) {
+    for measure in nova.measures.iter() {
+        let entry = SemanticLabelRef {
+            entity: modeling_entity_ref(unique_id, entity),
+            indicator: ModelingIndicatorRef {
+                indicator_name: measure.name.as_str().to_string(),
+                indicator_type: "measure".to_string(),
+                parent_unique_id: unique_id.to_string(),
+                source: Some(indicator_source_for_entity(entity).to_string()),
+            },
+            canonical: nova.canonical || measure.canonical,
+            ref_key: format!("{unique_id}:measure.{}", measure.name.as_str()),
+        };
+        insert_semantic_label_ref(by_label, measure.name.as_str(), &entry);
+        for synonym in measure.synonyms.iter() {
+            insert_semantic_label_ref(by_label, synonym.as_str(), &entry);
+        }
+    }
+    if let Some(metric) = nova.metric.as_ref() {
+        index_metric_labels(by_label, unique_id, entity, nova.canonical, metric);
+    }
+    for metric in nova.metrics.iter() {
+        index_metric_labels(by_label, unique_id, entity, nova.canonical, metric);
+    }
+}
+
+fn index_metric_labels(
+    by_label: &mut BTreeMap<String, BTreeMap<String, SemanticLabelRef>>,
+    unique_id: &str,
+    entity: &ArchivedEntity,
+    entity_canonical: bool,
+    metric: &ArchivedNovaMetric,
+) {
+    let entry = SemanticLabelRef {
+        entity: modeling_entity_ref(unique_id, entity),
+        indicator: modeling_metric_ref(unique_id, entity, metric.name.as_str()),
+        canonical: entity_canonical || metric.canonical,
+        ref_key: format!("{unique_id}:metric.{}", metric.name.as_str()),
+    };
+    insert_semantic_label_ref(by_label, metric.name.as_str(), &entry);
+    for synonym in metric.synonyms.iter() {
+        insert_semantic_label_ref(by_label, synonym.as_str(), &entry);
+    }
+}
+
+fn insert_semantic_label_ref(
+    by_label: &mut BTreeMap<String, BTreeMap<String, SemanticLabelRef>>,
+    label: &str,
+    entry: &SemanticLabelRef,
+) {
+    let label = normalize_value(label);
+    if label.is_empty() {
+        return;
+    }
+    by_label
+        .entry(label)
+        .or_default()
+        .entry(entry.ref_key.clone())
+        .or_insert_with(|| entry.clone());
+}
+
+fn semantic_label_entities(refs: &[SemanticLabelRef]) -> Vec<ModelingEntityRef> {
+    let mut seen = BTreeSet::new();
+    let mut entities = Vec::new();
+    for entry in refs.iter().take(12) {
+        if seen.insert(entry.entity.unique_id.clone()) {
+            entities.push(entry.entity.clone());
+        }
+        if entities.len() >= 8 {
+            break;
+        }
+    }
+    entities
+}
+
+fn semantic_label_indicators(refs: &[SemanticLabelRef]) -> Vec<ModelingIndicatorRef> {
+    refs.iter()
+        .take(8)
+        .map(|entry| entry.indicator.clone())
+        .collect()
+}
+
+fn semantic_label_drill_down_hints(label: &str) -> Vec<JsonValue> {
+    vec![json!({
+        "purpose": "search_indicator",
+        "tool": "search_indicator",
+        "arguments": {
+            "query": label,
+            "indicator_types": ["metric", "measure"],
+            "limit": 10,
+            "detail": "compact"
+        }
+    })]
+}
+
+fn collect_column_role_conflict_findings(
+    by_semantic_type: BTreeMap<String, Vec<ColumnSemanticRef>>,
+    findings: &mut Vec<AgentModellingFinding>,
+) {
+    for (semantic_type, refs) in by_semantic_type {
+        let roles = refs
+            .iter()
+            .filter_map(|entry| entry.role.as_ref().map(|role| normalize_value(role)))
+            .filter(|role| !role.is_empty())
+            .collect::<BTreeSet<_>>();
+        if roles.len() <= 1 {
+            continue;
+        }
+        findings.push(AgentModellingFinding {
+            code: "column_semantic_role_conflict",
+            severity: AgentModellingSeverity::Medium,
+            category: "column_semantics",
+            message: format!("Column semantic type `{semantic_type}` appears with multiple roles."),
+            entities: column_semantic_entities(&refs),
+            indicators: Vec::new(),
+            evidence: json!({
+                "semantic_type": semantic_type,
+                "roles": roles.into_iter().collect::<Vec<_>>(),
+                "columns": column_semantic_refs_json(&refs)
+            }),
+            recommendation: "Normalize column roles or use more precise semantic types."
+                .to_string(),
+            drill_down_hints: column_semantic_drill_down_hints(&refs),
+        });
+    }
+}
+
+fn collect_column_name_drift_findings(
+    by_column_name: BTreeMap<String, Vec<ColumnSemanticRef>>,
+    findings: &mut Vec<AgentModellingFinding>,
+) {
+    for (column_name, refs) in by_column_name {
+        let semantic_types = refs
+            .iter()
+            .map(|entry| entry.semantic_type.clone())
+            .filter(|semantic_type| !semantic_type.is_empty())
+            .collect::<BTreeSet<_>>();
+        if semantic_types.len() <= 1 || !refs.iter().any(|entry| entry.analyst_facing) {
+            continue;
+        }
+        findings.push(AgentModellingFinding {
+            code: "column_name_semantic_drift",
+            severity: AgentModellingSeverity::Medium,
+            category: "column_semantics",
+            message: format!("Column name `{column_name}` maps to multiple semantic types."),
+            entities: column_semantic_entities(&refs),
+            indicators: Vec::new(),
+            evidence: json!({
+                "column_name": column_name,
+                "semantic_types": semantic_types.into_iter().collect::<Vec<_>>(),
+                "columns": column_semantic_refs_json(&refs)
+            }),
+            recommendation:
+                "Rename ambiguous columns or add semantic_type/synonyms to disambiguate."
+                    .to_string(),
+            drill_down_hints: column_semantic_drill_down_hints(&refs),
+        });
+    }
+}
+
+fn column_semantic_entities(refs: &[ColumnSemanticRef]) -> Vec<ModelingEntityRef> {
+    let mut seen = BTreeSet::new();
+    let mut entities = Vec::new();
+    for entry in refs.iter().take(12) {
+        if seen.insert(entry.entity.unique_id.clone()) {
+            entities.push(entry.entity.clone());
+        }
+        if entities.len() >= 8 {
+            break;
+        }
+    }
+    entities
+}
+
+fn column_semantic_refs_json(refs: &[ColumnSemanticRef]) -> Vec<JsonValue> {
+    refs.iter()
+        .take(12)
+        .map(|entry| {
+            json!({
+                "entity_unique_id": entry.entity.unique_id.as_str(),
+                "column_name": entry.column_name.as_str(),
+                "role": entry.role.as_deref(),
+                "semantic_type": entry.semantic_type.as_str(),
+                "analyst_facing": entry.analyst_facing
+            })
+        })
+        .collect()
+}
+
+fn column_semantic_drill_down_hints(refs: &[ColumnSemanticRef]) -> Vec<JsonValue> {
+    refs.first()
+        .map(|entry| entity_columns_drill_down_hints(&entry.entity.unique_id))
+        .unwrap_or_default()
+}
+
 fn direct_parent_ids<'a>(search: &'a ManifestSearch, unique_id: &str) -> &'a [String] {
     search.parent_map.get(unique_id).map_or(&[], Vec::as_slice)
 }
@@ -2297,6 +2671,35 @@ fn analyst_candidate_disabled(nova: &ArchivedNovaMeta) -> bool {
         .as_ref()
         .and_then(|search| search.candidates.as_ref())
         .is_some_and(|candidates| !candidates.analyst)
+}
+
+fn pii_like_column_signal(column_name: &str) -> Option<&'static str> {
+    const PII_TERMS: [&str; 7] = [
+        "email",
+        "phone",
+        "address",
+        "full_name",
+        "first_name",
+        "last_name",
+        "date_of_birth",
+    ];
+    let normalized = column_name
+        .trim()
+        .to_ascii_lowercase()
+        .replace(['-', ' '], "_");
+    PII_TERMS.into_iter().find(|term| {
+        normalized == *term
+            || normalized.ends_with(&format!("_{term}"))
+            || normalized.starts_with(&format!("{term}_"))
+            || normalized.contains(&format!("_{term}_"))
+    })
+}
+
+fn column_governance_present(column: &JsonValue) -> bool {
+    column_nova_meta_json(column).is_some_and(|nova| {
+        nova.get("governance")
+            .is_some_and(|governance| !governance.is_null())
+    })
 }
 
 fn is_measure_like_data_type(data_type: &str) -> bool {

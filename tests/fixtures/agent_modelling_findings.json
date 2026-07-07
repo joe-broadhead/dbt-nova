@@ -397,6 +397,60 @@
       "columns": {"date_day": {"name": "date_day"}},
       "depends_on": {"nodes": [], "macros": []}
     },
+    "model.pkg.column_semantics_orders": {
+      "name": "column_semantics_orders",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.column_semantics_orders",
+      "columns": {
+        "country_code": {
+          "name": "country_code",
+          "meta": {"nova": {"role": "dimension", "semantic_type": "country_code"}}
+        },
+        "status": {
+          "name": "status",
+          "meta": {"nova": {"role": "dimension", "semantic_type": "order_status"}}
+        },
+        "customer_email": {"name": "customer_email"}
+      },
+      "depends_on": {"nodes": [], "macros": []}
+    },
+    "model.pkg.column_semantics_customers": {
+      "name": "column_semantics_customers",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.column_semantics_customers",
+      "columns": {
+        "country_code": {
+          "name": "country_code",
+          "meta": {"nova": {"role": "identifier", "semantic_type": "country_code"}}
+        },
+        "status": {
+          "name": "status",
+          "meta": {"nova": {"role": "dimension", "semantic_type": "payment_status"}}
+        }
+      },
+      "depends_on": {"nodes": [], "macros": []}
+    },
+    "model.pkg.governed_customer_surface": {
+      "name": "governed_customer_surface",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.governed_customer_surface",
+      "columns": {
+        "customer_email": {"name": "customer_email"}
+      },
+      "depends_on": {"nodes": [], "macros": []},
+      "meta": {
+        "nova": {
+          "governance": {
+            "sensitivity": "restricted",
+            "pii": true,
+            "compliance": ["gdpr"]
+          }
+        }
+      }
+    },
     "model.pkg.wide_surface": {
       "name": "wide_surface",
       "resource_type": "model",
