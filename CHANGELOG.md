@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added catalog and semantic artifact integrity findings for indicator-field
   catalog drift, catalog-missing fields, catalog-only measure-like columns, and
   unresolved MetricFlow measure references.
+- Added cross-grain, multi-fact, canonical primary-key, and analyst-surface
+  layering findings to the v1 agent modelling audit response.
 - Hardened DuckDB `execute_sql` by disabling external file/table access by
   default, requiring an explicit bounded `DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS`
   opt-in, and rejecting DuckDB file-scan functions in SQL validation.

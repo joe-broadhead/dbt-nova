@@ -190,9 +190,247 @@
           ]
         }
       }
+    },
+    "model.pkg.canonical_no_pk": {
+      "name": "canonical_no_pk",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.canonical_no_pk",
+      "columns": {
+        "canonical_revenue": {"name": "canonical_revenue"},
+        "order_date": {"name": "order_date"}
+      },
+      "depends_on": {"nodes": [], "macros": []},
+      "meta": {
+        "nova": {
+          "canonical": true,
+          "metrics": [
+            {
+              "name": "canonical_revenue",
+              "grain": {"time_field": "order_date"}
+            }
+          ]
+        }
+      }
+    },
+    "model.pkg.fct_orders": {
+      "name": "fct_orders",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.fct_orders",
+      "columns": {
+        "order_id": {"name": "order_id"},
+        "order_date": {"name": "order_date"},
+        "order_revenue": {"name": "order_revenue"}
+      },
+      "depends_on": {"nodes": [], "macros": []},
+      "meta": {
+        "nova": {
+          "grain": {
+            "primary_key": ["order_id"],
+            "time_field": "order_date"
+          },
+          "measures": [
+            {"name": "order_revenue", "field": "order_revenue"}
+          ]
+        }
+      }
+    },
+    "model.pkg.fct_sessions": {
+      "name": "fct_sessions",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.fct_sessions",
+      "columns": {
+        "session_id": {"name": "session_id"},
+        "session_date": {"name": "session_date"},
+        "sessions": {"name": "sessions"}
+      },
+      "depends_on": {"nodes": [], "macros": []},
+      "meta": {
+        "nova": {
+          "grain": {
+            "primary_key": ["session_id"],
+            "time_field": "session_date"
+          },
+          "measures": [
+            {"name": "sessions", "field": "sessions"}
+          ]
+        }
+      }
+    },
+    "model.pkg.cross_fact_ratio_model": {
+      "name": "cross_fact_ratio_model",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.cross_fact_ratio_model",
+      "columns": {
+        "revenue_per_session": {"name": "revenue_per_session"},
+        "order_id": {"name": "order_id"},
+        "order_date": {"name": "order_date"}
+      },
+      "depends_on": {
+        "nodes": ["model.pkg.fct_orders", "model.pkg.fct_sessions"],
+        "macros": []
+      },
+      "meta": {
+        "nova": {
+          "grain": {
+            "primary_key": ["order_id"],
+            "time_field": "order_date"
+          },
+          "metrics": [
+            {
+              "name": "revenue_per_session",
+              "expression": "order_revenue / sessions",
+              "canonical": true
+            }
+          ]
+        }
+      }
+    },
+    "model.pkg.raw_exposed_model": {
+      "name": "raw_exposed_model",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.raw_exposed_model",
+      "columns": {
+        "raw_revenue": {"name": "raw_revenue"},
+        "order_date": {"name": "order_date"}
+      },
+      "depends_on": {
+        "nodes": ["source.pkg.raw.orders"],
+        "macros": []
+      },
+      "meta": {
+        "nova": {
+          "metrics": [
+            {
+              "name": "raw_revenue",
+              "grain": {"time_field": "order_date"}
+            }
+          ]
+        }
+      }
+    },
+    "model.pkg.stg_orders_canonical": {
+      "name": "stg_orders_canonical",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.stg_orders_canonical",
+      "original_file_path": "models/staging/stg_orders_canonical.sql",
+      "columns": {
+        "stg_revenue": {"name": "stg_revenue"},
+        "order_id": {"name": "order_id", "meta": {"primary_key": true}},
+        "order_date": {"name": "order_date"}
+      },
+      "depends_on": {"nodes": [], "macros": []},
+      "meta": {
+        "nova": {
+          "canonical": true,
+          "grain": {
+            "primary_key": ["order_id"],
+            "time_field": "order_date"
+          },
+          "metrics": [
+            {
+              "name": "stg_revenue",
+              "canonical": true
+            }
+          ]
+        }
+      }
+    },
+    "model.pkg.int_helper_ranked": {
+      "name": "int_helper_ranked",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.int_helper_ranked",
+      "original_file_path": "models/intermediate/int_helper_ranked.sql",
+      "columns": {
+        "helper_id": {"name": "helper_id"}
+      },
+      "depends_on": {"nodes": [], "macros": []},
+      "meta": {
+        "nova": {
+          "role": "helper"
+        }
+      }
+    },
+    "model.pkg.dim_region": {
+      "name": "dim_region",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.dim_region",
+      "columns": {"region_id": {"name": "region_id"}},
+      "depends_on": {"nodes": [], "macros": []}
+    },
+    "model.pkg.dim_channel": {
+      "name": "dim_channel",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.dim_channel",
+      "columns": {"channel_id": {"name": "channel_id"}},
+      "depends_on": {"nodes": [], "macros": []}
+    },
+    "model.pkg.dim_product": {
+      "name": "dim_product",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.dim_product",
+      "columns": {"product_id": {"name": "product_id"}},
+      "depends_on": {"nodes": [], "macros": []}
+    },
+    "model.pkg.dim_customer": {
+      "name": "dim_customer",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.dim_customer",
+      "columns": {"customer_id": {"name": "customer_id"}},
+      "depends_on": {"nodes": [], "macros": []}
+    },
+    "model.pkg.dim_calendar": {
+      "name": "dim_calendar",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.dim_calendar",
+      "columns": {"date_day": {"name": "date_day"}},
+      "depends_on": {"nodes": [], "macros": []}
+    },
+    "model.pkg.wide_surface": {
+      "name": "wide_surface",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.wide_surface",
+      "columns": {
+        "wide_id": {"name": "wide_id"}
+      },
+      "depends_on": {
+        "nodes": [
+          "model.pkg.fct_orders",
+          "model.pkg.fct_sessions",
+          "model.pkg.dim_region",
+          "model.pkg.dim_channel",
+          "model.pkg.dim_product",
+          "model.pkg.dim_customer",
+          "model.pkg.dim_calendar"
+        ],
+        "macros": []
+      }
     }
   },
-  "sources": {},
+  "sources": {
+    "source.pkg.raw.orders": {
+      "name": "orders",
+      "source_name": "raw",
+      "resource_type": "source",
+      "package_name": "pkg",
+      "columns": {
+        "order_id": {"name": "order_id"},
+        "amount": {"name": "amount"}
+      }
+    }
+  },
   "macros": {},
   "docs": {},
   "groups": {},
@@ -205,6 +443,17 @@
       "label": "Semantic revenue",
       "type": "simple",
       "type_params": {"measure": {"name": "semantic_revenue_measure"}}
+    },
+    "metric.pkg.semantic_conversion_rate": {
+      "name": "conversion_rate",
+      "resource_type": "metric",
+      "package_name": "pkg",
+      "label": "Conversion rate",
+      "type": "ratio",
+      "type_params": {
+        "numerator": {"name": "orders_measure"},
+        "denominator": {"name": "sessions_measure"}
+      }
     }
   },
   "saved_queries": {},
@@ -224,7 +473,9 @@
       "entities": [{"name": "order", "type": "primary", "expr": "order_id"}],
       "dimensions": [{"name": "ordered_at", "type": "time", "expr": "ordered_at"}],
       "measures": [
-        {"name": "semantic_revenue_measure", "agg": "sum", "expr": "amount"}
+        {"name": "semantic_revenue_measure", "agg": "sum", "expr": "amount"},
+        {"name": "orders_measure", "agg": "sum", "expr": "orders"},
+        {"name": "sessions_measure", "agg": "sum", "expr": "sessions"}
       ]
     }
   },

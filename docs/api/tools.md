@@ -399,7 +399,9 @@ The report includes `agent_modelling_schema_version` set to
 indicator ambiguity, non-queryable indicator parents, metric output/grain field
 issues, missing metric time fields, multi-grain entities, and semantic-model
 primary/time grain gaps, catalog drift on indicator fields, catalog-only
-measure-like columns, and unresolved MetricFlow measure references.
+measure-like columns, unresolved MetricFlow measure references,
+cross-grain/multi-fact risks, missing canonical primary keys, and
+analyst-surface layering risks.
 
 ### `get_entity`
 Fetch a single entity by `unique_id` or name.

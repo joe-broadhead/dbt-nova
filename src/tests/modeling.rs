@@ -36,6 +36,17 @@ fn finding_code_present(findings: &[&JsonValue], code: &str) -> bool {
         .any(|finding| finding["code"].as_str() == Some(code))
 }
 
+fn finding_for_entity<'a>(
+    findings: &'a [&JsonValue],
+    code: &str,
+    unique_id: &str,
+) -> &'a JsonValue {
+    findings
+        .iter()
+        .find(|finding| finding["code"] == code && finding_mentions_entity(finding, unique_id))
+        .unwrap_or_else(|| panic!("expected finding {code} for {unique_id} in {findings:#?}"))
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn test_compare_grains_matches_entity_and_metric_grain() {
     let searcher = modeling_env();
@@ -247,6 +258,14 @@ async fn test_agent_modelling_findings_cover_indicator_queryability_and_grain_ru
         "entity_multiple_grain_variants",
         "semantic_model_missing_primary_entity",
         "semantic_model_missing_time_dimension",
+        "canonical_entity_missing_primary_key",
+        "multi_fact_metric_model",
+        "ratio_like_metric_without_deterministic_surface",
+        "cross_grain_kpi_without_semantic_artifact",
+        "analyst_facing_model_depends_on_source",
+        "non_mart_model_exposes_canonical_indicator",
+        "helper_ranked_as_analyst_candidate",
+        "agent_surface_too_many_parents",
     ] {
         assert!(
             finding_code_present(&findings, code),
@@ -294,6 +313,94 @@ async fn test_agent_modelling_findings_cover_indicator_queryability_and_grain_ru
         Some("none")
     );
 
+    let canonical_no_pk = finding_for_entity(
+        &findings,
+        "canonical_entity_missing_primary_key",
+        "model.pkg.canonical_no_pk",
+    );
+    assert_eq!(canonical_no_pk["severity"].as_str(), Some("high"));
+    assert_eq!(
+        canonical_no_pk["evidence"]["primary_key_present"].as_bool(),
+        Some(false)
+    );
+
+    let multi_fact = finding_for_entity(
+        &findings,
+        "multi_fact_metric_model",
+        "model.pkg.cross_fact_ratio_model",
+    );
+    assert_eq!(multi_fact["severity"].as_str(), Some("high"));
+    assert_eq!(
+        multi_fact["evidence"]["fact_like_parent_count"].as_u64(),
+        Some(2)
+    );
+
+    let metadata_only_ratio = finding_for_entity(
+        &findings,
+        "ratio_like_metric_without_deterministic_surface",
+        "analysis.pkg.metadata_only_metric",
+    );
+    assert_eq!(metadata_only_ratio["severity"].as_str(), Some("blocker"));
+    assert_eq!(
+        metadata_only_ratio["evidence"]["execution_surface"].as_str(),
+        Some("metadata_only")
+    );
+
+    let cross_grain = finding_for_entity(
+        &findings,
+        "cross_grain_kpi_without_semantic_artifact",
+        "model.pkg.cross_fact_ratio_model",
+    );
+    assert_eq!(cross_grain["severity"].as_str(), Some("high"));
+    assert_eq!(
+        cross_grain["evidence"]["semantic_metric_with_same_label"].as_bool(),
+        Some(false)
+    );
+
+    let source_dependency = finding_for_entity(
+        &findings,
+        "analyst_facing_model_depends_on_source",
+        "model.pkg.raw_exposed_model",
+    );
+    assert_eq!(source_dependency["severity"].as_str(), Some("high"));
+    assert_eq!(
+        source_dependency["evidence"]["source_parent_count"].as_u64(),
+        Some(1)
+    );
+
+    let helper_canonical = finding_for_entity(
+        &findings,
+        "non_mart_model_exposes_canonical_indicator",
+        "model.pkg.stg_orders_canonical",
+    );
+    assert_eq!(helper_canonical["severity"].as_str(), Some("medium"));
+    assert_eq!(
+        helper_canonical["evidence"]["layer"].as_str(),
+        Some("staging")
+    );
+
+    let helper_ranked = finding_for_entity(
+        &findings,
+        "helper_ranked_as_analyst_candidate",
+        "model.pkg.int_helper_ranked",
+    );
+    assert_eq!(helper_ranked["severity"].as_str(), Some("low"));
+    assert_eq!(
+        helper_ranked["evidence"]["analyst_candidate"].as_bool(),
+        Some(true)
+    );
+
+    let wide_surface = finding_for_entity(
+        &findings,
+        "agent_surface_too_many_parents",
+        "model.pkg.wide_surface",
+    );
+    assert_eq!(wide_surface["severity"].as_str(), Some("medium"));
+    assert_eq!(
+        wide_surface["evidence"]["direct_parent_count"].as_u64(),
+        Some(7)
+    );
+
     assert!(
         !findings.iter().any(|finding| {
             finding["severity"] == "blocker"
@@ -310,6 +417,20 @@ async fn test_agent_modelling_findings_cover_indicator_queryability_and_grain_ru
                 )
         }),
         "semantic-layer-backed MetricFlow metric should not look relation-backed or time-field broken: {findings:#?}"
+    );
+    assert!(
+        !findings.iter().any(|finding| {
+            finding_mentions_entity(finding, "metric.pkg.semantic_conversion_rate")
+                && matches!(
+                    finding["code"].as_str(),
+                    Some(
+                        "ratio_like_metric_without_deterministic_surface"
+                            | "cross_grain_kpi_without_semantic_artifact"
+                            | "semantic_metric_unresolved_measure_ref"
+                    )
+                )
+        }),
+        "semantic-layer ratio metric should not trigger metadata-only or unresolved-reference findings: {findings:#?}"
     );
 }
 
