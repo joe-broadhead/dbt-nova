@@ -370,9 +370,6 @@ fn apply_mcp_next_offset_meta(
     config: &DbtNovaConfig,
     pagination: Option<&PaginationParams>,
 ) {
-    if !config.mcp_include_truncation_meta {
-        return;
-    }
     let Some(pagination) = pagination else {
         return;
     };
@@ -409,9 +406,13 @@ fn apply_mcp_next_offset_meta(
         "next_offset".to_string(),
         serde_json::Value::from(next_offset),
     );
-    meta.entry("truncated".to_string())
-        .or_insert_with(|| serde_json::Value::from(truncated));
-    update_result_meta_response_bytes(value);
+    if config.mcp_include_truncation_meta || had_result_meta {
+        meta.entry("truncated".to_string())
+            .or_insert_with(|| serde_json::Value::from(truncated));
+    }
+    if had_result_meta {
+        update_result_meta_response_bytes(value);
+    }
     let mut refresh_response_bytes = false;
     if config.mcp_max_response_bytes > 0
         && serialized_len(value) > config.mcp_max_response_bytes
@@ -2896,6 +2897,39 @@ mod tests {
         assert_eq!(
             payload["_nova_result_meta"]["next_offset"],
             serde_json::json!(4)
+        );
+    }
+
+    #[test]
+    fn mcp_pagination_meta_survives_when_truncation_meta_disabled() {
+        let config = crate::config::DbtNovaConfig {
+            mcp_max_response_bytes: 0,
+            mcp_include_truncation_meta: false,
+            ..Default::default()
+        };
+        let response = serde_json::json!({
+            "success": true,
+            "count": 2,
+            "total_available": 5,
+            "truncated": true,
+            "data": [{"unique_id": "model.pkg.a"}, {"unique_id": "model.pkg.b"}]
+        });
+        let pagination = PaginationParams {
+            limit: Some(2),
+            offset: 2,
+        };
+
+        let serialized = DbtNovaServer::serialize_budgeted_value_with_pagination(
+            response,
+            &config,
+            Some(&pagination),
+        )
+        .expect("serialize response");
+        let payload: serde_json::Value = serde_json::from_str(&serialized).expect("response JSON");
+
+        assert_eq!(
+            payload["_nova_result_meta"],
+            serde_json::json!({"next_offset": 4})
         );
     }
 

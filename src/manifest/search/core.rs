@@ -691,7 +691,6 @@ impl ManifestSearchHandle {
         let notify = Arc::new(Notify::new());
         let refresh_stats = Arc::new(RwLock::new(RefreshStats::default()));
         let config_arc = Arc::new(RwLock::new(config.clone()));
-        let should_refresh = config.manifest_refresh_secs > 0 && !config.storage_read_only;
 
         let state_clone = state.clone();
         let notify_clone = notify.clone();
@@ -712,21 +711,19 @@ impl ManifestSearchHandle {
             notify_clone.notify_waiters();
         });
 
-        if should_refresh {
-            let refresh_state_handle = state.clone();
-            let refresh_notify = notify.clone();
-            let refresh_stats_shared = refresh_stats.clone();
-            let refresh_config = config_arc.clone();
-            tokio::spawn(async move {
-                refresh_loop(
-                    refresh_state_handle,
-                    refresh_notify,
-                    refresh_stats_shared,
-                    refresh_config,
-                )
-                .await;
-            });
-        }
+        let refresh_state_handle = state.clone();
+        let refresh_notify = notify.clone();
+        let refresh_stats_shared = refresh_stats.clone();
+        let refresh_config = config_arc.clone();
+        tokio::spawn(async move {
+            refresh_loop(
+                refresh_state_handle,
+                refresh_notify,
+                refresh_stats_shared,
+                refresh_config,
+            )
+            .await;
+        });
 
         Self {
             state,
@@ -867,11 +864,6 @@ impl ManifestSearchHandle {
 
         let bootstrap_resolution = prepare_runtime_config_for_reload(&mut next)?;
 
-        {
-            let mut guard = self.config.write().await;
-            *guard = next.clone();
-        }
-
         let active = {
             let mut guard = self.state.write().await;
             match &*guard {
@@ -903,6 +895,7 @@ impl ManifestSearchHandle {
         let state_clone = self.state.clone();
         let notify_clone = self.notify.clone();
         let refresh_stats_clone = self.refresh_stats.clone();
+        let config_clone = self.config.clone();
         tokio::spawn(async move {
             {
                 let mut refresh_stats_guard = refresh_stats_clone.write().await;
@@ -920,6 +913,10 @@ impl ManifestSearchHandle {
             let mut guard = state_clone.write().await;
             match result {
                 Ok(loaded) => {
+                    {
+                        let mut config_guard = config_clone.write().await;
+                        *config_guard = next;
+                    }
                     *guard = ManifestSearchState::Ready(Arc::new(loaded.search));
                     let mut refresh_stats_guard = refresh_stats_clone.write().await;
                     refresh_stats_guard.successes += 1;

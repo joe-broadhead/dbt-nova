@@ -58,8 +58,8 @@ denylist.
 | Tool | Purpose | Key Parameters |
 |------|---------|----------------|
 | `compare_grains` | Compare grain metadata between two entities | `entity1`, `entity2`, `entity1_resource_type`, `entity2_resource_type` |
-| `find_entity_overlap` | Detect overlapping entities using semantic evidence | `resource_types`, `package`, `min_overlap_score`, `limit`, `offset` |
-| `modelling_consistency_report` | Audit duplicate indicators, grain drift, and agent-modelling risks | `resource_types`, `package`, `limit`, `offset` |
+| `find_entity_overlap` | Detect overlapping entities using semantic evidence | `id_or_name`, `resource_type`, `resource_types`, `min_score`, `limit`, `offset` |
+| `modelling_consistency_report` | Audit duplicate indicators, grain drift, and agent-modelling risks | `resource_types`, `min_score`, `limit`, `offset` |
 
 ## Validation
 

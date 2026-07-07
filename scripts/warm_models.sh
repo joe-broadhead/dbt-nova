@@ -13,8 +13,12 @@ repo_slug="${DBT_NOVA_WARMUP_REPO:-joe-broadhead/dbt-nova}"
 release_version="${DBT_NOVA_WARMUP_VERSION:-latest}"
 fallback_from_release="${DBT_NOVA_WARMUP_FALLBACK_FROM_RELEASE:-1}"
 fallback_from_hf_direct="${DBT_NOVA_WARMUP_FALLBACK_FROM_HF_DIRECT:-1}"
-checksum_mode="${DBT_NOVA_WARMUP_CHECKSUM_MODE:-off}"
+checksum_mode="${DBT_NOVA_WARMUP_CHECKSUM_MODE:-warn}"
 checksum_file="${DBT_NOVA_WARMUP_CHECKSUM_FILE:-}"
+allow_mutable_hf_revisions="${DBT_NOVA_WARMUP_ALLOW_MUTABLE_HF_REVISIONS:-0}"
+e5_revision="${DBT_NOVA_WARMUP_E5_REVISION:-d128750597153bb5987e10b1c3493a34e5a4502a}"
+splade_revision="${DBT_NOVA_WARMUP_SPLADE_REVISION:-efcd182bc7eb351e81a9445752d4388c2bab500b}"
+reranker_revision="${DBT_NOVA_WARMUP_RERANKER_REVISION:-9cfeff2df7d40d1b78e75e5e9cebec92a99813c9}"
 pid=""
 
 usage() {
@@ -44,9 +48,14 @@ Optional env overrides:
   DBT_NOVA_WARMUP_FALLBACK_FROM_HF_DIRECT
                                        1 to seed cache from direct Hugging Face downloads on warmup failure (default: 1)
   DBT_NOVA_WARMUP_CHECKSUM_MODE        Checksum policy for direct HF fallback downloads:
-                                       off (default) | warn | required
+                                       off | warn (default) | required
   DBT_NOVA_WARMUP_CHECKSUM_FILE        Path to checksum manifest for direct HF fallback.
                                        Format: "<sha256> <url>" (space-delimited)
+  DBT_NOVA_WARMUP_E5_REVISION          Pinned intfloat/multilingual-e5-base revision
+  DBT_NOVA_WARMUP_SPLADE_REVISION      Pinned Qdrant/Splade_PP_en_v1 revision
+  DBT_NOVA_WARMUP_RERANKER_REVISION    Pinned jina reranker revision
+  DBT_NOVA_WARMUP_ALLOW_MUTABLE_HF_REVISIONS
+                                       1 to allow mutable revisions such as main/master/latest (default: 0)
 
 Example:
   # Model files only (default)
@@ -86,6 +95,31 @@ if [[ "$checksum_mode" == "required" && -z "$checksum_file" ]]; then
   echo "DBT_NOVA_WARMUP_CHECKSUM_MODE=required requires DBT_NOVA_WARMUP_CHECKSUM_FILE." >&2
   exit 1
 fi
+
+is_mutable_hf_revision() {
+  case "$1" in
+    main|master|latest) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+validate_hf_revision() {
+  local name="$1"
+  local revision="$2"
+  if [[ -z "$revision" ]]; then
+    echo "$name revision cannot be empty." >&2
+    exit 1
+  fi
+  if [[ "$fallback_from_hf_direct" == "1" && "$allow_mutable_hf_revisions" != "1" ]] \
+    && is_mutable_hf_revision "$revision"; then
+    echo "$name revision '$revision' is mutable. Set a commit SHA or DBT_NOVA_WARMUP_ALLOW_MUTABLE_HF_REVISIONS=1 to opt in." >&2
+    exit 1
+  fi
+}
+
+validate_hf_revision "DBT_NOVA_WARMUP_E5_REVISION" "$e5_revision"
+validate_hf_revision "DBT_NOVA_WARMUP_SPLADE_REVISION" "$splade_revision"
+validate_hf_revision "DBT_NOVA_WARMUP_RERANKER_REVISION" "$reranker_revision"
 
 cleanup() {
   if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
@@ -383,7 +417,6 @@ seed_repo_snapshot_from_hf() {
 }
 
 seed_from_hf_direct() {
-  local revision="main"
   local found
 
   echo "Attempting fallback seed from direct Hugging Face downloads..."
@@ -393,7 +426,7 @@ seed_from_hf_direct() {
   fi
 
   if (( required_models >= 1 )); then
-    if ! seed_repo_snapshot_from_hf "intfloat/multilingual-e5-base" "$revision" \
+    if ! seed_repo_snapshot_from_hf "intfloat/multilingual-e5-base" "$e5_revision" \
       "onnx/model.onnx" \
       "tokenizer.json" \
       "config.json" \
@@ -405,7 +438,7 @@ seed_from_hf_direct() {
   fi
 
   if (( required_models >= 2 )); then
-    if ! seed_repo_snapshot_from_hf "Qdrant/Splade_PP_en_v1" "$revision" \
+    if ! seed_repo_snapshot_from_hf "Qdrant/Splade_PP_en_v1" "$splade_revision" \
       "model.onnx" \
       "tokenizer.json" \
       "config.json" \
@@ -417,7 +450,7 @@ seed_from_hf_direct() {
   fi
 
   if (( required_models >= 3 )); then
-    if ! seed_repo_snapshot_from_hf "jinaai/jina-reranker-v2-base-multilingual" "$revision" \
+    if ! seed_repo_snapshot_from_hf "jinaai/jina-reranker-v2-base-multilingual" "$reranker_revision" \
       "onnx/model.onnx" \
       "tokenizer.json" \
       "config.json" \

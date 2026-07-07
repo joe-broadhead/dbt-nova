@@ -1,6 +1,6 @@
 use serde_json::Value as JsonValue;
 
-use crate::error::Result;
+use crate::error::{DbtNovaError, Result};
 use crate::manifest::search::ManifestSearch;
 use crate::params::GetUndocumentedParams;
 use crate::responses::SuccessResponse;
@@ -14,6 +14,13 @@ impl ManifestSearch {
     #[instrument(skip(self, params), fields(tool = "get_undocumented", resource_type = %params.resource_type, limit = ?params.pagination.limit, offset = params.pagination.offset, include_columns = params.include_columns))]
     #[allow(clippy::too_many_lines)]
     pub async fn get_undocumented(&self, params: &GetUndocumentedParams) -> Result<JsonValue> {
+        if params.pagination.offset > self.config.search.max_offset {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "Offset exceeds maximum of {}",
+                self.config.search.max_offset
+            )));
+        }
+
         let resource_type = self.normalize_resource_type_key(&params.resource_type)?;
         let resource_candidates = self.by_resource_type.get(&resource_type).ok_or_else(|| {
             crate::error::DbtNovaError::ServerError(format!(
@@ -32,17 +39,12 @@ impl ManifestSearch {
 
         let mut undocumented_entities: Vec<JsonValue> = Vec::new();
         let mut undocumented_columns: Vec<JsonValue> = Vec::new();
-        let mut skipped = 0usize;
+        let mut seen_missing_items = 0usize;
         let mut total_missing_entities = 0usize;
         let mut total_missing_columns = 0usize;
-        let mut entities_truncated = false;
-        let mut columns_truncated = false;
+        let mut returned_total = 0usize;
 
         for unique_id in candidates {
-            if undocumented_entities.len() >= limit {
-                break;
-            }
-
             let Some(entity) = self.get_entity(&unique_id).await? else {
                 continue;
             };
@@ -72,13 +74,11 @@ impl ManifestSearch {
             let mut include_entity = false;
             if desc.trim().is_empty() {
                 total_missing_entities += 1;
-                if skipped < offset {
-                    skipped += 1;
-                } else if undocumented_entities.len() < limit {
+                if seen_missing_items >= offset && returned_total < limit {
                     include_entity = true;
-                } else {
-                    entities_truncated = true;
+                    returned_total += 1;
                 }
+                seen_missing_items += 1;
             }
 
             if params.include_columns
@@ -91,14 +91,14 @@ impl ManifestSearch {
                         .unwrap_or("");
                     if col_desc.trim().is_empty() {
                         total_missing_columns += 1;
-                        if undocumented_columns.len() < limit {
+                        if seen_missing_items >= offset && returned_total < limit {
                             undocumented_columns.push(serde_json::json!({
                                 "entity_unique_id": unique_id.as_str(),
                                 "column_name": col_name,
                             }));
-                        } else {
-                            columns_truncated = true;
+                            returned_total += 1;
                         }
+                        seen_missing_items += 1;
                     }
                 }
             }
@@ -119,7 +119,7 @@ impl ManifestSearch {
 
         let returned_entities = undocumented_entities.len();
         let returned_columns = undocumented_columns.len();
-        let returned_total = returned_entities.saturating_add(returned_columns);
+        let total_missing = total_missing_entities.saturating_add(total_missing_columns);
 
         let response = serde_json::json!({
             "entities": undocumented_entities,
@@ -130,16 +130,13 @@ impl ManifestSearch {
                 "columns_returned": returned_columns,
                 "items_returned": returned_total
             },
-            "columns_truncated": columns_truncated,
+            "columns_truncated": offset.saturating_add(returned_total) < total_missing
+                && total_missing_columns > returned_columns,
             "undocumented_columns": undocumented_columns,
         });
 
-        let mut response = SuccessResponse::new(response, returned_total);
-        if entities_truncated
-            || columns_truncated
-            || (undocumented_entities.len() >= limit
-                && total_missing_entities > undocumented_entities.len() + offset)
-        {
+        let mut response = SuccessResponse::new(response, returned_total).with_total(total_missing);
+        if offset.saturating_add(returned_total) < total_missing {
             response = response.with_truncated(true);
         }
         Ok(serde_json::to_value(response)?)

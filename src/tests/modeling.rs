@@ -315,6 +315,10 @@ async fn test_agent_modelling_findings_cover_indicator_queryability_and_grain_ru
         Some(false)
     );
     assert_eq!(
+        not_queryable["evidence"]["direct_sql_queryable"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(
         not_queryable["evidence"]["queryable_via"].as_str(),
         Some("none")
     );
@@ -433,6 +437,10 @@ async fn test_agent_modelling_findings_cover_indicator_queryability_and_grain_ru
     assert_eq!(
         metadata_only_ratio["evidence"]["execution_surface"].as_str(),
         Some("metadata_only")
+    );
+    assert_eq!(
+        metadata_only_ratio["evidence"]["direct_sql_queryable"].as_bool(),
+        Some(false)
     );
 
     let cross_grain = finding_for_entity(
@@ -594,6 +602,58 @@ async fn test_modelling_consistency_report_can_disable_agent_modelling_audit() {
         data["duplicate_indicators"]
             .as_array()
             .is_some_and(|rows| !rows.is_empty())
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_modelling_consistency_report_truncates_agent_modelling_findings() {
+    let manifest_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/agent_modelling_findings.json");
+    let guard = tempfile::TempDir::new().expect("test temp dir");
+    let mut config = DbtNovaConfig {
+        manifest_path: manifest_path.to_string_lossy().to_string(),
+        search: SearchConfig {
+            enable_vector_search: false,
+            enable_sparse_search: false,
+            enable_reranker: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    config.storage_dir = guard.path().to_string_lossy().to_string();
+    config.storage_instance_id = "tests-audit-truncated".to_string();
+    config.storage_max_instances = 1;
+    config.cleanup_storage_on_start = true;
+    config.agent_modelling_audit.max_findings = 1;
+    let searcher = ManifestSearch::new(config)
+        .expect("Failed to load fixture manifest")
+        .search;
+
+    let result = searcher
+        .modelling_consistency_report(&ModellingConsistencyReportParams {
+            resource_types: vec![],
+            pagination: PaginationParams {
+                limit: Some(100),
+                offset: 0,
+            },
+            min_score: None,
+        })
+        .await
+        .json();
+
+    let data = result.get("data").expect("data");
+    let findings = data["agent_modelling_findings"]
+        .as_array()
+        .expect("agent modelling findings");
+    assert_eq!(findings.len(), 1);
+    assert!(
+        data["agent_modelling_finding_count"]
+            .as_u64()
+            .is_some_and(|count| count > 1)
+    );
+    assert_eq!(
+        data["summary"]["agent_modelling"]["truncated"].as_bool(),
+        Some(true)
     );
 }
 

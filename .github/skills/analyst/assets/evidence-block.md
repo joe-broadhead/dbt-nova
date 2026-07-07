@@ -17,6 +17,7 @@
 
 - Indicator definition source:
 - Indicator execution surface / queryable via:
+- Direct SQL queryable:
 - Semantic discovery:
 - Raw-search fallback reason:
 - Execution method:

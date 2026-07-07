@@ -89,7 +89,7 @@ jobs:
     timeout-minutes: 45
     env:
       DBT_NOVA_STRICT_SCHEMA: "1"
-      DBT_NOVA_BENCH_LARGE_ENTITY_COUNT: "1000"
+      DBT_NOVA_BENCH_LARGE_ENTITY_COUNT: "10000"
       CARGO_BUILD_JOBS: "1"
       RUSTFLAGS: "-C debuginfo=0"
     steps:

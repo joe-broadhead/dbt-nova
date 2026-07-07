@@ -20,6 +20,8 @@ use crate::utils::tokenize_alnum_lowercase;
 
 const AGENT_MODELLING_SCHEMA_VERSION: &str = "agent_modelling.v1";
 const AGENT_MODELLING_TOP_BUCKETS: usize = 5;
+const MAX_OVERLAP_BUCKET_SIZE: usize = 512;
+const MAX_OVERLAP_CANDIDATE_PAIRS: usize = 250_000;
 const AGENT_MODELLING_SEVERITY_ORDER: [AgentModellingSeverity; 4] = [
     AgentModellingSeverity::Blocker,
     AgentModellingSeverity::High,
@@ -75,7 +77,8 @@ impl ManifestSearch {
             .transpose()?;
 
         let profiles = self.collect_overlap_profiles(resource_filter.as_ref())?;
-        let mut rows = overlap_rows(&profiles, focus_unique_id.as_deref());
+        let overlap_result = overlap_rows(&profiles, focus_unique_id.as_deref());
+        let mut rows = overlap_result.rows;
         if let Some(min_score) = params.min_score {
             rows.retain(|row| row.score >= min_score);
         }
@@ -92,7 +95,7 @@ impl ManifestSearch {
             .map_err(|error| DbtNovaError::ServerError(error.to_string()))?;
         let count = results.len();
         let mut response = SuccessResponse::new(results, count).with_total(total);
-        if total > end {
+        if total > end || overlap_result.candidate_pairs_truncated {
             response = response.with_truncated(true);
         }
         Ok(serde_json::to_value(response)?)
@@ -119,38 +122,31 @@ impl ManifestSearch {
         let section_limit = self.page_limit(params.pagination.limit);
         let section_offset = params.pagination.offset;
 
-        let mut overlap_rows_all = overlap_rows(&profiles, None);
+        let overlap_result = overlap_rows(&profiles, None);
+        let overlap_candidate_generation_truncated = overlap_result.candidate_pairs_truncated;
+        let mut overlap_rows_all = overlap_result.rows;
         if let Some(min_score) = params.min_score {
             overlap_rows_all.retain(|row| row.score >= min_score);
         }
         let overlap_count = overlap_rows_all.len();
-        let overlap = paginate_section(overlap_rows_all.clone(), section_offset, section_limit);
+        let overlap = paginate_section(&overlap_rows_all, section_offset, section_limit);
 
         let duplicate_indicator_rows = duplicate_indicator_rows(&profiles, usize::MAX);
         let duplicate_indicator_count = duplicate_indicator_rows.len();
-        let duplicate_indicators = paginate_section(
-            duplicate_indicator_rows.clone(),
-            section_offset,
-            section_limit,
-        );
+        let duplicate_indicators =
+            paginate_section(&duplicate_indicator_rows, section_offset, section_limit);
         let canonical_conflict_rows: Vec<DuplicateIndicatorRow> = duplicate_indicator_rows
             .iter()
             .filter(|row| row.canonical_parent_count > 1)
             .cloned()
             .collect();
         let canonical_conflict_count = canonical_conflict_rows.len();
-        let canonical_conflicts = paginate_section(
-            canonical_conflict_rows.clone(),
-            section_offset,
-            section_limit,
-        );
+        let canonical_conflicts =
+            paginate_section(&canonical_conflict_rows, section_offset, section_limit);
         let multi_grain_entity_rows_all = multi_grain_entity_rows(&profiles);
         let multi_grain_entity_count = multi_grain_entity_rows_all.len();
-        let multi_grain_entities = paginate_section(
-            multi_grain_entity_rows_all.clone(),
-            section_offset,
-            section_limit,
-        );
+        let multi_grain_entities =
+            paginate_section(&multi_grain_entity_rows_all, section_offset, section_limit);
         let mut agent_modelling_findings_all = if self.config.agent_modelling_audit.enabled {
             build_agent_modelling_findings(
                 self,
@@ -175,6 +171,7 @@ impl ManifestSearch {
             ModellingReportPage {
                 limit: section_limit,
                 offset: section_offset,
+                overlap_candidate_generation_truncated,
             },
             &overlap_rows_all,
             &duplicate_indicator_rows,
@@ -430,10 +427,21 @@ struct EntityOverlapProfile {
     grain_variants: Vec<GrainVariant>,
 }
 
+struct OverlapRowsResult {
+    rows: Vec<EntityOverlapRow>,
+    candidate_pairs_truncated: bool,
+}
+
+struct CandidatePairs {
+    pairs: BTreeSet<(usize, usize)>,
+    truncated: bool,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ModellingReportPage {
     limit: usize,
     offset: usize,
+    overlap_candidate_generation_truncated: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -777,19 +785,15 @@ fn compare_entity_grains(
 fn overlap_rows(
     profiles: &[EntityOverlapProfile],
     focus_unique_id: Option<&str>,
-) -> Vec<EntityOverlapRow> {
-    let candidate_pairs = overlap_candidate_pairs(profiles);
+) -> OverlapRowsResult {
+    let focus_index = focus_unique_id
+        .and_then(|unique_id| profiles.iter().position(|p| p.unique_id == unique_id));
+    let candidate_pairs = overlap_candidate_pairs(profiles, focus_index);
     let mut rows = Vec::new();
 
-    for (left_index, right_index) in candidate_pairs {
+    for (left_index, right_index) in candidate_pairs.pairs {
         let left = &profiles[left_index];
         let right = &profiles[right_index];
-        if let Some(focus_unique_id) = focus_unique_id
-            && left.unique_id != focus_unique_id
-            && right.unique_id != focus_unique_id
-        {
-            continue;
-        }
         let evidence = overlap_evidence(left, right);
         let surface_overlap_count = evidence.surface_overlap_count();
         if surface_overlap_count == 0 {
@@ -808,10 +812,16 @@ fn overlap_rows(
     }
 
     rows.sort_by(compare_overlap_rows);
-    rows
+    OverlapRowsResult {
+        rows,
+        candidate_pairs_truncated: candidate_pairs.truncated,
+    }
 }
 
-fn overlap_candidate_pairs(profiles: &[EntityOverlapProfile]) -> BTreeSet<(usize, usize)> {
+fn overlap_candidate_pairs(
+    profiles: &[EntityOverlapProfile],
+    focus_index: Option<usize>,
+) -> CandidatePairs {
     let mut buckets: BTreeMap<String, Vec<usize>> = BTreeMap::new();
 
     for (index, profile) in profiles.iter().enumerate() {
@@ -821,14 +831,59 @@ fn overlap_candidate_pairs(profiles: &[EntityOverlapProfile]) -> BTreeSet<(usize
     }
 
     let mut pairs = BTreeSet::new();
-    for indices in buckets.into_values() {
+    let mut truncated = false;
+    for mut indices in buckets.into_values() {
+        indices.sort_unstable();
+
+        if let Some(focus_index) = focus_index {
+            if !indices.contains(&focus_index) {
+                continue;
+            }
+            if indices.len() > MAX_OVERLAP_BUCKET_SIZE {
+                truncated = true;
+            }
+            for other_index in indices
+                .into_iter()
+                .filter(|index| *index != focus_index)
+                .take(MAX_OVERLAP_BUCKET_SIZE.saturating_sub(1))
+            {
+                pairs.insert(ordered_pair(focus_index, other_index));
+                if pairs.len() >= MAX_OVERLAP_CANDIDATE_PAIRS {
+                    return CandidatePairs {
+                        pairs,
+                        truncated: true,
+                    };
+                }
+            }
+            continue;
+        }
+
+        if indices.len() > MAX_OVERLAP_BUCKET_SIZE {
+            indices.truncate(MAX_OVERLAP_BUCKET_SIZE);
+            truncated = true;
+        }
+
         for (offset, left_index) in indices.iter().enumerate() {
             for right_index in indices.iter().skip(offset + 1) {
                 pairs.insert((*left_index, *right_index));
+                if pairs.len() >= MAX_OVERLAP_CANDIDATE_PAIRS {
+                    return CandidatePairs {
+                        pairs,
+                        truncated: true,
+                    };
+                }
             }
         }
     }
-    pairs
+    CandidatePairs { pairs, truncated }
+}
+
+fn ordered_pair(left: usize, right: usize) -> (usize, usize) {
+    if left <= right {
+        (left, right)
+    } else {
+        (right, left)
+    }
 }
 
 fn overlap_bucket_keys(profile: &EntityOverlapProfile) -> BTreeSet<String> {
@@ -1076,6 +1131,8 @@ fn build_modelling_consistency_summary(
         page.limit,
         page.offset,
         overlap_rows,
+        duplicate_indicator_rows,
+        canonical_conflict_rows,
         multi_grain_entity_rows,
     )
     .then_some(page.offset.saturating_add(page.limit));
@@ -1095,14 +1152,15 @@ fn build_modelling_consistency_summary(
         "page": {
             "limit": page.limit,
             "offset": page.offset,
-            "next_offset": next_offset
+            "next_offset": next_offset,
+            "overlap_candidate_generation_truncated": page.overlap_candidate_generation_truncated
         },
         "overlap_evidence_categories": overlap_evidence_categories,
         "overlap_examples": overlap_examples,
         "top_duplicate_indicator_groups": top_duplicate_indicator_groups,
         "top_canonical_conflicts": top_canonical_conflicts,
         "top_multi_grain_entities": top_multi_grain_entities,
-        "drill_down_hints": modelling_drill_down_hints(params, page.limit, page.offset, overlap_rows, multi_grain_entity_rows)
+        "drill_down_hints": modelling_drill_down_hints(params, page.limit, page.offset, overlap_rows, duplicate_indicator_rows, canonical_conflict_rows, multi_grain_entity_rows)
     })
 }
 
@@ -1435,6 +1493,7 @@ fn collect_indicator_parent_not_queryable_findings(
             evidence: json!({
                 "execution_surface": execution.as_str(),
                 "queryable": execution.queryable(),
+                "direct_sql_queryable": execution.direct_sql_queryable(),
                 "queryable_via": execution.queryable_via()
             }),
             recommendation: "Move the indicator to a queryable dbt model, expose it through dbt Semantic Layer / MetricFlow, or mark the entity as non-analyst-facing.".to_string(),
@@ -1711,6 +1770,7 @@ fn collect_single_metric_cross_grain_findings(
                 "ratio_signals": ratio_signals,
                 "execution_surface": execution.as_str(),
                 "queryable": execution.queryable(),
+                "direct_sql_queryable": execution.direct_sql_queryable(),
                 "queryable_via": execution.queryable_via()
             }),
             recommendation: "Do not leave a ratio/cross-grain KPI as metadata-only. Expose a dbt model, MetricFlow metric, OSI-derived semantic artifact, recipe, or saved query.".to_string(),
@@ -2111,6 +2171,10 @@ impl IndicatorExecutionSurface {
 
     fn queryable(self) -> bool {
         !matches!(self, Self::MetadataOnly)
+    }
+
+    fn direct_sql_queryable(self) -> bool {
+        matches!(self, Self::Relation)
     }
 
     fn queryable_via(self) -> &'static str {
@@ -3106,6 +3170,8 @@ fn modelling_drill_down_hints(
     section_limit: usize,
     section_offset: usize,
     overlap_rows: &[EntityOverlapRow],
+    duplicate_indicator_rows: &[DuplicateIndicatorRow],
+    canonical_conflict_rows: &[DuplicateIndicatorRow],
     multi_grain_entity_rows: &[MultiGrainEntityRow],
 ) -> Vec<JsonValue> {
     let mut hints = Vec::new();
@@ -3113,6 +3179,8 @@ fn modelling_drill_down_hints(
         section_limit,
         section_offset,
         overlap_rows,
+        duplicate_indicator_rows,
+        canonical_conflict_rows,
         multi_grain_entity_rows,
     ) {
         hints.push(json!({
@@ -3156,11 +3224,18 @@ fn modelling_has_next_page(
     section_limit: usize,
     section_offset: usize,
     overlap_rows: &[EntityOverlapRow],
+    duplicate_indicator_rows: &[DuplicateIndicatorRow],
+    canonical_conflict_rows: &[DuplicateIndicatorRow],
     multi_grain_entity_rows: &[MultiGrainEntityRow],
 ) -> bool {
-    [overlap_rows.len(), multi_grain_entity_rows.len()]
-        .into_iter()
-        .any(|total| section_offset.saturating_add(section_limit) < total)
+    [
+        overlap_rows.len(),
+        duplicate_indicator_rows.len(),
+        canonical_conflict_rows.len(),
+        multi_grain_entity_rows.len(),
+    ]
+    .into_iter()
+    .any(|total| section_offset.saturating_add(section_limit) < total)
 }
 
 fn grain_signature_key(grain: &GrainVariant) -> String {
@@ -3318,8 +3393,8 @@ fn compare_duplicate_indicator_rows(
         .then_with(|| left.indicator_name.cmp(&right.indicator_name))
 }
 
-fn paginate_section<T>(rows: Vec<T>, offset: usize, limit: usize) -> Vec<T> {
-    rows.into_iter().skip(offset).take(limit).collect()
+fn paginate_section<T: Clone>(rows: &[T], offset: usize, limit: usize) -> Vec<T> {
+    rows.iter().skip(offset).take(limit).cloned().collect()
 }
 
 #[cfg(test)]
@@ -3369,6 +3444,36 @@ mod tests {
             column_semantic_types: BTreeSet::new(),
             grain_variants,
         }
+    }
+
+    fn duplicate_indicator_row(name: &str) -> DuplicateIndicatorRow {
+        DuplicateIndicatorRow {
+            indicator_name: name.to_string(),
+            indicator_type: "metric".to_string(),
+            parent_count: 2,
+            canonical_parent_count: 0,
+            parents_without_grain: 0,
+            inconsistent_grains: false,
+            parents: Vec::new(),
+            grain_signatures: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn modelling_next_page_accounts_for_duplicate_sections() {
+        let duplicate_rows = vec![
+            duplicate_indicator_row("revenue"),
+            duplicate_indicator_row("orders"),
+        ];
+
+        assert!(modelling_has_next_page(
+            1,
+            0,
+            &[],
+            &duplicate_rows,
+            &[],
+            &[],
+        ));
     }
 
     fn profile_with_indicator(
@@ -3657,9 +3762,10 @@ mod tests {
             profile_with("model.pkg.other", &["promotion_id"], vec![]),
         ];
 
-        let pairs = overlap_candidate_pairs(&profiles);
-        assert!(pairs.contains(&(0, 1)));
-        assert!(!pairs.contains(&(0, 2)));
+        let pairs = overlap_candidate_pairs(&profiles, None);
+        assert!(pairs.pairs.contains(&(0, 1)));
+        assert!(!pairs.pairs.contains(&(0, 2)));
+        assert!(!pairs.truncated);
     }
 
     #[test]

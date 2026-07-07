@@ -35,8 +35,8 @@ It is designed for:
 
 Notes:
 - `persona` is optional (`analyst`, `engineer`, `governance`, default).
-- `resource_types` and `limit` are only used for `scope=project`.
-- `offset` is optional and used for deterministic paging in `scope=project`.
+- `resource_types` selects entities for `scope=project`.
+- `limit` and `offset` page the returned project entity sample, not the aggregate project score.
 - Default project `limit` is **1000**.
 
 ## Response Structure
@@ -64,10 +64,10 @@ Notes:
 }
 ```
 
-For `scope=project`, the tool returns an overall score and a list of scored
-entities, honoring `limit` and marking responses as `truncated` when needed.
-It also returns `quality_summary.test_coverage`, aggregated across the
-returned entities (or all entities when not truncated).
+For `scope=project`, the tool returns an aggregate overall score across all
+matching entities plus a deterministic paged sample of entity scores. It marks
+the response as `truncated` when more sample rows are available. It also returns
+`quality_summary.test_coverage`, aggregated across all matching entities.
 
 All scopes include `scoring_contract.schema_version:
 "metadata_score_contract.v1"` so agents can explain scores without reading
@@ -222,8 +222,9 @@ The overall column score is still weighted by persona category weights.
 
 `scope=project`:
 - sorts selected `resource_types` and entity IDs deterministically
-- scores entities using `limit` + `offset` paging
-- returns an overall average and per‑entity results
+- scores all matching entities for the aggregate project score
+- uses `limit` + `offset` only for the returned entity sample
+- returns an overall average and paged per‑entity sample results
 - returns compact summary buckets and drill-down hints for agent triage
 - sets `truncated: true` if `offset + count < total_available`
 

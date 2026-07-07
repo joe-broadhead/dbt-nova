@@ -157,8 +157,12 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
 
-      - name: Validate Tokenomics Bridge Eval
-        run: cargo run --locked --no-default-features -- eval validate --suite evals/agent-tokenomics-bridge.yml
+      - name: Validate Packaged Eval Suites
+        run: |
+          set -euo pipefail
+          for suite in evals/*.yml; do
+            cargo run --locked --no-default-features -- eval validate --suite "$suite"
+          done
 
       - name: Run Tokenomics Bridge Eval
         run: |

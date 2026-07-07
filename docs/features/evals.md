@@ -404,6 +404,10 @@ Codex, Claude, and OpenCode. Fallback parsing only accepts MCP server aliases
 that look like Nova (`nova`, `dbt-nova`, `dbt_nova`, `dbtnova`, or
 `dbt-nova-mcp`). If your client uses a different alias, set
 `DBT_NOVA_EVAL_MCP_SERVER_ALIASES` to a comma-separated list of accepted aliases.
+Raw provider transcripts are not written by default because they may contain
+prompts, outputs, SQL, or credentials from the provider environment. Set
+`DBT_NOVA_EVAL_UNSAFE_WRITE_RAW_PROVIDER_LOGS=1` only in trusted local/debug
+runs where those raw artifacts are acceptable.
 
 ```yaml
 version: 1

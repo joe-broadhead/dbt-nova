@@ -253,6 +253,13 @@ enum EvalAssertion {
         #[serde(default)]
         must_not_contain_paths: Vec<String>,
     },
+    ToolFieldEquals {
+        tool: String,
+        #[serde(default = "empty_object")]
+        params: JsonValue,
+        field: String,
+        expected: JsonValue,
+    },
     SqlStructure {
         actual_sql: String,
         expected_sql: String,
@@ -1384,6 +1391,18 @@ async fn evaluate_bridge_assertion(
             Err(error) => {
                 AssertionResult::error(format!("tool_response_budget:{tool}"), error.to_string())
             }
+        },
+        EvalAssertion::ToolFieldEquals {
+            tool,
+            params,
+            field,
+            expected,
+        } => match call_tool(search, tool, params.clone()).await {
+            Ok(response) => tool_field_equals_assertion(tool, &response, field, expected),
+            Err(error) => AssertionResult::error(
+                format!("tool_field_equals:{tool}:{field}"),
+                error.to_string(),
+            ),
         },
         EvalAssertion::SqlStructure {
             actual_sql,
@@ -2519,6 +2538,31 @@ fn tool_response_budget_assertion(
                 "present_forbidden_paths": present_forbidden_paths,
             }),
         )
+    }
+}
+
+fn tool_field_equals_assertion(
+    tool: &str,
+    response: &JsonValue,
+    field: &str,
+    expected: &JsonValue,
+) -> AssertionResult {
+    match json_value_at_path(response, field) {
+        Some(actual) if actual == expected => AssertionResult::pass(
+            format!("tool_field_equals:{tool}:{field}"),
+            "tool field matched expected value",
+            json!({"field": field, "expected": expected}),
+        ),
+        Some(actual) => AssertionResult::fail(
+            format!("tool_field_equals:{tool}:{field}"),
+            "tool field did not match expected value",
+            json!({"field": field, "expected": expected, "actual": actual}),
+        ),
+        None => AssertionResult::fail(
+            format!("tool_field_equals:{tool}:{field}"),
+            "tool field was missing",
+            json!({"field": field, "expected": expected}),
+        ),
     }
 }
 
@@ -5390,6 +5434,18 @@ fn validate_assertion(assertion: &EvalAssertion, case_id: &str) -> crate::error:
             {
                 return Err(DbtNovaError::InvalidParams(format!(
                     "tool_response_budget assertion in case '{case_id}' must use non-empty field paths"
+                )));
+            }
+        }
+        EvalAssertion::ToolFieldEquals { tool, field, .. } => {
+            if tool.trim().is_empty() {
+                return Err(DbtNovaError::InvalidParams(format!(
+                    "tool_field_equals assertion in case '{case_id}' must include a non-empty tool"
+                )));
+            }
+            if field.trim().is_empty() {
+                return Err(DbtNovaError::InvalidParams(format!(
+                    "tool_field_equals assertion in case '{case_id}' must include a non-empty field"
                 )));
             }
         }

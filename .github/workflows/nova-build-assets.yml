@@ -217,7 +217,6 @@ on:
         value: ${{ jobs.build.outputs.published_models_uris }}
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   prepare:
@@ -754,6 +753,9 @@ jobs:
     runs-on: ${{ inputs.runner_labels_json != '' && fromJSON(inputs.runner_labels_json) || inputs.runner }}
     timeout-minutes: ${{ fromJSON(needs.prepare.outputs.build_timeout_minutes) }}
     needs: prepare
+    permissions:
+      contents: read
+      id-token: write
     concurrency:
       group: nova-assets-${{ github.repository }}-${{ needs.prepare.outputs.storage_instance_id }}
       cancel-in-progress: false

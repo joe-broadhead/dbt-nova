@@ -9,6 +9,13 @@ use crate::responses::SuccessResponse;
 use crate::utils::{compile_glob, glob_match_compiled};
 use tracing::instrument;
 
+struct PathMatch {
+    unique_id: String,
+    sort_path: String,
+    original_path: String,
+    manifest_path: String,
+}
+
 impl ManifestSearch {
     /// Find entities by file path pattern.
     ///
@@ -40,12 +47,9 @@ impl ManifestSearch {
         let detail = self.detail_level(params.detail);
         let limit = self.page_limit(params.pagination.limit);
         let offset = params.pagination.offset;
-        let match_scan_cap = offset.saturating_add(limit);
 
-        let mut result_rows: Vec<JsonValue> = Vec::new();
+        let mut path_matches: Vec<PathMatch> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
-        let mut skipped = 0usize;
-        let mut total_matches = 0usize;
 
         for unique_id in candidates {
             if !seen.insert(unique_id.clone()) {
@@ -84,65 +88,67 @@ impl ManifestSearch {
             };
 
             if let Some(matched_path) = matched_path {
-                total_matches += 1;
-                if total_matches > match_scan_cap {
-                    break;
-                }
-                if skipped < offset {
-                    skipped += 1;
-                    continue;
-                }
-
-                if result_rows.len() >= limit {
-                    continue;
-                }
-
-                if detail == DetailLevel::Full {
-                    result_rows.push(ManifestSearch::with_unique_id(entity_json, &unique_id));
+                let output_path = if original_path.is_empty() {
+                    matched_path.to_string()
                 } else {
-                    let archived = self.get_entity_archived(&unique_id)?;
-                    let mut summary = if detail == DetailLevel::Compact {
-                        archived.map_or(JsonValue::Null, |entity| {
-                            self.summary_for_compact(&unique_id, entity)
-                        })
-                    } else {
-                        self.entity_summary(&unique_id).unwrap_or(JsonValue::Null)
-                    };
-                    if let Some(obj) = summary.as_object_mut() {
-                        let output_path = if original_path.is_empty() {
-                            matched_path.to_string()
-                        } else {
-                            original_path.to_string()
-                        };
-                        obj.insert(
-                            "original_file_path".to_string(),
-                            JsonValue::String(output_path),
-                        );
-                        if !manifest_path.is_empty() {
-                            obj.insert(
-                                "path".to_string(),
-                                JsonValue::String(manifest_path.to_string()),
-                            );
-                        }
-                    }
-                    result_rows.push(summary);
-                }
+                    original_path.to_string()
+                };
+                path_matches.push(PathMatch {
+                    unique_id,
+                    sort_path: output_path,
+                    original_path: original_path.to_string(),
+                    manifest_path: manifest_path.to_string(),
+                });
             }
         }
 
-        result_rows.sort_by(|a, b| {
-            let path_a = a
-                .get("original_file_path")
-                .or_else(|| a.get("path"))
-                .and_then(|p| p.as_str())
-                .unwrap_or("");
-            let path_b = b
-                .get("original_file_path")
-                .or_else(|| b.get("path"))
-                .and_then(|p| p.as_str())
-                .unwrap_or("");
-            path_a.cmp(path_b)
+        path_matches.sort_by(|left, right| {
+            left.sort_path
+                .cmp(&right.sort_path)
+                .then_with(|| left.unique_id.cmp(&right.unique_id))
         });
+
+        let total_matches = path_matches.len();
+        let mut result_rows: Vec<JsonValue> = Vec::new();
+        for path_match in path_matches.into_iter().skip(offset).take(limit) {
+            if detail == DetailLevel::Full {
+                let Some(entity) = self.get_entity(&path_match.unique_id).await? else {
+                    continue;
+                };
+                result_rows.push(ManifestSearch::with_unique_id(
+                    entity.to_json_value(),
+                    &path_match.unique_id,
+                ));
+            } else {
+                let archived = self.get_entity_archived(&path_match.unique_id)?;
+                let mut summary = if detail == DetailLevel::Compact {
+                    archived.map_or(JsonValue::Null, |entity| {
+                        self.summary_for_compact(&path_match.unique_id, entity)
+                    })
+                } else {
+                    self.entity_summary(&path_match.unique_id)
+                        .unwrap_or(JsonValue::Null)
+                };
+                if let Some(obj) = summary.as_object_mut() {
+                    let output_path = if path_match.original_path.is_empty() {
+                        path_match.sort_path
+                    } else {
+                        path_match.original_path
+                    };
+                    obj.insert(
+                        "original_file_path".to_string(),
+                        JsonValue::String(output_path),
+                    );
+                    if !path_match.manifest_path.is_empty() {
+                        obj.insert(
+                            "path".to_string(),
+                            JsonValue::String(path_match.manifest_path),
+                        );
+                    }
+                }
+                result_rows.push(summary);
+            }
+        }
 
         let count = result_rows.len();
         let mut response = SuccessResponse::new(result_rows, count).with_total(total_matches);

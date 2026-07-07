@@ -94,24 +94,24 @@ impl ManifestSearch {
 
         let mut entity_scores = Vec::new();
         let mut total_scores = Vec::new();
-        let mut count = 0usize;
         let limit = params.limit.unwrap_or(DEFAULT_METADATA_SCORE_LIMIT);
         let offset = params.offset.unwrap_or(0);
-        let mut total_available = 0usize;
         let mut coverage = CoverageAggregate::default();
         let mut project_summary = ProjectScoreSummaryBuilder::default();
         let mut ordered_entity_ids = Vec::new();
 
         for resource_type in &resource_types {
             if let Some(entities) = self.by_resource_type.get(resource_type) {
-                total_available += entities.len();
                 let mut sorted_entities = entities.clone();
                 sorted_entities.sort_unstable();
                 ordered_entity_ids.extend(sorted_entities);
             }
         }
 
-        for entity_id in ordered_entity_ids.into_iter().skip(offset).take(limit) {
+        let total_available = ordered_entity_ids.len();
+        let mut scored_count = 0usize;
+
+        for (entity_index, entity_id) in ordered_entity_ids.into_iter().enumerate() {
             if let Some(entity) = self.get_entity_archived(&entity_id)? {
                 let entity_json = entity.to_json_value();
                 let score = self.score_entity(
@@ -133,21 +133,24 @@ impl ManifestSearch {
                     categories: &score.categories,
                     recommendations: &score.recommendations,
                 });
-                entity_scores.push(serde_json::json!({
-                    "unique_id": entity_id,
-                    "name": entity.name_str(),
-                    "resource_type": entity.resource_type_str(),
-                    "overall_score": score.overall_score,
-                    "grade": score.grade
-                }));
-                count += 1;
+                if entity_index >= offset && entity_scores.len() < limit {
+                    entity_scores.push(serde_json::json!({
+                        "unique_id": entity_id,
+                        "name": entity.name_str(),
+                        "resource_type": entity.resource_type_str(),
+                        "overall_score": score.overall_score,
+                        "grade": score.grade
+                    }));
+                }
+                scored_count += 1;
             }
         }
 
         let avg_overall = average_score(total_scores.into_iter().map(Some));
+        let count = entity_scores.len();
         let scanned = offset.saturating_add(count);
-        let truncated = scanned < total_available;
-        let quality_summary = coverage.build_summary(count, total_available, truncated);
+        let page_truncated = scanned < total_available;
+        let quality_summary = coverage.build_summary(scored_count, total_available, false);
         let response = serde_json::json!({
             "scope": "project",
             "persona": persona,
@@ -159,18 +162,18 @@ impl ManifestSearch {
             "quality_summary": quality_summary,
             "summary": project_summary.build(ProjectSummaryContext {
                 persona,
-                entities: count,
+                entities: scored_count,
                 total_available,
                 limit,
                 offset,
-                truncated,
-                next_offset: truncated.then_some(scanned),
+                page_truncated,
+                next_offset: page_truncated.then_some(scanned),
             }),
             "scoring_contract": metadata_score_scoring_contract()
         });
 
         let mut response = SuccessResponse::new(response, count).with_total(total_available);
-        if truncated {
+        if page_truncated {
             response = response.with_truncated(true);
         }
         Ok(serde_json::to_value(response)?)
@@ -316,10 +319,11 @@ impl ProjectScoreSummaryBuilder {
             .collect::<Vec<_>>();
 
         serde_json::json!({
-            "scope": if context.truncated { "included_entities" } else { "all_entities" },
+            "scope": "all_entities",
             "entities": context.entities,
             "entities_total": context.total_available,
-            "truncated": context.truncated,
+            "truncated": false,
+            "sample_truncated": context.page_truncated,
             "page": {
                 "limit": context.limit,
                 "offset": context.offset,
@@ -342,7 +346,7 @@ struct ProjectSummaryContext<'a> {
     total_available: usize,
     limit: usize,
     offset: usize,
-    truncated: bool,
+    page_truncated: bool,
     next_offset: Option<usize>,
 }
 
