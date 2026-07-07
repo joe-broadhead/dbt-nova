@@ -15,7 +15,8 @@ Use MCP to gather evidence from the currently deployed manifest. MCP is excellen
 2. `search_indicator` and `indicator_inventory` for measures and metrics.
 3. `search_columns` and `column_inventory` for column semantics.
 4. `search`, `get_entity`, `get_context`, and `get_columns` for current resource contracts.
-5. `compare_grains`, `find_entity_overlap`, or `modelling_consistency_report` for canonical placement questions.
+5. `compare_grains`, `find_entity_overlap`, or `modelling_consistency_report`
+   for canonical placement questions and agent-modelling findings.
 6. `get_metadata_score` and `get_undocumented` for review and remediation evidence.
 
 ## Evidence Standard
@@ -23,6 +24,7 @@ Use MCP to gather evidence from the currently deployed manifest. MCP is excellen
 Capture only the evidence needed to justify the metadata decision:
 - current canonical owner
 - competing duplicate definitions
+- indicator execution surface and queryability
 - grain and referenced fields
 - missing governance or semantic fields
 - expected search term and whether the preferred result surfaces

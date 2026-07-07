@@ -19,4 +19,5 @@ Use this reference when the client exposes `mcp__nova__*` tools directly.
 6. `compare_grains` and `diff_entities` for canonical-candidate decisions.
 7. `get_lineage`, `get_impact`, and `get_column_lineage` for blast-radius review.
 8. `get_metadata_score` when metadata quality should influence the canonical choice.
-9. `modelling_consistency_report` when you need project-wide duplicate indicators, canonical conflicts, or grain drift.
+9. `modelling_consistency_report` when you need project-wide duplicate
+   indicators, canonical conflicts, grain drift, or agent-modelling findings.

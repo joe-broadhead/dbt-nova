@@ -26,7 +26,8 @@ Use:
 - `show_metadata`, `search`, `find_by_path`, and `list_entities` for the first baseline
 - `search_indicator`, `indicator_inventory`, `search_columns`, and `column_inventory` for repeated semantic and column surfaces
 - `find_entity_overlap` for targeted overlap around a focus entity
-- `modelling_consistency_report` only when project-wide duplicate/canonical drift evidence is needed
+- `modelling_consistency_report` when project-wide duplicate/canonical drift,
+  grain drift, or agent-modelling blocker/high findings are needed
 - `compare_grains` and `diff_entities` for shortlisted candidate pairs
 - `get_lineage`, `get_impact`, and `get_column_lineage` for migration blast radius
 - `get_metadata_score` to check whether the proposed canonical target has enough documentation, tests, and semantics

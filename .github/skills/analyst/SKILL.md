@@ -58,7 +58,8 @@ Required order:
 Raw model search is fallback, not a parallel first step. Use it only after you
 can state one of these evidence-backed reasons:
 - `search_indicator` returned no relevant measure or metric.
-- The relevant indicator has no credible execution parent for the ask.
+- The relevant indicator has no credible execution parent or queryable execution
+  surface for the ask.
 - The ask is not KPI-shaped after decomposition.
 - A recipe fully covers the recurring deliverable and provides the semantic
   contract itself.
@@ -147,6 +148,7 @@ Rules:
 
 Every final answer must include:
 - selected indicator definition(s)
+- indicator execution surface and queryability
 - selected execution entity
 - selected grain
 - selected time field

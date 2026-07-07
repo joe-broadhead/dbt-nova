@@ -26,6 +26,7 @@ Treat these as overlap signals:
 - grain differences
 - repeated column families
 - repeated indicator families
+- `summary.agent_modelling` counts and any blocker/high finding codes
 - canonical metadata or search hints already present
 - downstream impact if the overlap were cleaned up
 - explicit reason for cleanup, deferral, or no action

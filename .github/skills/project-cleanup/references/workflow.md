@@ -27,12 +27,17 @@ Use this workflow when a dbt project has overlapping entities, inconsistent nami
 Use:
 - `show_metadata`, `search`, `find_by_path`, and `list_entities` for the first baseline
 - `find_entity_overlap` for focused overlap clusters
-- `modelling_consistency_report` for duplicate indicators, canonical conflicts, and project-wide grain drift
+- `modelling_consistency_report` for duplicate indicators, canonical conflicts,
+  project-wide grain drift, and agent-modelling blocker/high findings
 - `search_indicator`, `indicator_inventory`, `search_columns`, and `column_inventory` to inspect repeated terms and columns
 - `compare_grains` and `diff_entities` for narrowed candidate pairs
 - `get_lineage`, `get_impact`, and `get_column_lineage` for downstream risk
 - `get_metadata_score` when weak metadata contributes to cleanup priority
 - helper scripts in `scripts/` when you need exported inventories or overlap artifacts
+
+Prioritize blocker and high-severity `agent_modelling_findings` when they expose
+unsafe queryability, metadata-only KPIs, cross-grain risks, or ambiguous
+canonical surfaces.
 
 ## Output requirement
 

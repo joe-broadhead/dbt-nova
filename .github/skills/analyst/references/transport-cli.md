@@ -34,7 +34,8 @@ For KPI, metric, measure, rate, funnel, or conversion questions, run
 `execute_sql`. Raw model search is fallback only after the CLI response shows
 no relevant governed indicator or no credible semantic parent. Keep the
 `search_indicator` command and rejection reason as final-answer evidence when
-fallback is used.
+fallback is used. Inspect `indicator_source`, `execution_surface`, `queryable`,
+and `queryable_via` before execution.
 
 ## CLI guardrails
 
@@ -75,8 +76,12 @@ dbt-nova tool call search_indicator \
 
 For rate, conversion, funnel, or ratio questions, request metric indicators
 first and copy any returned metric `expression` exactly into downstream SQL.
-If the compact indicator row includes `relation_name`, `grain`, and
-`expression`, do not run schema-inspection SQL before execution.
+If the compact indicator row is relation-backed (`execution_surface: "relation"`,
+`queryable: true`, `queryable_via: "relation_name"`) and includes
+`relation_name`, `grain`, and `expression`, do not run schema-inspection SQL
+before execution. If the row is Semantic Layer-backed, use the configured
+MetricFlow path. If it is metadata-only or not queryable, report the execution
+blocker instead of writing inferred SQL.
 
 Compact entity inspection:
 

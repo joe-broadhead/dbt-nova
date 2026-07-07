@@ -157,6 +157,12 @@ Each indicator row includes response-only execution metadata:
 `queryable`, `queryable_via` (`relation_name`, `metricflow`, or `none`), and an
 optional `execution_note`.
 
+Use those fields as the execution gate. Relation-backed indicators can be
+queried through the returned `relation_name` after the grain and fields fit the
+question. Semantic Layer-backed indicators require the configured dbt Semantic
+Layer / MetricFlow execution path. Metadata-only indicators are context only;
+they are not safe SQL surfaces and should not trigger inferred joins.
+
 Required:
 - `query`
 
@@ -224,7 +230,8 @@ List Nova measures and metrics deterministically, with parent execution context.
 Use this when you need a flat semantic catalog instead of ranked search results.
 MetricFlow metrics and semantic-model measures are included as derived Nova
 indicators unless explicit `meta.nova` metadata overrides or extends them.
-Execution metadata uses the same response-only fields as `search_indicator`.
+Execution metadata uses the same response-only fields and execution-surface gate
+as `search_indicator`.
 
 Common:
 - `indicator_types` (`["metric"]`, `["measure"]`, or omitted for both)
@@ -376,7 +383,8 @@ Common:
 ```
 
 ### `modelling_consistency_report`
-Audit project-level overlap, duplicate indicators, canonical conflicts, and grain drift.
+Audit project-level overlap, duplicate indicators, canonical conflicts, grain
+drift, and deterministic agent-modelling risks.
 
 Common:
 - `resource_types`
@@ -407,6 +415,10 @@ use `DBT_NOVA_AGENT_MODELLING_AUDIT_ENABLED=false` to suppress
 `agent_modelling_findings`, `DBT_NOVA_AGENT_MODELLING_MAX_FINDINGS` to bound
 retained findings, and keep SQL-shape checks opt-in with
 `DBT_NOVA_AGENT_MODELLING_ENABLE_SQL_SHAPE_CHECKS=true`.
+
+See [Agent Modelling Audits](../features/agent-modelling-audits.md) for the
+finding contract, execution-surface policy, readiness integration, and CI
+examples.
 
 ### `get_entity`
 Fetch a single entity by `unique_id` or name.
@@ -798,6 +810,9 @@ spots, repeated fields, agent-modelling counts/top codes, and drill-down hints.
 Deterministic modelling blockers are returned as readiness blockers; high and
 medium modelling findings and advisory count threshold misses are returned as
 improvements, while required count threshold misses are blockers.
+
+See [Agent Modelling Audits](../features/agent-modelling-audits.md) for the
+modelling finding contract and execution-surface rules.
 
 Large reports use the standard MCP response-budget behavior; check
 `_nova_result_meta.truncated` when response budgeting is enabled.

@@ -21,6 +21,7 @@
 - Geo/segment column:
 - Validated filter values:
 - Metric definition source:
+- Indicator execution surface / queryable via:
 - Semantic discovery:
 - Raw-search fallback reason:
 - Execution method:

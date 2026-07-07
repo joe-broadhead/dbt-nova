@@ -166,6 +166,8 @@ been written.
 Modelling thresholds can also be supplied through
 `DBT_NOVA_AGENT_READINESS_MODELLING_MAX_BLOCKERS`,
 `DBT_NOVA_AGENT_READINESS_MODELLING_MAX_HIGH`, and their `*_REQUIRED` flags.
+For the modelling finding contract and execution-surface rules that feed these
+counts, see [Agent Modelling Audits](agent-modelling-audits.md).
 
 The recommended rollout is:
 

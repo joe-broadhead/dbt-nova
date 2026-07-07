@@ -26,6 +26,10 @@ Use this before final handoff.
 - Only one preferred owner is canonical at the relevant level unless the domain/grain difference is explicit.
 - Existing canonical definitions are reused instead of copied.
 - Duplicate or helper variants remain searchable but rank lower for the intended persona.
+- Queryable indicators have an explicit execution surface:
+  `relation_name` for relation-backed rows or the configured Semantic Layer path
+  for `metricflow` rows.
+- Metadata-only cross-grain KPIs are not presented as executable surfaces.
 
 ## Field Integrity
 
@@ -49,5 +53,7 @@ Use this before final handoff.
 - `search_indicator` or `search` returns the expected canonical result for key terms.
 - `get_entity`, `get_context`, or `get_columns` confirms the final contract.
 - `get_metadata_score` improves or any non-score tradeoff is explained.
+- `modelling_consistency_report` is clean or intentionally documented for
+  repeated-indicator, canonical, or cross-grain changes.
 - Domain reference changes were validated with skill installation and docs build
   when the packaged template or docs changed.

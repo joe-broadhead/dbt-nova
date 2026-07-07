@@ -14,7 +14,8 @@ Use this reference when the client exposes `mcp__nova__*` tools directly.
 1. `show_metadata` or `health` for manifest identity and readiness when needed.
 2. `search`, `find_by_path`, or `list_entities` for baseline scope.
 3. `find_entity_overlap` for focused overlap clusters.
-4. `modelling_consistency_report` when duplicate indicators, canonical conflicts, or project-wide grain drift matter.
+4. `modelling_consistency_report` when duplicate indicators, canonical
+   conflicts, project-wide grain drift, or agent-modelling findings matter.
 5. `search_indicator`, `indicator_inventory`, `search_columns`, and `column_inventory` for repeated semantics and column families.
 6. `get_entity`, `get_context`, and `get_columns` for contract inspection.
 7. `compare_grains` and `diff_entities` for cluster comparison.

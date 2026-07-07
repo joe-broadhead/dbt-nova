@@ -31,6 +31,8 @@ If classification is ambiguous, inspect context and lineage before editing. Do n
 For business terms such as GMV, AOV, sessions, orders, customers, margin, conversion, or product counts:
 - search indicators by term and synonym
 - inventory canonical indicators
+- inspect `execution_surface`, `queryable`, and `queryable_via` before treating
+  an indicator as executable
 - inspect candidate entities and grains
 - compare grains when two definitions look equivalent
 - use overlap or consistency reports when the concept appears broadly
@@ -47,6 +49,9 @@ Use:
 - `search.candidates` for audience-specific de-ranking only
 
 Prefer fewer high-signal fields over exhaustive metadata.
+Do not make a metadata-only cross-grain KPI look queryable by adding a formula.
+Move it to a dbt model, configured Semantic Layer metric, saved query, or recipe,
+or leave it as context with an explicit blocker.
 
 ## Domain References
 
@@ -77,5 +82,7 @@ After local validation and manifest refresh, verify:
 - `get_entity` or `get_context` for compact contract checks
 - `get_columns` for referenced field existence
 - `get_metadata_score` for quality impact
+- `modelling_consistency_report` after repeated-indicator, canonical, or
+  cross-grain KPI edits
 
 If the hosted MCP manifest is older than the local build, report that search verification is pending deployment rather than pretending it passed.

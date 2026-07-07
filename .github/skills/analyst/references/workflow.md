@@ -76,11 +76,14 @@ Semantic discovery evidence must include:
 - the `search_indicator` query terms used
 - whether you searched metrics, measures, or both
 - the top relevant indicator names and parent entities when present
+- the returned `indicator_source`, `execution_surface`, `queryable`, and
+  `queryable_via` values for the accepted row
 - why the top semantic result was accepted or rejected
 
 Fallback to raw model search only when one of these is true:
 - no relevant indicator is returned
-- relevant indicators lack a credible execution parent for the ask
+- relevant indicators lack a credible execution parent or queryable execution
+  surface for the ask
 - requested outputs are dimensional, provenance, or entity-comparison work, not
   KPI work
 - a recipe covers the deliverable and supplies the contract
@@ -136,10 +139,17 @@ When a metric row returns an `expression`, use that expression as the contract
 for SQL. Do not replace it with a similarly named measure or a guessed
 numerator/denominator.
 
-When compact indicator rows include `relation_name`, `grain`, and metric
-`expression`, treat them as sufficient execution evidence. Do not spend a tool
-call on `DESCRIBE`, `information_schema`, or full context unless execution
-actually fails because the contract is incomplete.
+When compact indicator rows include `execution_surface: "relation"`,
+`queryable: true`, `queryable_via: "relation_name"`, `relation_name`, `grain`,
+and metric `expression`, treat them as sufficient execution evidence. Do not
+spend a tool call on `DESCRIBE`, `information_schema`, or full context unless
+execution actually fails because the contract is incomplete.
+
+When `execution_surface` is `semantic_layer`, use the configured dbt Semantic
+Layer / MetricFlow execution path rather than SQL against `relation_name`. When
+`execution_surface` is `metadata_only` or `queryable` is false, treat the row as
+definition context or a blocker; do not infer joins or write SQL from metric
+names alone.
 
 ## Contract check rule
 

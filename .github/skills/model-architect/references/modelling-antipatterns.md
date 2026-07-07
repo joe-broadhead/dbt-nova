@@ -31,6 +31,26 @@ Signals:
 - synonyms pull search toward many siblings without a clear winner
 - project-wide consistency reports show duplicate indicators with inconsistent grains
 
+## Metadata-only cross-grain KPI
+
+Signals:
+- a ratio or KPI combines facts at incompatible grains
+- the KPI exists only as `meta.nova` text, a derivation note, or a proposed
+  composite metadata graph
+- no dbt relation, configured Semantic Layer metric, saved query, or recipe owns
+  the executable shape
+- modelling findings mark the indicator as non-queryable or missing a
+  deterministic surface
+
+## Semantic-layer row treated as relation SQL
+
+Signals:
+- `search_indicator` returns `execution_surface: "semantic_layer"` but the plan
+  tries to query `relation_name` directly
+- MetricFlow measure references are not resolved before using the metric
+- the refactor plan mixes Semantic Layer ownership with dbt relation ownership
+  without an explicit boundary
+
 ## Naming drift without contract drift control
 
 Signals:

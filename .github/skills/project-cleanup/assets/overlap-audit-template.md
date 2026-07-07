@@ -25,6 +25,12 @@
 - Metadata inconsistencies:
 - Discovery / search inconsistencies:
 
+## Agent modelling findings
+- Blocker findings:
+- High findings:
+- Affected indicators / entities:
+- Execution-surface remediation:
+
 ## Cleanup queue
 - P0 immediate:
 - P1 next:

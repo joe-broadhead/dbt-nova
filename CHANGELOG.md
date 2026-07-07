@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added agent modelling audit docs, API guidance, and packaged skill updates so
+  agents use relation-backed, Semantic Layer-backed, and metadata-only indicator
+  surfaces correctly.
 - Added response-only indicator execution metadata to `search_indicator` and
   `indicator_inventory` so agents can distinguish relation-backed,
   Semantic Layer-backed, and metadata-only indicators before execution.

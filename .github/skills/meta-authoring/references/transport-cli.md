@@ -14,5 +14,7 @@ Use the local `dbt-nova` CLI when editing files or validating a local manifest. 
 - schema and semantic validation: `audit nova-meta`
 - repeated-concept discovery: `tool call search_indicator`, `indicator_inventory`, `search_columns`, `column_inventory`
 - contract checks: `tool call get_entity`, `get_context`, `get_columns`
-- canonical placement checks: `tool call compare_grains`, `find_entity_overlap`, `modelling_consistency_report`
+- canonical placement checks: `tool call compare_grains`,
+  `find_entity_overlap`, `modelling_consistency_report`
 - post-build verification: `tool call search_indicator`, `search`, `get_metadata_score`
+- agent-modelling verification: `tool call modelling_consistency_report`
