@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use rkyv::string::ArchivedString;
 use serde::Serialize;
-use serde_json::{Value as JsonValue, json};
+use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use tracing::instrument;
 
 use crate::error::{DbtNovaError, Result};
@@ -16,6 +16,16 @@ use crate::params::{
 };
 use crate::responses::SuccessResponse;
 use crate::utils::tokenize_alnum_lowercase;
+
+const AGENT_MODELLING_SCHEMA_VERSION: &str = "agent_modelling.v1";
+const AGENT_MODELLING_MAX_FINDINGS: usize = 100;
+const AGENT_MODELLING_TOP_BUCKETS: usize = 5;
+const AGENT_MODELLING_SEVERITY_ORDER: [AgentModellingSeverity; 4] = [
+    AgentModellingSeverity::Blocker,
+    AgentModellingSeverity::High,
+    AgentModellingSeverity::Medium,
+    AgentModellingSeverity::Low,
+];
 
 impl ManifestSearch {
     /// Compare effective grain information between two entities.
@@ -141,27 +151,43 @@ impl ManifestSearch {
             section_offset,
             section_limit,
         );
+        let mut agent_modelling_findings_all = build_agent_modelling_findings(&profiles);
+        sort_agent_modelling_findings(&mut agent_modelling_findings_all);
+        let agent_modelling_finding_count = agent_modelling_findings_all.len();
+        let agent_modelling_findings_truncated =
+            agent_modelling_finding_count > AGENT_MODELLING_MAX_FINDINGS;
+        let agent_modelling_findings =
+            truncate_agent_modelling_findings(&agent_modelling_findings_all);
         let summary = build_modelling_consistency_summary(
             params,
-            section_limit,
-            section_offset,
+            ModellingReportPage {
+                limit: section_limit,
+                offset: section_offset,
+            },
             &overlap_rows_all,
             &duplicate_indicator_rows,
             &canonical_conflict_rows,
             &multi_grain_entity_rows_all,
+            AgentModellingSummaryInput {
+                findings: &agent_modelling_findings_all,
+                truncated: agent_modelling_findings_truncated,
+            },
         );
 
         let report = ModellingConsistencyReport {
             summary,
+            agent_modelling_schema_version: AGENT_MODELLING_SCHEMA_VERSION,
             entity_count: profiles.len(),
             overlap_candidate_count: overlap_count,
             duplicate_indicator_count,
             canonical_conflict_count,
             multi_grain_entity_count,
+            agent_modelling_finding_count,
             overlap_candidates: overlap,
             duplicate_indicators,
             canonical_indicator_conflicts: canonical_conflicts,
             entities_with_multiple_grain_variants: multi_grain_entities,
+            agent_modelling_findings,
         };
 
         Ok(serde_json::to_value(SuccessResponse::new(report, 1))?)
@@ -294,18 +320,84 @@ struct MultiGrainEntityRow {
     grain_variants: Vec<GrainVariant>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum AgentModellingSeverity {
+    Blocker,
+    High,
+    Medium,
+    Low,
+}
+
+impl AgentModellingSeverity {
+    fn sort_rank(self) -> u8 {
+        match self {
+            Self::Blocker => 0,
+            Self::High => 1,
+            Self::Medium => 2,
+            Self::Low => 3,
+        }
+    }
+
+    fn summary_key(self) -> &'static str {
+        match self {
+            Self::Blocker => "blockers",
+            Self::High => "high",
+            Self::Medium => "medium",
+            Self::Low => "low",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ModelingEntityRef {
+    unique_id: String,
+    name: String,
+    resource_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    relation_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ModelingIndicatorRef {
+    indicator_name: String,
+    indicator_type: String,
+    parent_unique_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AgentModellingFinding {
+    code: &'static str,
+    severity: AgentModellingSeverity,
+    category: &'static str,
+    message: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    entities: Vec<ModelingEntityRef>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    indicators: Vec<ModelingIndicatorRef>,
+    evidence: JsonValue,
+    recommendation: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    drill_down_hints: Vec<JsonValue>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct ModellingConsistencyReport {
     summary: JsonValue,
+    agent_modelling_schema_version: &'static str,
     entity_count: usize,
     overlap_candidate_count: usize,
     duplicate_indicator_count: usize,
     canonical_conflict_count: usize,
     multi_grain_entity_count: usize,
+    agent_modelling_finding_count: usize,
     overlap_candidates: Vec<EntityOverlapRow>,
     duplicate_indicators: Vec<DuplicateIndicatorRow>,
     canonical_indicator_conflicts: Vec<DuplicateIndicatorRow>,
     entities_with_multiple_grain_variants: Vec<MultiGrainEntityRow>,
+    agent_modelling_findings: Vec<AgentModellingFinding>,
 }
 
 #[derive(Clone)]
@@ -324,6 +416,18 @@ struct EntityOverlapProfile {
     indicator_profiles: BTreeMap<(String, String), IndicatorOverlapIndicatorProfile>,
     column_semantic_types: BTreeSet<String>,
     grain_variants: Vec<GrainVariant>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ModellingReportPage {
+    limit: usize,
+    offset: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AgentModellingSummaryInput<'a> {
+    findings: &'a [AgentModellingFinding],
+    truncated: bool,
 }
 
 #[derive(Clone)]
@@ -892,12 +996,12 @@ fn multi_grain_entity_rows(profiles: &[EntityOverlapProfile]) -> Vec<MultiGrainE
 
 fn build_modelling_consistency_summary(
     params: &ModellingConsistencyReportParams,
-    section_limit: usize,
-    section_offset: usize,
+    page: ModellingReportPage,
     overlap_rows: &[EntityOverlapRow],
     duplicate_indicator_rows: &[DuplicateIndicatorRow],
     canonical_conflict_rows: &[DuplicateIndicatorRow],
     multi_grain_entity_rows: &[MultiGrainEntityRow],
+    agent_modelling: AgentModellingSummaryInput<'_>,
 ) -> JsonValue {
     let overlap_evidence_categories = overlap_evidence_category_counts(overlap_rows);
     let overlap_examples = overlap_rows
@@ -942,23 +1046,28 @@ fn build_modelling_consistency_summary(
         })
         .collect::<Vec<_>>();
     let next_offset = modelling_has_next_page(
-        section_limit,
-        section_offset,
+        page.limit,
+        page.offset,
         overlap_rows,
         multi_grain_entity_rows,
     )
-    .then_some(section_offset.saturating_add(section_limit));
+    .then_some(page.offset.saturating_add(page.limit));
 
     json!({
         "section_counts": {
             "overlap_candidates": overlap_rows.len(),
             "duplicate_indicators": duplicate_indicator_rows.len(),
             "canonical_indicator_conflicts": canonical_conflict_rows.len(),
-            "entities_with_multiple_grain_variants": multi_grain_entity_rows.len()
+            "entities_with_multiple_grain_variants": multi_grain_entity_rows.len(),
+            "agent_modelling_findings": agent_modelling.findings.len()
         },
+        "agent_modelling": agent_modelling_summary(
+            agent_modelling.findings,
+            agent_modelling.truncated
+        ),
         "page": {
-            "limit": section_limit,
-            "offset": section_offset,
+            "limit": page.limit,
+            "offset": page.offset,
             "next_offset": next_offset
         },
         "overlap_evidence_categories": overlap_evidence_categories,
@@ -966,8 +1075,100 @@ fn build_modelling_consistency_summary(
         "top_duplicate_indicator_groups": top_duplicate_indicator_groups,
         "top_canonical_conflicts": top_canonical_conflicts,
         "top_multi_grain_entities": top_multi_grain_entities,
-        "drill_down_hints": modelling_drill_down_hints(params, section_limit, section_offset, overlap_rows, multi_grain_entity_rows)
+        "drill_down_hints": modelling_drill_down_hints(params, page.limit, page.offset, overlap_rows, multi_grain_entity_rows)
     })
+}
+
+fn build_agent_modelling_findings(
+    _profiles: &[EntityOverlapProfile],
+) -> Vec<AgentModellingFinding> {
+    Vec::new()
+}
+
+fn truncate_agent_modelling_findings(
+    findings: &[AgentModellingFinding],
+) -> Vec<AgentModellingFinding> {
+    findings
+        .iter()
+        .take(AGENT_MODELLING_MAX_FINDINGS)
+        .cloned()
+        .collect()
+}
+
+fn sort_agent_modelling_findings(findings: &mut [AgentModellingFinding]) {
+    findings.sort_by(compare_agent_modelling_findings);
+}
+
+fn compare_agent_modelling_findings(
+    left: &AgentModellingFinding,
+    right: &AgentModellingFinding,
+) -> Ordering {
+    left.severity
+        .sort_rank()
+        .cmp(&right.severity.sort_rank())
+        .then_with(|| left.category.cmp(right.category))
+        .then_with(|| left.code.cmp(right.code))
+        .then_with(|| first_finding_entity_id(left).cmp(first_finding_entity_id(right)))
+        .then_with(|| first_finding_indicator_name(left).cmp(first_finding_indicator_name(right)))
+        .then_with(|| left.message.cmp(&right.message))
+}
+
+fn first_finding_entity_id(finding: &AgentModellingFinding) -> &str {
+    finding
+        .entities
+        .first()
+        .map_or("", |entity| entity.unique_id.as_str())
+}
+
+fn first_finding_indicator_name(finding: &AgentModellingFinding) -> &str {
+    finding
+        .indicators
+        .first()
+        .map_or("", |indicator| indicator.indicator_name.as_str())
+}
+
+fn agent_modelling_summary(findings: &[AgentModellingFinding], truncated: bool) -> JsonValue {
+    let mut severity_counts = BTreeMap::<&'static str, usize>::new();
+    for severity in AGENT_MODELLING_SEVERITY_ORDER {
+        severity_counts.insert(severity.summary_key(), 0);
+    }
+    let mut code_counts = BTreeMap::<String, usize>::new();
+    let mut category_counts = BTreeMap::<String, usize>::new();
+
+    for finding in findings {
+        *severity_counts
+            .entry(finding.severity.summary_key())
+            .or_default() += 1;
+        *code_counts.entry(finding.code.to_string()).or_default() += 1;
+        *category_counts
+            .entry(finding.category.to_string())
+            .or_default() += 1;
+    }
+
+    json!({
+        "total": findings.len(),
+        "blockers": severity_counts["blockers"],
+        "high": severity_counts["high"],
+        "medium": severity_counts["medium"],
+        "low": severity_counts["low"],
+        "truncated": truncated,
+        "top_codes": top_agent_modelling_buckets(code_counts, "code"),
+        "top_categories": top_agent_modelling_buckets(category_counts, "category")
+    })
+}
+
+fn top_agent_modelling_buckets(counts: BTreeMap<String, usize>, key: &str) -> Vec<JsonValue> {
+    let mut rows = counts.into_iter().collect::<Vec<_>>();
+    rows.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    rows.into_iter()
+        .take(AGENT_MODELLING_TOP_BUCKETS)
+        .map(|(value, count)| {
+            let mut row = JsonMap::new();
+            row.insert(key.to_string(), JsonValue::String(value));
+            row.insert("count".to_string(), JsonValue::from(count));
+            JsonValue::Object(row)
+        })
+        .collect()
 }
 
 fn overlap_evidence_category_counts(rows: &[EntityOverlapRow]) -> JsonValue {
@@ -1321,6 +1522,172 @@ mod tests {
             },
         );
         profile
+    }
+
+    fn agent_finding(
+        code: &'static str,
+        severity: AgentModellingSeverity,
+        category: &'static str,
+        entity_id: &str,
+        indicator_name: &str,
+        message: &str,
+    ) -> AgentModellingFinding {
+        AgentModellingFinding {
+            code,
+            severity,
+            category,
+            message: message.to_string(),
+            entities: vec![ModelingEntityRef {
+                unique_id: entity_id.to_string(),
+                name: entity_id.to_string(),
+                resource_type: "model".to_string(),
+                relation_name: None,
+            }],
+            indicators: vec![ModelingIndicatorRef {
+                indicator_name: indicator_name.to_string(),
+                indicator_type: "metric".to_string(),
+                parent_unique_id: entity_id.to_string(),
+                source: Some("nova_meta".to_string()),
+            }],
+            evidence: json!({}),
+            recommendation: "Fix the deterministic modelling issue.".to_string(),
+            drill_down_hints: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn agent_modelling_summary_counts_and_sorts_buckets() {
+        let findings = vec![
+            agent_finding(
+                "beta_code",
+                AgentModellingSeverity::High,
+                "queryability",
+                "model.pkg.b",
+                "beta",
+                "beta",
+            ),
+            agent_finding(
+                "alpha_code",
+                AgentModellingSeverity::Blocker,
+                "grain_safety",
+                "model.pkg.a",
+                "alpha",
+                "alpha",
+            ),
+            agent_finding(
+                "alpha_code",
+                AgentModellingSeverity::Medium,
+                "grain_safety",
+                "model.pkg.c",
+                "alpha",
+                "alpha duplicate",
+            ),
+        ];
+
+        let summary = agent_modelling_summary(&findings, true);
+        assert_eq!(summary["total"].as_u64(), Some(3));
+        assert_eq!(summary["blockers"].as_u64(), Some(1));
+        assert_eq!(summary["high"].as_u64(), Some(1));
+        assert_eq!(summary["medium"].as_u64(), Some(1));
+        assert_eq!(summary["low"].as_u64(), Some(0));
+        assert_eq!(summary["truncated"].as_bool(), Some(true));
+        assert_eq!(summary["top_codes"][0]["code"].as_str(), Some("alpha_code"));
+        assert_eq!(summary["top_codes"][0]["count"].as_u64(), Some(2));
+        assert_eq!(
+            summary["top_categories"][0]["category"].as_str(),
+            Some("grain_safety")
+        );
+        assert_eq!(summary["top_categories"][0]["count"].as_u64(), Some(2));
+    }
+
+    #[test]
+    fn agent_modelling_findings_sort_by_contract_order() {
+        let mut findings = vec![
+            agent_finding(
+                "later_low",
+                AgentModellingSeverity::Low,
+                "queryability",
+                "model.pkg.low",
+                "low",
+                "low",
+            ),
+            agent_finding(
+                "second_blocker",
+                AgentModellingSeverity::Blocker,
+                "queryability",
+                "model.pkg.b",
+                "b",
+                "second",
+            ),
+            agent_finding(
+                "first_blocker",
+                AgentModellingSeverity::Blocker,
+                "grain_safety",
+                "model.pkg.a",
+                "a",
+                "first",
+            ),
+            agent_finding(
+                "middle_high",
+                AgentModellingSeverity::High,
+                "grain_safety",
+                "model.pkg.high",
+                "high",
+                "middle",
+            ),
+        ];
+
+        sort_agent_modelling_findings(&mut findings);
+
+        let codes = findings
+            .iter()
+            .map(|finding| finding.code)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            codes,
+            vec![
+                "first_blocker",
+                "second_blocker",
+                "middle_high",
+                "later_low"
+            ]
+        );
+    }
+
+    #[test]
+    fn agent_modelling_findings_truncate_after_sorting() {
+        let mut findings = (0..AGENT_MODELLING_MAX_FINDINGS)
+            .map(|index| {
+                agent_finding(
+                    "low_code",
+                    AgentModellingSeverity::Low,
+                    "queryability",
+                    &format!("model.pkg.low_{index:03}"),
+                    "low",
+                    "low",
+                )
+            })
+            .collect::<Vec<_>>();
+        findings.push(agent_finding(
+            "blocker_code",
+            AgentModellingSeverity::Blocker,
+            "queryability",
+            "model.pkg.blocker",
+            "blocker",
+            "blocker",
+        ));
+
+        sort_agent_modelling_findings(&mut findings);
+        let truncated = findings.len() > AGENT_MODELLING_MAX_FINDINGS;
+        let bounded = truncate_agent_modelling_findings(&findings);
+
+        assert!(truncated);
+        assert_eq!(bounded.len(), AGENT_MODELLING_MAX_FINDINGS);
+        assert!(matches!(
+            bounded[0].severity,
+            AgentModellingSeverity::Blocker
+        ));
+        assert_eq!(bounded[0].code, "blocker_code");
     }
 
     #[test]

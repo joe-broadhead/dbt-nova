@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documented the accepted v1 agent modelling finding contract, including
   severity semantics, bounded summaries, rule requirements, and deferred
   default-off checks.
+- Added the empty `agent_modelling_findings` framework and bounded summary
+  fields to `modelling_consistency_report`.
 - Hardened DuckDB `execute_sql` by disabling external file/table access by
   default, requiring an explicit bounded `DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS`
   opt-in, and rejecting DuckDB file-scan functions in SQL validation.

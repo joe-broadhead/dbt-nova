@@ -389,8 +389,14 @@ Common:
 
 Responses include a compact `summary` with section counts, top duplicate
 indicator groups, top canonical conflicts, overlap evidence category counts,
-bounded overlap examples, multi-grain entity highlights, and drill-down hints.
-The existing detail arrays remain paged by `limit` and `offset`.
+bounded overlap examples, multi-grain entity highlights, `agent_modelling`
+finding counts, and drill-down hints. The existing detail arrays remain paged
+by `limit` and `offset`.
+
+The report includes `agent_modelling_schema_version` set to
+`"agent_modelling.v1"`, `agent_modelling_finding_count`, and
+`agent_modelling_findings`. The initial framework serializes an empty findings
+array until individual deterministic rules are enabled.
 
 ### `get_entity`
 Fetch a single entity by `unique_id` or name.

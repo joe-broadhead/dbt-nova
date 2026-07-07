@@ -120,6 +120,39 @@ async fn test_modelling_consistency_report_surfaces_duplicate_indicators() {
 
     let data = result.get("data").expect("data");
     let summary = data.get("summary").expect("summary");
+    assert_eq!(
+        data["agent_modelling_schema_version"].as_str(),
+        Some("agent_modelling.v1")
+    );
+    assert_eq!(data["agent_modelling_finding_count"].as_u64(), Some(0));
+    assert!(
+        data["agent_modelling_findings"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    );
+    assert_eq!(
+        summary["section_counts"]["agent_modelling_findings"].as_u64(),
+        Some(0)
+    );
+    assert_eq!(summary["agent_modelling"]["total"].as_u64(), Some(0));
+    assert_eq!(summary["agent_modelling"]["blockers"].as_u64(), Some(0));
+    assert_eq!(summary["agent_modelling"]["high"].as_u64(), Some(0));
+    assert_eq!(summary["agent_modelling"]["medium"].as_u64(), Some(0));
+    assert_eq!(summary["agent_modelling"]["low"].as_u64(), Some(0));
+    assert_eq!(
+        summary["agent_modelling"]["truncated"].as_bool(),
+        Some(false)
+    );
+    assert!(
+        summary["agent_modelling"]["top_codes"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    );
+    assert!(
+        summary["agent_modelling"]["top_categories"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    );
     assert!(
         summary["section_counts"]["duplicate_indicators"]
             .as_u64()
