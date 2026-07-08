@@ -56,8 +56,7 @@ Run agent readiness after dbt has produced `target/manifest.json`. This example
 starts in advisory mode, writes machine and human reports, always uploads the
 reports as workflow artifacts, and mirrors the Markdown report into the job
 summary. Replace `<nova-release-tag>` with a release that includes
-`audit agent-readiness`; until that release exists, install Nova from an
-immutable source commit instead of using the release installer step.
+`audit agent-readiness`; use `v0.0.5` or newer for the release installer step.
 
 ```yaml
 name: Agent readiness

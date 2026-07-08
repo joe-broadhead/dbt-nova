@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/joe-broadhead/dbt-nova/schemas/nova/v0.json",
   "title": "Nova Meta Schema v0",
-  "x-nova-release": "0.0.0",
+  "x-nova-release": "0.0.6",
   "type": "object",
   "properties": {
     "nova": {
@@ -86,7 +86,7 @@
         "field": { "type": "string" },
         "operator": {
           "type": "string",
-          "description": "Expected values: in, not_in, =, !=, >, >=, <, <=, between, is_null, is_not_null."
+          "pattern": "^(in|not_in|=|!=|>|>=|<|<=|between|is_null|is_not_null)$"
         },
         "values": { "type": "array", "items": { "type": "string" } },
         "label": { "type": "string" }

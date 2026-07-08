@@ -46,7 +46,7 @@ models:
 ## Recommended Fields (Model‑Level)
 
 - `canonical` (bool): True for the preferred dataset for a business concept.
-- `tier` (alpha|beta|gamma): Quality signal for discovery.
+- `tier` (`alpha`, `beta`, `gamma`, `gold`, `silver`, or `bronze`): Quality signal for discovery.
 - `domains` (list): Broad business domain(s) used for routing.
 - `use_cases` (list): Typical analyst questions (e.g., `weekly_report`).
 - `synonyms` (list): Business names analysts will search for.

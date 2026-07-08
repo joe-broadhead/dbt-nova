@@ -303,13 +303,26 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf dist/oci
-          rm -f dbt-nova-linux-x86_64.tar.gz dbt-nova-linux-arm64.tar.gz
+          rm -f dbt-nova-linux-x86_64.tar.gz* dbt-nova-linux-x86_64.sha256 \
+            dbt-nova-linux-arm64.tar.gz* dbt-nova-linux-arm64.sha256
           mkdir -p dist/oci/linux-amd64 dist/oci/linux-arm64
 
           gh release download "${RELEASE_TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
-            --pattern "dbt-nova-linux-x86_64.tar.gz" \
-            --pattern "dbt-nova-linux-arm64.tar.gz"
+            --pattern "dbt-nova-linux-x86_64.tar.gz*" \
+            --pattern "dbt-nova-linux-x86_64.sha256" \
+            --pattern "dbt-nova-linux-arm64.tar.gz*" \
+            --pattern "dbt-nova-linux-arm64.sha256"
+
+          for asset in dbt-nova-linux-x86_64 dbt-nova-linux-arm64; do
+            sha256sum -c "${asset}.sha256"
+            COSIGN_EXPERIMENTAL=1 cosign verify-blob \
+              --certificate "${asset}.tar.gz.crt" \
+              --signature "${asset}.tar.gz.sig" \
+              --certificate-identity-regexp "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/(tags/${RELEASE_TAG}|heads/master)" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "${asset}.tar.gz"
+          done
 
           tar -xzf dbt-nova-linux-x86_64.tar.gz -C dist/oci/linux-amd64
           tar -xzf dbt-nova-linux-arm64.tar.gz -C dist/oci/linux-arm64
@@ -429,6 +442,46 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: TARGETARCH=arm64
           provenance: false
+
+      - name: Smoke ARM64 HTTP container
+        shell: bash
+        env:
+          ARM64_IMAGE: ${{ steps.image.outputs.arm64_tag }}
+        run: |
+          set -euo pipefail
+          docker rm -f dbt-nova-arm64-release-smoke >/dev/null 2>&1 || true
+          trap 'docker logs dbt-nova-arm64-release-smoke || true; docker rm -f dbt-nova-arm64-release-smoke >/dev/null 2>&1 || true' EXIT
+          docker run -d --rm \
+            --platform linux/arm64 \
+            --name dbt-nova-arm64-release-smoke \
+            -p 127.0.0.1:8081:8080 \
+            -v "$PWD/tests/fixtures:/fixtures:ro" \
+            -e DBT_MANIFEST_PATH=/fixtures/nova_manifest.json \
+            -e PORT=8080 \
+            -e DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true \
+            -e DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest \
+            -e DBT_NOVA_SEARCH_ENABLE_VECTOR=false \
+            -e DBT_NOVA_SEARCH_ENABLE_SPARSE=false \
+            -e DBT_NOVA_SEARCH_ENABLE_RERANKER=false \
+            "${ARM64_IMAGE}"
+
+          health_ok=0
+          ready_ok=0
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8081/healthz > /tmp/dbt-nova-arm64-healthz.json; then
+              health_ok=1
+            fi
+            if curl -fsS http://127.0.0.1:8081/readyz > /tmp/dbt-nova-arm64-readyz.json; then
+              if grep -q '"status":"ready"' /tmp/dbt-nova-arm64-readyz.json; then
+                ready_ok=1
+                break
+              fi
+            fi
+            sleep 1
+          done
+
+          test "$health_ok" -eq 1
+          test "$ready_ok" -eq 1
 
       - name: Publish multi-arch manifest
         id: manifest

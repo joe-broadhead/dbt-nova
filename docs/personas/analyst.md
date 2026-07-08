@@ -43,7 +43,7 @@ Goal: translate a business question into data requirements.
 
 Search needs:
 - Find entities by business terms (description, docs, tags).
-- Identify canonical models (alpha/beta/gamma labels, package ownership).
+- Identify canonical models (tier labels, package ownership).
 
 Required analyst behavior:
 - If the question is ambiguous or internally inconsistent, **clarify before querying**.

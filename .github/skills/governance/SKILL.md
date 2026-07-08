@@ -2,7 +2,7 @@
 name: governance
 description: "Runs deterministic governance audits with Nova using frozen scope, repeatable scoring, explicit blocker extraction, and remediation planning. Use when enforcing metadata standards, testing and documentation gates, ownership and compliance requirements, and rerunnable audit evidence through MCP or the dbt-nova CLI."
 license: MIT
-allowed-tools: "Bash Read Write mcp__nova__show_metadata mcp__nova__health mcp__nova__list_entities mcp__nova__list_tags mcp__nova__list_packages mcp__nova__batch_get_entities mcp__nova__find_by_path mcp__nova__search mcp__nova__search_columns mcp__nova__column_inventory mcp__nova__get_entity mcp__nova__get_columns mcp__nova__get_metadata_score mcp__nova__get_test_coverage"
+allowed-tools: "Bash Read Write mcp__nova__show_metadata mcp__nova__health mcp__nova__list_entities mcp__nova__list_tags mcp__nova__list_packages mcp__nova__batch_get_entities mcp__nova__find_by_path mcp__nova__search mcp__nova__search_columns mcp__nova__column_inventory mcp__nova__get_entity mcp__nova__get_columns mcp__nova__get_metadata_audit mcp__nova__get_agent_readiness mcp__nova__get_metadata_score mcp__nova__get_test_coverage"
 metadata:
   owner: "dbt-nova"
   persona: "governance"

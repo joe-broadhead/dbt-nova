@@ -101,7 +101,7 @@ a remediation path instead of asking the agent to infer a raw fact-table join:
     {
       "code": "ratio_like_metric_without_deterministic_surface",
       "severity": "blocker",
-      "category": "cross_grain",
+      "category": "cross_grain_risk",
       "message": "Ratio-like indicator `revenue_per_session` has no deterministic execution surface.",
       "evidence": {
         "execution_surface": "metadata_only",
@@ -128,7 +128,7 @@ a remediation path instead of asking the agent to infer a raw fact-table join:
       ],
       "top_categories": [
         {
-          "category": "cross_grain",
+          "category": "cross_grain_risk",
           "count": 1
         }
       ]

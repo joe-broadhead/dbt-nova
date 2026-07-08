@@ -60,9 +60,10 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_MCP_MAX_PAGE_SIZE` – MCP-specific cap for paginated result requests before the global search cap is applied (`0` disables the MCP-specific cap, default: `100`)
 - `DBT_NOVA_MCP_MAX_RESPONSE_BYTES` – central serialized MCP tool response budget in bytes (`0` disables central budgeting, default: `65536`)
 - `DBT_NOVA_MCP_MAX_STRING_CHARS` – max characters retained for long strings when central MCP budgeting truncates (default: `4096`)
-- `DBT_NOVA_MCP_INCLUDE_TRUNCATION_META` – include `_nova_result_meta` when a central MCP budget pass truncates a response (`true`|`false`, default: `true`)
+- `DBT_NOVA_MCP_INCLUDE_TRUNCATION_META` – include byte-budget fields in `_nova_result_meta` when a central MCP budget pass truncates a response; pagination `next_offset` metadata can still appear when this is false (`true`|`false`, default: `true`)
 - `DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD` – allow MCP `reload_manifest` to change `manifest_uri`, `manifest_path`, `refresh_secs`, or `storage_instance_id`; no-argument current-source reloads do not require this opt-in
 - `DBT_NOVA_MCP_ENABLE_MANIFEST_WARM` – allow MCP/`tool call` `warm_manifest` semantic cache writes
+- `DBT_NOVA_EVAL_UNSAFE_WRITE_RAW_PROVIDER_LOGS` – opt in to raw provider transcript artifacts during agent eval debugging; unsafe for shared CI or untrusted environments
 - `DBT_NOVA_SQL_PROVIDER` – SQL backend for `execute_sql` (`databricks`, `bigquery`, `snowflake`, or `duckdb`, default: `databricks`)
 - `DBT_NOVA_GCP_PROJECT_ID` – shared Google project id alias (used by BigQuery fallback resolution)
 - `DBT_NOVA_GCP_ACCESS_TOKEN` – shared Google OAuth access token alias (used by BigQuery fallback resolution)
@@ -123,8 +124,9 @@ Remote manifest notes:
   available for debugging.
 - Central MCP response budgeting is a backstop, not a replacement for tool-level
   limits. Prefer compact tool parameters first; truncated responses include
-  `_nova_result_meta` with byte budget, omitted path evidence, and `next_offset`
-  for paginated MCP responses when enabled.
+  `_nova_result_meta` with byte budget and omitted path evidence when enabled.
+  Paginated MCP responses can include `_nova_result_meta.next_offset` whenever
+  another page is available.
 - Tool filter examples:
   - Full backwards-compatible MCP catalog:
     - `DBT_NOVA_TOOL_PROFILE=all`

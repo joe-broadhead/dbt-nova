@@ -9,8 +9,9 @@ use std::time::Duration;
 use tokio::runtime::Runtime;
 
 use dbt_nova::params::{
-    DetailLevel, GetEntityParams, GetLineageParams, IndicatorInventoryParams, PaginationParams,
-    SearchColumnsParams, SearchParams,
+    DetailLevel, GetEntityParams, GetLineageParams, IndicatorInventoryParams,
+    ModellingConsistencyReportParams, PaginationParams, ParentGroupMode, SearchColumnsParams,
+    SearchIndicatorParams, SearchParams,
 };
 use serde_json::json;
 
@@ -110,6 +111,7 @@ fn load_large_synthetic_fixture(entity_count: usize) -> fixtures::FixtureSearchE
                 "description": format!("Synthetic benchmark model {index} for revenue customer search."),
                 "database": "analytics",
                 "schema": "benchmark",
+                "relation_name": format!("analytics.benchmark.{name}"),
                 "path": format!("models/benchmark/{name}.sql"),
                 "original_file_path": format!("models/benchmark/{name}.sql"),
                 "unique_id": unique_id,
@@ -201,6 +203,54 @@ fn bench_large_indicator_inventory(c: &mut Criterion) {
     });
 }
 
+fn bench_large_search_indicator(c: &mut Criterion) {
+    let entity_count = large_entity_count();
+    let env = load_large_synthetic_fixture(entity_count);
+    let rt = Runtime::new().unwrap();
+    let params = SearchIndicatorParams {
+        query: "gross revenue sales bookings customer".to_string(),
+        resource_types: vec!["model".to_string()],
+        indicator_types: vec!["measure".to_string()],
+        persona: Some("analyst".to_string()),
+        pagination: PaginationParams {
+            limit: Some(25),
+            offset: 0,
+        },
+        detail: Some(DetailLevel::Compact),
+        group_mode: Some(ParentGroupMode::Top),
+        include_support_signals: false,
+        ..Default::default()
+    };
+
+    c.bench_function("large_search_indicator_compact", |b| {
+        b.iter(|| {
+            rt.block_on(env.search_indicator(black_box(&params)))
+                .expect("large search_indicator failed");
+        })
+    });
+}
+
+fn bench_large_modelling_consistency_report(c: &mut Criterion) {
+    let entity_count = large_entity_count();
+    let env = load_large_synthetic_fixture(entity_count);
+    let rt = Runtime::new().unwrap();
+    let params = ModellingConsistencyReportParams {
+        resource_types: vec!["model".to_string()],
+        pagination: PaginationParams {
+            limit: Some(10),
+            offset: 0,
+        },
+        min_score: Some(0.5),
+    };
+
+    c.bench_function("large_modelling_consistency_report", |b| {
+        b.iter(|| {
+            rt.block_on(env.modelling_consistency_report(black_box(&params)))
+                .expect("large modelling report failed");
+        })
+    });
+}
+
 fn bench_large_archived_access(c: &mut Criterion) {
     let entity_count = large_entity_count();
     let env = load_large_synthetic_fixture(entity_count);
@@ -262,7 +312,8 @@ criterion_group! {
         .sample_size(50)
         .measurement_time(Duration::from_secs(7));
     targets = bench_search, bench_lineage, bench_indicator_inventory, bench_search_columns,
-        bench_large_indicator_inventory, bench_large_archived_access,
+        bench_large_indicator_inventory, bench_large_search_indicator,
+        bench_large_modelling_consistency_report, bench_large_archived_access,
         bench_large_concurrent_search_and_lookup
 }
 criterion_main!(benches);

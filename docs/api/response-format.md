@@ -27,6 +27,29 @@ Notes:
 - For object payloads, each tool defines primary records explicitly.
 - `get_undocumented` sets `count = entities_returned + columns_returned`.
 
+## MCP Result Metadata
+
+MCP responses may include `_nova_result_meta` for machine-readable transport
+metadata:
+
+```json
+{
+  "_nova_result_meta": {
+    "next_offset": 25,
+    "response_bytes": 42117,
+    "budget_bytes": 65536,
+    "truncated": true,
+    "omitted_paths": ["$.data.0.compiled_code"],
+    "original_count": 50
+  }
+}
+```
+
+`next_offset` is pagination metadata. It appears when a paginated MCP request
+returned items and more results are available, even when truncation metadata is
+disabled. The byte-budget fields appear only when central MCP response
+budgeting attaches truncation metadata.
+
 Search responses may include suggestions when no results are found:
 
 ```json

@@ -56,6 +56,58 @@ cases:
           - data.0.description
           - data.0.explain
           - data.0.support_signals
+      - type: tool_field_equals
+        tool: search_indicator
+        params:
+          query: checkout completion rate order completed checkout start ecommerce sessions
+          resource_types: [model]
+          indicator_types: [metric]
+          persona: analyst
+          limit: 2
+          detail: compact
+          group_mode: top
+          include_support_signals: false
+        field: data.0.execution_surface
+        expected: relation
+      - type: tool_field_equals
+        tool: search_indicator
+        params:
+          query: checkout completion rate order completed checkout start ecommerce sessions
+          resource_types: [model]
+          indicator_types: [metric]
+          persona: analyst
+          limit: 2
+          detail: compact
+          group_mode: top
+          include_support_signals: false
+        field: data.0.queryable
+        expected: true
+      - type: tool_field_equals
+        tool: search_indicator
+        params:
+          query: checkout completion rate order completed checkout start ecommerce sessions
+          resource_types: [model]
+          indicator_types: [metric]
+          persona: analyst
+          limit: 2
+          detail: compact
+          group_mode: top
+          include_support_signals: false
+        field: data.0.direct_sql_queryable
+        expected: true
+      - type: tool_field_equals
+        tool: search_indicator
+        params:
+          query: checkout completion rate order completed checkout start ecommerce sessions
+          resource_types: [model]
+          indicator_types: [metric]
+          persona: analyst
+          limit: 2
+          detail: compact
+          group_mode: top
+          include_support_signals: false
+        field: data.0.queryable_via
+        expected: relation_name
 
   - id: entity_compact_contract_budget
     question: Compact entity lookup should return enough contract to execute without full context payloads.

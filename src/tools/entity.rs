@@ -157,51 +157,50 @@ impl ManifestSearch {
         let ids: Vec<String> = params.unique_ids.clone();
 
         let detail = self.detail_level(params.detail);
-        let store = self.entities.clone();
-        let results: Vec<(String, Option<JsonValue>)> = tokio::task::spawn_blocking(move || {
-            ids.par_iter()
-                .map(|id| {
-                    let payload = match store.get_archived(id)? {
-                        Some(entity) => {
-                            let json = serde_json::from_str(entity.payload_json())
-                                .unwrap_or(JsonValue::Null);
-                            Some(json)
-                        }
-                        None => None,
-                    };
-                    Ok((id.clone(), payload))
-                })
-                .collect::<Result<Vec<_>>>()
-        })
-        .await
-        .map_err(|err| DbtNovaError::ServerError(err.to_string()))??;
-
         let mut found: Vec<JsonValue> = Vec::new();
         let mut not_found: Vec<String> = Vec::new();
 
-        for (id, entity_json) in results {
-            if let Some(entity_json) = entity_json {
-                match detail {
-                    DetailLevel::Full => {
-                        found.push(ManifestSearch::with_unique_id(entity_json, &id));
-                    }
-                    DetailLevel::Compact => {
-                        if let Some(entity) = self.get_entity_archived(&id)? {
-                            found.push(self.summary_for_compact(&id, entity));
-                        } else {
-                            not_found.push(id);
-                        }
-                    }
-                    DetailLevel::Standard => {
-                        if let Some(entity) = self.get_entity_archived(&id)? {
-                            found.push(self.summary_for_standard(&id, entity));
-                        } else {
-                            not_found.push(id);
-                        }
-                    }
+        if detail == DetailLevel::Full {
+            let store = self.entities.clone();
+            let results: Vec<(String, Option<JsonValue>)> =
+                tokio::task::spawn_blocking(move || {
+                    ids.par_iter()
+                        .map(|id| {
+                            let payload = match store.get_archived(id)? {
+                                Some(entity) => {
+                                    let json = serde_json::from_str(entity.payload_json())
+                                        .unwrap_or(JsonValue::Null);
+                                    Some(json)
+                                }
+                                None => None,
+                            };
+                            Ok((id.clone(), payload))
+                        })
+                        .collect::<Result<Vec<_>>>()
+                })
+                .await
+                .map_err(|err| DbtNovaError::ServerError(err.to_string()))??;
+
+            for (id, entity_json) in results {
+                if let Some(entity_json) = entity_json {
+                    found.push(ManifestSearch::with_unique_id(entity_json, &id));
+                } else {
+                    not_found.push(id);
                 }
-            } else {
-                not_found.push(id);
+            }
+        } else {
+            for id in ids {
+                if let Some(entity) = self.get_entity_archived(&id)? {
+                    match detail {
+                        DetailLevel::Compact => found.push(self.summary_for_compact(&id, entity)),
+                        DetailLevel::Standard => found.push(self.summary_for_standard(&id, entity)),
+                        DetailLevel::Full => {
+                            unreachable!("full detail is handled by the parallel payload path")
+                        }
+                    }
+                } else {
+                    not_found.push(id);
+                }
             }
         }
 

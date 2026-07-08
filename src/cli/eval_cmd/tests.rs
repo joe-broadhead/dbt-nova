@@ -19,8 +19,9 @@ use super::{
     render_eval_card_markdown, resolve_mcp_writable_path, run_eval_command, run_validate_command,
     safe_path_segment, score_agent_expectations, score_final_answer, selected_agent_cases,
     selected_bridge_cases, sql_structure_assertion, suite_file_hash, telemetry_grade_mode,
-    telemetry_path_for_suite, telemetry_row_matches_since, tool_response_budget_assertion,
-    tool_success_assertion, validate_since_date, validate_suite, validate_telemetry_suite_name,
+    telemetry_path_for_suite, telemetry_row_matches_since, tool_field_equals_assertion,
+    tool_response_budget_assertion, tool_success_assertion, validate_since_date, validate_suite,
+    validate_telemetry_suite_name,
 };
 use crate::params::{
     CompareEvalRunsParams, GetEvalGateParams, GetEvalHistoryParams, InitEvalSuiteParams,
@@ -501,6 +502,27 @@ fn tool_response_budget_checks_bytes_and_shape() {
             "data.0.expression".to_string(),
         ],
         &["parent_groups.1".to_string()],
+    );
+
+    assert_eq!(result.status, "pass");
+}
+
+#[test]
+fn tool_field_equals_checks_json_path_value() {
+    let response = json!({
+        "data": [
+            {
+                "execution_surface": "relation",
+                "direct_sql_queryable": true
+            }
+        ]
+    });
+
+    let result = tool_field_equals_assertion(
+        "search_indicator",
+        &response,
+        "data.0.direct_sql_queryable",
+        &json!(true),
     );
 
     assert_eq!(result.status, "pass");

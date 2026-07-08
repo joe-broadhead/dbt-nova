@@ -19,17 +19,19 @@ Use this reference when the client exposes `mcp__nova__*` tools directly.
 
 1. `show_metadata` for manifest identity
 2. `find_by_path`, `list_tags`, `list_packages`, or bounded `list_entities` to freeze scope
-3. `get_metadata_score` for baseline scoring
-4. `get_test_coverage`, `get_entity`, and `get_columns` for blocker detail
-5. `search_columns` or `column_inventory` for PII/compliance and repeated-field audits
-6. `batch_get_entities` for compact review of a small failing set
-7. `search` only as a triage helper when the scope definition is still unclear
+3. `get_metadata_audit` for baseline governance gates and blocker extraction
+4. `get_agent_readiness` when MCP/agent-readiness gates are in scope
+5. `get_metadata_score` for entity-level drill-down
+6. `get_test_coverage`, `get_entity`, and `get_columns` for blocker detail
+7. `search_columns` or `column_inventory` for PII/compliance and repeated-field audits
+8. `batch_get_entities` for compact review of a small failing set
+9. `search` only as a triage helper when the scope definition is still unclear
 
 Scope discipline:
 - for exact entity audits, skip inventory and score the entity directly
 - for path audits, use `find_by_path` before `list_entities`
-- for small path/tag scopes, call `get_metadata_score` on each frozen entity; `scope=project` pages are project baselines, not path-scoped gates
-- for project baselines, use bounded pages and report the page/scope limit
+- for small path/tag scopes, call `get_metadata_score` on each frozen entity
+- for project baselines, use `get_metadata_audit` or `get_metadata_score scope=project`; the latter returns aggregate scoring plus a bounded entity sample
 - keep the rerun scope identical to the baseline scope
 
 Compliance scan pattern:

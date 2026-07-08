@@ -192,6 +192,42 @@ async fn test_metadata_score_project_scope_offset_pages_results() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_metadata_score_project_aggregate_is_page_stable() {
+    let searcher = get_searcher();
+    let page_one = GetMetadataScoreParams {
+        scope: Some("project".to_string()),
+        include_breakdown: false,
+        include_recommendations: false,
+        resource_types: vec!["model".to_string()],
+        limit: Some(1),
+        offset: Some(0),
+        ..Default::default()
+    };
+    let page_two = GetMetadataScoreParams {
+        scope: Some("project".to_string()),
+        include_breakdown: false,
+        include_recommendations: false,
+        resource_types: vec!["model".to_string()],
+        limit: Some(1),
+        offset: Some(1),
+        ..Default::default()
+    };
+
+    let result1 = searcher.get_metadata_score(&page_one).await.json();
+    let result2 = searcher.get_metadata_score(&page_two).await.json();
+
+    assert_eq!(
+        result1["data"]["overall_score"], result2["data"]["overall_score"],
+        "Project aggregate score should not depend on the entity sample page"
+    );
+    assert_eq!(result1["data"]["summary"]["scope"], json!("all_entities"));
+    assert_eq!(
+        result1["data"]["summary"]["sample_truncated"].as_bool(),
+        Some(true)
+    );
+}
+
 #[test]
 fn test_description_tier_scoring() {
     assert_eq!(description_tier_score("", 30), 0);

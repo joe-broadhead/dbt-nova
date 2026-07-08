@@ -148,7 +148,7 @@ async fn test_find_by_path_respects_limit() {
         result
             .get("total_available")
             .and_then(serde_json::Value::as_u64),
-        Some(6)
+        Some(13)
     );
 }
 
