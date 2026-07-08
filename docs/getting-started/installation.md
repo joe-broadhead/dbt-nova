@@ -303,7 +303,7 @@ You can control this behavior with:
 
 For direct Hugging Face fallback, you can enable checksum verification:
 
-- `DBT_NOVA_WARMUP_CHECKSUM_MODE=off|warn|required` (default: `off`)
+- `DBT_NOVA_WARMUP_CHECKSUM_MODE=off|warn|required` (default: `warn`)
 - `DBT_NOVA_WARMUP_CHECKSUM_FILE=/path/to/checksums.txt`
 - Template manifest: `scripts/warm_models.checksums.example`
 
@@ -316,11 +316,13 @@ Checksum manifest format is one entry per line:
 Example:
 
 ```text
-3f2c... https://huggingface.co/intfloat/multilingual-e5-base/resolve/main/onnx/model.onnx
+3f2c... https://huggingface.co/intfloat/multilingual-e5-base/resolve/d128750597153bb5987e10b1c3493a34e5a4502a/onnx/model.onnx
 ```
 
 `required` mode fails warmup if a checksum entry is missing or mismatched.
-`warn` mode logs and continues when entries are missing.
+`warn` mode logs and continues when entries are missing. Checksum entries must
+match the exact resolved URL, including pinned Hugging Face revision SHAs; update
+the template URLs if you override any `DBT_NOVA_WARMUP_*_REVISION` value.
 
 During direct Hugging Face seeding, downloads are validated against HTTP
 `Content-Length` before replacing cached files, and can be additionally guarded

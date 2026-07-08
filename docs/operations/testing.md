@@ -89,11 +89,11 @@ Use `dbt-nova eval run` to test that a manifest exposes the right search,
 indicator, context, lineage, recipe, and metadata-score evidence to agents:
 
 ```bash
-dbt-nova eval validate --suite evals/analyst-smoke.yml
+dbt-nova eval validate --suite evals/starter.yml
 
 dbt-nova eval run \
-  --suite evals/analyst-smoke.yml \
-  --manifest-path target/manifest.json \
+  --suite evals/starter.yml \
+  --manifest-path tests/fixtures/starter_eval_manifest.json \
   --output-dir out/nova-evals \
   --fail-under 0.95 \
   --json
@@ -104,9 +104,9 @@ how agents use Nova tools in practice:
 
 ```bash
 dbt-nova eval agent run \
-  --suite evals/analyst-agent.yml \
+  --suite evals/starter.yml \
   --provider opencode \
-  --manifest-path target/manifest.json \
+  --manifest-path tests/fixtures/starter_eval_manifest.json \
   --timeout-secs 600
 ```
 

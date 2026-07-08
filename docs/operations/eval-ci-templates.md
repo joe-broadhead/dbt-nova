@@ -41,8 +41,8 @@ jobs:
       DBT_NOVA_INSTALL_REF: v0.0.6
       DBT_NOVA_VERSION: v0.0.6
       DBT_NOVA_VERIFY_SIGNATURE: "1"
-      NOVA_EVAL_SUITE: evals/analyst-smoke.yml
-      NOVA_EVAL_NAME: analyst-smoke
+      NOVA_EVAL_SUITE: evals/custom-analyst-discovery.yml
+      NOVA_EVAL_NAME: custom-analyst-discovery
       NOVA_EVAL_OUTPUT: out/nova-bridge-evals
     steps:
       - uses: actions/checkout@v4
@@ -161,8 +161,8 @@ jobs:
       DBT_NOVA_INSTALL_REF: v0.0.6
       DBT_NOVA_VERSION: v0.0.6
       DBT_NOVA_VERIFY_SIGNATURE: "1"
-      NOVA_AGENT_SUITE: evals/analyst-agent.yml
-      NOVA_AGENT_NAME: analyst-agent-smoke
+      NOVA_AGENT_SUITE: evals/custom-agent-smoke.yml
+      NOVA_AGENT_NAME: custom-agent-smoke
       NOVA_AGENT_OUTPUT: out/nova-agent-evals
       NOVA_AGENT_MODEL: opencode/deepseek-v4-flash-free
     steps:

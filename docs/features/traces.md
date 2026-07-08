@@ -21,7 +21,7 @@ execute SQL.
 ## Capture A Trace
 
 ```bash
-DBT_NOVA_TRACE_TOOL_CALLS_PATH=out/tool-calls/analyst-smoke.jsonl \
+DBT_NOVA_TRACE_TOOL_CALLS_PATH=out/tool-calls/custom-analyst-discovery.jsonl \
 dbt-nova tool call search_indicator \
   --params-json '{"query":"gross margin","indicator_types":["metric"],"limit":5}' \
   --manifest-path target/manifest.json \
@@ -36,7 +36,7 @@ trace details.
 
 ```bash
 dbt-nova trace inspect \
-  --path out/tool-calls/analyst-smoke.jsonl \
+  --path out/tool-calls/custom-analyst-discovery.jsonl \
   --json
 ```
 
@@ -62,8 +62,8 @@ The JSON report includes:
 
 ```bash
 dbt-nova trace summarize \
-  --path out/tool-calls/analyst-smoke.jsonl \
-  --report-md-path out/tool-calls/analyst-smoke.trace.md
+  --path out/tool-calls/custom-analyst-discovery.jsonl \
+  --report-md-path out/tool-calls/custom-analyst-discovery.trace.md
 ```
 
 `trace summarize` produces a compact Markdown report for PR comments, release
@@ -93,8 +93,8 @@ JSONL writes require `DBT_NOVA_MCP_ENABLE_TRACE_WRITES=1`.
 
 ```bash
 dbt-nova trace redact \
-  --path out/tool-calls/analyst-smoke.jsonl \
-  --out out/tool-calls/analyst-smoke.redacted.jsonl \
+  --path out/tool-calls/custom-analyst-discovery.jsonl \
+  --out out/tool-calls/custom-analyst-discovery.redacted.jsonl \
   --json
 ```
 
@@ -125,7 +125,7 @@ Redacted output remains compatible with `trace inspect` and `trace summarize`.
 
 ```bash
 dbt-nova trace replay \
-  --path out/tool-calls/analyst-smoke.redacted.jsonl \
+  --path out/tool-calls/custom-analyst-discovery.redacted.jsonl \
   --manifest-path target/manifest.json \
   --json
 ```

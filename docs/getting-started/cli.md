@@ -19,7 +19,7 @@ dbt-nova
 ├── manifest warm [--manifest-path|--manifest-uri] [--storage-instance-id] [--vector] [--sparse] [--reranker] [--force] [--json]
 ├── tool call <tool_name> [--params-json|--params-file|--params-stdin] [--manifest-path|--manifest-uri] [--storage-instance-id] [--cleanup-storage-on-start] [--read-only] [--json]
 ├── audit agent-readiness [--manifest-path|--manifest-uri] [--storage-instance-id] [--cleanup-storage-on-start] [--read-only] [--personas-json] [--thresholds-json|--thresholds-file] [--eval-gate-json|--eval-gate-file] [--report-json-path] [--report-md-path] [--fail-on-blockers] [--json]
-├── audit metadata-score [--selection-mode] [--changed-files-json|--changed-files-file] [--entity-ids-json|--entity-ids-file] [--resource-types-json] [--personas-json] [--thresholds-json|--thresholds-file] [--manifest-path|--manifest-uri] [--storage-instance-id] [--report-json-path] [--report-md-path] [--fail-on-no-targets] [--json]
+├── audit metadata-score [--selection-mode] [--changed-files-json|--changed-files-file] [--entity-ids-json|--entity-ids-file] [--resource-types-json] [--personas-json] [--thresholds-json|--thresholds-file] [--include-breakdown] [--include-recommendations] [--manifest-path|--manifest-uri] [--storage-instance-id] [--report-json-path] [--report-md-path] [--fail-on-no-targets] [--json]
 ├── audit nova-meta [--project-dir] [--path <PATH>...] [--resource-kind] [--resource-name] [--column] [--json]
 ├── config show [--defaults] [--json]
 ├── config validate [--json]
@@ -33,7 +33,7 @@ dbt-nova
 ├── eval init --out <PATH> [--persona] [--force]
 ├── eval validate --suite <PATH> [--json]
 ├── eval run --suite <PATH> [--manifest-path|--manifest-uri] [--storage-instance-id] [--output-dir] [--telemetry] [--telemetry-retention] [--case-id <ID>...] [--fail-under] [--cleanup-storage-on-start] [--read-only] [--json]
-├── eval agent run --suite <PATH> [--provider] [--provider-command] [--provider-args-json] [--manifest-path|--manifest-uri] [--storage-instance-id] [--output-dir] [--telemetry] [--telemetry-retention] [--case-id <ID>...] [--timeout-secs] [--fail-under] [--cleanup-storage-on-start] [--read-only] [--json]
+├── eval agent run --suite <PATH> [--provider] [--provider-model] [--provider-command] [--provider-args-json] [--manifest-path|--manifest-uri] [--storage-instance-id] [--output-dir] [--telemetry] [--telemetry-retention] [--case-id <ID>...] [--timeout-secs] [--fail-under] [--cleanup-storage-on-start] [--read-only] [--json]
 ├── eval compare --before <PATH> --after <PATH> [--json]
 ├── eval gate <NAME> [--json]
 ├── eval history --suite <NAME> --since <YYYY-MM-DD>
@@ -177,20 +177,20 @@ findings.
 
 ```bash
 dbt-nova trace inspect \
-  --path out/nova-evals/tool-calls/analyst-smoke.jsonl \
+  --path out/nova-evals/tool-calls/custom-analyst-discovery.jsonl \
   --json
 
 dbt-nova trace summarize \
-  --path out/nova-evals/tool-calls/analyst-smoke.jsonl \
-  --report-md-path out/nova-evals/tool-calls/analyst-smoke.trace.md
+  --path out/nova-evals/tool-calls/custom-analyst-discovery.jsonl \
+  --report-md-path out/nova-evals/tool-calls/custom-analyst-discovery.trace.md
 
 dbt-nova trace redact \
-  --path out/nova-evals/tool-calls/analyst-smoke.jsonl \
-  --out out/nova-evals/tool-calls/analyst-smoke.redacted.jsonl \
+  --path out/nova-evals/tool-calls/custom-analyst-discovery.jsonl \
+  --out out/nova-evals/tool-calls/custom-analyst-discovery.redacted.jsonl \
   --json
 
 dbt-nova trace replay \
-  --path out/nova-evals/tool-calls/analyst-smoke.redacted.jsonl \
+  --path out/nova-evals/tool-calls/custom-analyst-discovery.redacted.jsonl \
   --manifest-path /path/to/target/manifest.json \
   --json
 ```
@@ -264,11 +264,11 @@ dbt-nova audit nova-meta \
 ### Run Nova bridge evals
 
 ```bash
-dbt-nova eval init --persona analyst --out evals/analyst-smoke.yml
-dbt-nova eval validate --suite evals/analyst-smoke.yml
+dbt-nova eval init --persona analyst --out evals/custom-analyst-discovery.yml
+dbt-nova eval validate --suite evals/custom-analyst-discovery.yml
 
 dbt-nova eval run \
-  --suite evals/analyst-smoke.yml \
+  --suite evals/custom-analyst-discovery.yml \
   --manifest-path /path/to/target/manifest.json \
   --fail-under 1.0 \
   --json
@@ -278,7 +278,7 @@ dbt-nova eval run \
 
 ```bash
 dbt-nova eval agent run \
-  --suite evals/analyst-agent.yml \
+  --suite evals/custom-agent-smoke.yml \
   --provider opencode \
   --manifest-path /path/to/target/manifest.json \
   --timeout-secs 600

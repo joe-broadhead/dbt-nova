@@ -211,6 +211,10 @@ Implementation note:
 | `run_eval` | Eval harness + loaded ManifestSearch |
 | `init_eval_suite` | Eval suite starter writer |
 | `run_agent_eval` | Eval harness + provider process |
+| `inspect_tool_trace` | Trace JSONL parser + path policy |
+| `summarize_tool_trace` | Trace summary renderer + path policy |
+| `redact_tool_trace` | Trace redactor + write safety gate |
+| `replay_tool_trace` | Trace replay harness + loaded ManifestSearch |
 | `get_metadata_score` | EntityStore + Indexes |
 | `get_metadata_audit` | Metadata Score + Selection/Gate Logic |
 | `get_agent_readiness` | Metadata Score + Nova metadata |

@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documented the trace file size guard `DBT_NOVA_TRACE_MAX_BYTES`, the exact
   Snowflake passphrase sentinel, and removed redundant direct dependency edges
   while preserving the intentional `ort-sys` release-stack pin.
+- Refreshed eval, trace, and warm-model examples so docs and packaged skills
+  use current starter-suite names, current CLI flags, and pinned Hugging Face
+  warmup checksum URLs.
 - Enforced `manifest_max_bytes` for local manifest paths and auto-discovered
   sibling `catalog.json` files before parsing.
 - Fixed storage loading so readers reuse complete published versions without

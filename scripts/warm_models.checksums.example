@@ -5,26 +5,27 @@
 #   DBT_NOVA_WARMUP_CHECKSUM_MODE=required
 #   DBT_NOVA_WARMUP_CHECKSUM_FILE=/path/to/warm_models.checksums.txt
 #
-# Direct HF fallback URLs queried by scripts/warm_models.sh.
-# In required mode, include an entry for every URL below.
+# Direct HF fallback URLs queried by scripts/warm_models.sh with default pinned
+# revisions. In required mode, include an entry for every URL below. If you
+# override DBT_NOVA_WARMUP_*_REVISION, update the matching URLs here too.
 
 # intfloat/multilingual-e5-base
-<sha256> https://huggingface.co/intfloat/multilingual-e5-base/resolve/main/onnx/model.onnx
-<sha256> https://huggingface.co/intfloat/multilingual-e5-base/resolve/main/tokenizer.json
-<sha256> https://huggingface.co/intfloat/multilingual-e5-base/resolve/main/config.json
-<sha256> https://huggingface.co/intfloat/multilingual-e5-base/resolve/main/special_tokens_map.json
-<sha256> https://huggingface.co/intfloat/multilingual-e5-base/resolve/main/tokenizer_config.json
+<sha256> https://huggingface.co/intfloat/multilingual-e5-base/resolve/d128750597153bb5987e10b1c3493a34e5a4502a/onnx/model.onnx
+<sha256> https://huggingface.co/intfloat/multilingual-e5-base/resolve/d128750597153bb5987e10b1c3493a34e5a4502a/tokenizer.json
+<sha256> https://huggingface.co/intfloat/multilingual-e5-base/resolve/d128750597153bb5987e10b1c3493a34e5a4502a/config.json
+<sha256> https://huggingface.co/intfloat/multilingual-e5-base/resolve/d128750597153bb5987e10b1c3493a34e5a4502a/special_tokens_map.json
+<sha256> https://huggingface.co/intfloat/multilingual-e5-base/resolve/d128750597153bb5987e10b1c3493a34e5a4502a/tokenizer_config.json
 
 # Qdrant/Splade_PP_en_v1
-<sha256> https://huggingface.co/Qdrant/Splade_PP_en_v1/resolve/main/model.onnx
-<sha256> https://huggingface.co/Qdrant/Splade_PP_en_v1/resolve/main/tokenizer.json
-<sha256> https://huggingface.co/Qdrant/Splade_PP_en_v1/resolve/main/config.json
-<sha256> https://huggingface.co/Qdrant/Splade_PP_en_v1/resolve/main/special_tokens_map.json
-<sha256> https://huggingface.co/Qdrant/Splade_PP_en_v1/resolve/main/tokenizer_config.json
+<sha256> https://huggingface.co/Qdrant/Splade_PP_en_v1/resolve/efcd182bc7eb351e81a9445752d4388c2bab500b/model.onnx
+<sha256> https://huggingface.co/Qdrant/Splade_PP_en_v1/resolve/efcd182bc7eb351e81a9445752d4388c2bab500b/tokenizer.json
+<sha256> https://huggingface.co/Qdrant/Splade_PP_en_v1/resolve/efcd182bc7eb351e81a9445752d4388c2bab500b/config.json
+<sha256> https://huggingface.co/Qdrant/Splade_PP_en_v1/resolve/efcd182bc7eb351e81a9445752d4388c2bab500b/special_tokens_map.json
+<sha256> https://huggingface.co/Qdrant/Splade_PP_en_v1/resolve/efcd182bc7eb351e81a9445752d4388c2bab500b/tokenizer_config.json
 
 # jinaai/jina-reranker-v2-base-multilingual
-<sha256> https://huggingface.co/jinaai/jina-reranker-v2-base-multilingual/resolve/main/onnx/model.onnx
-<sha256> https://huggingface.co/jinaai/jina-reranker-v2-base-multilingual/resolve/main/tokenizer.json
-<sha256> https://huggingface.co/jinaai/jina-reranker-v2-base-multilingual/resolve/main/config.json
-<sha256> https://huggingface.co/jinaai/jina-reranker-v2-base-multilingual/resolve/main/special_tokens_map.json
-<sha256> https://huggingface.co/jinaai/jina-reranker-v2-base-multilingual/resolve/main/tokenizer_config.json
+<sha256> https://huggingface.co/jinaai/jina-reranker-v2-base-multilingual/resolve/9cfeff2df7d40d1b78e75e5e9cebec92a99813c9/onnx/model.onnx
+<sha256> https://huggingface.co/jinaai/jina-reranker-v2-base-multilingual/resolve/9cfeff2df7d40d1b78e75e5e9cebec92a99813c9/tokenizer.json
+<sha256> https://huggingface.co/jinaai/jina-reranker-v2-base-multilingual/resolve/9cfeff2df7d40d1b78e75e5e9cebec92a99813c9/config.json
+<sha256> https://huggingface.co/jinaai/jina-reranker-v2-base-multilingual/resolve/9cfeff2df7d40d1b78e75e5e9cebec92a99813c9/special_tokens_map.json
+<sha256> https://huggingface.co/jinaai/jina-reranker-v2-base-multilingual/resolve/9cfeff2df7d40d1b78e75e5e9cebec92a99813c9/tokenizer_config.json

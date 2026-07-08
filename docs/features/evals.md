@@ -17,7 +17,7 @@ tools for realistic tasks.
 Generate a starter suite:
 
 ```bash
-dbt-nova eval init --persona analyst --out evals/analyst-smoke.yml
+dbt-nova eval init --persona analyst --out evals/custom-analyst-discovery.yml
 ```
 
 When using an agent to design or debug suites, use the packaged `eval-author`
@@ -29,7 +29,7 @@ The suite format is YAML or JSON. A minimal bridge suite looks like this:
 
 ```yaml
 version: 1
-name: analyst-smoke
+name: custom-analyst-discovery
 purpose: Prove that analyst discovery can find the canonical orders model and context.
 manifest_scope: target/manifest.json for the analytics project
 known_gaps:
@@ -55,7 +55,7 @@ cases:
 Validate suite shape before running against a manifest or provider:
 
 ```bash
-dbt-nova eval validate --suite evals/analyst-smoke.yml
+dbt-nova eval validate --suite evals/custom-analyst-discovery.yml
 ```
 
 ## Date Anchors
@@ -152,7 +152,7 @@ dbt-nova eval agent run \
 
 ```bash
 dbt-nova eval run \
-  --suite evals/analyst-smoke.yml \
+  --suite evals/custom-analyst-discovery.yml \
   --manifest-path /path/to/target/manifest.json \
   --fail-under 1.0 \
   --json
@@ -308,13 +308,13 @@ Bridge example:
 
 ```bash
 dbt-nova eval run \
-  --suite evals/analyst-smoke.yml \
+  --suite evals/custom-analyst-discovery.yml \
   --manifest-path target/manifest.json \
   --output-dir out/evals/before \
   --json
 
 dbt-nova eval run \
-  --suite evals/analyst-smoke.yml \
+  --suite evals/custom-analyst-discovery.yml \
   --manifest-path target/manifest.json \
   --output-dir out/evals/after \
   --json
@@ -328,14 +328,14 @@ Agent example:
 
 ```bash
 dbt-nova eval agent run \
-  --suite evals/analyst-agent.yml \
+  --suite evals/custom-agent-smoke.yml \
   --provider opencode \
   --manifest-path target/manifest.json \
   --output-dir out/agent-evals/before \
   --json
 
 dbt-nova eval agent run \
-  --suite evals/analyst-agent.yml \
+  --suite evals/custom-agent-smoke.yml \
   --provider opencode \
   --manifest-path target/manifest.json \
   --output-dir out/agent-evals/after \
@@ -411,7 +411,7 @@ runs where those raw artifacts are acceptable.
 
 ```yaml
 version: 1
-name: analyst-agent-smoke
+name: custom-agent-smoke
 agent_cases:
   - id: metric_lookup_flow
     task: Which canonical model and indicator should be used to analyze gross merchandise value?
@@ -534,7 +534,7 @@ Run against the default `opencode` adapter:
 
 ```bash
 dbt-nova eval agent run \
-  --suite evals/analyst-agent.yml \
+  --suite evals/custom-agent-smoke.yml \
   --provider opencode \
   --provider-model opencode/deepseek-v4-flash-free \
   --manifest-path /path/to/target/manifest.json \
@@ -581,7 +581,7 @@ line is auditable:
 
 ```bash
 dbt-nova eval agent run \
-  --suite evals/analyst-agent.yml \
+  --suite evals/custom-agent-smoke.yml \
   --provider custom \
   --provider-command opencode \
   --provider-args-json '["run","--format","json","--dangerously-skip-permissions","{prompt}"]' \
@@ -590,7 +590,7 @@ dbt-nova eval agent run \
   --fail-under 1.0
 
 dbt-nova eval agent run \
-  --suite evals/analyst-agent.yml \
+  --suite evals/custom-agent-smoke.yml \
   --provider custom \
   --provider-command claude \
   --provider-args-json '["-p","--dangerously-skip-permissions","--verbose","--output-format","stream-json","{prompt}"]' \
@@ -599,7 +599,7 @@ dbt-nova eval agent run \
   --fail-under 1.0
 
 dbt-nova eval agent run \
-  --suite evals/analyst-agent.yml \
+  --suite evals/custom-agent-smoke.yml \
   --provider custom \
   --provider-command codex \
   --provider-args-json '["exec","--json","--dangerously-bypass-approvals-and-sandbox","--skip-git-repo-check","--cd","{workdir}","{prompt}"]' \
@@ -617,9 +617,9 @@ For another provider or a custom local wrapper, pass an explicit command:
 
 ```bash
 dbt-nova eval agent run \
-  --suite evals/analyst-agent.yml \
+  --suite evals/custom-agent-smoke.yml \
   --provider custom \
-  --provider-command ./scripts/run-agent-eval.sh \
+  --provider-command /path/to/provider-wrapper.sh \
   --provider-args-json '["--prompt","{prompt}","--workdir","{workdir}","--trace","{trace_path}"]' \
   --manifest-path /path/to/target/manifest.json
 ```
@@ -681,7 +681,7 @@ Suites can declare an advisory readiness threshold:
 
 ```yaml
 version: 1
-name: analyst-smoke
+name: custom-analyst-discovery
 gate:
   threshold: 0.9
 ```
@@ -689,7 +689,7 @@ gate:
 After running the full suite with `--telemetry`, check the latest run:
 
 ```bash
-dbt-nova eval gate analyst-smoke --json
+dbt-nova eval gate custom-analyst-discovery --json
 ```
 
 The gate scans the suite telemetry JSONL, selects the latest run, computes its
@@ -744,10 +744,10 @@ evidence.
 Use bridge evals as a fast metadata quality gate after producing a manifest:
 
 ```bash
-dbt-nova eval validate --suite evals/analyst-smoke.yml
+dbt-nova eval validate --suite evals/custom-analyst-discovery.yml
 
 dbt-nova eval run \
-  --suite evals/analyst-smoke.yml \
+  --suite evals/custom-analyst-discovery.yml \
   --manifest-path target/manifest.json \
   --output-dir out/nova-evals \
   --fail-under 0.95 \

@@ -198,7 +198,7 @@ Default provider run:
 
 ```bash
 dbt-nova eval agent run \
-  --suite evals/analyst-agent.yml \
+  --suite evals/custom-agent-smoke.yml \
   --provider opencode \
   --manifest-path target/manifest.json \
   --case-id metric_lookup_flow \
@@ -210,7 +210,7 @@ and noninteractive execution is acceptable, use explicit custom provider args:
 
 ```bash
 dbt-nova eval agent run \
-  --suite evals/analyst-agent.yml \
+  --suite evals/custom-agent-smoke.yml \
   --provider custom \
   --provider-command opencode \
   --provider-args-json '["run","--format","json","--dangerously-skip-permissions","{prompt}"]' \
@@ -219,7 +219,7 @@ dbt-nova eval agent run \
   --fail-under 1.0
 
 dbt-nova eval agent run \
-  --suite evals/analyst-agent.yml \
+  --suite evals/custom-agent-smoke.yml \
   --provider custom \
   --provider-command claude \
   --provider-args-json '["-p","--dangerously-skip-permissions","--verbose","--output-format","stream-json","{prompt}"]' \
@@ -228,7 +228,7 @@ dbt-nova eval agent run \
   --fail-under 1.0
 
 dbt-nova eval agent run \
-  --suite evals/analyst-agent.yml \
+  --suite evals/custom-agent-smoke.yml \
   --provider custom \
   --provider-command codex \
   --provider-args-json '["exec","--json","--dangerously-bypass-approvals-and-sandbox","--skip-git-repo-check","--cd","{workdir}","{prompt}"]' \
@@ -244,9 +244,9 @@ Custom provider:
 
 ```bash
 dbt-nova eval agent run \
-  --suite evals/analyst-agent.yml \
+  --suite evals/custom-agent-smoke.yml \
   --provider custom \
-  --provider-command ./scripts/run-agent-eval.sh \
+  --provider-command /path/to/provider-wrapper.sh \
   --provider-args-json '["--prompt","{prompt}","--trace","{trace_path}","--manifest","{manifest_path}"]' \
   --manifest-path target/manifest.json
 ```
