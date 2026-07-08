@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path};
 
 use serde_json::Value as JsonValue;
 use tracing::instrument;
 
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::search::ManifestSearch;
-use crate::params::{GetRecipeParams, RunRecipeParams, SearchRecipesParams};
+use crate::params::{ExecuteSqlParams, GetRecipeParams, RunRecipeParams, SearchRecipesParams};
 use crate::responses::SuccessResponse;
 
 mod jinja_scan;
@@ -19,121 +19,12 @@ use placeholder::{
     normalize_recipe_query_key, parse_placeholder_at, resolve_placeholder_value_type,
 };
 
-#[derive(Debug, Clone)]
-enum RecipeQuerySource {
-    ManifestAnalysis { analysis_id: String },
-}
+mod types;
 
-impl RecipeQuerySource {
-    fn label(&self) -> &'static str {
-        match self {
-            Self::ManifestAnalysis { .. } => "manifest_analysis",
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct RecipeQuery {
-    name: String,
-    path: PathBuf,
-    order: usize,
-    source: RecipeQuerySource,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RecipeSqlSource {
-    CompiledCode,
-    RawCode,
-}
-
-impl RecipeSqlSource {
-    fn label(self) -> &'static str {
-        match self {
-            Self::CompiledCode => "compiled_code",
-            Self::RawCode => "raw_code",
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct RecipeRecord {
-    id: String,
-    path: PathBuf,
-    queries: Vec<RecipeQuery>,
-}
-
-#[derive(Debug, Clone)]
-struct RecipeParameterSpec {
-    key: String,
-    name: String,
-    required: bool,
-    placeholder_type: Option<String>,
-    default_value: Option<JsonValue>,
-    description: Option<String>,
-    source: &'static str,
-}
-
-impl RecipeParameterSpec {
-    fn effective_required(&self) -> bool {
-        self.required && self.default_value.is_none()
-    }
-
-    fn to_json_value(&self) -> JsonValue {
-        let mut obj = serde_json::Map::new();
-        obj.insert("name".to_string(), JsonValue::String(self.name.clone()));
-        obj.insert(
-            "required".to_string(),
-            JsonValue::Bool(self.effective_required()),
-        );
-        obj.insert(
-            "source".to_string(),
-            JsonValue::String(self.source.to_string()),
-        );
-        if let Some(placeholder_type) = &self.placeholder_type {
-            obj.insert(
-                "placeholder_type".to_string(),
-                JsonValue::String(placeholder_type.clone()),
-            );
-        }
-        if let Some(description) = &self.description {
-            obj.insert(
-                "description".to_string(),
-                JsonValue::String(description.clone()),
-            );
-        }
-        if let Some(default_value) = &self.default_value {
-            obj.insert("default".to_string(), default_value.clone());
-        }
-        JsonValue::Object(obj)
-    }
-}
-
-#[derive(Debug, Clone)]
-struct PreparedRecipeQuery {
-    query: RecipeQuery,
-    base_sql: String,
-    parameter_specs: Vec<RecipeParameterSpec>,
-    analysis_unique_id: String,
-    sql_source: RecipeSqlSource,
-}
-
-#[derive(Debug)]
-struct ResolvedRecipeSql {
-    base_sql: String,
-    payload: JsonValue,
-    analysis_unique_id: String,
-    source: RecipeSqlSource,
-}
-
-#[derive(Debug, Clone)]
-struct RecipeParameterSchema {
-    aggregated_specs: Vec<RecipeParameterSpec>,
-    query_specs: Vec<(String, Vec<RecipeParameterSpec>)>,
-    missing_parameters: Vec<String>,
-    unused_parameters: Vec<String>,
-    type_mismatches: Vec<JsonValue>,
-    effective_parameters: HashMap<String, JsonValue>,
-}
+use types::{
+    PreparedRecipeQuery, RecipeParameterSchema, RecipeParameterSpec, RecipeQuery,
+    RecipeQuerySource, RecipeRecord, RecipeSqlSource, ResolvedRecipeSql,
+};
 
 impl ManifestSearch {
     /// Search available recipe directories and return a paginated list.
@@ -258,7 +149,6 @@ impl ManifestSearch {
     ///
     /// # Errors
     /// Returns an error if the recipe cannot be resolved, query execution fails, or query selection is invalid.
-    #[allow(clippy::too_many_lines)]
     #[instrument(
         skip(self, params),
         fields(
@@ -296,138 +186,38 @@ impl ManifestSearch {
         let selected_queries: Vec<RecipeQuery> =
             selected.iter().map(|query| (*query).clone()).collect();
         let prepared_queries = self.prepare_recipe_queries(&selected_queries)?;
-        let schema = self.recipe_parameter_schema(
-            &RecipeRecord {
-                id: recipe.id.clone(),
-                path: recipe.path.clone(),
-                queries: selected_queries.clone(),
-            },
-            params.parameters.as_ref(),
-            placeholder_types.as_ref(),
-        )?;
-        if !schema.missing_parameters.is_empty() || !schema.type_mismatches.is_empty() {
-            let details = serde_json::json!({
-                "recipe_id": recipe.id,
-                "required_parameters": parameter_names_by_required(&schema.aggregated_specs, true),
-                "optional_parameters": parameter_names_by_required(&schema.aggregated_specs, false),
-                "parameter_defaults": parameter_defaults_map(&schema.aggregated_specs),
-                "query_parameters": query_parameter_map(&schema.query_specs),
-                "missing_parameters": schema.missing_parameters.clone(),
-                "unused_parameters": schema.unused_parameters.clone(),
-                "type_mismatches": schema.type_mismatches.clone(),
-                "by_query": query_validation_payload(&prepared_queries, &schema),
-            });
-            return Err(DbtNovaError::InvalidParamsDetailed {
-                message: "Recipe parameter preflight validation failed".to_string(),
-                details,
-            });
-        }
-
-        let mut steps: Vec<JsonValue> = Vec::new();
-        let mut executed = 0usize;
-        let mut failed = 0usize;
         let selected_query_names: Vec<String> = prepared_queries
             .iter()
             .map(|prepared| prepared.query.name.clone())
             .collect();
-        let mut rendered_statements: Vec<(&PreparedRecipeQuery, String)> =
-            Vec::with_capacity(prepared_queries.len());
-        for prepared in &prepared_queries {
-            rendered_statements.push((
-                prepared,
-                render_recipe_query_sql(
-                    &recipe.id,
-                    prepared,
-                    &schema.effective_parameters,
-                    placeholder_types.as_ref(),
-                )?,
-            ));
-        }
+        let schema = self.recipe_parameter_schema(
+            &RecipeRecord {
+                id: recipe.id.clone(),
+                path: recipe.path.clone(),
+                queries: selected_queries,
+            },
+            params.parameters.as_ref(),
+            placeholder_types.as_ref(),
+        )?;
+        ensure_recipe_parameters_ready(&recipe.id, &prepared_queries, &schema)?;
 
-        for (prepared, statement) in rendered_statements {
-            let query = &prepared.query;
-            let exec_params = crate::params::ExecuteSqlParams {
-                statement: statement.clone(),
-                warehouse_id: None,
-                preflight_only: false,
-                preflight_catalog: None,
-                preflight_schema: None,
-                preflight_relation: None,
-                row_limit: params.row_limit,
-                byte_limit: params.byte_limit,
-                wait_timeout_s: params.wait_timeout_s,
-                poll_interval_ms: params.poll_interval_ms,
-                max_poll_seconds: params.max_poll_seconds,
-                parameters: params.parameters.clone(),
-                parameter_types: sql_parameter_types.clone(),
-                fetch_all_chunks: params.fetch_all_chunks,
-                max_chunks: params.max_chunks,
-            };
-
-            executed = executed.saturating_add(1);
-            let step = match self.execute_sql(&exec_params).await {
-                Ok(result) => {
-                    let mut step = serde_json::Map::new();
-                    step.insert(
-                        "query_name".to_string(),
-                        JsonValue::String(query.name.clone()),
-                    );
-                    step.insert("order".to_string(), JsonValue::from(query.order));
-                    step.insert("status".to_string(), JsonValue::String("ok".to_string()));
-                    step.insert("result".to_string(), result);
-                    if params.include_sql {
-                        step.insert("sql".to_string(), JsonValue::String(statement.clone()));
-                    }
-                    JsonValue::Object(step)
-                }
-                Err(err) => {
-                    failed = failed.saturating_add(1);
-                    let mut step = serde_json::Map::new();
-                    step.insert(
-                        "query_name".to_string(),
-                        JsonValue::String(query.name.clone()),
-                    );
-                    step.insert("order".to_string(), JsonValue::from(query.order));
-                    step.insert("status".to_string(), JsonValue::String("error".to_string()));
-                    step.insert("error".to_string(), JsonValue::String(err.to_string()));
-                    if params.include_sql {
-                        step.insert("sql".to_string(), JsonValue::String(statement.clone()));
-                    }
-                    if params.stop_on_failure {
-                        return Err(err);
-                    }
-                    JsonValue::Object(step)
-                }
-            };
-            steps.push(step);
-        }
-
-        let stopped_on_error = false;
-        let mut response = serde_json::json!({
-            "recipe_id": recipe.id,
-            "executed_queries": executed,
-            "failed_queries": failed,
-            "stopped_on_error": stopped_on_error,
-            "required_parameters": parameter_names_by_required(&schema.aggregated_specs, true),
-            "optional_parameters": parameter_names_by_required(&schema.aggregated_specs, false),
-            "parameter_defaults": parameter_defaults_map(&schema.aggregated_specs),
-            "query_parameters": query_parameter_map(&schema.query_specs),
-            "missing_parameters": schema.missing_parameters.clone(),
-            "unused_parameters": schema.unused_parameters.clone(),
-            "type_mismatches": schema.type_mismatches.clone(),
-            "steps": JsonValue::Array(steps),
-        });
-        if let Some(obj) = response.as_object_mut() {
-            obj.insert(
-                "query_names".to_string(),
-                JsonValue::Array(
-                    selected_query_names
-                        .iter()
-                        .map(|query_name| JsonValue::String(query_name.clone()))
-                        .collect(),
-                ),
-            );
-        }
+        let rendered_statements = render_recipe_statements(
+            &recipe.id,
+            &prepared_queries,
+            &schema,
+            placeholder_types.as_ref(),
+        )?;
+        let (steps, executed, failed) =
+            execute_recipe_statements(self, params, sql_parameter_types, rendered_statements)
+                .await?;
+        let response = build_run_recipe_response(
+            &recipe.id,
+            &selected_query_names,
+            &schema,
+            steps,
+            executed,
+            failed,
+        );
         Ok(serde_json::to_value(SuccessResponse::new(
             response, executed,
         ))?)
@@ -679,6 +469,193 @@ impl ManifestSearch {
             source,
         })
     }
+}
+
+fn ensure_recipe_parameters_ready(
+    recipe_id: &str,
+    prepared_queries: &[PreparedRecipeQuery],
+    schema: &RecipeParameterSchema,
+) -> Result<()> {
+    if schema.missing_parameters.is_empty() && schema.type_mismatches.is_empty() {
+        return Ok(());
+    }
+
+    let details = serde_json::json!({
+        "recipe_id": recipe_id,
+        "required_parameters": parameter_names_by_required(&schema.aggregated_specs, true),
+        "optional_parameters": parameter_names_by_required(&schema.aggregated_specs, false),
+        "parameter_defaults": parameter_defaults_map(&schema.aggregated_specs),
+        "query_parameters": query_parameter_map(&schema.query_specs),
+        "missing_parameters": schema.missing_parameters.clone(),
+        "unused_parameters": schema.unused_parameters.clone(),
+        "type_mismatches": schema.type_mismatches.clone(),
+        "by_query": query_validation_payload(prepared_queries, schema),
+    });
+    Err(DbtNovaError::InvalidParamsDetailed {
+        message: "Recipe parameter preflight validation failed".to_string(),
+        details,
+    })
+}
+
+fn render_recipe_statements<'a>(
+    recipe_id: &str,
+    prepared_queries: &'a [PreparedRecipeQuery],
+    schema: &RecipeParameterSchema,
+    placeholder_types: Option<&HashMap<String, String>>,
+) -> Result<Vec<(&'a PreparedRecipeQuery, String)>> {
+    let mut rendered_statements = Vec::with_capacity(prepared_queries.len());
+    for prepared in prepared_queries {
+        rendered_statements.push((
+            prepared,
+            render_recipe_query_sql(
+                recipe_id,
+                prepared,
+                &schema.effective_parameters,
+                placeholder_types,
+            )?,
+        ));
+    }
+    Ok(rendered_statements)
+}
+
+async fn execute_recipe_statements(
+    searcher: &ManifestSearch,
+    params: &RunRecipeParams,
+    sql_parameter_types: Option<HashMap<String, String>>,
+    rendered_statements: Vec<(&PreparedRecipeQuery, String)>,
+) -> Result<(Vec<JsonValue>, usize, usize)> {
+    let mut steps = Vec::new();
+    let mut executed = 0usize;
+    let mut failed = 0usize;
+
+    for (prepared, statement) in rendered_statements {
+        let query = &prepared.query;
+        let exec_params = recipe_execute_params(params, &statement, sql_parameter_types.clone());
+        executed = executed.saturating_add(1);
+
+        match searcher.execute_sql(&exec_params).await {
+            Ok(result) => steps.push(recipe_success_step(
+                query,
+                result,
+                &statement,
+                params.include_sql,
+            )),
+            Err(err) => {
+                failed = failed.saturating_add(1);
+                if params.stop_on_failure {
+                    return Err(err);
+                }
+                steps.push(recipe_error_step(
+                    query,
+                    &err,
+                    &statement,
+                    params.include_sql,
+                ));
+            }
+        }
+    }
+
+    Ok((steps, executed, failed))
+}
+
+fn recipe_execute_params(
+    params: &RunRecipeParams,
+    statement: &str,
+    sql_parameter_types: Option<HashMap<String, String>>,
+) -> ExecuteSqlParams {
+    ExecuteSqlParams {
+        statement: statement.to_string(),
+        warehouse_id: None,
+        preflight_only: false,
+        preflight_catalog: None,
+        preflight_schema: None,
+        preflight_relation: None,
+        row_limit: params.row_limit,
+        byte_limit: params.byte_limit,
+        wait_timeout_s: params.wait_timeout_s,
+        poll_interval_ms: params.poll_interval_ms,
+        max_poll_seconds: params.max_poll_seconds,
+        parameters: params.parameters.clone(),
+        parameter_types: sql_parameter_types,
+        fetch_all_chunks: params.fetch_all_chunks,
+        max_chunks: params.max_chunks,
+    }
+}
+
+fn recipe_success_step(
+    query: &RecipeQuery,
+    result: JsonValue,
+    statement: &str,
+    include_sql: bool,
+) -> JsonValue {
+    let mut step = serde_json::Map::new();
+    step.insert(
+        "query_name".to_string(),
+        JsonValue::String(query.name.clone()),
+    );
+    step.insert("order".to_string(), JsonValue::from(query.order));
+    step.insert("status".to_string(), JsonValue::String("ok".to_string()));
+    step.insert("result".to_string(), result);
+    if include_sql {
+        step.insert("sql".to_string(), JsonValue::String(statement.to_string()));
+    }
+    JsonValue::Object(step)
+}
+
+fn recipe_error_step(
+    query: &RecipeQuery,
+    err: &DbtNovaError,
+    statement: &str,
+    include_sql: bool,
+) -> JsonValue {
+    let mut step = serde_json::Map::new();
+    step.insert(
+        "query_name".to_string(),
+        JsonValue::String(query.name.clone()),
+    );
+    step.insert("order".to_string(), JsonValue::from(query.order));
+    step.insert("status".to_string(), JsonValue::String("error".to_string()));
+    step.insert("error".to_string(), JsonValue::String(err.to_string()));
+    if include_sql {
+        step.insert("sql".to_string(), JsonValue::String(statement.to_string()));
+    }
+    JsonValue::Object(step)
+}
+
+fn build_run_recipe_response(
+    recipe_id: &str,
+    selected_query_names: &[String],
+    schema: &RecipeParameterSchema,
+    steps: Vec<JsonValue>,
+    executed: usize,
+    failed: usize,
+) -> JsonValue {
+    let mut response = serde_json::json!({
+        "recipe_id": recipe_id,
+        "executed_queries": executed,
+        "failed_queries": failed,
+        "stopped_on_error": false,
+        "required_parameters": parameter_names_by_required(&schema.aggregated_specs, true),
+        "optional_parameters": parameter_names_by_required(&schema.aggregated_specs, false),
+        "parameter_defaults": parameter_defaults_map(&schema.aggregated_specs),
+        "query_parameters": query_parameter_map(&schema.query_specs),
+        "missing_parameters": schema.missing_parameters.clone(),
+        "unused_parameters": schema.unused_parameters.clone(),
+        "type_mismatches": schema.type_mismatches.clone(),
+        "steps": JsonValue::Array(steps),
+    });
+    if let Some(obj) = response.as_object_mut() {
+        obj.insert(
+            "query_names".to_string(),
+            JsonValue::Array(
+                selected_query_names
+                    .iter()
+                    .map(|query_name| JsonValue::String(query_name.clone()))
+                    .collect(),
+            ),
+        );
+    }
+    response
 }
 
 fn recipe_parameter_contract_details(recipe_id: &str, schema: &RecipeParameterSchema) -> JsonValue {
@@ -1511,274 +1488,4 @@ fn select_recipe_queries<'a>(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_query_order_parsing() {
-        assert_eq!(parse_query_order("query__1.sql"), 1);
-        assert_eq!(parse_query_order("query_2.sql"), 2);
-        assert_eq!(parse_query_order("analysis__weekly_headline__01.sql"), 1);
-        assert_eq!(parse_query_order("query.sql"), usize::MAX);
-        assert_eq!(parse_query_order("query_foo.sql"), usize::MAX);
-    }
-
-    #[test]
-    fn test_select_recipe_queries_by_name_and_index() {
-        let recipe = RecipeRecord {
-            id: "marketing/retention".to_string(),
-            path: PathBuf::from("/tmp/recipes/marketing/retention"),
-            queries: vec![
-                RecipeQuery {
-                    name: "query__2.sql".to_string(),
-                    path: PathBuf::from("/tmp/q2.sql"),
-                    order: 2,
-                    source: RecipeQuerySource::ManifestAnalysis {
-                        analysis_id: "analysis.test.query_2".to_string(),
-                    },
-                },
-                RecipeQuery {
-                    name: "query__1.sql".to_string(),
-                    path: PathBuf::from("/tmp/q1.sql"),
-                    order: 1,
-                    source: RecipeQuerySource::ManifestAnalysis {
-                        analysis_id: "analysis.test.query_1".to_string(),
-                    },
-                },
-            ],
-        };
-
-        let by_name = select_recipe_queries(
-            &recipe,
-            &RunRecipeParams {
-                recipe_id: "marketing/retention".to_string(),
-                query_names: vec!["query__1".to_string()],
-                query_indexes: vec![],
-                stop_on_failure: true,
-                include_sql: false,
-                row_limit: None,
-                byte_limit: None,
-                max_poll_seconds: None,
-                poll_interval_ms: None,
-                wait_timeout_s: None,
-                parameters: None,
-                placeholder_types: None,
-                sql_parameter_types: None,
-                parameter_types: None,
-                fetch_all_chunks: None,
-                max_chunks: None,
-            },
-        )
-        .expect("Expected query by name");
-        assert_eq!(by_name.len(), 1);
-        assert_eq!(by_name[0].name, "query__1.sql");
-
-        let by_index = select_recipe_queries(
-            &recipe,
-            &RunRecipeParams {
-                recipe_id: "marketing/retention".to_string(),
-                query_names: vec![],
-                query_indexes: vec![2],
-                stop_on_failure: false,
-                include_sql: false,
-                row_limit: None,
-                byte_limit: None,
-                max_poll_seconds: None,
-                poll_interval_ms: None,
-                wait_timeout_s: None,
-                parameters: None,
-                placeholder_types: None,
-                sql_parameter_types: None,
-                parameter_types: None,
-                fetch_all_chunks: None,
-                max_chunks: None,
-            },
-        )
-        .expect("Expected query by index");
-        assert_eq!(by_index.len(), 1);
-        assert_eq!(by_index[0].name, "query__2.sql");
-
-        let all = select_recipe_queries(
-            &recipe,
-            &RunRecipeParams {
-                recipe_id: "marketing/retention".to_string(),
-                query_names: vec![],
-                query_indexes: vec![],
-                stop_on_failure: false,
-                include_sql: false,
-                row_limit: None,
-                byte_limit: None,
-                max_poll_seconds: None,
-                poll_interval_ms: None,
-                wait_timeout_s: None,
-                parameters: None,
-                placeholder_types: None,
-                sql_parameter_types: None,
-                parameter_types: None,
-                fetch_all_chunks: None,
-                max_chunks: None,
-            },
-        )
-        .expect("Expected all queries");
-        assert_eq!(all[0].order, 1);
-        assert_eq!(all[1].order, 2);
-    }
-
-    #[test]
-    fn test_select_recipe_queries_invalid_index() {
-        let recipe = RecipeRecord {
-            id: "marketing/retention".to_string(),
-            path: PathBuf::from("/tmp/recipes/marketing/retention"),
-            queries: vec![RecipeQuery {
-                name: "query__1.sql".to_string(),
-                path: PathBuf::from("/tmp/q1.sql"),
-                order: 1,
-                source: RecipeQuerySource::ManifestAnalysis {
-                    analysis_id: "analysis.test.query_1".to_string(),
-                },
-            }],
-        };
-
-        let err = select_recipe_queries(
-            &recipe,
-            &RunRecipeParams {
-                recipe_id: "marketing/retention".to_string(),
-                query_names: vec![],
-                query_indexes: vec![2],
-                stop_on_failure: false,
-                include_sql: false,
-                row_limit: None,
-                byte_limit: None,
-                max_poll_seconds: None,
-                poll_interval_ms: None,
-                wait_timeout_s: None,
-                parameters: None,
-                placeholder_types: None,
-                sql_parameter_types: None,
-                parameter_types: None,
-                fetch_all_chunks: None,
-                max_chunks: None,
-            },
-        )
-        .expect_err("Expected invalid index error");
-        assert!(err.to_string().contains("out of range"));
-    }
-
-    #[test]
-    fn test_apply_runtime_parameter_substitution() {
-        let mut parameters = HashMap::new();
-        parameters.insert("COUNTRY".to_string(), JsonValue::String("us".to_string()));
-        parameters.insert("IS_ACTIVE".to_string(), JsonValue::Bool(true));
-        parameters.insert(
-            "TARGET_TABLE".to_string(),
-            JsonValue::String("analytics__events".to_string()),
-        );
-        let mut parameter_types = HashMap::new();
-        parameter_types.insert("TARGET_TABLE".to_string(), "identifier".to_string());
-
-        let rendered = apply_runtime_parameter_substitution(
-            "select * from __TARGET_TABLE__ where country = '__COUNTRY__' and is_active = __IS_ACTIVE__",
-            &parameters,
-            Some(&parameter_types),
-        )
-        .expect("render");
-
-        assert_eq!(
-            rendered,
-            "select * from analytics__events where country = 'us' and is_active = true"
-        );
-    }
-
-    #[test]
-    fn test_apply_runtime_parameter_substitution_missing_param() {
-        let mut parameters = HashMap::new();
-        parameters.insert("OTHER".to_string(), JsonValue::String("foo".to_string()));
-        let err = apply_runtime_parameter_substitution(
-            "select * from __TARGET_TABLE__",
-            &parameters,
-            None,
-        )
-        .expect_err("expected missing param");
-        assert!(
-            err.to_string()
-                .contains("Missing runtime parameter for placeholder '__TARGET_TABLE__'")
-        );
-    }
-
-    #[test]
-    fn test_resolve_recipe_placeholder_types_legacy_fallback_normalizes_keys() {
-        let mut legacy = HashMap::new();
-        legacy.insert("country_code".to_string(), "string".to_string());
-
-        let resolved = resolve_recipe_placeholder_types(None, Some(&legacy), "get_recipe")
-            .expect("expected successful fallback resolution")
-            .expect("expected merged fallback map");
-
-        assert_eq!(resolved.get("country_code"), Some(&"string".to_string()));
-    }
-
-    #[test]
-    fn test_resolve_recipe_placeholder_types_rejects_conflicting_hints() {
-        let mut primary = HashMap::new();
-        primary.insert("COUNTRY_CODE".to_string(), "identifier".to_string());
-        let mut legacy = HashMap::new();
-        legacy.insert("country_code".to_string(), "string".to_string());
-
-        let err = resolve_recipe_placeholder_types(Some(&primary), Some(&legacy), "run_recipe")
-            .expect_err("expected conflicting hint error");
-        let message = err.to_string();
-        assert!(message.contains("conflicting type hints"));
-        assert!(message.contains("placeholder_types"));
-        assert!(message.contains("parameter_types"));
-    }
-
-    #[test]
-    fn test_recipe_query_jinja_markers_detects_comment_blocks() {
-        let markers = recipe_query_jinja_markers("{# comment #}\nselect 1");
-        assert_eq!(markers, vec!["{#"]);
-    }
-
-    #[test]
-    fn test_recipe_query_jinja_markers_ignores_sql_literals() {
-        let markers = recipe_query_jinja_markers(
-            "select '{{' as open_token, '{%' as block_token, '{#' as comment_token",
-        );
-        assert!(markers.is_empty());
-    }
-
-    #[test]
-    fn test_recipe_query_jinja_markers_ignores_sql_comments() {
-        let markers = recipe_query_jinja_markers(
-            "-- {{ in line comment }}\nselect 1 /* {% in block comment %} */",
-        );
-        assert!(markers.is_empty());
-    }
-
-    #[test]
-    fn test_recipe_query_jinja_markers_ignores_backslash_escaped_quote_literals() {
-        let markers = recipe_query_jinja_markers(
-            "select E'It\\'s {{ok}} and {% raw %} and {# note #}' as msg",
-        );
-        assert!(markers.is_empty());
-    }
-
-    #[test]
-    fn test_recipe_query_jinja_markers_detects_after_standard_sql_backslash_literal() {
-        let markers = recipe_query_jinja_markers("select 'C:\\' as path; {{ ref('model') }}");
-        assert_eq!(markers, vec!["{{"]);
-    }
-
-    #[test]
-    fn test_recipe_query_jinja_markers_ignores_dollar_quoted_literals() {
-        let markers =
-            recipe_query_jinja_markers("select $$ {{ok}} {% block %} {# note #} $$ as body");
-        assert!(markers.is_empty());
-    }
-
-    #[test]
-    fn test_recipe_query_jinja_markers_ignores_tagged_dollar_quoted_literals() {
-        let markers =
-            recipe_query_jinja_markers("select $tag$ {{ok}} {% block %} {# note #} $tag$ as body");
-        assert!(markers.is_empty());
-    }
-}
+mod tests;
