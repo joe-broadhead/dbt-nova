@@ -31,6 +31,7 @@ pub struct ConfigValidationChecklist {
     pub exposed_tool_count: usize,
     pub tool_exposure: ToolExposureChecklist,
     pub hosted_http: HostedHttpChecklist,
+    pub hosted_auth: HostedAuthPosture,
     pub metrics: MetricsPosture,
     pub storage: StoragePosture,
     pub warnings: Vec<String>,
@@ -62,6 +63,22 @@ pub struct HostedHttpChecklist {
     pub path: String,
     pub non_loopback: bool,
     pub auth_proxy_acknowledged: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct HostedAuthPosture {
+    pub mode: String,
+    pub effective_mode: String,
+    pub required: bool,
+    pub non_off_modes_implemented: bool,
+    pub proxy_identity_header_configured: bool,
+    pub proxy_signature_header_configured: bool,
+    pub proxy_secret_file_configured: bool,
+    pub jwt_issuer_configured: bool,
+    pub jwt_audience_configured: bool,
+    pub jwt_jwks_url_configured: bool,
+    pub jwt_algorithms_configured: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -285,6 +302,7 @@ fn build_validation_checklist(config: &DbtNovaConfig) -> ConfigValidationCheckli
         non_loopback: config.http_transport_binds_non_loopback(),
         auth_proxy_acknowledged: config.http_expect_auth_proxy,
     };
+    let hosted_auth = build_hosted_auth_posture(config);
     let prometheus_http_enabled =
         config.server_transport == ServerTransport::StreamableHttp && config.metrics_enabled;
     let metrics = MetricsPosture {
@@ -353,9 +371,38 @@ fn build_validation_checklist(config: &DbtNovaConfig) -> ConfigValidationCheckli
             },
         },
         hosted_http,
+        hosted_auth,
         metrics,
         storage,
         warnings,
+    }
+}
+
+fn build_hosted_auth_posture(config: &DbtNovaConfig) -> HostedAuthPosture {
+    HostedAuthPosture {
+        mode: config.hosted_auth.mode.as_str().to_string(),
+        effective_mode: "off".to_string(),
+        required: config.hosted_auth.required,
+        non_off_modes_implemented: false,
+        proxy_identity_header_configured: !config
+            .hosted_auth
+            .proxy_identity_header
+            .trim()
+            .is_empty(),
+        proxy_signature_header_configured: !config
+            .hosted_auth
+            .proxy_signature_header
+            .trim()
+            .is_empty(),
+        proxy_secret_file_configured: !config
+            .hosted_auth
+            .proxy_identity_secret_file
+            .trim()
+            .is_empty(),
+        jwt_issuer_configured: !config.hosted_auth.jwt_issuer.trim().is_empty(),
+        jwt_audience_configured: !config.hosted_auth.jwt_audience.trim().is_empty(),
+        jwt_jwks_url_configured: !config.hosted_auth.jwt_jwks_url.trim().is_empty(),
+        jwt_algorithms_configured: !config.hosted_auth.jwt_algorithms.is_empty(),
     }
 }
 
@@ -408,7 +455,7 @@ fn metrics_posture_label(health_tool_exposed: bool, prometheus_http_enabled: boo
 fn redact_config_value(value: &mut JsonValue, key: Option<&str>) {
     match value {
         JsonValue::String(raw) => {
-            if key.is_some_and(is_sensitive_config_key) {
+            if key.is_some_and(is_sensitive_config_key) && !raw.trim().is_empty() {
                 *raw = "[REDACTED]".to_string();
             } else if key.is_some_and(is_location_config_key) {
                 *raw = sanitize_uri(raw);
@@ -451,6 +498,7 @@ fn is_location_config_key(key: &str) -> bool {
     key.contains("uri")
         || key.contains("path")
         || key.contains("dir")
+        || key.contains("url")
         || key == "source"
         || key.ends_with("_source")
 }
@@ -474,7 +522,9 @@ mod tests {
         validate_runtime_config,
     };
     use crate::cli::args::ConfigShowArgs;
-    use crate::config::{DbtNovaConfig, RuntimePreset, ServerTransport};
+    use crate::config::{
+        DbtNovaConfig, HostedAuthConfig, HostedAuthMode, RuntimePreset, ServerTransport,
+    };
     use crate::params::{ConfigShowParams, ConfigValidateParams};
     use tempfile::TempDir;
 
@@ -580,6 +630,53 @@ mod tests {
     }
 
     #[test]
+    fn config_redaction_preserves_empty_sensitive_values() {
+        let mut value = serde_json::json!({
+            "proxy_identity_secret_file": "",
+            "api_token": "raw-token"
+        });
+
+        super::redact_config_value(&mut value, None);
+
+        assert_eq!(value["proxy_identity_secret_file"], serde_json::json!(""));
+        assert_eq!(value["api_token"], serde_json::json!("[REDACTED]"));
+    }
+
+    #[test]
+    fn config_show_response_redacts_hosted_auth_secrets_and_urls() {
+        let active_config = DbtNovaConfig {
+            hosted_auth: HostedAuthConfig {
+                mode: HostedAuthMode::Jwt,
+                required: true,
+                proxy_identity_secret_file: "/run/secrets/raw-proxy-secret".to_string(),
+                jwt_jwks_url:
+                    "https://user:pass@issuer.example/.well-known/jwks.json?token=raw-token"
+                        .to_string(),
+                jwt_algorithms: vec!["RS256".to_string()],
+                ..HostedAuthConfig::default()
+            },
+            ..DbtNovaConfig::default()
+        };
+
+        let response =
+            build_config_show_tool_response(&active_config, &ConfigShowParams { defaults: false })
+                .expect("config show response");
+        let serialized = response.to_string();
+
+        assert!(!serialized.contains("raw-proxy-secret"));
+        assert!(!serialized.contains("raw-token"));
+        assert!(!serialized.contains("user:pass"));
+        assert_eq!(
+            response["data"]["hosted_auth"]["proxy_identity_secret_file"],
+            serde_json::json!("[REDACTED]")
+        );
+        assert_eq!(
+            response["data"]["hosted_auth"]["jwt_jwks_url"],
+            serde_json::json!("https://[REDACTED]@issuer.example/.well-known/jwks.json?[REDACTED]")
+        );
+    }
+
+    #[test]
     fn config_validate_tool_response_matches_cli_payload() {
         let response = build_config_validate_tool_response(
             &DbtNovaConfig::default(),
@@ -601,6 +698,22 @@ mod tests {
         );
         assert!(response["data"]["checklist"]["tool_denylist"].is_array());
         assert!(response["data"]["checklist"]["hosted_http"]["enabled"].is_boolean());
+        assert_eq!(
+            response["data"]["checklist"]["hosted_auth"]["mode"],
+            serde_json::json!("off")
+        );
+        assert_eq!(
+            response["data"]["checklist"]["hosted_auth"]["effective_mode"],
+            serde_json::json!("off")
+        );
+        assert_eq!(
+            response["data"]["checklist"]["hosted_auth"]["non_off_modes_implemented"],
+            serde_json::json!(false)
+        );
+        assert_eq!(
+            response["data"]["checklist"]["hosted_auth"]["proxy_secret_file_configured"],
+            serde_json::json!(false)
+        );
         assert!(response["data"]["checklist"]["metrics"]["posture"].is_string());
         assert_eq!(
             response["data"]["checklist"]["metrics"]["prometheus_http_enabled"],

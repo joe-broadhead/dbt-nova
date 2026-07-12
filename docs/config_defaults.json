@@ -99,6 +99,23 @@
       "nova.governance.compliance"
     ]
   },
+  "hosted_auth": {
+    "identity_email_claim": "email",
+    "identity_groups_claim": "groups",
+    "identity_name_claim": "name",
+    "identity_subject_claim": "sub",
+    "jwt_algorithms": [],
+    "jwt_audience": "",
+    "jwt_clock_skew_secs": 60,
+    "jwt_issuer": "",
+    "jwt_jwks_url": "",
+    "mode": "off",
+    "proxy_identity_header": "",
+    "proxy_identity_max_age_secs": 300,
+    "proxy_identity_secret_file": "",
+    "proxy_signature_header": "",
+    "required": false
+  },
   "http_allowed_hosts": "",
   "http_expect_auth_proxy": false,
   "http_host": "127.0.0.1",

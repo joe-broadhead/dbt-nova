@@ -9,9 +9,11 @@ Hosted `streamable_http` mode has no built-in authentication or authorization.
 If you expose it beyond loopback, you must place it behind an authenticating
 reverse proxy or platform auth layer first.
 
-Default-off hosted identity and JWT validation are being designed separately.
-The current runtime still relies on the proxy or platform layer for
-authentication. See
+Default-off hosted identity config is parsed as a fail-closed skeleton, but
+proxy-signed headers and JWT validation are not enforced yet. Non-`off`
+`DBT_NOVA_AUTH_MODE` values fail validation until their verifiers land, so the
+current runtime still relies on the proxy or platform layer for authentication.
+See
 [Hosted Identity Threat Model](../development/hosted-identity-threat-model.md)
 and [Hosted Identity Contract](../development/hosted-identity-contract.md).
 
@@ -34,6 +36,8 @@ Recommended hosted posture:
   intentionally warming semantic caches.
 - Set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when the reverse proxy or
   platform auth layer is actually enforcing authentication.
+- Keep `DBT_NOVA_AUTH_MODE=off` until a verifier implementation lands; non-`off`
+  modes currently fail validation rather than running without enforcement.
 
 ## Local HTTP Profile
 

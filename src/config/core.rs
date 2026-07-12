@@ -12,6 +12,7 @@ use crate::tools::catalog::{
 };
 
 use super::column_lineage::ColumnLineageConfig;
+use super::hosted_auth::{HostedAuthConfig, HostedAuthMode};
 use super::metadata_score::MetadataScoreConfig;
 use super::search::SearchConfig;
 use super::warehouse::DEFAULT_SQL_PROVIDER;
@@ -429,6 +430,8 @@ pub struct DbtNovaConfig {
     pub http_max_body_bytes: usize,
     /// Expose the Prometheus-compatible `/metrics` endpoint in hosted HTTP mode.
     pub metrics_enabled: bool,
+    /// Default-off hosted HTTP identity/authentication skeleton.
+    pub hosted_auth: HostedAuthConfig,
     /// Per-tool rate limits (comma-separated, e.g. "`search=60,execute_sql=30,default=120`")
     pub tool_rate_limits: String,
     /// Rate limit window size in seconds
@@ -553,6 +556,7 @@ impl Default for DbtNovaConfig {
             http_sse_retry_secs: 3,
             http_max_body_bytes: 16 * 1024 * 1024,
             metrics_enabled: true,
+            hosted_auth: HostedAuthConfig::default(),
             tool_rate_limits: "search=60,execute_sql=20,default=120".to_string(),
             tool_rate_limit_window_secs: 60,
             tool_allowlist: String::new(),
@@ -893,6 +897,7 @@ impl DbtNovaConfig {
         }
         self.validate_result_profile_config()?;
         self.agent_modelling_audit.validate()?;
+        self.hosted_auth.validate()?;
 
         if self.entity_cache_size == 0 {
             warn!("entity cache disabled (entity_cache_size=0)");
@@ -1309,12 +1314,71 @@ impl DbtNovaConfig {
         if let Some(value) = parse_bool("DBT_NOVA_METRICS_ENABLED") {
             self.metrics_enabled = value;
         }
+        self.apply_hosted_auth_env();
 
         self.apply_http_platform_port_fallback(
             explicit_http_host.is_some(),
             parsed_http_port.is_some(),
             parse_u16("PORT"),
         );
+    }
+
+    fn apply_hosted_auth_env(&mut self) {
+        if let Some(value) = env_string("DBT_NOVA_AUTH_MODE") {
+            if let Some(mode) = HostedAuthMode::parse(&value) {
+                self.hosted_auth.mode = mode;
+                if mode != HostedAuthMode::Off && env_string("DBT_NOVA_AUTH_REQUIRED").is_none() {
+                    self.hosted_auth.required = true;
+                }
+            } else {
+                self.env_errors.push(format!(
+                    "Invalid DBT_NOVA_AUTH_MODE value '{value}'; expected off|proxy_signed_headers|jwt"
+                ));
+            }
+        }
+        if let Some(value) = parse_bool("DBT_NOVA_AUTH_REQUIRED") {
+            self.hosted_auth.required = value;
+        }
+        set_string(
+            "DBT_NOVA_IDENTITY_SUBJECT_CLAIM",
+            &mut self.hosted_auth.identity_subject_claim,
+        );
+        set_string(
+            "DBT_NOVA_IDENTITY_EMAIL_CLAIM",
+            &mut self.hosted_auth.identity_email_claim,
+        );
+        set_string(
+            "DBT_NOVA_IDENTITY_NAME_CLAIM",
+            &mut self.hosted_auth.identity_name_claim,
+        );
+        set_string(
+            "DBT_NOVA_IDENTITY_GROUPS_CLAIM",
+            &mut self.hosted_auth.identity_groups_claim,
+        );
+        set_string(
+            "DBT_NOVA_PROXY_IDENTITY_HEADER",
+            &mut self.hosted_auth.proxy_identity_header,
+        );
+        set_string(
+            "DBT_NOVA_PROXY_SIGNATURE_HEADER",
+            &mut self.hosted_auth.proxy_signature_header,
+        );
+        set_string(
+            "DBT_NOVA_PROXY_IDENTITY_SECRET_FILE",
+            &mut self.hosted_auth.proxy_identity_secret_file,
+        );
+        if let Some(value) = parse_u64("DBT_NOVA_PROXY_IDENTITY_MAX_AGE_SECS") {
+            self.hosted_auth.proxy_identity_max_age_secs = value;
+        }
+        set_string("DBT_NOVA_JWT_ISSUER", &mut self.hosted_auth.jwt_issuer);
+        set_string("DBT_NOVA_JWT_AUDIENCE", &mut self.hosted_auth.jwt_audience);
+        set_string("DBT_NOVA_JWT_JWKS_URL", &mut self.hosted_auth.jwt_jwks_url);
+        if let Some(value) = env_string("DBT_NOVA_JWT_ALGORITHMS") {
+            self.hosted_auth.jwt_algorithms = parse_csv_values(&value);
+        }
+        if let Some(value) = parse_u64("DBT_NOVA_JWT_CLOCK_SKEW_SECS") {
+            self.hosted_auth.jwt_clock_skew_secs = value;
+        }
     }
 
     pub(crate) fn apply_http_platform_port_fallback(
@@ -1573,6 +1637,10 @@ fn canonical_prune_patterns(patterns: &[String]) -> Vec<String> {
 }
 
 fn parse_tool_name_csv(raw: &str) -> Vec<String> {
+    parse_csv_values(raw)
+}
+
+fn parse_csv_values(raw: &str) -> Vec<String> {
     raw.split(',')
         .map(str::trim)
         .filter(|entry| !entry.is_empty())
