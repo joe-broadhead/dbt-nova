@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tightened docs and packaged skill wording around Nova as a metadata bridge,
   keeping MetricFlow/dbt Semantic Layer references framed as optional manifest
   evidence or externally owned execution paths.
+- Added CODEOWNERS plus v0.0.x ADR and release-hygiene docs for maintainership,
+  compatibility, hosted security, presets, and metrics posture.
 - Added response-only `direct_sql_queryable` metadata to `search_indicator` and
   `indicator_inventory` so agents can distinguish relation-backed SQL surfaces
   from Semantic Layer-backed indicators that require MetricFlow/dbt Semantic

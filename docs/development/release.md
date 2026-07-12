@@ -17,6 +17,39 @@ The release workflow enforces this policy:
 
 - Tags must point at a commit on `master`
 
+## v0.0.x Compatibility Policy
+
+Nova remains on v0.0.x while the metadata-bridge surface hardens. During this
+phase, prefer additive changes and explicit operator controls:
+
+- Additive response fields are allowed when existing fields keep their meaning.
+- Safety tightening is allowed when it reduces accidental execution, hosted
+  exposure, or credential risk; document the behavior and migration path.
+- Defaults may become more conservative when `config validate`, docs, and
+  changelog entries make the effective posture clear.
+- Breaking CLI, MCP, schema, storage, or workflow changes must be called out in
+  `CHANGELOG.md` and isolated from unrelated cleanup.
+- Do not rename the release plan to 1.0 or use 1.0 language until the user
+  explicitly chooses that milestone.
+
+Deprecations should name the old surface, the replacement, the first version
+that carries the warning, and the earliest version where removal may happen.
+For v0.0.x, avoid removals unless the old behavior is unsafe or unmaintainable.
+
+## Hardening PR Checklist
+
+Use this checklist for normal hardening PRs, not just release branches:
+
+- [ ] Code changes: `cargo fmt --check`, `cargo clippy --locked --all-targets --all-features -- -D warnings`, and focused tests for the touched behavior
+- [ ] Broad runtime changes: `cargo test --locked --all-features` or a documented narrower substitute
+- [ ] Docs changes: `uv run mkdocs build --strict`
+- [ ] Config/default changes: `bash scripts/check_config_reference.sh`
+- [ ] Workflow changes: `actionlint .github/workflows/<workflow>.yml`
+- [ ] Supply-chain/dependency changes: `cargo deny check` and `bash scripts/check_dependency_watchlist.sh`
+- [ ] Public CLI/MCP/workflow/security behavior: update `CHANGELOG.md`
+- [ ] Metadata-bridge boundary: keep Semantic Layer / MetricFlow references
+  framed as optional manifest evidence or externally owned execution paths
+
 ## Release Checklist
 
 Before tagging:
@@ -29,6 +62,10 @@ Before tagging:
 - [ ] `cargo clippy --locked --all-targets --all-features -- -D warnings` passes
 - [ ] `cargo fmt --check` passes
 - [ ] Docs build clean (`mkdocs build --strict`)
+- [ ] Config defaults are current (`scripts/check_config_reference.sh`)
+- [ ] Workflow changes have been linted with `actionlint`
+- [ ] Supply-chain changes have `cargo deny check` and dependency watchlist
+      review where applicable
 - [ ] No-warm release smoke passes against the intended manifest or fixture:
       `scripts/smoke_release_no_warm.sh --manifest-path <manifest.json>`
 - [ ] Release PR approved and merged to `master`
@@ -93,6 +130,18 @@ The installer in v0.0.6 and newer releases defaults to strict checksum signature
 `DBT_NOVA_VERIFY_SIGNATURE=1` requires `cosign` plus the released `.sha256.sig`
 and `.sha256.crt` files. Use `DBT_NOVA_VERIFY_SIGNATURE=auto` only for trusted
 development installs where missing `cosign` or signatures may be skipped.
+
+## Changelog Guidance
+
+`CHANGELOG.md` should stay user-facing and v0.0.x-aware:
+
+- Group entries by behavior, not by internal module.
+- Name new environment variables, CLI flags, MCP fields, workflow inputs, and
+  safety gates exactly.
+- Call out hosted/security posture changes even when they are additive.
+- Link large compatibility or release-policy changes back to the ADRs or this
+  release guide when the reasoning matters.
+- Avoid promising 1.0 semantics in v0.0.x release notes.
 
 Supported prebuilt binary targets:
 

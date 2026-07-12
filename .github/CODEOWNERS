@@ -1,0 +1,28 @@
+# Default owner for all changes.
+* @joe-broadhead
+
+# Manifest loading, normalization, search, and artifact hydration are the core
+# metadata-bridge surface.
+/src/manifest/ @joe-broadhead
+/src/tools/search/ @joe-broadhead
+/src/tools/modeling/ @joe-broadhead
+/schemas/ @joe-broadhead
+
+# Hosted server, MCP contracts, warehouse execution, and config changes affect
+# operator safety and public runtime behavior.
+/src/server/ @joe-broadhead
+/src/cli/server_cmd.rs @joe-broadhead
+/src/config/ @joe-broadhead
+/src/warehouse/ @joe-broadhead
+
+# CI, release, packaging, and supply-chain files require explicit review.
+/.github/workflows/ @joe-broadhead
+/Dockerfile @joe-broadhead
+/Dockerfile.oci @joe-broadhead
+/scripts/install.sh @joe-broadhead
+/deny.toml @joe-broadhead
+/dependency-watchlist.toml @joe-broadhead
+
+# Docs and packaged skills are agent-facing product surfaces.
+/docs/ @joe-broadhead
+/.github/skills/ @joe-broadhead
