@@ -140,6 +140,26 @@ jobs:
           DBT_NOVA_EVAL_ENABLE_LIFECYCLE=0 \
           cargo test --locked --no-default-features --test search_eval compare_lexical_vs_hybrid_search_quality -- --ignored
 
+  lexical-scale:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      DBT_NOVA_STRICT_SCHEMA: "1"
+      CARGO_BUILD_JOBS: "1"
+      RUSTFLAGS: "-C debuginfo=0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+
+      - name: Lexical Scale Guard
+        run: scripts/check_lexical_scale.sh
+
   tokenomics-bridge-eval:
     runs-on: ubuntu-22.04
     timeout-minutes: 45

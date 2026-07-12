@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   evidence or externally owned execution paths.
 - Added CODEOWNERS plus v0.0.x ADR and release-hygiene docs for maintainership,
   compatibility, hosted security, presets, and metrics posture.
+- Added a CI-backed lexical scale guard with a shared synthetic manifest
+  generator and measured default-mode performance baselines for manifest load,
+  search, inventory, context, and readiness paths.
 - Added response-only `direct_sql_queryable` metadata to `search_indicator` and
   `indicator_inventory` so agents can distinguish relation-backed SQL surfaces
   from Semantic Layer-backed indicators that require MetricFlow/dbt Semantic

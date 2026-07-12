@@ -13,12 +13,13 @@ use dbt_nova::params::{
     ModellingConsistencyReportParams, PaginationParams, ParentGroupMode, SearchColumnsParams,
     SearchIndicatorParams, SearchParams,
 };
-use serde_json::json;
 
 #[path = "../tests/support/fixtures.rs"]
 mod fixtures;
 #[path = "../tests/support/config.rs"]
 mod support_config;
+#[path = "../tests/support/synthetic_manifest.rs"]
+mod synthetic_manifest;
 
 fn bench_search(c: &mut Criterion) {
     // Bench hybrid search on a representative query against the fixture manifest.
@@ -97,95 +98,17 @@ fn large_entity_count() -> usize {
 fn load_large_synthetic_fixture(entity_count: usize) -> fixtures::FixtureSearchEnv {
     let temp_dir = tempfile::tempdir().expect("large manifest tempdir");
     let manifest_path = temp_dir.path().join("large_manifest.json");
-    let mut nodes = serde_json::Map::new();
-
-    for index in 0..entity_count {
-        let name = format!("model_{index:05}");
-        let unique_id = format!("model.large.{name}");
-        nodes.insert(
-            unique_id.clone(),
-            json!({
-                "name": name,
-                "resource_type": "model",
-                "package_name": "large",
-                "description": format!("Synthetic benchmark model {index} for revenue customer search."),
-                "database": "analytics",
-                "schema": "benchmark",
-                "relation_name": format!("analytics.benchmark.{name}"),
-                "path": format!("models/benchmark/{name}.sql"),
-                "original_file_path": format!("models/benchmark/{name}.sql"),
-                "unique_id": unique_id,
-                "fqn": ["large", "benchmark", name],
-                "alias": name,
-                "checksum": {"name": "sha256", "checksum": format!("{index:064}")},
-                "config": {
-                    "enabled": true,
-                    "meta": {
-                        "nova": {
-                            "canonical": index % 10 == 0,
-                            "grain": {"entities": ["customer"], "time": "day"},
-                            "measures": [
-                                {
-                                    "name": "gross_revenue",
-                                    "expr": "gross_revenue",
-                                    "agg": "sum",
-                                    "canonical": index % 10 == 0,
-                                    "synonyms": ["sales", "bookings"]
-                                }
-                            ]
-                        }
-                    }
-                },
-                "tags": ["benchmark", "revenue"],
-                "columns": {
-                    "customer_id": {
-                        "name": "customer_id",
-                        "description": "Synthetic customer identifier.",
-                        "data_type": "string",
-                        "meta": {"nova": {"role": "identifier", "semantic_type": "customer_id"}},
-                        "config": {"meta": {}, "tags": []},
-                        "constraints": [],
-                        "tags": []
-                    },
-                    "gross_revenue": {
-                        "name": "gross_revenue",
-                        "description": "Synthetic gross revenue amount.",
-                        "data_type": "numeric",
-                        "meta": {"nova": {"role": "measure", "semantic_type": "money"}},
-                        "config": {"meta": {}, "tags": []},
-                        "constraints": [],
-                        "tags": []
-                    }
-                },
-                "depends_on": {"nodes": [], "macros": []},
-                "raw_code": "select customer_id, gross_revenue from source_table",
-                "compiled_code": "select customer_id, gross_revenue from source_table"
-            }),
-        );
-    }
-
-    let manifest = json!({
-        "metadata": {
-            "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
-            "dbt_version": "1.10.2",
-            "project_name": "large"
-        },
-        "selectors": {},
-        "nodes": nodes,
-        "sources": {},
-        "macros": {},
-        "docs": {},
-        "exposures": {},
-        "metrics": {},
-        "semantic_models": {},
-        "parent_map": {},
-        "child_map": {}
-    });
-    std::fs::write(
+    synthetic_manifest::write_synthetic_manifest(
         &manifest_path,
-        serde_json::to_vec(&manifest).expect("serialize large manifest"),
+        synthetic_manifest::SyntheticManifestConfig {
+            models: entity_count,
+            packages: 1,
+            columns_per_model: 2,
+            ref_fanout: 0,
+            metric_every: 10,
+        },
     )
-    .expect("write large manifest");
+    .expect("write large synthetic manifest");
     fixtures::load_manifest_path(&manifest_path).expect("load large synthetic manifest")
 }
 
