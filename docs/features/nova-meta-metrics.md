@@ -113,13 +113,14 @@ For cross-grain KPIs, prefer one of these surfaces:
 `composite_metrics` and `NovaMetric.derivation` graphs are not part of the
 current Nova schema. They should not be used as metadata-only substitutes for a
 queryable surface. Nova-native composite metrics may be revisited later only if
-Nova owns a narrow SQL compiler, validation, explainability, and fail-closed
-behavior.
+they come with explicit execution ownership, validation, explainability, and
+fail-closed behavior.
 
 Agent guidance: if a KPI crosses grain boundaries and no deterministic surface
 exists, treat it as non-queryable context. Ask for or propose a dbt model,
-semantic-layer metric, OSI artifact, saved query, or recipe instead of joining
-heterogeneous facts from metric names alone.
+configured dbt Semantic Layer / MetricFlow artifact, scoped external semantic
+artifact, saved query, or recipe instead of joining heterogeneous facts from
+metric names alone.
 
 Run [Agent Modelling Audits](agent-modelling-audits.md) when cross-grain KPIs
 are added or reviewed. The audit flags ratio-like and cross-grain indicators

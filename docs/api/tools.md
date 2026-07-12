@@ -216,9 +216,9 @@ with query tokens, retrievers used, and the active ranking config snapshot.
 
 ### `search_indicator`
 Search Nova measures and metrics directly, then return the parent execution
-entity and grain context. Native dbt Semantic Layer / MetricFlow `metrics` and
-`semantic_models` are bridged into this indicator surface even when no
-hand-authored `meta.nova` block exists.
+entity and grain context. When a manifest already contains dbt Semantic Layer /
+MetricFlow `metrics` or `semantic_models`, Nova derives indicator evidence from
+those artifact rows even when no hand-authored `meta.nova` block exists.
 
 Each indicator row includes response-only execution metadata:
 `indicator_source` (`nova_meta`, `dbt_metric`, or `dbt_semantic_model`),
@@ -298,9 +298,9 @@ entirely.
 
 ### `indicator_inventory`
 List Nova measures and metrics deterministically, with parent execution context.
-Use this when you need a flat semantic catalog instead of ranked search results.
-MetricFlow metrics and semantic-model measures are included as derived Nova
-indicators unless explicit `meta.nova` metadata overrides or extends them.
+Use this when you need a flat indicator inventory instead of ranked search
+results. MetricFlow metrics and semantic-model measures are included as derived
+Nova indicators unless explicit `meta.nova` metadata overrides or extends them.
 Execution metadata uses the same response-only fields and execution-surface gate
 as `search_indicator`.
 

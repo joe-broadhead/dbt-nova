@@ -59,7 +59,7 @@ export DBT_NOVA_BOOTSTRAP_URI='https://example.invalid/bootstrap.json'
 export DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing
 unset DBT_NOVA_STORAGE_READ_ONLY
 
-# Optional: enable semantic layers when your runtime has warmed or hydrated models
+# Optional: enable semantic search components when your runtime has warmed or hydrated models
 # export DBT_NOVA_SEARCH_ENABLE_VECTOR=true
 # export DBT_NOVA_SEARCH_ENABLE_SPARSE=true
 # export DBT_NOVA_SEARCH_ENABLE_RERANKER=true

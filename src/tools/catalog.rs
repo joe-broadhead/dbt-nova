@@ -994,6 +994,54 @@ mod tests {
         }
     }
 
+    #[test]
+    fn docs_and_skills_avoid_semantic_layer_product_drift() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut checked_files = vec![root.join("README.md")];
+        collect_markdown_files(&root.join("docs"), root, &mut checked_files);
+        collect_markdown_files(&root.join(".github/skills"), root, &mut checked_files);
+
+        let banned_phrases = [
+            (
+                "semantic layers",
+                "Use `semantic search components` for vector/sparse/reranker features.",
+            ),
+            (
+                "flat semantic catalog",
+                "Use `indicator inventory` so Nova remains a metadata bridge.",
+            ),
+            (
+                "nova owns a narrow sql compiler",
+                "Do not imply Nova is becoming a semantic-layer compiler.",
+            ),
+            (
+                "semantic-layer metric",
+                "Use `configured dbt Semantic Layer / MetricFlow artifact`.",
+            ),
+            (
+                "osi artifact",
+                "Use `scoped external semantic artifact` unless OSI is explicitly in scope.",
+            ),
+        ];
+
+        for file in checked_files {
+            let relative = file.strip_prefix(root).unwrap_or(file.as_path());
+            if relative == std::path::Path::new("docs/development/world-class-1.0-spec.md") {
+                continue;
+            }
+            let text = fs::read_to_string(&file)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", file.display()));
+            let normalized = text.to_ascii_lowercase();
+            for (phrase, guidance) in banned_phrases {
+                assert!(
+                    !normalized.contains(phrase),
+                    "{} contains drift phrase `{phrase}`. {guidance}",
+                    relative.display()
+                );
+            }
+        }
+    }
+
     fn collect_cli_leaf_commands(
         command: &ClapCommand,
         prefix: &[String],
@@ -1040,5 +1088,33 @@ mod tests {
             }
         }
         counts
+    }
+
+    fn collect_markdown_files(
+        dir: &std::path::Path,
+        root: &std::path::Path,
+        out: &mut Vec<std::path::PathBuf>,
+    ) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries {
+            let entry = entry.unwrap_or_else(|error| {
+                panic!(
+                    "failed to read directory entry in {}: {error}",
+                    dir.display()
+                )
+            });
+            let path = entry.path();
+            let relative = path.strip_prefix(root).unwrap_or(path.as_path());
+            if relative == std::path::Path::new("docs/development/world-class-1.0-spec.md") {
+                continue;
+            }
+            if path.is_dir() {
+                collect_markdown_files(&path, root, out);
+            } else if path.extension().is_some_and(|ext| ext == "md") {
+                out.push(path);
+            }
+        }
     }
 }

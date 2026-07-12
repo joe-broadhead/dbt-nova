@@ -66,7 +66,8 @@ DBT Nova is built around semantic sovereignty:
 
 - Your definitions live in **dbt code + `meta.nova`**, versioned in your repo.
 - Nova reads open dbt artifacts (`manifest.json`) and serves them to agents.
-- You can move warehouses or clouds without rewriting your semantic layer into a vendor-specific system.
+- You can move warehouses or clouds without rewriting governed metric and model
+  definitions into a vendor-specific system.
 - Analysts and agents use the same governed definitions engineering maintains.
 
 ## How It Works (Short Version)
@@ -152,7 +153,7 @@ curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
   https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
   DBT_NOVA_VERSION=v0.0.6 DBT_NOVA_VERIFY_SIGNATURE=1 DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --slim --non-interactive
 
-# Optional: pre-warm model files during install before enabling semantic layers
+# Optional: pre-warm model files before enabling semantic search components
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
   DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/.fastembed_cache" \
   DBT_NOVA_WARMUP_REQUIRED_MODELS=3 \

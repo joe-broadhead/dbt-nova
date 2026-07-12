@@ -372,7 +372,7 @@ Guardrails:
     Enabling dense vectors (`DBT_NOVA_SEARCH_ENABLE_VECTOR=true`) requires ~2 GB RAM
     for embeddings. Disable on memory-constrained systems.
 
-- Semantic layers are disabled by default. Opt in explicitly with
+- Semantic search components are disabled by default. Opt in explicitly with
   `DBT_NOVA_SEARCH_ENABLE_VECTOR=true`,
   `DBT_NOVA_SEARCH_ENABLE_SPARSE=true`, and/or
   `DBT_NOVA_SEARCH_ENABLE_RERANKER=true` after warming model files and, for

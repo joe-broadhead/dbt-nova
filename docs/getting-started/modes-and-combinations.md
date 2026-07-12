@@ -14,7 +14,7 @@ This page maps those planes, shows precedence rules, and gives validated deploym
 
 | Mode | How | Notes |
 |---|---|---|
-| Release slim (default) | `scripts/install.sh --slim` | Binary only. Semantic layers are opt-in; model files are resolved only when those layers are enabled. |
+| Release slim (default) | `scripts/install.sh --slim` | Binary only. Semantic search components are opt-in; model files are resolved only when those components are enabled. |
 | Release bundled | `scripts/install.sh --bundled` | Binary + colocated `models/` when bundled assets exist. Installer falls back to slim if bundled artifact is unavailable. |
 | Source build | `cargo build --release` | Use for unreleased commits or unsupported runner/platform. |
 
@@ -81,7 +81,7 @@ If `DBT_NOVA_EMBEDDINGS_CACHE_DIR` is unset, Nova resolves model path in this or
 | Colocated bundled models | Bundled install with `models/` beside binary | Air-gapped/local fixed runtime |
 | Pre-warmed local cache | `--warm-models` or `scripts/warm_models.sh` + fixed `DBT_NOVA_EMBEDDINGS_CACHE_DIR` | Laptops, consistent MCP startup |
 | Remote models artifact | `DBT_NOVA_MODELS_ARTIFACT_URI` (or bootstrap field) | Fully centralized artifact distribution |
-| On-demand download | Slim install without prewarm + semantic layers enabled | Fastest install path, slower first semantic startup |
+| On-demand download | Slim install without prewarm + semantic search components enabled | Fastest install path, slower first semantic startup |
 
 Important: if bootstrap omits `models_artifact_uri` (for example producer `models_distribution_mode=none`), consumers must rely on pre-warmed/local cache or on-demand model download.
 

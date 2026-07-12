@@ -138,7 +138,8 @@ gh attestation verify dbt-nova-linux-x86_64.tar.gz \
 
 ## Release Type
 
-- **Slim**: binary only (semantic layers are opt-in; models download only when enabled)
+- **Slim**: binary only (semantic search components are opt-in; models download
+  only when enabled)
 - **OCI image**: hosted/server runtime image for streamable HTTP deployments,
   published as a multi-arch `linux/amd64` + `linux/arm64` manifest
 
