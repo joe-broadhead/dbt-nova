@@ -48,6 +48,7 @@ const MAX_MARKDOWN_GOLDEN_SEEDS: usize = 8;
 mod patches;
 mod render;
 mod seeds;
+mod thresholds;
 mod types;
 
 use patches::build_suggested_meta_patches;
@@ -64,16 +65,22 @@ use seeds::{
     indicator_count_in_nova, indicator_meta_base_path, infer_primary_key_column, infer_time_column,
     json_array_field_non_empty, json_bool_field_present, looks_like_time_column, push_meta_patch,
 };
-use types::{
-    AgentModellingReadinessResult, AgentReadinessReport, AppliedCountThreshold, AppliedThreshold,
-    CountThresholdRule, EntityReadinessFinding, EntityReadinessSignals, EntityScoreAccumulator,
-    EntityScoreEvidence, EvalReadinessStatus, GoldenQuestionSeed, IndicatorReadinessFinding,
-    ModellingThresholdConfig, NextActionInput, PersonaReadinessScore, ReadinessConfigSummary,
-    ReadinessFinalSectionInput, ReadinessFinalSections, ReadinessFinding, ReadinessInputs,
-    ReadinessManifestSummary, ReadinessNextAction, ReadinessRecommendation, ReadinessSearchReady,
-    ReadinessSummary, ReadinessSummaryInput, ReadinessThresholdConfig, SuggestedMetaPatch,
-    ThresholdRule, ThresholdSeverity,
+use thresholds::{
+    applied_threshold, apply_agent_modelling_thresholds, apply_overall_threshold,
+    apply_persona_threshold, effective_readiness_thresholds, evaluate_threshold,
+    threshold_gate_to_report_gate,
 };
+use types::{
+    AgentModellingReadinessResult, AgentReadinessReport, EntityReadinessFinding,
+    EntityReadinessSignals, EntityScoreAccumulator, EntityScoreEvidence, EvalReadinessStatus,
+    GoldenQuestionSeed, IndicatorReadinessFinding, ModellingThresholdConfig, NextActionInput,
+    PersonaReadinessScore, ReadinessConfigSummary, ReadinessFinalSectionInput,
+    ReadinessFinalSections, ReadinessFinding, ReadinessInputs, ReadinessManifestSummary,
+    ReadinessNextAction, ReadinessRecommendation, ReadinessSearchReady, ReadinessSummary,
+    ReadinessSummaryInput, ReadinessThresholdConfig, SuggestedMetaPatch,
+};
+#[cfg(test)]
+use types::{ThresholdRule, ThresholdSeverity};
 
 /// Runs the `audit agent-readiness` CLI command.
 ///
@@ -516,37 +523,6 @@ fn build_readiness_summary(input: ReadinessSummaryInput) -> ReadinessSummary {
     }
 }
 
-fn effective_readiness_thresholds(
-    search: &ManifestSearch,
-    inputs: &ReadinessThresholdConfig,
-) -> ReadinessThresholdConfig {
-    let mut thresholds = inputs.clone();
-    let modelling = &search.config().agent_readiness.modelling;
-    thresholds
-        .modelling
-        .max_blockers
-        .get_or_insert_with(|| CountThresholdRule {
-            value: modelling.max_blockers,
-            severity: count_threshold_severity(modelling.max_blockers_required),
-        });
-    thresholds
-        .modelling
-        .max_high
-        .get_or_insert_with(|| CountThresholdRule {
-            value: modelling.max_high,
-            severity: count_threshold_severity(modelling.max_high_required),
-        });
-    thresholds
-}
-
-fn count_threshold_severity(required: bool) -> ThresholdSeverity {
-    if required {
-        ThresholdSeverity::Required
-    } else {
-        ThresholdSeverity::Advisory
-    }
-}
-
 async fn build_agent_modelling_readiness_result(
     search: &ManifestSearch,
     thresholds: &ModellingThresholdConfig,
@@ -684,80 +660,6 @@ fn agent_modelling_readiness_finding(
     }
 }
 
-fn apply_agent_modelling_thresholds(
-    summary: &JsonValue,
-    thresholds: &ModellingThresholdConfig,
-    blocking_findings: &mut Vec<ReadinessFinding>,
-    improvement_findings: &mut Vec<ReadinessFinding>,
-) {
-    if let Some(rule) = thresholds.max_blockers.as_ref() {
-        apply_agent_modelling_count_threshold(
-            "blockers",
-            "agent_modelling_blocker_threshold_missed",
-            summary_usize(summary, "blockers"),
-            rule,
-            summary,
-            blocking_findings,
-            improvement_findings,
-        );
-    }
-    if let Some(rule) = thresholds.max_high.as_ref() {
-        apply_agent_modelling_count_threshold(
-            "high",
-            "agent_modelling_high_threshold_missed",
-            summary_usize(summary, "high"),
-            rule,
-            summary,
-            blocking_findings,
-            improvement_findings,
-        );
-    }
-}
-
-fn apply_agent_modelling_count_threshold(
-    label: &'static str,
-    code: &'static str,
-    actual: usize,
-    threshold: &CountThresholdRule,
-    summary: &JsonValue,
-    blocking_findings: &mut Vec<ReadinessFinding>,
-    improvement_findings: &mut Vec<ReadinessFinding>,
-) {
-    if actual <= threshold.value {
-        return;
-    }
-    let gate = count_threshold_gate(threshold.severity);
-    let finding = ReadinessFinding {
-        severity: threshold_gate_to_finding_severity(gate),
-        category: "modelling",
-        code,
-        message: format!(
-            "agent modelling {label} count {actual} exceeded threshold {}",
-            threshold.value
-        ),
-        evidence: json!({
-            "count": actual,
-            "threshold": applied_count_threshold(threshold),
-            "agent_modelling_summary": summary
-        }),
-    };
-    push_threshold_finding(gate, finding, blocking_findings, improvement_findings);
-}
-
-fn count_threshold_gate(severity: ThresholdSeverity) -> &'static str {
-    match severity {
-        ThresholdSeverity::Required => "required_fail",
-        ThresholdSeverity::Advisory => "advisory_fail",
-    }
-}
-
-fn applied_count_threshold(rule: &CountThresholdRule) -> AppliedCountThreshold {
-    AppliedCountThreshold {
-        value: rule.value,
-        severity: rule.severity,
-    }
-}
-
 fn build_agent_modelling_next_actions(findings: &[JsonValue]) -> Vec<ReadinessNextAction> {
     findings
         .iter()
@@ -804,14 +706,6 @@ fn agent_modelling_finding_severity(finding: &JsonValue) -> Option<&str> {
 
 fn agent_modelling_finding_code(finding: &JsonValue) -> Option<&str> {
     finding.get("code").and_then(JsonValue::as_str)
-}
-
-fn summary_usize(summary: &JsonValue, key: &str) -> usize {
-    summary
-        .get(key)
-        .and_then(JsonValue::as_u64)
-        .and_then(|value| usize::try_from(value).ok())
-        .unwrap_or(0)
 }
 
 async fn score_project_personas(
@@ -1501,76 +1395,6 @@ fn selected_entity_ids(search: &ManifestSearch, resource_types: &[String]) -> Re
     Ok(selected.into_iter().collect())
 }
 
-fn apply_overall_threshold(
-    overall_score: u8,
-    grade: &str,
-    threshold: Option<&ThresholdRule>,
-    blocking_findings: &mut Vec<ReadinessFinding>,
-    improvement_findings: &mut Vec<ReadinessFinding>,
-) {
-    let gate = evaluate_threshold(overall_score, grade, threshold);
-    if gate == "pass" {
-        return;
-    }
-    let finding = ReadinessFinding {
-        severity: threshold_gate_to_finding_severity(gate),
-        category: "overall_score",
-        code: "overall_threshold_missed",
-        message: format!("overall readiness score {overall_score} ({grade}) missed its threshold"),
-        evidence: serde_json::json!({
-            "overall_score": overall_score,
-            "grade": grade,
-            "threshold": threshold.map(applied_threshold)
-        }),
-    };
-    push_threshold_finding(gate, finding, blocking_findings, improvement_findings);
-}
-
-fn apply_persona_threshold(
-    persona: &str,
-    score: &PersonaReadinessScore,
-    blocking_findings: &mut Vec<ReadinessFinding>,
-    improvement_findings: &mut Vec<ReadinessFinding>,
-) {
-    if !matches!(score.gate_status, "fail" | "advisory") {
-        return;
-    }
-    let gate = if score.gate_status == "fail" {
-        "required_fail"
-    } else {
-        "advisory_fail"
-    };
-    let finding = ReadinessFinding {
-        severity: threshold_gate_to_finding_severity(gate),
-        category: "persona_score",
-        code: "persona_threshold_missed",
-        message: format!(
-            "{persona} readiness score {} ({}) missed its threshold",
-            score.overall_score, score.grade
-        ),
-        evidence: serde_json::json!({
-            "persona": persona,
-            "overall_score": score.overall_score,
-            "grade": score.grade,
-            "threshold": score.threshold
-        }),
-    };
-    push_threshold_finding(gate, finding, blocking_findings, improvement_findings);
-}
-
-fn push_threshold_finding(
-    gate: &'static str,
-    finding: ReadinessFinding,
-    blocking_findings: &mut Vec<ReadinessFinding>,
-    improvement_findings: &mut Vec<ReadinessFinding>,
-) {
-    if gate == "required_fail" {
-        blocking_findings.push(finding);
-    } else {
-        improvement_findings.push(finding);
-    }
-}
-
 fn parse_eval_status(inline: Option<&str>, path: Option<&str>) -> Result<EvalReadinessStatus> {
     let Some(raw) = raw_optional_input(inline, path)? else {
         return Ok(EvalReadinessStatus {
@@ -1632,66 +1456,6 @@ fn parse_eval_status(inline: Option<&str>, path: Option<&str>) -> Result<EvalRea
             .map(ToString::to_string),
         message,
     })
-}
-
-fn evaluate_threshold(
-    overall_score: u8,
-    grade: &str,
-    threshold: Option<&ThresholdRule>,
-) -> &'static str {
-    let Some(threshold) = threshold else {
-        return "pass";
-    };
-    let score_pass = threshold.min_score.is_none_or(|min| overall_score >= min);
-    let grade_pass = threshold
-        .min_grade
-        .as_deref()
-        .is_none_or(|min| grade_meets_threshold(grade, min));
-    if score_pass && grade_pass {
-        return "pass";
-    }
-    match threshold.severity {
-        ThresholdSeverity::Required => "required_fail",
-        ThresholdSeverity::Advisory => "advisory_fail",
-    }
-}
-
-fn grade_meets_threshold(actual: &str, minimum: &str) -> bool {
-    grade_rank(actual) >= grade_rank(minimum)
-}
-
-fn grade_rank(grade: &str) -> i8 {
-    match grade.trim().to_ascii_uppercase().as_str() {
-        "A" => 4,
-        "B" => 3,
-        "C" => 2,
-        "D" => 1,
-        _ => 0,
-    }
-}
-
-fn threshold_gate_to_report_gate(gate: &'static str) -> &'static str {
-    match gate {
-        "required_fail" => "fail",
-        "advisory_fail" => "advisory",
-        _ => "pass",
-    }
-}
-
-fn threshold_gate_to_finding_severity(gate: &'static str) -> &'static str {
-    if gate == "required_fail" {
-        "blocker"
-    } else {
-        "improvement"
-    }
-}
-
-fn applied_threshold(rule: &ThresholdRule) -> AppliedThreshold {
-    AppliedThreshold {
-        min_score: rule.min_score,
-        min_grade: rule.min_grade.clone(),
-        severity: rule.severity,
-    }
 }
 
 fn readiness_recommendation_from_json(value: &JsonValue) -> ReadinessRecommendation {
