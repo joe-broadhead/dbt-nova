@@ -18,10 +18,10 @@ agent clients unless the service is isolated and access controlled.
 
 Recommended hosted posture:
 
-- Use `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,reload_manifest,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest` for general-purpose hosted agent endpoints.
+- Use `DBT_NOVA_PRESET=hosted-discovery` for general-purpose hosted agent
+  endpoints.
 - Keep `execute_sql` and `run_recipe` denied for discovery-only endpoints.
-  Published container images set the full general-purpose hosted denylist by
-  default.
+  Published container images set `DBT_NOVA_PRESET=hosted-discovery` by default.
 - Leave `DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN` unset unless a trusted operator is
   intentionally pruning or cleaning storage.
 - Leave `DBT_NOVA_MCP_ENABLE_MANIFEST_WARM` unset unless a trusted operator is
@@ -45,13 +45,12 @@ The hosted acknowledgement is not needed for loopback binds.
 Recommended runtime env:
 
 ```bash
-export DBT_NOVA_SERVER_TRANSPORT=streamable_http
+export DBT_NOVA_PRESET=hosted-discovery
 export PORT=8080
 export DBT_NOVA_HTTP_PATH=/mcp
 export DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true
 export DBT_NOVA_HTTP_ALLOWED_HOSTS=nova.example.com
 export DBT_NOVA_HTTP_MAX_BODY_BYTES=16777216
-export DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,reload_manifest,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest
 export DBT_NOVA_STORAGE_DIR=/tmp/dbt-nova
 export DBT_NOVA_EMBEDDINGS_CACHE_DIR=/tmp/dbt-nova/models
 export DBT_NOVA_BOOTSTRAP_URI='https://example.invalid/bootstrap.json'
@@ -66,13 +65,17 @@ unset DBT_NOVA_STORAGE_READ_ONLY
 
 Why these defaults matter:
 
+- `DBT_NOVA_PRESET=hosted-discovery` selects streamable HTTP plus the lean
+  `agent` tool profile and hides SQL, recipe execution, eval execution/writes,
+  trace replay/write, manifest lifecycle, config inspection, and storage-admin
+  tools by default.
 - `PORT` lets Nova bind correctly on Cloud Run-style platforms.
 - `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` is required for non-loopback hosted binds and documents that an authenticating reverse proxy is in front of Nova.
 - `DBT_NOVA_HTTP_ALLOWED_HOSTS` allows the public/proxy `Host` header while the transport still rejects unexpected hosts.
 - `DBT_NOVA_HTTP_MAX_BODY_BYTES` caps request bodies before the mounted MCP transport buffers them; keep it bounded unless a stricter proxy limit is enforced.
-- `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,reload_manifest,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest`
-  keeps a hosted endpoint discovery-only and hides operator inspection tools
-  unless those capabilities are intentionally enabled.
+- Env vars override preset values, so `DBT_NOVA_TOOL_DENYLIST=` intentionally
+  clears the hosted denylist. Run `dbt-nova config validate --json` in deploy
+  smoke tests to inspect the effective checklist.
 - `DBT_NOVA_STORAGE_DIR=/tmp/dbt-nova` gives artifact hydration a writable local filesystem.
 - `DBT_NOVA_EMBEDDINGS_CACHE_DIR=/tmp/dbt-nova/models` keeps model cache resolution deterministic.
 - `DBT_NOVA_BOOTSTRAP_URI` should point at the stable bootstrap alias published by the reusable asset workflow.
@@ -80,11 +83,10 @@ Why these defaults matter:
 
 ## Hosted SQL-Enabled Profile
 
-Start from the discovery-only profile, then intentionally clear or customize
-`DBT_NOVA_TOOL_DENYLIST` and provide SQL provider credentials:
+Start from the SQL-trusted hosted preset, then provide SQL provider credentials:
 
 ```bash
-export DBT_NOVA_TOOL_DENYLIST=
+export DBT_NOVA_PRESET=hosted-sql-trusted
 export DBT_NOVA_SQL_PROVIDER=duckdb
 # Set the provider-specific warehouse/catalog credentials needed by your target.
 ```
@@ -92,6 +94,10 @@ export DBT_NOVA_SQL_PROVIDER=duckdb
 Use least-privilege warehouse credentials, keep row/byte/poll limits bounded, and
 serve the endpoint only through the same authenticating proxy requirement as the
 discovery-only profile.
+
+`hosted-sql-trusted` leaves `execute_sql` eligible through the `analyst` tool
+profile, but still denies recipe execution, eval execution/writes, trace
+replay/write, manifest lifecycle, config inspection, and storage-admin tools.
 
 Storage note:
 

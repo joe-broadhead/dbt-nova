@@ -68,6 +68,17 @@ curl -fsS http://127.0.0.1:8080/healthz
 curl -fsS http://127.0.0.1:8080/readyz
 ```
 
+Validate effective runtime posture before exposing a hosted process:
+
+```bash
+DBT_NOVA_PRESET=hosted-discovery \
+dbt-nova config validate --json
+```
+
+The JSON response includes the active preset, effective tool filters, exposed
+SQL/recipe/admin/write surfaces, hosted HTTP proxy acknowledgement, health
+metrics exposure, storage/artifact writability posture, and warnings.
+
 ## Common Examples
 
 ### Build and inspect manifest indexes

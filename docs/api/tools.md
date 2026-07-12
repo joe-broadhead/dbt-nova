@@ -1311,7 +1311,10 @@ Validate operator configuration.
 
 `validate_config` checks the active runtime configuration and returns the same
 structured validation payload as `dbt-nova config validate --json`, including
-the resolved `storage_instance_id` and `embedding_cache_dir`.
+the resolved `storage_instance_id`, `embedding_cache_dir`, active
+`runtime_preset`, and an operator checklist for effective tool filters,
+execution/admin/write exposure, hosted HTTP proxy posture, metrics exposure,
+storage/artifact writability, and warnings.
 
 ```json
 {"name":"validate_config","arguments":{}}

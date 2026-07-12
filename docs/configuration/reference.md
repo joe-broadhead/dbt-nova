@@ -12,6 +12,9 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 
 ## Core
 
+- `DBT_NOVA_PRESET` – optional runtime preset applied before other
+  `DBT_NOVA_*` env vars (`local-dev`, `ci-audit`, `hosted-discovery`, or
+  `hosted-sql-trusted`; default: `local-dev`)
 - `DBT_MANIFEST_PATH` – path to `manifest.json` (default: `manifest.json`)
 - `DBT_NOVA_MANIFEST_URI` – optional manifest URI (`file://`, `http(s)://`, `dbfs://`, `s3://`, `gs://`)
 - `DBT_NOVA_CATALOG_PATH` – optional dbt `catalog.json` path/URI for warehouse column types and stats; when unset, a local sibling `catalog.json` next to the resolved manifest is loaded if present
@@ -128,6 +131,8 @@ Remote manifest notes:
   Paginated MCP responses can include `_nova_result_meta.next_offset` whenever
   another page is available.
 - Tool filter examples:
+  - Named hosted discovery preset:
+    - `DBT_NOVA_PRESET=hosted-discovery`
   - Full backwards-compatible MCP catalog:
     - `DBT_NOVA_TOOL_PROFILE=all`
   - Operator/admin catalog:
@@ -135,7 +140,7 @@ Remote manifest notes:
   - Allowlist only (expose only discovery + entity lookup):
     - `DBT_NOVA_TOOL_ALLOWLIST=search,get_entity`
   - Denylist only (hosted discovery-only and non-admin posture):
-    - `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,reload_manifest,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest`
+    - `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,reload_manifest,warm_manifest,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,run_eval,init_eval_suite,run_agent_eval,summarize_tool_trace,redact_tool_trace,replay_tool_trace`
   - Deny operator/admin tools for normal agent clients:
     - `DBT_NOVA_TOOL_DENYLIST=show_config,validate_config,inspect_storage,prune_storage,cleanup_storage`
   - Combined with denylist precedence (effective exposed set: `search`):
@@ -146,7 +151,25 @@ Remote manifest notes:
   current source.
 - Destructive storage admin tools (`prune_storage`, `cleanup_storage`) are also
   disabled by default and require `DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN=1`.
-- Published container images default to `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,reload_manifest,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest` so hosted image starts are discovery-only and non-admin unless an operator clears or customizes the denylist.
+- Runtime preset precedence is deterministic:
+  `defaults -> DBT_NOVA_PRESET -> env vars -> CLI overrides -> validate`.
+  Env vars intentionally win over preset values, including an empty-but-present
+  `DBT_NOVA_TOOL_DENYLIST=`. Run `dbt-nova config validate --json` to inspect
+  the effective checklist.
+- Preset behavior:
+  - `local-dev`: current defaults.
+  - `ci-audit`: disables vector, sparse, and reranker semantic search by
+    default and denies `execute_sql`/`run_recipe`.
+  - `hosted-discovery`: selects streamable HTTP plus the `agent` tool profile
+    and denies SQL, recipe execution, eval execution/writes, trace replay/write,
+    manifest lifecycle, config inspection, and storage-admin tools.
+  - `hosted-sql-trusted`: selects streamable HTTP plus the `analyst` tool
+    profile, leaves `execute_sql` eligible, and denies recipe, eval,
+    trace-replay/write, manifest lifecycle, config inspection, and
+    storage-admin tools.
+- Published container images set `DBT_NOVA_PRESET=hosted-discovery` by default
+  so hosted image starts are discovery-only and non-admin unless an operator
+  overrides the preset or clears/customizes the denylist.
 - Streamable HTTP mode has **no built-in authentication**. Keep it bound to loopback for local use, or set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when an authenticating reverse proxy is enforcing access in front of dbt-nova. For hosted/proxied deployments, set `DBT_NOVA_HTTP_ALLOWED_HOSTS` to the public/proxy hostnames clients send in `Host`. Published container images do not set these acknowledgements by default.
 - Streamable HTTP mode applies a global request body cap before the mounted MCP transport reads request bodies. Keep `DBT_NOVA_HTTP_MAX_BODY_BYTES` bounded in hosted deployments unless an outer proxy enforces a stricter limit.
 - The MCP endpoint is mounted at `DBT_NOVA_HTTP_PATH`; plain probe endpoints are always available at `/healthz` and `/readyz`.

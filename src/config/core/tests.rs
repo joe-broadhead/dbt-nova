@@ -1,6 +1,9 @@
 use std::sync::{LazyLock, Mutex};
 
-use super::{ArtifactFetchPolicy, DbtNovaConfig, ResultProfile, ServerTransport};
+use super::{
+    ArtifactFetchPolicy, CI_AUDIT_TOOL_DENYLIST, DbtNovaConfig, HOSTED_DISCOVERY_TOOL_DENYLIST,
+    HOSTED_SQL_TRUSTED_TOOL_DENYLIST, ResultProfile, RuntimePreset, ServerTransport,
+};
 
 static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -9,6 +12,43 @@ fn base_config() -> DbtNovaConfig {
         manifest_uri: "file:///tmp/manifest.json".to_string(),
         ..DbtNovaConfig::default()
     }
+}
+
+fn with_env_vars<R>(vars: &[(&str, Option<&str>)], run: impl FnOnce() -> R) -> R {
+    let _guard = ENV_LOCK.lock().expect("env lock");
+    let previous = vars
+        .iter()
+        .map(|(key, _)| (*key, std::env::var(key).ok()))
+        .collect::<Vec<_>>();
+    for (key, value) in vars {
+        match value {
+            Some(value) => {
+                // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                unsafe { std::env::set_var(key, value) };
+            }
+            None => {
+                // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                unsafe { std::env::remove_var(key) };
+            }
+        }
+    }
+
+    let result = run();
+
+    for (key, value) in previous {
+        match value {
+            Some(value) => {
+                // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                unsafe { std::env::set_var(key, value) };
+            }
+            None => {
+                // SAFETY: tests serialize environment mutation with `ENV_LOCK`.
+                unsafe { std::env::remove_var(key) };
+            }
+        }
+    }
+
+    result
 }
 
 #[test]
@@ -47,6 +87,106 @@ fn server_transport_parse_is_case_insensitive() {
         Some(ServerTransport::StreamableHttp)
     );
     assert_eq!(ServerTransport::parse("unknown"), None);
+}
+
+#[test]
+fn runtime_preset_parse_accepts_documented_names() {
+    assert_eq!(
+        RuntimePreset::parse("local-dev"),
+        Some(RuntimePreset::LocalDev)
+    );
+    assert_eq!(
+        RuntimePreset::parse("ci_audit"),
+        Some(RuntimePreset::CiAudit)
+    );
+    assert_eq!(
+        RuntimePreset::parse("hosted-discovery"),
+        Some(RuntimePreset::HostedDiscovery)
+    );
+    assert_eq!(
+        RuntimePreset::parse("hosted_sql_trusted"),
+        Some(RuntimePreset::HostedSqlTrusted)
+    );
+    assert_eq!(RuntimePreset::parse("semantic-layer"), None);
+}
+
+#[test]
+fn runtime_presets_apply_conservative_metadata_bridge_postures() {
+    let mut config = DbtNovaConfig::default();
+    config.apply_runtime_preset(RuntimePreset::CiAudit);
+    assert_eq!(config.runtime_preset, RuntimePreset::CiAudit);
+    assert!(!config.search.enable_vector_search);
+    assert!(!config.search.enable_sparse_search);
+    assert!(!config.search.enable_reranker);
+    assert_eq!(
+        config.parsed_tool_denylist(),
+        CI_AUDIT_TOOL_DENYLIST
+            .iter()
+            .map(|tool| (*tool).to_string())
+            .collect::<Vec<_>>()
+    );
+
+    let mut config = DbtNovaConfig::default();
+    config.apply_runtime_preset(RuntimePreset::HostedDiscovery);
+    assert_eq!(config.server_transport, ServerTransport::StreamableHttp);
+    assert_eq!(config.tool_profile, "agent");
+    assert!(
+        config
+            .parsed_tool_denylist()
+            .contains(&"execute_sql".to_string())
+    );
+    assert!(
+        config
+            .parsed_tool_denylist()
+            .contains(&"validate_config".to_string())
+    );
+    assert_eq!(
+        config.parsed_tool_denylist().len(),
+        HOSTED_DISCOVERY_TOOL_DENYLIST.len()
+    );
+
+    let mut config = DbtNovaConfig::default();
+    config.apply_runtime_preset(RuntimePreset::HostedSqlTrusted);
+    let denylist = config.parsed_tool_denylist();
+    assert_eq!(config.server_transport, ServerTransport::StreamableHttp);
+    assert_eq!(config.tool_profile, "analyst");
+    assert!(!denylist.contains(&"execute_sql".to_string()));
+    assert!(denylist.contains(&"run_recipe".to_string()));
+    assert_eq!(denylist.len(), HOSTED_SQL_TRUSTED_TOOL_DENYLIST.len());
+}
+
+#[test]
+fn from_env_applies_preset_before_env_overrides() {
+    let config = with_env_vars(
+        &[
+            ("DBT_NOVA_PRESET", Some("ci-audit")),
+            ("DBT_NOVA_SEARCH_ENABLE_VECTOR", Some("true")),
+            ("DBT_NOVA_SEARCH_ENABLE_SPARSE", Some("true")),
+            ("DBT_NOVA_TOOL_PROFILE", Some("all")),
+            ("DBT_NOVA_TOOL_DENYLIST", Some("")),
+        ],
+        DbtNovaConfig::from_env,
+    );
+
+    assert_eq!(config.runtime_preset, RuntimePreset::CiAudit);
+    assert!(config.search.enable_vector_search);
+    assert!(config.search.enable_sparse_search);
+    assert!(!config.search.enable_reranker);
+    assert_eq!(config.tool_profile, "all");
+    assert!(config.parsed_tool_denylist().is_empty());
+}
+
+#[test]
+fn from_env_records_invalid_runtime_preset() {
+    let config = with_env_vars(
+        &[("DBT_NOVA_PRESET", Some("semantic-layer"))],
+        DbtNovaConfig::from_env,
+    );
+
+    let error = config
+        .validate()
+        .expect_err("invalid preset should fail validation");
+    assert!(error.to_string().contains("DBT_NOVA_PRESET"));
 }
 
 #[test]

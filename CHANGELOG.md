@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added fixture-backed contract tests for `agent_readiness.v1` and
   `agent_modelling.v1` payload shapes, including queryability execution-surface
   evidence.
+- Added v0.0.x runtime presets (`local-dev`, `ci-audit`, `hosted-discovery`,
+  and `hosted-sql-trusted`) plus a `config validate` posture checklist for
+  effective tool filters, hosted HTTP proxy posture, and storage/artifact
+  writability.
 - Added response-only `direct_sql_queryable` metadata to `search_indicator` and
   `indicator_inventory` so agents can distinguish relation-backed SQL surfaces
   from Semantic Layer-backed indicators that require MetricFlow/dbt Semantic

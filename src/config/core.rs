@@ -252,11 +252,94 @@ impl ResultProfile {
     }
 }
 
+/// Runtime deployment presets applied before environment overrides.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum RuntimePreset {
+    /// Current local/default behavior.
+    #[default]
+    LocalDev,
+    /// Offline-friendly audit posture for CI metadata checks.
+    CiAudit,
+    /// Hosted discovery posture with execution/admin/write tools hidden by default.
+    HostedDiscovery,
+    /// Hosted trusted analyst posture with direct SQL available and admin/write tools hidden.
+    HostedSqlTrusted,
+}
+
+impl RuntimePreset {
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "local-dev" | "local_dev" | "local" => Some(Self::LocalDev),
+            "ci-audit" | "ci_audit" | "ci" => Some(Self::CiAudit),
+            "hosted-discovery" | "hosted_discovery" | "hosted" => Some(Self::HostedDiscovery),
+            "hosted-sql-trusted" | "hosted_sql_trusted" | "hosted-sql" | "hosted_sql" => {
+                Some(Self::HostedSqlTrusted)
+            }
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::LocalDev => "local-dev",
+            Self::CiAudit => "ci-audit",
+            Self::HostedDiscovery => "hosted-discovery",
+            Self::HostedSqlTrusted => "hosted-sql-trusted",
+        }
+    }
+}
+
+pub const CI_AUDIT_TOOL_DENYLIST: &[&str] = &["execute_sql", "run_recipe"];
+
+pub const HOSTED_DISCOVERY_TOOL_DENYLIST: &[&str] = &[
+    "execute_sql",
+    "run_recipe",
+    "reload_manifest",
+    "warm_manifest",
+    "show_config",
+    "validate_config",
+    "inspect_storage",
+    "prune_storage",
+    "cleanup_storage",
+    "run_eval",
+    "init_eval_suite",
+    "run_agent_eval",
+    "summarize_tool_trace",
+    "redact_tool_trace",
+    "replay_tool_trace",
+];
+
+pub const HOSTED_SQL_TRUSTED_TOOL_DENYLIST: &[&str] = &[
+    "run_recipe",
+    "reload_manifest",
+    "warm_manifest",
+    "show_config",
+    "validate_config",
+    "inspect_storage",
+    "prune_storage",
+    "cleanup_storage",
+    "run_eval",
+    "init_eval_suite",
+    "run_agent_eval",
+    "summarize_tool_trace",
+    "redact_tool_trace",
+    "replay_tool_trace",
+];
+
+fn tool_name_csv(tools: &[&str]) -> String {
+    tools.join(",")
+}
+
 /// Configuration for the dbt-nova server.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct DbtNovaConfig {
+    /// Runtime preset applied before environment overrides.
+    pub runtime_preset: RuntimePreset,
     /// Path to the dbt `manifest.json` file
     pub manifest_path: String,
     /// True when `manifest_path` was set explicitly by env/CLI/user config.
@@ -423,6 +506,7 @@ pub struct DbtNovaConfig {
 impl Default for DbtNovaConfig {
     fn default() -> Self {
         Self {
+            runtime_preset: RuntimePreset::LocalDev,
             manifest_path: "manifest.json".to_string(),
             manifest_path_explicit: false,
             catalog_path: String::new(),
@@ -533,6 +617,30 @@ fn default_governance_required_fields() -> HashMap<String, Vec<String>> {
 }
 
 impl DbtNovaConfig {
+    /// Apply a runtime preset before environment or CLI overrides.
+    pub fn apply_runtime_preset(&mut self, preset: RuntimePreset) {
+        self.runtime_preset = preset;
+        match preset {
+            RuntimePreset::LocalDev => {}
+            RuntimePreset::CiAudit => {
+                self.search.enable_vector_search = false;
+                self.search.enable_sparse_search = false;
+                self.search.enable_reranker = false;
+                self.tool_denylist = tool_name_csv(CI_AUDIT_TOOL_DENYLIST);
+            }
+            RuntimePreset::HostedDiscovery => {
+                self.server_transport = ServerTransport::StreamableHttp;
+                self.tool_profile = DEFAULT_MCP_TOOL_PROFILE.to_string();
+                self.tool_denylist = tool_name_csv(HOSTED_DISCOVERY_TOOL_DENYLIST);
+            }
+            RuntimePreset::HostedSqlTrusted => {
+                self.server_transport = ServerTransport::StreamableHttp;
+                self.tool_profile = "analyst".to_string();
+                self.tool_denylist = tool_name_csv(HOSTED_SQL_TRUSTED_TOOL_DENYLIST);
+            }
+        }
+    }
+
     /// Whether manifest pruning is enabled.
     #[must_use]
     pub fn manifest_pruning_enabled(&self) -> bool {
@@ -992,6 +1100,7 @@ impl DbtNovaConfig {
     #[must_use]
     pub fn from_env() -> Self {
         let mut config = Self::default();
+        config.apply_runtime_preset_env();
         config.apply_manifest_env();
         config.apply_artifact_env();
         config.apply_storage_env();
@@ -1003,10 +1112,26 @@ impl DbtNovaConfig {
         config.apply_agent_modelling_env();
 
         config.column_lineage = ColumnLineageConfig::from_env();
-        config.search = SearchConfig::from_env();
+        config.search.apply_env();
         config.metadata_score = MetadataScoreConfig::from_env();
 
         config
+    }
+
+    fn apply_runtime_preset_env(&mut self) {
+        let Some(value) = env_string("DBT_NOVA_PRESET") else {
+            return;
+        };
+        if value.trim().is_empty() {
+            return;
+        }
+        if let Some(preset) = RuntimePreset::parse(&value) {
+            self.apply_runtime_preset(preset);
+        } else {
+            self.env_errors.push(format!(
+                "Invalid DBT_NOVA_PRESET value '{value}'; expected local-dev|ci-audit|hosted-discovery|hosted-sql-trusted"
+            ));
+        }
     }
 
     fn apply_manifest_env(&mut self) {

@@ -342,8 +342,9 @@ dbt-nova tool call reload_manifest \
 ```
 
 For hosted `streamable_http` deployments, front dbt-nova with an authenticating
-reverse proxy, set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true`, and set
-`DBT_NOVA_HTTP_ALLOWED_HOSTS` to the expected public/proxy hostnames. See
+reverse proxy, start from `DBT_NOVA_PRESET=hosted-discovery`, set
+`DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true`, and set `DBT_NOVA_HTTP_ALLOWED_HOSTS` to
+the expected public/proxy hostnames. See
 **[Hosted Deployment](docs/operations/hosted-deployment.md)**.
 
 ## Release Size

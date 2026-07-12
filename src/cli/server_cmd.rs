@@ -82,13 +82,30 @@ pub async fn start_with_config(config: DbtNovaConfig) -> Result<()> {
 }
 
 fn build_start_config(args: &ServerStartArgs) -> DbtNovaConfig {
-    let mut config = DbtNovaConfig::from_env();
     let explicit_env_http_host = std::env::var("DBT_NOVA_HTTP_HOST")
         .ok()
         .is_some_and(|value| !value.trim().is_empty());
     let explicit_env_http_port = std::env::var("DBT_NOVA_HTTP_PORT")
         .ok()
         .and_then(|value| value.parse::<u16>().ok());
+    apply_start_args(
+        DbtNovaConfig::from_env(),
+        args,
+        explicit_env_http_host,
+        explicit_env_http_port.is_some(),
+        std::env::var("PORT")
+            .ok()
+            .and_then(|value| value.parse().ok()),
+    )
+}
+
+fn apply_start_args(
+    mut config: DbtNovaConfig,
+    args: &ServerStartArgs,
+    explicit_env_http_host: bool,
+    explicit_env_http_port: bool,
+    platform_port: Option<u16>,
+) -> DbtNovaConfig {
     if let Some(transport) = args.transport {
         config.server_transport = match transport {
             ServerTransportArg::Stdio => ServerTransport::Stdio,
@@ -116,14 +133,8 @@ fn build_start_config(args: &ServerStartArgs) -> DbtNovaConfig {
         .as_ref()
         .is_some_and(|host| !host.trim().is_empty())
         || explicit_env_http_host;
-    let explicit_http_port = args.http_port.is_some() || explicit_env_http_port.is_some();
-    config.apply_http_platform_port_fallback(
-        explicit_http_host,
-        explicit_http_port,
-        std::env::var("PORT")
-            .ok()
-            .and_then(|value| value.parse().ok()),
-    );
+    let explicit_http_port = args.http_port.is_some() || explicit_env_http_port;
+    config.apply_http_platform_port_fallback(explicit_http_host, explicit_http_port, platform_port);
     config
 }
 
@@ -362,9 +373,11 @@ mod tests {
     use tokio::net::TcpListener;
     use tokio_util::sync::CancellationToken;
 
-    use super::{HttpServerSettings, build_start_config, start_with_config_and_shutdown};
+    use super::{
+        HttpServerSettings, apply_start_args, build_start_config, start_with_config_and_shutdown,
+    };
     use crate::cli::args::{ServerStartArgs, ServerTransportArg};
-    use crate::config::{DbtNovaConfig, SearchConfig, ServerTransport};
+    use crate::config::{DbtNovaConfig, RuntimePreset, SearchConfig, ServerTransport};
     use crate::tests::common::fixture_manifest_path_string;
 
     static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -420,6 +433,37 @@ mod tests {
         assert_eq!(config.http_port, 9090);
         assert_eq!(config.http_path, "/mcp");
         assert!(!config.http_stateful_mode);
+    }
+
+    #[test]
+    fn apply_start_args_applies_cli_overrides_after_runtime_preset() {
+        let mut base = DbtNovaConfig::default();
+        base.apply_runtime_preset(RuntimePreset::HostedDiscovery);
+        let config = apply_start_args(
+            base,
+            &ServerStartArgs {
+                transport: Some(ServerTransportArg::Stdio),
+                http_host: Some("127.0.0.1".to_string()),
+                http_port: Some(7777),
+                http_path: Some("/agent".to_string()),
+                http_stateful_mode: Some(false),
+            },
+            false,
+            false,
+            None,
+        );
+
+        assert_eq!(config.runtime_preset, RuntimePreset::HostedDiscovery);
+        assert_eq!(config.server_transport, ServerTransport::Stdio);
+        assert_eq!(config.http_host, "127.0.0.1");
+        assert_eq!(config.http_port, 7777);
+        assert_eq!(config.http_path, "/agent");
+        assert!(!config.http_stateful_mode);
+        assert!(
+            config
+                .parsed_tool_denylist()
+                .contains(&"execute_sql".to_string())
+        );
     }
 
     #[test]

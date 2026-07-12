@@ -5,7 +5,7 @@ use serde_json::Value as JsonValue;
 
 use crate::cli::args::{ConfigShowArgs, ConfigValidateArgs};
 use crate::cli::output::{CliEnvelope, error_envelope};
-use crate::config::DbtNovaConfig;
+use crate::config::{ArtifactFetchPolicy, DbtNovaConfig, RuntimePreset, ServerTransport};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::bootstrap::prepare_runtime_config;
 use crate::params::{ConfigShowParams, ConfigValidateParams};
@@ -17,8 +17,76 @@ use super::{DispatchError, DispatchResult};
 #[derive(Debug, Serialize)]
 pub struct ConfigValidateData {
     pub valid: bool,
+    pub runtime_preset: String,
     pub storage_instance_id: String,
     pub embedding_cache_dir: String,
+    pub checklist: ConfigValidationChecklist,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ConfigValidationChecklist {
+    pub tool_profile: String,
+    pub tool_allowlist: Vec<String>,
+    pub tool_denylist: Vec<String>,
+    pub exposed_tool_count: usize,
+    pub tool_exposure: ToolExposureChecklist,
+    pub hosted_http: HostedHttpChecklist,
+    pub metrics: MetricsPosture,
+    pub storage: StoragePosture,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ToolExposureChecklist {
+    pub execution: ExecutionToolExposure,
+    pub operations: OperationalToolExposure,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExecutionToolExposure {
+    pub sql_execution_exposed: bool,
+    pub recipe_execution_exposed: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OperationalToolExposure {
+    pub admin_tools_exposed: bool,
+    pub write_tools_exposed: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct HostedHttpChecklist {
+    pub enabled: bool,
+    pub host: String,
+    pub port: u16,
+    pub path: String,
+    pub non_loopback: bool,
+    pub auth_proxy_acknowledged: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MetricsPosture {
+    pub health_tool_exposed: bool,
+    pub posture: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StoragePosture {
+    pub access: StorageAccessPosture,
+    pub artifacts: StorageArtifactPosture,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StorageAccessPosture {
+    pub read_only: bool,
+    pub local_writes_allowed: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StorageArtifactPosture {
+    pub remote_artifact_mode: bool,
+    pub bootstrap_configured: bool,
+    pub artifact_fetch_policy: ArtifactFetchPolicy,
 }
 
 /// Builds the shared MCP/CLI-tool response for config inspection.
@@ -48,11 +116,7 @@ pub fn build_config_validate_tool_response(
     _params: &ConfigValidateParams,
 ) -> Result<JsonValue> {
     let config = validate_runtime_config(active_config.clone())?;
-    let payload = ConfigValidateData {
-        valid: true,
-        storage_instance_id: config.storage_instance_id.clone(),
-        embedding_cache_dir: config.search.embedding_cache_dir.clone(),
-    };
+    let payload = build_config_validate_payload(&config);
     serde_json::to_value(SuccessResponse::new(payload, 1))
         .map_err(|error| DbtNovaError::ServerError(error.to_string()))
 }
@@ -96,11 +160,7 @@ pub fn run_validate_command(args: &ConfigValidateArgs) -> DispatchResult {
     let config = validate_runtime_config(DbtNovaConfig::from_env())
         .map_err(|error| render_or_propagate_error(args, error, started.elapsed().as_millis()))?;
 
-    let payload = ConfigValidateData {
-        valid: true,
-        storage_instance_id: config.storage_instance_id.clone(),
-        embedding_cache_dir: config.search.embedding_cache_dir.clone(),
-    };
+    let payload = build_config_validate_payload(&config);
 
     if args.json {
         let envelope =
@@ -112,8 +172,54 @@ pub fn run_validate_command(args: &ConfigValidateArgs) -> DispatchResult {
         println!("{out}");
     } else {
         println!("config is valid");
+        println!("  runtime_preset: {}", payload.runtime_preset);
         println!("  storage_instance_id: {}", payload.storage_instance_id);
         println!("  embedding_cache_dir: {}", payload.embedding_cache_dir);
+        println!("  tool_profile: {}", payload.checklist.tool_profile);
+        println!(
+            "  exposed_tool_count: {}",
+            payload.checklist.exposed_tool_count
+        );
+        println!(
+            "  sql_execution_exposed: {}",
+            payload
+                .checklist
+                .tool_exposure
+                .execution
+                .sql_execution_exposed
+        );
+        println!(
+            "  recipe_execution_exposed: {}",
+            payload
+                .checklist
+                .tool_exposure
+                .execution
+                .recipe_execution_exposed
+        );
+        println!(
+            "  admin_tools_exposed: {}",
+            payload
+                .checklist
+                .tool_exposure
+                .operations
+                .admin_tools_exposed
+        );
+        println!(
+            "  write_tools_exposed: {}",
+            payload
+                .checklist
+                .tool_exposure
+                .operations
+                .write_tools_exposed
+        );
+        if payload.checklist.warnings.is_empty() {
+            println!("  warnings: none");
+        } else {
+            println!("  warnings:");
+            for warning in &payload.checklist.warnings {
+                println!("    - {warning}");
+            }
+        }
     }
 
     Ok(())
@@ -153,6 +259,139 @@ fn redacted_config_show_value(config: &DbtNovaConfig) -> Result<JsonValue> {
         .map_err(|error| DbtNovaError::ServerError(error.to_string()))?;
     redact_config_value(&mut value, None);
     Ok(value)
+}
+
+fn build_config_validate_payload(config: &DbtNovaConfig) -> ConfigValidateData {
+    ConfigValidateData {
+        valid: true,
+        runtime_preset: config.runtime_preset.as_str().to_string(),
+        storage_instance_id: config.storage_instance_id.clone(),
+        embedding_cache_dir: config.search.embedding_cache_dir.clone(),
+        checklist: build_validation_checklist(config),
+    }
+}
+
+fn build_validation_checklist(config: &DbtNovaConfig) -> ConfigValidationChecklist {
+    let exposed_tools = config.resolved_mcp_tool_names();
+    let tool_allowlist = config.parsed_tool_allowlist().unwrap_or_default();
+    let tool_denylist = config.parsed_tool_denylist();
+    let hosted_http = HostedHttpChecklist {
+        enabled: config.server_transport == ServerTransport::StreamableHttp,
+        host: config.http_host.clone(),
+        port: config.http_port,
+        path: config.http_path.clone(),
+        non_loopback: config.http_transport_binds_non_loopback(),
+        auth_proxy_acknowledged: config.http_expect_auth_proxy,
+    };
+    let metrics = MetricsPosture {
+        health_tool_exposed: exposed_tools.contains("health"),
+        posture: if exposed_tools.contains("health") {
+            "health_tool_exposes_in_memory_tool_metrics".to_string()
+        } else {
+            "not_exposed_through_mcp_tool_catalog".to_string()
+        },
+    };
+    let storage = StoragePosture {
+        access: StorageAccessPosture {
+            read_only: config.storage_read_only,
+            local_writes_allowed: !config.storage_read_only,
+        },
+        artifacts: StorageArtifactPosture {
+            remote_artifact_mode: config.remote_artifact_mode_enabled(),
+            bootstrap_configured: !config.bootstrap_uri.trim().is_empty(),
+            artifact_fetch_policy: config.artifact_fetch_policy,
+        },
+    };
+    let warnings = validation_checklist_warnings(
+        config.runtime_preset,
+        &tool_denylist,
+        hosted_http.non_loopback,
+        &exposed_tools,
+    );
+
+    ConfigValidationChecklist {
+        tool_profile: config.tool_profile.clone(),
+        tool_allowlist,
+        tool_denylist,
+        exposed_tool_count: exposed_tools.len(),
+        tool_exposure: ToolExposureChecklist {
+            execution: ExecutionToolExposure {
+                sql_execution_exposed: exposed_tools.contains("execute_sql"),
+                recipe_execution_exposed: exposed_tools.contains("run_recipe"),
+            },
+            operations: OperationalToolExposure {
+                admin_tools_exposed: contains_any(
+                    &exposed_tools,
+                    &[
+                        "reload_manifest",
+                        "warm_manifest",
+                        "show_config",
+                        "validate_config",
+                        "inspect_storage",
+                        "prune_storage",
+                        "cleanup_storage",
+                    ],
+                ),
+                write_tools_exposed: contains_any(
+                    &exposed_tools,
+                    &[
+                        "run_recipe",
+                        "reload_manifest",
+                        "warm_manifest",
+                        "init_eval_suite",
+                        "run_eval",
+                        "run_agent_eval",
+                        "summarize_tool_trace",
+                        "redact_tool_trace",
+                        "replay_tool_trace",
+                        "prune_storage",
+                        "cleanup_storage",
+                    ],
+                ),
+            },
+        },
+        hosted_http,
+        metrics,
+        storage,
+        warnings,
+    }
+}
+
+fn validation_checklist_warnings(
+    runtime_preset: RuntimePreset,
+    tool_denylist: &[String],
+    non_loopback_http: bool,
+    exposed_tools: &std::collections::BTreeSet<String>,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if matches!(
+        runtime_preset,
+        RuntimePreset::HostedDiscovery | RuntimePreset::HostedSqlTrusted
+    ) && non_loopback_http
+        && tool_denylist.is_empty()
+    {
+        warnings.push(
+            "hosted preset is bound to a non-loopback address with an empty tool denylist; confirm an outer policy intentionally exposes execution/admin surfaces"
+                .to_string(),
+        );
+    }
+    if runtime_preset == RuntimePreset::HostedDiscovery && exposed_tools.contains("execute_sql") {
+        warnings.push(
+            "hosted-discovery currently exposes execute_sql after overrides; keep SQL hidden unless this deployment is intentionally trusted"
+                .to_string(),
+        );
+    }
+    if runtime_preset == RuntimePreset::HostedSqlTrusted && !exposed_tools.contains("execute_sql") {
+        warnings.push(
+            "hosted-sql-trusted does not expose execute_sql after overrides; agents will have discovery-only SQL posture"
+                .to_string(),
+        );
+    }
+    warnings
+}
+
+fn contains_any(values: &std::collections::BTreeSet<String>, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| values.contains(*needle))
 }
 
 fn redact_config_value(value: &mut JsonValue, key: Option<&str>) {
@@ -224,7 +463,7 @@ mod tests {
         validate_runtime_config,
     };
     use crate::cli::args::ConfigShowArgs;
-    use crate::config::DbtNovaConfig;
+    use crate::config::{DbtNovaConfig, RuntimePreset, ServerTransport};
     use crate::params::{ConfigShowParams, ConfigValidateParams};
     use tempfile::TempDir;
 
@@ -339,8 +578,63 @@ mod tests {
 
         assert_eq!(response["success"], serde_json::json!(true));
         assert_eq!(response["data"]["valid"], serde_json::json!(true));
+        assert_eq!(
+            response["data"]["runtime_preset"],
+            serde_json::json!("local-dev")
+        );
         assert!(response["data"]["storage_instance_id"].is_string());
         assert!(response["data"]["embedding_cache_dir"].is_string());
+        assert_eq!(
+            response["data"]["checklist"]["tool_profile"],
+            serde_json::json!("agent")
+        );
+        assert!(response["data"]["checklist"]["tool_denylist"].is_array());
+        assert!(response["data"]["checklist"]["hosted_http"]["enabled"].is_boolean());
+        assert!(response["data"]["checklist"]["metrics"]["posture"].is_string());
+        assert!(
+            response["data"]["checklist"]["storage"]["access"]["local_writes_allowed"].is_boolean()
+        );
+    }
+
+    #[test]
+    fn config_validate_warns_for_hosted_preset_with_empty_non_loopback_denylist() {
+        let config = DbtNovaConfig {
+            runtime_preset: RuntimePreset::HostedDiscovery,
+            server_transport: ServerTransport::StreamableHttp,
+            http_host: "0.0.0.0".to_string(),
+            http_expect_auth_proxy: true,
+            tool_profile: "all".to_string(),
+            tool_denylist: String::new(),
+            ..DbtNovaConfig::default()
+        };
+
+        let response =
+            build_config_validate_tool_response(&config, &ConfigValidateParams::default())
+                .expect("config validate response");
+
+        assert_eq!(response["success"], serde_json::json!(true));
+        assert_eq!(
+            response["data"]["checklist"]["hosted_http"]["non_loopback"],
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            response["data"]["checklist"]["hosted_http"]["auth_proxy_acknowledged"],
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            response["data"]["checklist"]["tool_exposure"]["execution"]["sql_execution_exposed"],
+            serde_json::json!(true)
+        );
+        let warnings = response["data"]["checklist"]["warnings"]
+            .as_array()
+            .expect("warnings array");
+        assert!(
+            warnings.iter().any(|warning| warning
+                .as_str()
+                .unwrap_or_default()
+                .contains("empty tool denylist")),
+            "expected hosted empty-denylist warning: {warnings:#?}"
+        );
     }
 
     #[test]
