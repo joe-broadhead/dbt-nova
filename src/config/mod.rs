@@ -4,11 +4,13 @@
 //! - `core`: Core settings (manifest, storage, logging)
 //! - `search`: Search configuration and persona weights
 //! - `column_lineage`: Column lineage tracing settings
+//! - `hosted_auth`: Default-off hosted HTTP authentication config skeleton
 //! - `metadata_score`: Metadata scoring configuration
 //! - `warehouse`: Warehouse connection settings
 
 pub mod column_lineage;
 pub mod core;
+pub mod hosted_auth;
 pub mod metadata_score;
 pub mod search;
 pub mod warehouse;
@@ -18,9 +20,10 @@ pub use column_lineage::{
 };
 pub use core::{
     AgentModellingAuditConfig, AgentReadinessConfig, AgentReadinessModellingConfig,
-    ArtifactFetchPolicy, DbtNovaConfig, GovernanceGateConfig, HostedAuthConfig, HostedAuthMode,
-    ResultProfile, RuntimePreset, ServerTransport,
+    ArtifactFetchPolicy, DbtNovaConfig, GovernanceGateConfig, ResultProfile, RuntimePreset,
+    ServerTransport,
 };
+pub use hosted_auth::{HostedAuthConfig, HostedAuthMode};
 pub use metadata_score::{
     MetadataCategoryWeights, MetadataScoreConfig, MetadataScoreWeightProfiles,
 };
