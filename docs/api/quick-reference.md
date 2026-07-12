@@ -2,7 +2,8 @@
 
 One-page cheatsheet for the canonical catalog of 53 MCP tools. Runtime
 server exposure may be narrowed by `DBT_NOVA_TOOL_PROFILE`, allowlist, or
-denylist.
+denylist. See [Tools Reference](tools.md#stability-and-profiles) for the
+machine-checked stability tier, profile, and safety-gate matrix.
 
 ## Discovery
 

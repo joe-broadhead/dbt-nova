@@ -239,6 +239,186 @@ pub fn mcp_tool_profile_names(profile: &str) -> Option<&'static [&'static str]> 
     }
 }
 
+/// Public contract tier for a canonical MCP tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpToolStability {
+    /// Stable fields follow v0.0.x additive-compatibility rules.
+    Stable,
+    /// Stable fields plus explicit opt-in safety gates for execution or mutation.
+    StableGated,
+}
+
+impl McpToolStability {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Stable => "Stable",
+            Self::StableGated => "StableGated",
+        }
+    }
+}
+
+/// Machine-readable contract metadata for each canonical MCP tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct McpToolContract {
+    pub tool: &'static str,
+    pub stability: McpToolStability,
+    pub safety_gate: Option<&'static str>,
+    pub docs_anchor: &'static str,
+}
+
+macro_rules! mcp_tool_contract {
+    ($tool:literal, Stable, $docs_anchor:literal) => {
+        McpToolContract {
+            tool: $tool,
+            stability: McpToolStability::Stable,
+            safety_gate: None,
+            docs_anchor: $docs_anchor,
+        }
+    };
+    ($tool:literal, StableGated, $safety_gate:expr, $docs_anchor:literal) => {
+        McpToolContract {
+            tool: $tool,
+            stability: McpToolStability::StableGated,
+            safety_gate: Some($safety_gate),
+            docs_anchor: $docs_anchor,
+        }
+    };
+}
+
+pub const MCP_TOOL_CONTRACTS: [McpToolContract; 53] = [
+    mcp_tool_contract!("search", Stable, "#search"),
+    mcp_tool_contract!("search_indicator", Stable, "#search_indicator"),
+    mcp_tool_contract!("indicator_inventory", Stable, "#indicator_inventory"),
+    mcp_tool_contract!("search_columns", Stable, "#search_columns"),
+    mcp_tool_contract!("column_inventory", Stable, "#column_inventory"),
+    mcp_tool_contract!("compare_grains", Stable, "#compare_grains"),
+    mcp_tool_contract!("find_entity_overlap", Stable, "#find_entity_overlap"),
+    mcp_tool_contract!(
+        "modelling_consistency_report",
+        Stable,
+        "#modelling_consistency_report"
+    ),
+    mcp_tool_contract!("get_entity", Stable, "#get_entity"),
+    mcp_tool_contract!("list_entities", Stable, "#list_entities"),
+    mcp_tool_contract!("get_lineage", Stable, "#get_lineage"),
+    mcp_tool_contract!("get_sql", Stable, "#get_sql"),
+    mcp_tool_contract!("get_columns", Stable, "#get_columns"),
+    mcp_tool_contract!("diff_entities", Stable, "#diff_entities"),
+    mcp_tool_contract!("get_impact", Stable, "#get_impact"),
+    mcp_tool_contract!("validate_dag", Stable, "#validate_dag"),
+    mcp_tool_contract!("validate_nova_meta", Stable, "#validate_nova_meta"),
+    mcp_tool_contract!("validate_eval_suite", Stable, "#validate_eval_suite"),
+    mcp_tool_contract!("get_eval_gate", Stable, "#get_eval_gate"),
+    mcp_tool_contract!("get_eval_history", Stable, "#get_eval_history"),
+    mcp_tool_contract!("compare_eval_runs", Stable, "#compare_eval_runs"),
+    mcp_tool_contract!(
+        "run_eval",
+        StableGated,
+        "DBT_NOVA_MCP_ENABLE_EVAL_RUN",
+        "#run_eval"
+    ),
+    mcp_tool_contract!(
+        "init_eval_suite",
+        StableGated,
+        "DBT_NOVA_MCP_ENABLE_EVAL_WRITES",
+        "#init_eval_suite"
+    ),
+    mcp_tool_contract!(
+        "run_agent_eval",
+        StableGated,
+        "DBT_NOVA_MCP_ENABLE_AGENT_EVAL; DBT_NOVA_MCP_ENABLE_CUSTOM_AGENT_PROVIDER for custom commands",
+        "#run_agent_eval"
+    ),
+    mcp_tool_contract!("inspect_tool_trace", Stable, "#inspect_tool_trace"),
+    mcp_tool_contract!(
+        "summarize_tool_trace",
+        StableGated,
+        "DBT_NOVA_MCP_ENABLE_TRACE_WRITES for Markdown report writes",
+        "#summarize_tool_trace"
+    ),
+    mcp_tool_contract!(
+        "redact_tool_trace",
+        StableGated,
+        "DBT_NOVA_MCP_ENABLE_TRACE_WRITES",
+        "#redact_tool_trace"
+    ),
+    mcp_tool_contract!("replay_tool_trace", Stable, "#replay_tool_trace"),
+    mcp_tool_contract!("show_metadata", Stable, "#show_metadata"),
+    mcp_tool_contract!("health", Stable, "#health"),
+    mcp_tool_contract!(
+        "reload_manifest",
+        StableGated,
+        "DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD for source, refresh, or storage changes",
+        "#reload_manifest"
+    ),
+    mcp_tool_contract!(
+        "warm_manifest",
+        StableGated,
+        "DBT_NOVA_MCP_ENABLE_MANIFEST_WARM",
+        "#warm_manifest"
+    ),
+    mcp_tool_contract!("show_config", Stable, "#show_config"),
+    mcp_tool_contract!("validate_config", Stable, "#validate_config"),
+    mcp_tool_contract!("inspect_storage", Stable, "#inspect_storage"),
+    mcp_tool_contract!(
+        "prune_storage",
+        StableGated,
+        "DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN",
+        "#prune_storage"
+    ),
+    mcp_tool_contract!(
+        "cleanup_storage",
+        StableGated,
+        "DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN",
+        "#cleanup_storage"
+    ),
+    mcp_tool_contract!("list_tags", Stable, "#list_tags"),
+    mcp_tool_contract!("list_packages", Stable, "#list_packages"),
+    mcp_tool_contract!("list_databases", Stable, "#list_databases"),
+    mcp_tool_contract!("get_column_lineage", Stable, "#get_column_lineage"),
+    mcp_tool_contract!("get_test_coverage", Stable, "#get_test_coverage"),
+    mcp_tool_contract!("get_metadata_score", Stable, "#get_metadata_score"),
+    mcp_tool_contract!("get_metadata_audit", Stable, "#get_metadata_audit"),
+    mcp_tool_contract!("get_agent_readiness", Stable, "#get_agent_readiness"),
+    mcp_tool_contract!("batch_get_entities", Stable, "#batch_get_entities"),
+    mcp_tool_contract!("find_by_path", Stable, "#find_by_path"),
+    mcp_tool_contract!("search_recipes", Stable, "#search_recipes"),
+    mcp_tool_contract!("get_recipe", Stable, "#get_recipe"),
+    mcp_tool_contract!(
+        "run_recipe",
+        StableGated,
+        "DBT_NOVA_TOOL_PROFILE/DBT_NOVA_TOOL_DENYLIST plus SQL provider controls",
+        "#run_recipe"
+    ),
+    mcp_tool_contract!("get_undocumented", Stable, "#get_undocumented"),
+    mcp_tool_contract!("get_context", Stable, "#get_context"),
+    mcp_tool_contract!(
+        "execute_sql",
+        StableGated,
+        "DBT_NOVA_TOOL_PROFILE/DBT_NOVA_TOOL_DENYLIST plus SQL provider controls",
+        "#execute_sql"
+    ),
+];
+
+#[must_use]
+pub fn mcp_tool_contract(tool: &str) -> Option<&'static McpToolContract> {
+    MCP_TOOL_CONTRACTS
+        .iter()
+        .find(|contract| contract.tool == tool)
+}
+
+#[must_use]
+pub fn mcp_tool_profile_memberships(tool: &str) -> Vec<&'static str> {
+    MCP_TOOL_PROFILE_NAMES
+        .iter()
+        .copied()
+        .filter(|profile| {
+            mcp_tool_profile_names(profile).is_some_and(|tools| tools.contains(&tool))
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct McpBudgetableDataArrayField {
     pub field: &'static str,
@@ -527,8 +707,9 @@ mod tests {
 
     use super::{
         CLI_MCP_PARITY_MATRIX, CliMcpParityStatus, MCP_AGENT_TOOL_PROFILE,
-        MCP_BUDGETABLE_DATA_ARRAY_FIELDS, MCP_RESPONSE_BUDGET_CONTRACTS, MCP_TOOL_COUNT,
-        MCP_TOOL_NAMES, MCP_TOOL_PROFILE_NAMES, mcp_tool_profile_names,
+        MCP_BUDGETABLE_DATA_ARRAY_FIELDS, MCP_RESPONSE_BUDGET_CONTRACTS, MCP_TOOL_CONTRACTS,
+        MCP_TOOL_COUNT, MCP_TOOL_NAMES, MCP_TOOL_PROFILE_NAMES, McpToolStability,
+        mcp_tool_contract, mcp_tool_profile_memberships, mcp_tool_profile_names,
     };
 
     #[test]
@@ -591,6 +772,106 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn tool_contracts_cover_canonical_catalog_in_order() {
+        let contract_tools = MCP_TOOL_CONTRACTS
+            .iter()
+            .map(|contract| contract.tool)
+            .collect::<Vec<_>>();
+
+        assert_eq!(contract_tools, MCP_TOOL_NAMES.to_vec());
+        for tool in MCP_TOOL_NAMES {
+            assert!(
+                mcp_tool_contract(tool).is_some(),
+                "missing MCP tool contract for {tool}"
+            );
+        }
+    }
+
+    #[test]
+    fn tool_contracts_have_profiles_docs_and_gate_status() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let tools_doc =
+            fs::read_to_string(root.join("docs/api/tools.md")).expect("read docs/api/tools.md");
+
+        for contract in MCP_TOOL_CONTRACTS {
+            let profiles = mcp_tool_profile_memberships(contract.tool);
+            assert!(
+                !profiles.is_empty(),
+                "{} must be reachable through at least one profile",
+                contract.tool
+            );
+
+            let heading = format!("### `{}`", contract.tool);
+            assert!(
+                tools_doc.contains(&heading),
+                "docs/api/tools.md must include heading {heading}"
+            );
+            let stability_row = format!(
+                "| [`{}`]({}) | {} |",
+                contract.tool,
+                contract.docs_anchor,
+                contract.stability.as_str()
+            );
+            assert!(
+                tools_doc.contains(&stability_row),
+                "docs/api/tools.md must include stability row starting {stability_row}"
+            );
+
+            match contract.stability {
+                McpToolStability::Stable => assert!(
+                    contract.safety_gate.is_none(),
+                    "{} is Stable but declares a safety gate",
+                    contract.tool
+                ),
+                McpToolStability::StableGated => assert!(
+                    contract.safety_gate.is_some(),
+                    "{} is StableGated without a safety gate note",
+                    contract.tool
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn agent_tool_profile_is_frozen_for_v0_0_x() {
+        let frozen_agent_profile = [
+            "search",
+            "search_indicator",
+            "indicator_inventory",
+            "search_columns",
+            "column_inventory",
+            "compare_grains",
+            "find_entity_overlap",
+            "modelling_consistency_report",
+            "get_entity",
+            "list_entities",
+            "get_lineage",
+            "get_sql",
+            "get_columns",
+            "get_impact",
+            "validate_dag",
+            "show_metadata",
+            "health",
+            "list_tags",
+            "list_packages",
+            "list_databases",
+            "get_column_lineage",
+            "get_test_coverage",
+            "get_metadata_score",
+            "get_metadata_audit",
+            "get_agent_readiness",
+            "batch_get_entities",
+            "find_by_path",
+            "search_recipes",
+            "get_recipe",
+            "get_undocumented",
+            "get_context",
+        ];
+
+        assert_eq!(MCP_AGENT_TOOL_PROFILE, frozen_agent_profile);
     }
 
     #[test]

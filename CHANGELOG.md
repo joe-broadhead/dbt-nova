@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added machine-checked MCP tool stability metadata, profile membership docs,
+  and safety-gate posture for the canonical 53-tool catalog while preserving
+  v0.0.x versioning.
 - Added response-only `direct_sql_queryable` metadata to `search_indicator` and
   `indicator_inventory` so agents can distinguish relation-backed SQL surfaces
   from Semantic Layer-backed indicators that require MetricFlow/dbt Semantic
