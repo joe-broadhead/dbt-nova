@@ -998,8 +998,8 @@ mod tests {
     fn docs_and_skills_avoid_semantic_layer_product_drift() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut checked_files = vec![root.join("README.md")];
-        collect_markdown_files(&root.join("docs"), root, &mut checked_files);
-        collect_markdown_files(&root.join(".github/skills"), root, &mut checked_files);
+        collect_markdown_files(&root.join("docs"), &mut checked_files);
+        collect_markdown_files(&root.join(".github/skills"), &mut checked_files);
 
         let banned_phrases = [
             (
@@ -1026,9 +1026,6 @@ mod tests {
 
         for file in checked_files {
             let relative = file.strip_prefix(root).unwrap_or(file.as_path());
-            if relative == std::path::Path::new("docs/development/world-class-1.0-spec.md") {
-                continue;
-            }
             let text = fs::read_to_string(&file)
                 .unwrap_or_else(|error| panic!("failed to read {}: {error}", file.display()));
             let normalized = text.to_ascii_lowercase();
@@ -1090,11 +1087,7 @@ mod tests {
         counts
     }
 
-    fn collect_markdown_files(
-        dir: &std::path::Path,
-        root: &std::path::Path,
-        out: &mut Vec<std::path::PathBuf>,
-    ) {
+    fn collect_markdown_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
         let Ok(entries) = fs::read_dir(dir) else {
             return;
         };
@@ -1106,12 +1099,8 @@ mod tests {
                 )
             });
             let path = entry.path();
-            let relative = path.strip_prefix(root).unwrap_or(path.as_path());
-            if relative == std::path::Path::new("docs/development/world-class-1.0-spec.md") {
-                continue;
-            }
             if path.is_dir() {
-                collect_markdown_files(&path, root, out);
+                collect_markdown_files(&path, out);
             } else if path.extension().is_some_and(|ext| ext == "md") {
                 out.push(path);
             }
