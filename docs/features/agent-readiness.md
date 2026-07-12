@@ -286,6 +286,12 @@ JSON reports use `schema_version: "agent_readiness.v1"` and include:
 Markdown reports contain the same evidence in a compact review format for PR
 comments, release notes, or CI job summaries.
 
+The repository keeps fixture-backed contract tests for
+`agent_readiness.v1` using both clean and problematic manifests. These tests
+lock the required JSON keys, modelling summary fields, finding evidence shapes,
+and ordered next-action fields without turning readiness into a semantic-layer
+planner.
+
 ## Report Artifacts
 
 Write both report files in CI:

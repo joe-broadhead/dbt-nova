@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   v0.0.x versioning.
 - Added an additive top-level `api` response contract marker to Nova-owned MCP
   JSON bodies and CLI JSON envelopes.
+- Added fixture-backed contract tests for `agent_readiness.v1` and
+  `agent_modelling.v1` payload shapes, including queryability execution-surface
+  evidence.
 - Added response-only `direct_sql_queryable` metadata to `search_indicator` and
   `indicator_inventory` so agents can distinguish relation-backed SQL surfaces
   from Semantic Layer-backed indicators that require MetricFlow/dbt Semantic

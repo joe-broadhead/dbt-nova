@@ -12,6 +12,7 @@ use dbt_nova::params::{
     ModellingConsistencyReportParams, PaginationParams, SearchIndicatorParams,
 };
 use dbt_nova::{DbtNovaConfig, ManifestSearch};
+use serde_json::Value as JsonValue;
 use support_json::json;
 
 fn load_searcher(
@@ -32,6 +33,201 @@ fn load_searcher(
         .expect("synthetic manifest should load")
         .search;
     (searcher, guard)
+}
+
+fn assert_object_has_fields(value: &JsonValue, context: &str, fields: &[&str]) {
+    let obj = value
+        .as_object()
+        .unwrap_or_else(|| panic!("{context} must be an object: {value:#?}"));
+    for field in fields {
+        assert!(
+            obj.contains_key(*field),
+            "{context} missing required field `{field}` in {value:#?}"
+        );
+    }
+}
+
+fn assert_non_empty_string(value: &JsonValue, context: &str, field: &str) {
+    let text = value
+        .get(field)
+        .and_then(JsonValue::as_str)
+        .unwrap_or_else(|| panic!("{context}.{field} must be a string: {value:#?}"));
+    assert!(
+        !text.trim().is_empty(),
+        "{context}.{field} must not be empty"
+    );
+}
+
+fn assert_indicator_execution_surface_contract(
+    row: &JsonValue,
+    expected_surface: &str,
+    expected_queryable: bool,
+    expected_direct_sql_queryable: bool,
+    expected_queryable_via: &str,
+) {
+    assert_object_has_fields(
+        row,
+        "indicator execution surface",
+        &[
+            "indicator_name",
+            "indicator_type",
+            "indicator_source",
+            "execution_surface",
+            "queryable",
+            "direct_sql_queryable",
+            "queryable_via",
+        ],
+    );
+    assert_eq!(row["execution_surface"], expected_surface);
+    assert_eq!(row["queryable"].as_bool(), Some(expected_queryable));
+    assert_eq!(
+        row["direct_sql_queryable"].as_bool(),
+        Some(expected_direct_sql_queryable)
+    );
+    assert_eq!(row["queryable_via"], expected_queryable_via);
+}
+
+fn assert_agent_modelling_finding_contract(finding: &JsonValue) {
+    assert_object_has_fields(
+        finding,
+        "agent_modelling_findings[]",
+        &[
+            "code",
+            "severity",
+            "category",
+            "message",
+            "evidence",
+            "recommendation",
+        ],
+    );
+    assert_non_empty_string(finding, "agent_modelling_findings[]", "code");
+    assert!(
+        matches!(
+            finding.get("severity").and_then(JsonValue::as_str),
+            Some("blocker" | "high" | "medium" | "low")
+        ),
+        "finding severity must stay in the v1 enum: {finding:#?}"
+    );
+    assert_non_empty_string(finding, "agent_modelling_findings[]", "category");
+    assert_non_empty_string(finding, "agent_modelling_findings[]", "message");
+    assert!(
+        finding.get("evidence").is_some_and(JsonValue::is_object),
+        "finding evidence must be an object: {finding:#?}"
+    );
+    assert_non_empty_string(finding, "agent_modelling_findings[]", "recommendation");
+
+    if let Some(entities) = finding.get("entities").and_then(JsonValue::as_array) {
+        for entity in entities {
+            assert_object_has_fields(
+                entity,
+                "agent_modelling_findings[].entities[]",
+                &["unique_id", "name", "resource_type"],
+            );
+        }
+    }
+    if let Some(indicators) = finding.get("indicators").and_then(JsonValue::as_array) {
+        for indicator in indicators {
+            assert_object_has_fields(
+                indicator,
+                "agent_modelling_findings[].indicators[]",
+                &["indicator_name", "indicator_type", "parent_unique_id"],
+            );
+        }
+    }
+    if let Some(hints) = finding
+        .get("drill_down_hints")
+        .and_then(JsonValue::as_array)
+    {
+        for hint in hints {
+            assert_object_has_fields(
+                hint,
+                "agent_modelling_findings[].drill_down_hints[]",
+                &["purpose", "tool", "arguments"],
+            );
+        }
+    }
+}
+
+fn assert_agent_modelling_report_contract(report: &JsonValue) {
+    assert_eq!(report["success"].as_bool(), Some(true), "{report:#?}");
+    assert_eq!(report["count"].as_u64(), Some(1), "{report:#?}");
+    let data = &report["data"];
+    assert_object_has_fields(
+        data,
+        "modelling_consistency_report.data",
+        &[
+            "summary",
+            "agent_modelling_schema_version",
+            "entity_count",
+            "overlap_candidate_count",
+            "duplicate_indicator_count",
+            "canonical_conflict_count",
+            "multi_grain_entity_count",
+            "agent_modelling_finding_count",
+            "overlap_candidates",
+            "duplicate_indicators",
+            "canonical_indicator_conflicts",
+            "entities_with_multiple_grain_variants",
+            "agent_modelling_findings",
+        ],
+    );
+    assert_eq!(data["agent_modelling_schema_version"], "agent_modelling.v1");
+    assert_object_has_fields(
+        &data["summary"],
+        "modelling_consistency_report.data.summary",
+        &[
+            "section_counts",
+            "agent_modelling",
+            "page",
+            "overlap_evidence_categories",
+            "overlap_examples",
+            "top_duplicate_indicator_groups",
+            "top_canonical_conflicts",
+            "top_multi_grain_entities",
+            "drill_down_hints",
+        ],
+    );
+    assert_object_has_fields(
+        &data["summary"]["section_counts"],
+        "modelling_consistency_report.data.summary.section_counts",
+        &[
+            "overlap_candidates",
+            "duplicate_indicators",
+            "canonical_indicator_conflicts",
+            "entities_with_multiple_grain_variants",
+            "agent_modelling_findings",
+        ],
+    );
+    assert_object_has_fields(
+        &data["summary"]["agent_modelling"],
+        "modelling_consistency_report.data.summary.agent_modelling",
+        &[
+            "total",
+            "blockers",
+            "high",
+            "medium",
+            "low",
+            "truncated",
+            "top_codes",
+            "top_categories",
+        ],
+    );
+    let findings = data["agent_modelling_findings"]
+        .as_array()
+        .expect("agent_modelling_findings must be an array");
+    assert_eq!(
+        data["agent_modelling_finding_count"].as_u64(),
+        u64::try_from(findings.len()).ok(),
+        "finding count must match array length"
+    );
+    assert_eq!(
+        data["summary"]["agent_modelling"]["total"].as_u64(),
+        u64::try_from(findings.len()).ok(),
+        "summary total must match array length"
+    );
+    for finding in findings {
+        assert_agent_modelling_finding_contract(finding);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -141,6 +337,13 @@ async fn metricflow_metrics_are_discoverable_without_nova_meta() {
         .iter()
         .find(|row| row["indicator_name"] == "gross_revenue" && row["indicator_type"] == "metric")
         .expect("metricflow metric should be inventoried");
+    assert_indicator_execution_surface_contract(
+        gross_revenue,
+        "semantic_layer",
+        true,
+        false,
+        "metricflow",
+    );
     assert_eq!(gross_revenue["indicator_source"], "dbt_metric");
     assert_eq!(gross_revenue["execution_surface"], "semantic_layer");
     assert_eq!(gross_revenue["queryable"].as_bool(), Some(true));
@@ -160,6 +363,13 @@ async fn metricflow_metrics_are_discoverable_without_nova_meta() {
             row["indicator_name"] == "revenue_per_session" && row["indicator_type"] == "metric"
         })
         .expect("MetricFlow ratio metric should be inventoried");
+    assert_indicator_execution_surface_contract(
+        revenue_per_session,
+        "semantic_layer",
+        true,
+        false,
+        "metricflow",
+    );
     assert_eq!(revenue_per_session["indicator_source"], "dbt_metric");
     assert_eq!(revenue_per_session["execution_surface"], "semantic_layer");
     assert_eq!(revenue_per_session["queryable"].as_bool(), Some(true));
@@ -173,6 +383,13 @@ async fn metricflow_metrics_are_discoverable_without_nova_meta() {
         .iter()
         .find(|row| row["indicator_name"] == "order_total" && row["indicator_type"] == "measure")
         .expect("semantic model measure should be inventoried");
+    assert_indicator_execution_surface_contract(
+        order_total,
+        "semantic_layer",
+        true,
+        false,
+        "metricflow",
+    );
     assert_eq!(order_total["indicator_source"], "dbt_semantic_model");
     assert_eq!(order_total["execution_surface"], "semantic_layer");
     assert_eq!(order_total["queryable"].as_bool(), Some(true));
@@ -186,6 +403,13 @@ async fn metricflow_metrics_are_discoverable_without_nova_meta() {
                 && row["indicator_type"] == "metric"
         })
         .expect("relation-backed nova metric should be inventoried");
+    assert_indicator_execution_surface_contract(
+        relation_metric,
+        "relation",
+        true,
+        true,
+        "relation_name",
+    );
     assert_eq!(relation_metric["indicator_source"], "nova_meta");
     assert_eq!(relation_metric["execution_surface"], "relation");
     assert_eq!(relation_metric["queryable"].as_bool(), Some(true));
@@ -207,6 +431,13 @@ async fn metricflow_metrics_are_discoverable_without_nova_meta() {
         .iter()
         .find(|row| row["indicator_name"] == "metadata_only_revenue")
         .expect("metadata-only nova metric should be inventoried");
+    assert_indicator_execution_surface_contract(
+        metadata_only_metric,
+        "metadata_only",
+        false,
+        false,
+        "none",
+    );
     assert_eq!(metadata_only_metric["indicator_source"], "nova_meta");
     assert_eq!(metadata_only_metric["execution_surface"], "metadata_only");
     assert_eq!(metadata_only_metric["queryable"].as_bool(), Some(false));
@@ -241,6 +472,13 @@ async fn metricflow_metrics_are_discoverable_without_nova_meta() {
         .iter()
         .find(|row| row["indicator_name"] == "gross_revenue" && row["indicator_type"] == "metric")
         .expect("metricflow metric should be searchable");
+    assert_indicator_execution_surface_contract(
+        gross_revenue_search,
+        "semantic_layer",
+        true,
+        false,
+        "metricflow",
+    );
     assert_eq!(gross_revenue_search["indicator_source"], "dbt_metric");
     assert_eq!(gross_revenue_search["execution_surface"], "semantic_layer");
     assert_eq!(gross_revenue_search["queryable"].as_bool(), Some(true));
@@ -270,6 +508,13 @@ async fn metricflow_metrics_are_discoverable_without_nova_meta() {
             row["indicator_name"] == "revenue_per_session" && row["indicator_type"] == "metric"
         })
         .expect("MetricFlow ratio metric should be searchable");
+    assert_indicator_execution_surface_contract(
+        revenue_per_session_search,
+        "semantic_layer",
+        true,
+        false,
+        "metricflow",
+    );
     assert_eq!(revenue_per_session_search["indicator_source"], "dbt_metric");
     assert_eq!(
         revenue_per_session_search["execution_surface"],
@@ -502,6 +747,7 @@ async fn agent_modelling_findings_use_catalog_and_semantic_artifact_evidence() {
             })
             .await,
     );
+    assert_agent_modelling_report_contract(&report);
     let findings = report["data"]["agent_modelling_findings"]
         .as_array()
         .expect("agent modelling findings");
@@ -614,6 +860,7 @@ async fn agent_modelling_findings_use_catalog_and_semantic_artifact_evidence() {
             })
             .await,
     );
+    assert_agent_modelling_report_contract(&metric_only_report);
     let metric_only_findings = metric_only_report["data"]["agent_modelling_findings"]
         .as_array()
         .expect("metric-only agent modelling findings");
