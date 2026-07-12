@@ -1,4 +1,29 @@
 use serde::Serialize;
+use serde_json::Value as JsonValue;
+
+pub const RESPONSE_ENVELOPE_ID: &str = "nova.response.v1";
+
+/// Additive API contract marker for Nova-owned JSON response envelopes.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct ApiContract {
+    pub envelope: &'static str,
+    pub nova_version: &'static str,
+}
+
+#[must_use]
+pub const fn response_api_contract() -> ApiContract {
+    ApiContract {
+        envelope: RESPONSE_ENVELOPE_ID,
+        nova_version: env!("CARGO_PKG_VERSION"),
+    }
+}
+
+pub fn attach_response_api_contract(value: &mut JsonValue) {
+    if let Some(obj) = value.as_object_mut() {
+        obj.entry("api".to_string())
+            .or_insert_with(|| serde_json::json!(response_api_contract()));
+    }
+}
 
 #[derive(Serialize)]
 pub struct PaginationInfo {

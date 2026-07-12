@@ -10,13 +10,14 @@ use crate::nova_meta::{
     validate_nova_meta,
 };
 use crate::params::{NovaMetaResourceKindParam, ValidateNovaMetaParams};
-use crate::responses::SuccessResponse;
+use crate::responses::{ApiContract, SuccessResponse, response_api_contract};
 use serde::Serialize;
 
 use super::{DispatchError, DispatchResult};
 
 #[derive(Debug, Serialize)]
 struct NovaMetaCliEnvelope<'a> {
+    api: ApiContract,
     command: &'static str,
     status: &'static str,
     data: &'a crate::nova_meta::NovaMetaValidationReport,
@@ -56,6 +57,7 @@ pub fn run_nova_meta_command(args: &NovaMetaAuditArgs) -> DispatchResult {
     if args.json {
         let output = if has_errors {
             let envelope = NovaMetaCliEnvelope {
+                api: response_api_contract(),
                 command: "audit nova-meta",
                 status: "error",
                 data: &report,

@@ -50,7 +50,7 @@ use crate::params::{
     TraceRedactParams, TraceReplayParams, TraceSummarizeParams, ValidateDagParams,
     ValidateEvalSuiteParams, ValidateNovaMetaParams, WarmManifestParams,
 };
-use crate::responses::SuccessResponse;
+use crate::responses::{SuccessResponse, attach_response_api_contract};
 use crate::server::health::build_manifest_health_payload;
 use crate::utils::{ToolMetricsStore, ToolRateLimiter};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -111,16 +111,21 @@ impl DbtNovaServer {
     }
 
     fn serialization_error_response(err: &impl std::fmt::Display) -> String {
-        serde_json::json!({
+        let value = serde_json::json!({
             "success": false,
             "error": format!("Serialization error: {err}"),
             "error_code": "SERVER_ERROR"
-        })
-        .to_string()
+        });
+        Self::serialize_unbudgeted_value(value)
     }
 
     fn error_response(err: &DbtNovaError) -> String {
-        serde_json::to_string(&err.to_response())
+        Self::serialize_unbudgeted_value(err.to_response())
+    }
+
+    fn serialize_unbudgeted_value(mut value: serde_json::Value) -> String {
+        attach_response_api_contract(&mut value);
+        serde_json::to_string(&value)
             .unwrap_or_else(|ser_err| Self::serialization_error_response(&ser_err))
     }
 
@@ -136,6 +141,8 @@ impl DbtNovaServer {
         config: &DbtNovaConfig,
         pagination: Option<&PaginationParams>,
     ) -> std::result::Result<String, serde_json::Error> {
+        let mut value = value;
+        attach_response_api_contract(&mut value);
         let mut budgeted = apply_mcp_response_budget(value, config);
         apply_mcp_next_offset_meta(&mut budgeted, config, pagination);
         serde_json::to_string(&budgeted)
@@ -221,12 +228,11 @@ impl DbtNovaServer {
         };
 
         if !self.check_rate_limit(tool, searcher.config()) {
-            let out = serde_json::json!({
+            let out = Self::serialize_unbudgeted_value(serde_json::json!({
                 "success": false,
                 "error": format!("Rate limit exceeded for tool '{}'", tool),
                 "error_code": "RATE_LIMITED",
-            })
-            .to_string();
+            }));
             let duration_ms = elapsed_ms_to_u64(start.elapsed());
             let parsed_trace_response = serde_json::from_str::<serde_json::Value>(&out).ok();
             crate::utils::tool_trace::record_tool_call(
@@ -1177,7 +1183,7 @@ impl DbtNovaServer {
             return Self::serialize_budgeted_value(response, searcher.config())
                 .map_err(|err| Self::serialization_error_response(&err));
         }
-        serde_json::to_string(&response).map_err(|err| Self::serialization_error_response(&err))
+        Ok(Self::serialize_unbudgeted_value(response))
     }
 
     /// Reload the manifest and rebuild indexes.
@@ -1195,8 +1201,8 @@ impl DbtNovaServer {
         } else {
             match self.searcher.reload(&reload_params).await {
                 Ok(payload) => match serde_json::to_value(SuccessResponse::new(payload, 1)) {
-                    Ok(response) => match self.searcher.get().await {
-                        Ok(searcher) => {
+                    Ok(response) => {
+                        if let Ok(searcher) = self.searcher.get().await {
                             match Self::serialize_budgeted_value(response, searcher.config()) {
                                 Ok(out) => {
                                     success = true;
@@ -1204,21 +1210,16 @@ impl DbtNovaServer {
                                 }
                                 Err(err) => Self::serialization_error_response(&err),
                             }
+                        } else {
+                            success = true;
+                            Self::serialize_unbudgeted_value(response)
                         }
-                        Err(_) => match serde_json::to_string(&response) {
-                            Ok(out) => {
-                                success = true;
-                                out
-                            }
-                            Err(err) => Self::serialization_error_response(&err),
-                        },
-                    },
-                    Err(err) => serde_json::json!({
+                    }
+                    Err(err) => Self::serialize_unbudgeted_value(serde_json::json!({
                         "success": false,
                         "error": format!("Serialization error: {}", err),
                         "error_code": "SERVER_ERROR"
-                    })
-                    .to_string(),
+                    })),
                 },
                 Err(err) => Self::error_response(&err),
             }
