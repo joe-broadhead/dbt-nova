@@ -45,6 +45,12 @@ Tool metrics:
 - `tool_metrics.<tool>.max_ms`: maximum duration in ms
 - `tool_metrics.<tool>.buckets`: latency buckets (<=5ms, <=10ms, <=50ms, <=100ms, <=500ms, <=1000ms, >1000ms)
 
+In streamable HTTP mode, `GET /metrics` exposes the same tool recorder as
+Prometheus-compatible text plus `nova_manifest_ready_for_traffic`. The scrape
+uses cumulative histogram buckets and privacy-safe labels (`tool`, `result`).
+Restrict it with the same proxy/network ACL as MCP or set
+`DBT_NOVA_METRICS_ENABLED=false`.
+
 Search concurrency:
 
 - `search_concurrency.enabled`: whether queue/concurrency controls are active

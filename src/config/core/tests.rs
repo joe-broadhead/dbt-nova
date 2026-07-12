@@ -519,14 +519,21 @@ fn validate_rejects_http_transport_with_wildcard_path() {
 
 #[test]
 fn validate_rejects_http_transport_with_probe_path_collision() {
-    let mut config = base_config();
-    config.server_transport = ServerTransport::StreamableHttp;
-    config.http_path = "/healthz".to_string();
+    for path in ["/healthz", "/readyz", "/metrics"] {
+        let mut config = base_config();
+        config.server_transport = ServerTransport::StreamableHttp;
+        config.http_path = path.to_string();
 
-    let error = config
-        .validate()
-        .expect_err("probe path collisions should fail validation");
-    assert!(error.to_string().contains("reserves /healthz and /readyz"));
+        let error = config
+            .validate()
+            .expect_err("probe path collisions should fail validation");
+        assert!(
+            error
+                .to_string()
+                .contains("reserves /healthz, /readyz, and /metrics"),
+            "unexpected error for {path}: {error}"
+        );
+    }
 }
 
 #[test]

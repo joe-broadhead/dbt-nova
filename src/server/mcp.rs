@@ -110,6 +110,11 @@ impl DbtNovaServer {
         }
     }
 
+    #[must_use]
+    pub(crate) fn tool_metrics(&self) -> Arc<ToolMetricsStore> {
+        Arc::clone(&self.metrics)
+    }
+
     fn serialization_error_response(err: &impl std::fmt::Display) -> String {
         let value = serde_json::json!({
             "success": false,

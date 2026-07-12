@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `hosted-sql-trusted`) plus a `config validate` posture checklist for
   effective tool filters, hosted HTTP proxy posture, and storage/artifact
   writability.
+- Added a privacy-safe Prometheus-compatible `GET /metrics` endpoint for
+  streamable HTTP mode, backed by the existing tool metrics recorder and
+  readiness signal, with `DBT_NOVA_METRICS_ENABLED=false` as an opt-out.
 - Added response-only `direct_sql_queryable` metadata to `search_indicator` and
   `indicator_inventory` so agents can distinguish relation-backed SQL surfaces
   from Semantic Layer-backed indicators that require MetricFlow/dbt Semantic

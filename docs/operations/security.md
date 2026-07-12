@@ -49,6 +49,10 @@ Published container images default to discovery-only, non-admin MCP exposure wit
 only for a SQL-enabled endpoint that is isolated, authenticated, and backed by
 least-privilege credentials. Env vars override preset values, so an
 empty-but-present `DBT_NOVA_TOOL_DENYLIST=` intentionally clears the denylist.
+The hosted `/metrics` endpoint is enabled by default when HTTP mode is running;
+it is privacy-safe by label design, but still exposes readiness, tool names,
+call counts, error counts, and latency. Restrict scrapes with the same
+proxy/network ACL as MCP, or set `DBT_NOVA_METRICS_ENABLED=false`.
 
 Some tools read from the server filesystem. `validate_nova_meta` validates dbt
 YAML under the server working directory and rejects absolute or traversal paths

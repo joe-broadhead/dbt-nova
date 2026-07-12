@@ -67,6 +67,8 @@ pub struct HostedHttpChecklist {
 #[derive(Debug, Serialize)]
 pub struct MetricsPosture {
     pub health_tool_exposed: bool,
+    pub prometheus_http_enabled: bool,
+    pub prometheus_path: String,
     pub posture: String,
 }
 
@@ -283,13 +285,13 @@ fn build_validation_checklist(config: &DbtNovaConfig) -> ConfigValidationCheckli
         non_loopback: config.http_transport_binds_non_loopback(),
         auth_proxy_acknowledged: config.http_expect_auth_proxy,
     };
+    let prometheus_http_enabled =
+        config.server_transport == ServerTransport::StreamableHttp && config.metrics_enabled;
     let metrics = MetricsPosture {
         health_tool_exposed: exposed_tools.contains("health"),
-        posture: if exposed_tools.contains("health") {
-            "health_tool_exposes_in_memory_tool_metrics".to_string()
-        } else {
-            "not_exposed_through_mcp_tool_catalog".to_string()
-        },
+        prometheus_http_enabled,
+        prometheus_path: "/metrics".to_string(),
+        posture: metrics_posture_label(exposed_tools.contains("health"), prometheus_http_enabled),
     };
     let storage = StoragePosture {
         access: StorageAccessPosture {
@@ -392,6 +394,15 @@ fn validation_checklist_warnings(
 
 fn contains_any(values: &std::collections::BTreeSet<String>, needles: &[&str]) -> bool {
     needles.iter().any(|needle| values.contains(*needle))
+}
+
+fn metrics_posture_label(health_tool_exposed: bool, prometheus_http_enabled: bool) -> String {
+    match (health_tool_exposed, prometheus_http_enabled) {
+        (true, true) => "health_tool_and_prometheus_http".to_string(),
+        (true, false) => "health_tool_only".to_string(),
+        (false, true) => "prometheus_http_only".to_string(),
+        (false, false) => "not_exposed".to_string(),
+    }
 }
 
 fn redact_config_value(value: &mut JsonValue, key: Option<&str>) {
@@ -591,6 +602,14 @@ mod tests {
         assert!(response["data"]["checklist"]["tool_denylist"].is_array());
         assert!(response["data"]["checklist"]["hosted_http"]["enabled"].is_boolean());
         assert!(response["data"]["checklist"]["metrics"]["posture"].is_string());
+        assert_eq!(
+            response["data"]["checklist"]["metrics"]["prometheus_http_enabled"],
+            serde_json::json!(false)
+        );
+        assert_eq!(
+            response["data"]["checklist"]["metrics"]["prometheus_path"],
+            serde_json::json!("/metrics")
+        );
         assert!(
             response["data"]["checklist"]["storage"]["access"]["local_writes_allowed"].is_boolean()
         );

@@ -41,13 +41,14 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_SERVER_TRANSPORT` – MCP server transport (`stdio` or `streamable_http`, default: `stdio`)
 - `DBT_NOVA_HTTP_HOST` – bind host for streamable HTTP mode (default: `127.0.0.1`; falls back to `0.0.0.0` when `PORT` is set and `DBT_NOVA_SERVER_TRANSPORT=streamable_http`)
 - `DBT_NOVA_HTTP_PORT` – bind port for streamable HTTP mode (default: `8000`; falls back to `PORT` when unset)
-- `DBT_NOVA_HTTP_PATH` – HTTP mount path for MCP requests in streamable HTTP mode (default: `/mcp`; reserved probe paths `/healthz` and `/readyz` are not allowed)
+- `DBT_NOVA_HTTP_PATH` – HTTP mount path for MCP requests in streamable HTTP mode (default: `/mcp`; reserved operational paths `/healthz`, `/readyz`, and `/metrics` are not allowed)
 - `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY` – required acknowledgement for non-loopback streamable HTTP binds (`true`|`false`, default: `false`; set to `true` only when an authenticating reverse proxy is enforcing access in front of dbt-nova)
 - `DBT_NOVA_HTTP_ALLOWED_HOSTS` – comma-separated additional `Host` header values accepted by streamable HTTP mode (default: empty; loopback hosts are always allowed by the transport)
 - `DBT_NOVA_HTTP_STATEFUL_MODE` – enable stateful streamable HTTP sessions (`true`|`false`, default: `true`)
 - `DBT_NOVA_HTTP_SSE_KEEP_ALIVE_SECS` – SSE keepalive interval for streamable HTTP mode (`0` disables keepalives, default: `15`)
 - `DBT_NOVA_HTTP_SSE_RETRY_SECS` – SSE retry hint for streamable HTTP mode (`0` disables retry hints, default: `3`)
 - `DBT_NOVA_HTTP_MAX_BODY_BYTES` – global streamable HTTP request body cap (`0` disables the in-process cap, default: `16777216`)
+- `DBT_NOVA_METRICS_ENABLED` – expose the Prometheus-compatible `GET /metrics` endpoint in streamable HTTP mode (`true`|`false`, default: `true`)
 - `DBT_NOVA_STRICT_SCHEMA` – fail build if schema files are missing or invalid (`true`|`false`, default: `false`; forced `true` in CI)
 - `DBT_NOVA_S3_MODE` – S3 fetch mode (`https` or `sdk`, default: `https`)
 - `DBT_NOVA_GCS_MODE` – GCS fetch mode (`https` or `sdk`, default: `https`)
@@ -172,7 +173,12 @@ Remote manifest notes:
   overrides the preset or clears/customizes the denylist.
 - Streamable HTTP mode has **no built-in authentication**. Keep it bound to loopback for local use, or set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when an authenticating reverse proxy is enforcing access in front of dbt-nova. For hosted/proxied deployments, set `DBT_NOVA_HTTP_ALLOWED_HOSTS` to the public/proxy hostnames clients send in `Host`. Published container images do not set these acknowledgements by default.
 - Streamable HTTP mode applies a global request body cap before the mounted MCP transport reads request bodies. Keep `DBT_NOVA_HTTP_MAX_BODY_BYTES` bounded in hosted deployments unless an outer proxy enforces a stricter limit.
-- The MCP endpoint is mounted at `DBT_NOVA_HTTP_PATH`; plain probe endpoints are always available at `/healthz` and `/readyz`.
+- The MCP endpoint is mounted at `DBT_NOVA_HTTP_PATH`; plain operational
+  endpoints are reserved at `/healthz`, `/readyz`, and `/metrics`.
+  `DBT_NOVA_METRICS_ENABLED=false` makes `/metrics` return `404` while keeping
+  that path out of the MCP fallback. Protect `/metrics` with the same
+  proxy/network ACL as MCP because it exposes tool names, call counts, latency,
+  and readiness posture.
 
 Manifest pruning notes:
 - Matching is against dbt `unique_id` (not `fqn`).

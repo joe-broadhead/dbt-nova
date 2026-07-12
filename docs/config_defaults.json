@@ -157,6 +157,7 @@
       }
     }
   },
+  "metrics_enabled": true,
   "models_artifact_uri": "",
   "provenance_stale_after_days": 30,
   "recipes_dir": "analyses/recipes",

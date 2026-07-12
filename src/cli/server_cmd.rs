@@ -1,7 +1,14 @@
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 
-use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
+use axum::{
+    Json, Router,
+    extract::State,
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
+    routing::get,
+};
 use rmcp::transport::{
     StreamableHttpServerConfig, StreamableHttpService,
     streamable_http_server::session::local::LocalSessionManager,
@@ -19,7 +26,7 @@ use crate::manifest::bootstrap::prepare_runtime_config;
 use crate::manifest::search::ManifestSearchHandle;
 use crate::server::health::build_manifest_health_payload;
 use crate::server::mcp::DbtNovaServer;
-use crate::utils::sanitize_uri;
+use crate::utils::{ToolMetricsStore, sanitize_uri};
 
 use super::prepare_storage;
 
@@ -33,11 +40,14 @@ struct HttpServerSettings {
     sse_retry_secs: u64,
     max_body_bytes: usize,
     allowed_hosts: Vec<String>,
+    metrics_enabled: bool,
 }
 
 #[derive(Clone)]
 struct HostedProbeState {
     searcher: ManifestSearchHandle,
+    metrics: Arc<ToolMetricsStore>,
+    metrics_enabled: bool,
 }
 
 impl HttpServerSettings {
@@ -51,6 +61,7 @@ impl HttpServerSettings {
             sse_retry_secs: config.http_sse_retry_secs,
             max_body_bytes: config.http_max_body_bytes,
             allowed_hosts: parse_http_allowed_hosts(&config.http_allowed_hosts),
+            metrics_enabled: config.metrics_enabled,
         }
     }
 }
@@ -244,6 +255,7 @@ async fn serve_streamable_http(
         }
     }
 
+    let metrics = server.tool_metrics();
     let service: StreamableHttpService<DbtNovaServer, LocalSessionManager> =
         StreamableHttpService::new(
             move || Ok::<DbtNovaServer, io::Error>(server.clone()),
@@ -254,7 +266,12 @@ async fn serve_streamable_http(
     let base_app = Router::new()
         .route("/healthz", get(http_liveness))
         .route("/readyz", get(http_readiness))
-        .with_state(HostedProbeState { searcher });
+        .route("/metrics", get(http_metrics))
+        .with_state(HostedProbeState {
+            searcher,
+            metrics,
+            metrics_enabled: settings.metrics_enabled,
+        });
 
     let app = if settings.path == "/" {
         base_app.fallback_service(service)
@@ -317,6 +334,28 @@ async fn http_readiness(
         StatusCode::SERVICE_UNAVAILABLE
     };
     (status, Json(snapshot.payload))
+}
+
+async fn http_metrics(State(state): State<HostedProbeState>) -> Response {
+    if !state.metrics_enabled {
+        return (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            "metrics disabled\n".to_string(),
+        )
+            .into_response();
+    }
+    let snapshot = build_manifest_health_payload(&state.searcher).await;
+    let body = state.metrics.prometheus_text(snapshot.ready_for_traffic);
+    (
+        StatusCode::OK,
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        body,
+    )
+        .into_response()
 }
 
 fn secs_to_option(value: u64) -> Option<Duration> {
@@ -778,6 +817,101 @@ mod tests {
             "unexpected body: {body}"
         );
         assert!(body.contains(r#""id":1"#), "unexpected body: {body}");
+    }
+
+    #[tokio::test]
+    async fn http_transport_serves_prometheus_metrics() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let port = next_test_port().await;
+        let shutdown = CancellationToken::new();
+        let config = http_test_config(&temp_dir, fixture_manifest_path_string(), port);
+
+        let server_task = tokio::spawn(start_with_config_and_shutdown(config, shutdown.clone()));
+        let client = Client::new();
+        let _readiness = wait_for_http_status(
+            &client,
+            &format!("http://127.0.0.1:{port}/readyz"),
+            reqwest::StatusCode::OK,
+            Some("ready"),
+        )
+        .await;
+
+        let response = client
+            .get(format!("http://127.0.0.1:{port}/metrics"))
+            .send()
+            .await
+            .expect("metrics request should succeed");
+        let status = response.status();
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        let body = response.text().await.expect("metrics body");
+
+        shutdown.cancel();
+        let join_result = server_task.await.expect("server task");
+        assert!(
+            join_result.is_ok(),
+            "server should shut down cleanly: {join_result:?}"
+        );
+
+        assert_eq!(status, reqwest::StatusCode::OK);
+        assert!(
+            content_type.starts_with("text/plain"),
+            "unexpected content-type: {content_type}"
+        );
+        assert!(
+            body.contains("# TYPE nova_manifest_ready_for_traffic gauge"),
+            "{body}"
+        );
+        assert!(body.contains("nova_manifest_ready_for_traffic 1"), "{body}");
+        assert!(
+            body.contains("# TYPE nova_tool_calls_total counter"),
+            "{body}"
+        );
+        assert!(
+            body.contains("# TYPE nova_tool_call_duration_milliseconds histogram"),
+            "{body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_transport_metrics_endpoint_can_be_disabled() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let port = next_test_port().await;
+        let shutdown = CancellationToken::new();
+        let mut config = http_test_config(&temp_dir, fixture_manifest_path_string(), port);
+        config.metrics_enabled = false;
+
+        let server_task = tokio::spawn(start_with_config_and_shutdown(config, shutdown.clone()));
+        let client = Client::new();
+        let _liveness = wait_for_http_status(
+            &client,
+            &format!("http://127.0.0.1:{port}/healthz"),
+            reqwest::StatusCode::OK,
+            Some("ok"),
+        )
+        .await;
+
+        let response = client
+            .get(format!("http://127.0.0.1:{port}/metrics"))
+            .send()
+            .await
+            .expect("metrics request should succeed");
+        let status = response.status();
+        let body = response.text().await.expect("metrics disabled body");
+
+        shutdown.cancel();
+        let join_result = server_task.await.expect("server task");
+        assert!(
+            join_result.is_ok(),
+            "server should shut down cleanly: {join_result:?}"
+        );
+
+        assert_eq!(status, reqwest::StatusCode::NOT_FOUND);
+        assert_eq!(body, "metrics disabled\n");
     }
 
     #[tokio::test]

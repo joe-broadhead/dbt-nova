@@ -427,6 +427,8 @@ pub struct DbtNovaConfig {
     pub http_sse_retry_secs: u64,
     /// Maximum inbound HTTP request body bytes for hosted mode (0 = unlimited)
     pub http_max_body_bytes: usize,
+    /// Expose the Prometheus-compatible `/metrics` endpoint in hosted HTTP mode.
+    pub metrics_enabled: bool,
     /// Per-tool rate limits (comma-separated, e.g. "`search=60,execute_sql=30,default=120`")
     pub tool_rate_limits: String,
     /// Rate limit window size in seconds
@@ -550,6 +552,7 @@ impl Default for DbtNovaConfig {
             http_sse_keep_alive_secs: 15,
             http_sse_retry_secs: 3,
             http_max_body_bytes: 16 * 1024 * 1024,
+            metrics_enabled: true,
             tool_rate_limits: "search=60,execute_sql=20,default=120".to_string(),
             tool_rate_limit_window_secs: 60,
             tool_allowlist: String::new(),
@@ -963,7 +966,7 @@ impl DbtNovaConfig {
             }
             if http_path_conflicts_with_probe_route(http_path) {
                 return Err(DbtNovaError::InvalidParams(
-                    "streamable HTTP transport reserves /healthz and /readyz for probe endpoints; choose a different http_path".to_string(),
+                    "streamable HTTP transport reserves /healthz, /readyz, and /metrics for probe and metrics endpoints; choose a different http_path".to_string(),
                 ));
             }
             if self.http_transport_binds_non_loopback() && !self.http_expect_auth_proxy {
@@ -1303,6 +1306,9 @@ impl DbtNovaConfig {
         if let Some(value) = parse_usize("DBT_NOVA_HTTP_MAX_BODY_BYTES") {
             self.http_max_body_bytes = value;
         }
+        if let Some(value) = parse_bool("DBT_NOVA_METRICS_ENABLED") {
+            self.metrics_enabled = value;
+        }
 
         self.apply_http_platform_port_fallback(
             explicit_http_host.is_some(),
@@ -1623,7 +1629,7 @@ fn http_path_is_literal_mount(path: &str) -> bool {
 }
 
 fn http_path_conflicts_with_probe_route(path: &str) -> bool {
-    matches!(path, "/healthz" | "/readyz")
+    matches!(path, "/healthz" | "/readyz" | "/metrics")
 }
 
 fn http_host_is_non_loopback(host: &str) -> bool {

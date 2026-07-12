@@ -51,6 +51,8 @@ export DBT_NOVA_HTTP_PATH=/mcp
 export DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true
 export DBT_NOVA_HTTP_ALLOWED_HOSTS=nova.example.com
 export DBT_NOVA_HTTP_MAX_BODY_BYTES=16777216
+# Optional if the proxy/network cannot restrict scrapes:
+# export DBT_NOVA_METRICS_ENABLED=false
 export DBT_NOVA_STORAGE_DIR=/tmp/dbt-nova
 export DBT_NOVA_EMBEDDINGS_CACHE_DIR=/tmp/dbt-nova/models
 export DBT_NOVA_BOOTSTRAP_URI='https://example.invalid/bootstrap.json'
@@ -73,6 +75,11 @@ Why these defaults matter:
 - `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` is required for non-loopback hosted binds and documents that an authenticating reverse proxy is in front of Nova.
 - `DBT_NOVA_HTTP_ALLOWED_HOSTS` allows the public/proxy `Host` header while the transport still rejects unexpected hosts.
 - `DBT_NOVA_HTTP_MAX_BODY_BYTES` caps request bodies before the mounted MCP transport buffers them; keep it bounded unless a stricter proxy limit is enforced.
+- `GET /metrics` is enabled by default for hosted HTTP. It does not include
+  query text, entity names, paths, user IDs, or credentials, but it does expose
+  readiness, tool names, call counts, error counts, and latency histograms.
+  Protect it with the same proxy/network ACL as MCP, or set
+  `DBT_NOVA_METRICS_ENABLED=false`.
 - Env vars override preset values, so `DBT_NOVA_TOOL_DENYLIST=` intentionally
   clears the hosted denylist. Run `dbt-nova config validate --json` in deploy
   smoke tests to inspect the effective checklist.
@@ -116,6 +123,10 @@ When `DBT_NOVA_SERVER_TRANSPORT=streamable_http`, Nova exposes:
   - returns:
     - `200 OK` when Nova is ready for traffic
     - `503 Service Unavailable` when Nova is not ready for traffic
+- `GET /metrics`
+  - Prometheus-compatible text metrics
+  - returns `200 OK` when `DBT_NOVA_METRICS_ENABLED=true`
+  - returns `404 Not Found` when `DBT_NOVA_METRICS_ENABLED=false`
 
 In practice that usually means:
 
@@ -125,6 +136,11 @@ In practice that usually means:
 
 `/readyz` reflects the same manifest status that powers the MCP `health` tool,
 including refresh stats and active index diagnostics when available.
+
+`/metrics` uses the same readiness signal and the same in-process tool metrics
+recorder as the MCP `health` tool. Histogram buckets in the scrape are
+cumulative Prometheus buckets; the health JSON bucket map remains
+non-cumulative for backward compatibility.
 
 ## Docker Build
 
