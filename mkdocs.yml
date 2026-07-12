@@ -151,6 +151,8 @@ nav:
   - Development:
     - Architecture: development/architecture.md
     - Architecture Decisions: development/adrs.md
+    - Hosted Identity Threat Model: development/hosted-identity-threat-model.md
+    - Hosted Identity Contract: development/hosted-identity-contract.md
     - Module Size Ratchet: development/module-size-ratchet.md
     - Negative Results Log: development/negative-results.md
     - Agent Tokenomics Plan: development/agent-tokenomics-plan.md

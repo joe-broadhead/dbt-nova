@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added design-only hosted identity and JWT threat-model docs, planned config
+  contract docs, and guardrail tests for the default-off identity milestone.
 - Added machine-checked MCP tool stability metadata, profile membership docs,
   and safety-gate posture for the canonical 53-tool catalog while preserving
   v0.0.x versioning.

@@ -65,3 +65,24 @@ Metrics must reuse existing recorders where possible. Labels must stay
 privacy-safe: tool names and result classes are acceptable; query text, entity
 names, paths, user IDs, and credentials are not. Hosted metrics are still an
 operator surface and need the same proxy/network ACL as MCP.
+
+## ADR-006: Default-Off Hosted Identity
+
+**Status:** Accepted
+
+Nova may add hosted identity only as an opt-in request attribution and inbound
+authentication layer for `streamable_http`. The default remains `off`, and
+existing stdio, local CLI, and loopback development workflows must not require
+identity.
+
+The preferred sequence is design, fail-closed config skeleton,
+proxy-signed identity headers, then JWT validation only if the narrower proxy
+mode does not cover common hosted deployments. Any JWT support must validate
+issuer, audience, expiry, not-before, signature, and algorithm allowlists, and
+must treat claims as sanitized request identity only.
+
+Identity must not become tenant routing, per-entity authorization, warehouse
+credential brokering, semantic-layer authorization, or a multi-manifest control
+plane. Nova remains a one-manifest metadata bridge; authorization and policy
+enforcement stay at the authenticating proxy or hosting platform unless a
+separate, explicit design proves a narrower need.

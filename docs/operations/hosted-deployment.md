@@ -9,6 +9,12 @@ Hosted `streamable_http` mode has no built-in authentication or authorization.
 If you expose it beyond loopback, you must place it behind an authenticating
 reverse proxy or platform auth layer first.
 
+Default-off hosted identity and JWT validation are being designed separately.
+The current runtime still relies on the proxy or platform layer for
+authentication. See
+[Hosted Identity Threat Model](../development/hosted-identity-threat-model.md)
+and [Hosted Identity Contract](../development/hosted-identity-contract.md).
+
 ## Admin Tool Exposure
 
 MCP/CLI parity includes operator/admin tools such as `show_config`,
