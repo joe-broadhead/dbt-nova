@@ -66,6 +66,12 @@ The report adds:
 categories. Findings are sorted by severity, category, code, entity, indicator,
 and message so repeated runs are stable.
 
+Fixture-backed contract tests cover clean reports, metadata-only KPI risks,
+catalog drift, Semantic Layer-backed MetricFlow surfaces, and relation-backed
+direct SQL indicators. They enforce `direct_sql_queryable` as execution-surface
+metadata: Nova makes the route explicit for agents, but does not execute
+MetricFlow or infer semantic-layer SQL.
+
 ## Output Examples
 
 A clean project still includes the agent-modelling section so CI and agent

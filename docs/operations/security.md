@@ -45,9 +45,14 @@ warehouse-backed `execute_sql` capability. dbt-nova does **not** provide built-i
 authentication or authorization for this transport.
 
 Published container images default to discovery-only, non-admin MCP exposure with
-`DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,reload_manifest,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest`.
-Clear or customize that denylist only for a SQL-enabled or operator endpoint
-that is isolated, authenticated, and backed by least-privilege credentials.
+`DBT_NOVA_PRESET=hosted-discovery`. Use `DBT_NOVA_PRESET=hosted-sql-trusted`
+only for a SQL-enabled endpoint that is isolated, authenticated, and backed by
+least-privilege credentials. Env vars override preset values, so an
+empty-but-present `DBT_NOVA_TOOL_DENYLIST=` intentionally clears the denylist.
+The hosted `/metrics` endpoint is enabled by default when HTTP mode is running;
+it is privacy-safe by label design, but still exposes readiness, tool names,
+call counts, error counts, and latency. Restrict scrapes with the same
+proxy/network ACL as MCP, or set `DBT_NOVA_METRICS_ENABLED=false`.
 
 Some tools read from the server filesystem. `validate_nova_meta` validates dbt
 YAML under the server working directory and rejects absolute or traversal paths

@@ -573,11 +573,16 @@ impl Default for SearchConfig {
 }
 
 impl SearchConfig {
+    /// Apply search configuration overrides from environment variables to this config.
+    pub fn apply_env(&mut self) {
+        env::apply_search_env(self);
+    }
+
     /// Load search configuration overrides from environment variables.
     #[must_use]
     pub fn from_env() -> Self {
         let mut config = Self::default();
-        env::apply_search_env(&mut config);
+        config.apply_env();
         config
     }
 

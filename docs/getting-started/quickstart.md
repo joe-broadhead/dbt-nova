@@ -11,8 +11,9 @@ Get dbt-nova running in under 5 minutes.
 
 !!! tip "All-in-one option"
     Use the installer script. It defaults to the **slim** release and
-    starts with lexical search only. Semantic layers are opt-in. Install
-    `cosign` first because these examples require signed checksum verification.
+    starts with lexical search only. Semantic search components are opt-in.
+    Install `cosign` first because these examples require signed checksum
+    verification.
 
 ```bash
 # Public repo (unauthenticated)
@@ -25,7 +26,7 @@ curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
   https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
   DBT_NOVA_VERSION=v0.0.6 DBT_NOVA_VERIFY_SIGNATURE=1 DBT_NOVA_GITHUB_TOKEN="${GH_TOKEN}" bash -s -- --slim --non-interactive
 
-# Optional: pre-warm models during install before enabling semantic layers
+# Optional: pre-warm models before enabling semantic search components
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
   DBT_NOVA_EMBEDDINGS_CACHE_DIR="$HOME/.dbt-nova/.fastembed_cache" \
   DBT_NOVA_WARMUP_REQUIRED_MODELS=3 \

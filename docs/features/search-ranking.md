@@ -101,10 +101,10 @@ without duplicate `meta.nova` annotations:
 - Explicit `meta.nova` remains authoritative and can override or extend the
   derived metadata.
 
-This gives vanilla Semantic Layer projects useful `search_indicator`,
-`indicator_inventory`, analyst ranking, and metadata-score signal immediately.
-Full `meta.nova` is still the contract for Nova-specific governance,
-candidate-profile, domain, and recommendation metadata.
+This gives dbt projects that already publish Semantic Layer artifacts useful
+`search_indicator`, `indicator_inventory`, analyst ranking, and metadata-score
+signal immediately. Full `meta.nova` is still the contract for Nova-specific
+governance, candidate-profile, domain, and recommendation metadata.
 
 Indicator search and inventory rows also expose execution metadata so agents can
 distinguish relation-backed `meta.nova` indicators from MetricFlow-backed

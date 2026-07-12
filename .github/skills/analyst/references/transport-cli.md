@@ -79,10 +79,10 @@ first and copy any returned metric `expression` exactly into downstream SQL.
 If the compact indicator row is relation-backed (`execution_surface: "relation"`,
 `queryable: true`, `direct_sql_queryable: true`,
 `queryable_via: "relation_name"`) and includes `relation_name`, `grain`, and
-`expression`, do not run schema-inspection SQL before execution. If the row is
-Semantic Layer-backed, use the configured MetricFlow path. If it is
-metadata-only or not queryable, report the execution blocker instead of writing
-inferred SQL.
+`expression`, do not run schema-inspection SQL before execution. If the row has
+`queryable_via: "metricflow"`, use the externally configured MetricFlow/dbt
+Semantic Layer path instead of Nova SQL. If it is metadata-only or not
+queryable, report the execution blocker instead of writing inferred SQL.
 
 Compact entity inspection:
 

@@ -8,6 +8,75 @@ All tools return the standard envelope described in [Response Format](response-f
 For CLI equivalents and known parity gaps, see
 [MCP/CLI Parity](mcp-cli-parity.md).
 
+## Stability and Profiles
+
+The MCP catalog uses two public contract tiers for the v0.0.x line:
+
+- `Stable`: documented fields follow additive-compatibility rules. Removing or
+  renaming documented fields requires an explicit breaking-change note.
+- `StableGated`: the same field contract, plus explicit opt-in safety controls
+  for execution, writes, mutation, or SQL-capable behavior.
+
+Runtime exposure starts from `DBT_NOVA_TOOL_PROFILE` (`agent` by default), then
+applies strict allowlist/denylist filters. The `all` profile means the complete
+catalog and does not bypass safety gates.
+
+| Tool | Stability | Profiles | Safety gate |
+| --- | --- | --- | --- |
+| [`search`](#search) | Stable | agent, analyst, engineer, governance, all | - |
+| [`search_indicator`](#search_indicator) | Stable | agent, analyst, engineer, governance, all | - |
+| [`indicator_inventory`](#indicator_inventory) | Stable | agent, analyst, engineer, governance, all | - |
+| [`search_columns`](#search_columns) | Stable | agent, analyst, engineer, governance, all | - |
+| [`column_inventory`](#column_inventory) | Stable | agent, analyst, engineer, governance, all | - |
+| [`compare_grains`](#compare_grains) | Stable | agent, analyst, engineer, governance, all | - |
+| [`find_entity_overlap`](#find_entity_overlap) | Stable | agent, engineer, governance, all | - |
+| [`modelling_consistency_report`](#modelling_consistency_report) | Stable | agent, engineer, governance, all | - |
+| [`get_entity`](#get_entity) | Stable | agent, analyst, engineer, governance, all | - |
+| [`list_entities`](#list_entities) | Stable | agent, analyst, engineer, governance, all | - |
+| [`get_lineage`](#get_lineage) | Stable | agent, analyst, engineer, governance, all | - |
+| [`get_sql`](#get_sql) | Stable | agent, analyst, engineer, all | - |
+| [`get_columns`](#get_columns) | Stable | agent, analyst, engineer, governance, all | - |
+| [`diff_entities`](#diff_entities) | Stable | engineer, all | - |
+| [`get_impact`](#get_impact) | Stable | agent, analyst, engineer, governance, all | - |
+| [`validate_dag`](#validate_dag) | Stable | agent, engineer, governance, all | - |
+| [`validate_nova_meta`](#validate_nova_meta) | Stable | engineer, governance, all | - |
+| [`validate_eval_suite`](#validate_eval_suite) | Stable | ops, all | - |
+| [`get_eval_gate`](#get_eval_gate) | Stable | ops, all | - |
+| [`get_eval_history`](#get_eval_history) | Stable | ops, all | - |
+| [`compare_eval_runs`](#compare_eval_runs) | Stable | ops, all | - |
+| [`run_eval`](#run_eval) | StableGated | ops, all | `DBT_NOVA_MCP_ENABLE_EVAL_RUN` |
+| [`init_eval_suite`](#init_eval_suite) | StableGated | ops, all | `DBT_NOVA_MCP_ENABLE_EVAL_WRITES` |
+| [`run_agent_eval`](#run_agent_eval) | StableGated | ops, all | `DBT_NOVA_MCP_ENABLE_AGENT_EVAL`; custom commands also require `DBT_NOVA_MCP_ENABLE_CUSTOM_AGENT_PROVIDER` |
+| [`inspect_tool_trace`](#inspect_tool_trace) | Stable | ops, all | - |
+| [`summarize_tool_trace`](#summarize_tool_trace) | StableGated | ops, all | `DBT_NOVA_MCP_ENABLE_TRACE_WRITES` for Markdown report writes |
+| [`redact_tool_trace`](#redact_tool_trace) | StableGated | ops, all | `DBT_NOVA_MCP_ENABLE_TRACE_WRITES` |
+| [`replay_tool_trace`](#replay_tool_trace) | Stable | ops, all | - |
+| [`show_metadata`](#show_metadata) | Stable | agent, analyst, engineer, governance, ops, all | - |
+| [`health`](#health) | Stable | agent, analyst, engineer, governance, ops, all | - |
+| [`reload_manifest`](#reload_manifest) | StableGated | ops, all | `DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD` for source, refresh, or storage changes |
+| [`warm_manifest`](#warm_manifest) | StableGated | ops, all | `DBT_NOVA_MCP_ENABLE_MANIFEST_WARM` |
+| [`show_config`](#show_config) | Stable | ops, all | - |
+| [`validate_config`](#validate_config) | Stable | ops, all | - |
+| [`inspect_storage`](#inspect_storage) | Stable | ops, all | - |
+| [`prune_storage`](#prune_storage) | StableGated | ops, all | `DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN` |
+| [`cleanup_storage`](#cleanup_storage) | StableGated | ops, all | `DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN` |
+| [`list_tags`](#list_tags) | Stable | agent, analyst, engineer, governance, all | - |
+| [`list_packages`](#list_packages) | Stable | agent, analyst, engineer, governance, all | - |
+| [`list_databases`](#list_databases) | Stable | agent, analyst, engineer, governance, all | - |
+| [`get_column_lineage`](#get_column_lineage) | Stable | agent, analyst, engineer, governance, all | - |
+| [`get_test_coverage`](#get_test_coverage) | Stable | agent, analyst, engineer, governance, all | - |
+| [`get_metadata_score`](#get_metadata_score) | Stable | agent, analyst, engineer, governance, all | - |
+| [`get_metadata_audit`](#get_metadata_audit) | Stable | agent, engineer, governance, all | - |
+| [`get_agent_readiness`](#get_agent_readiness) | Stable | agent, engineer, governance, all | - |
+| [`batch_get_entities`](#batch_get_entities) | Stable | agent, analyst, engineer, governance, all | - |
+| [`find_by_path`](#find_by_path) | Stable | agent, analyst, engineer, governance, all | - |
+| [`search_recipes`](#search_recipes) | Stable | agent, analyst, engineer, all | - |
+| [`get_recipe`](#get_recipe) | Stable | agent, analyst, engineer, all | - |
+| [`run_recipe`](#run_recipe) | StableGated | engineer, all | tool profile/denylist plus SQL provider controls |
+| [`get_undocumented`](#get_undocumented) | Stable | agent, engineer, governance, all | - |
+| [`get_context`](#get_context) | Stable | agent, analyst, engineer, governance, all | - |
+| [`execute_sql`](#execute_sql) | StableGated | analyst, engineer, all | tool profile/denylist plus SQL provider controls |
+
 > Tip: use `persona` in `search` to tune ranking (`analyst`, `engineer`, `governance`).
 
 ## Discovery
@@ -147,9 +216,9 @@ with query tokens, retrievers used, and the active ranking config snapshot.
 
 ### `search_indicator`
 Search Nova measures and metrics directly, then return the parent execution
-entity and grain context. Native dbt Semantic Layer / MetricFlow `metrics` and
-`semantic_models` are bridged into this indicator surface even when no
-hand-authored `meta.nova` block exists.
+entity and grain context. When a manifest already contains dbt Semantic Layer /
+MetricFlow `metrics` or `semantic_models`, Nova derives indicator evidence from
+those artifact rows even when no hand-authored `meta.nova` block exists.
 
 Each indicator row includes response-only execution metadata:
 `indicator_source` (`nova_meta`, `dbt_metric`, or `dbt_semantic_model`),
@@ -229,9 +298,9 @@ entirely.
 
 ### `indicator_inventory`
 List Nova measures and metrics deterministically, with parent execution context.
-Use this when you need a flat semantic catalog instead of ranked search results.
-MetricFlow metrics and semantic-model measures are included as derived Nova
-indicators unless explicit `meta.nova` metadata overrides or extends them.
+Use this when you need a flat indicator inventory instead of ranked search
+results. MetricFlow metrics and semantic-model measures are included as derived
+Nova indicators unless explicit `meta.nova` metadata overrides or extends them.
 Execution metadata uses the same response-only fields and execution-surface gate
 as `search_indicator`.
 
@@ -1242,7 +1311,10 @@ Validate operator configuration.
 
 `validate_config` checks the active runtime configuration and returns the same
 structured validation payload as `dbt-nova config validate --json`, including
-the resolved `storage_instance_id` and `embedding_cache_dir`.
+the resolved `storage_instance_id`, `embedding_cache_dir`, active
+`runtime_preset`, and an operator checklist for effective tool filters,
+execution/admin/write exposure, hosted HTTP proxy posture, metrics exposure,
+storage/artifact writability, and warnings.
 
 ```json
 {"name":"validate_config","arguments":{}}

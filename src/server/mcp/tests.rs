@@ -74,6 +74,46 @@ fn tool_response_json(response: ToolCallResponse) -> serde_json::Value {
 }
 
 #[test]
+fn mcp_success_serialization_includes_api_contract_marker() {
+    let config = crate::config::DbtNovaConfig {
+        mcp_max_response_bytes: 0,
+        ..Default::default()
+    };
+    let response = serde_json::json!({
+        "success": true,
+        "count": 1,
+        "data": [{"unique_id": "model.pkg.orders"}]
+    });
+
+    let serialized =
+        DbtNovaServer::serialize_budgeted_value(response, &config).expect("serialize response");
+    let payload: serde_json::Value = serde_json::from_str(&serialized).expect("response JSON");
+
+    assert_eq!(
+        payload["api"]["envelope"],
+        serde_json::json!(crate::responses::RESPONSE_ENVELOPE_ID)
+    );
+    assert_eq!(
+        payload["api"]["nova_version"],
+        serde_json::json!(env!("CARGO_PKG_VERSION"))
+    );
+}
+
+#[test]
+fn mcp_error_serialization_includes_api_contract_marker() {
+    let serialized =
+        DbtNovaServer::error_response(&DbtNovaError::InvalidParams("missing id".to_string()));
+    let payload: serde_json::Value = serde_json::from_str(&serialized).expect("response JSON");
+
+    assert_eq!(payload["success"], serde_json::json!(false));
+    assert_eq!(
+        payload["api"]["envelope"],
+        serde_json::json!(crate::responses::RESPONSE_ENVELOPE_ID)
+    );
+    assert_eq!(payload["error_code"], serde_json::json!("INVALID_PARAMS"));
+}
+
+#[test]
 fn mcp_response_budget_prunes_large_object_payloads() {
     let mut columns = serde_json::Map::new();
     for idx in 0..500 {

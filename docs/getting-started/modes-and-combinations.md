@@ -14,7 +14,7 @@ This page maps those planes, shows precedence rules, and gives validated deploym
 
 | Mode | How | Notes |
 |---|---|---|
-| Release slim (default) | `scripts/install.sh --slim` | Binary only. Semantic layers are opt-in; model files are resolved only when those layers are enabled. |
+| Release slim (default) | `scripts/install.sh --slim` | Binary only. Semantic search components are opt-in; model files are resolved only when those components are enabled. |
 | Release bundled | `scripts/install.sh --bundled` | Binary + colocated `models/` when bundled assets exist. Installer falls back to slim if bundled artifact is unavailable. |
 | Source build | `cargo build --release` | Use for unreleased commits or unsupported runner/platform. |
 
@@ -81,7 +81,7 @@ If `DBT_NOVA_EMBEDDINGS_CACHE_DIR` is unset, Nova resolves model path in this or
 | Colocated bundled models | Bundled install with `models/` beside binary | Air-gapped/local fixed runtime |
 | Pre-warmed local cache | `--warm-models` or `scripts/warm_models.sh` + fixed `DBT_NOVA_EMBEDDINGS_CACHE_DIR` | Laptops, consistent MCP startup |
 | Remote models artifact | `DBT_NOVA_MODELS_ARTIFACT_URI` (or bootstrap field) | Fully centralized artifact distribution |
-| On-demand download | Slim install without prewarm + semantic layers enabled | Fastest install path, slower first semantic startup |
+| On-demand download | Slim install without prewarm + semantic search components enabled | Fastest install path, slower first semantic startup |
 
 Important: if bootstrap omits `models_artifact_uri` (for example producer `models_distribution_mode=none`), consumers must rely on pre-warmed/local cache or on-demand model download.
 
@@ -109,8 +109,8 @@ dbt-nova tool call execute_sql \
 | Local dev (simple) | local path | local build | on-demand | `DBT_MANIFEST_PATH` |
 | Local dev (stable) | local path | local build | pre-warmed local cache | `DBT_MANIFEST_PATH`, `DBT_NOVA_EMBEDDINGS_CACHE_DIR` |
 | Remote manifest, local index | `DBT_NOVA_MANIFEST_URI` | local build | pre-warmed local cache | `DBT_NOVA_MANIFEST_URI`, `DBT_NOVA_EMBEDDINGS_CACHE_DIR` |
-| Hosted bootstrap consumer, discovery-only | bootstrap | prebuilt artifacts hydrated locally | remote models artifact or pre-warmed cache | `DBT_NOVA_SERVER_TRANSPORT=streamable_http`, `PORT`, `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true`, `DBT_NOVA_HTTP_ALLOWED_HOSTS=<public-host>`, `DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,reload_manifest,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest`, `DBT_NOVA_STORAGE_DIR=/tmp/dbt-nova`, `DBT_NOVA_EMBEDDINGS_CACHE_DIR=/tmp/dbt-nova/models`, `DBT_NOVA_BOOTSTRAP_URI`, `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing`, `DBT_NOVA_STORAGE_READ_ONLY=false` |
-| Hosted bootstrap consumer, SQL-enabled | bootstrap | prebuilt artifacts hydrated locally | remote models artifact or pre-warmed cache | Hosted discovery-only config plus SQL provider credentials, least-privilege warehouse access, and an empty or custom `DBT_NOVA_TOOL_DENYLIST` |
+| Hosted bootstrap consumer, discovery-only | bootstrap | prebuilt artifacts hydrated locally | remote models artifact or pre-warmed cache | `DBT_NOVA_PRESET=hosted-discovery`, `PORT`, `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true`, `DBT_NOVA_HTTP_ALLOWED_HOSTS=<public-host>`, `DBT_NOVA_STORAGE_DIR=/tmp/dbt-nova`, `DBT_NOVA_EMBEDDINGS_CACHE_DIR=/tmp/dbt-nova/models`, `DBT_NOVA_BOOTSTRAP_URI`, `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing`, `DBT_NOVA_STORAGE_READ_ONLY=false` |
+| Hosted bootstrap consumer, SQL-enabled | bootstrap | prebuilt artifacts hydrated locally | remote models artifact or pre-warmed cache | `DBT_NOVA_PRESET=hosted-sql-trusted`, SQL provider credentials, least-privilege warehouse access, and bounded SQL limits |
 | Prebuilt writable first-run consumer | bootstrap or explicit artifact URIs | prebuilt artifacts hydrated locally | local pre-warmed cache or remote models artifact | `DBT_NOVA_BOOTSTRAP_URI` or artifact URIs, `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing`, `DBT_NOVA_STORAGE_READ_ONLY=false` |
 | Prebuilt strict read-only consumer | bootstrap or explicit artifact URIs | pre-materialized local storage | pre-materialized local models or pre-warmed cache | `DBT_NOVA_STORAGE_READ_ONLY=true`, `DBT_NOVA_ARTIFACT_FETCH_POLICY=never`, bootstrap/artifact vars, `DBT_NOVA_EMBEDDINGS_CACHE_DIR` |
 

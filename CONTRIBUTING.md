@@ -69,6 +69,7 @@ This repo enforces strict quality rules:
   - Soft target: `<= 1200` LOC (excluding generated code)
   - Hard review threshold: `> 1800` LOC requires explicit PR rationale
   - When touching files above the soft target, avoid unnecessary net growth and prefer incremental extraction.
+  - Run `scripts/check_module_size.sh` to inspect soft-limit files and validate hard-limit exceptions in `module-size-exceptions.tsv`.
 - **Function size policy (ratchet model):**
   - Soft target: `<= 120` LOC
   - Hard review threshold: `> 220` LOC requires explicit PR rationale

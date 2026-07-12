@@ -242,7 +242,7 @@ pub(super) fn trim_result_meta_paths_for_budget(value: &mut serde_json::Value, b
 pub(super) fn compact_truncated_response(value: &serde_json::Value) -> serde_json::Value {
     let mut obj = serde_json::Map::new();
     if let Some(source) = value.as_object() {
-        for key in ["success", "total_available", "persona"] {
+        for key in ["api", "success", "total_available", "persona"] {
             if let Some(child) = source.get(key) {
                 obj.insert(key.to_string(), child.clone());
             }

@@ -157,10 +157,12 @@
       }
     }
   },
+  "metrics_enabled": true,
   "models_artifact_uri": "",
   "provenance_stale_after_days": 30,
   "recipes_dir": "analyses/recipes",
   "result_profile": "standard",
+  "runtime_preset": "local-dev",
   "search": {
     "analyst_candidate_false_deboost_factor": 0.44999998807907104,
     "analyst_nova_semantic_match_multiplier": 1.350000023841858,

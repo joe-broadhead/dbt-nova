@@ -18,7 +18,8 @@ pub use column_lineage::{
 };
 pub use core::{
     AgentModellingAuditConfig, AgentReadinessConfig, AgentReadinessModellingConfig,
-    ArtifactFetchPolicy, DbtNovaConfig, GovernanceGateConfig, ResultProfile, ServerTransport,
+    ArtifactFetchPolicy, DbtNovaConfig, GovernanceGateConfig, ResultProfile, RuntimePreset,
+    ServerTransport,
 };
 pub use metadata_score::{
     MetadataCategoryWeights, MetadataScoreConfig, MetadataScoreWeightProfiles,

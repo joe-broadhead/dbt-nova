@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -8,6 +9,21 @@ use tracing::warn;
 
 const BUCKET_EDGES_MS: [u64; 6] = [5, 10, 50, 100, 500, 1000];
 const BUCKET_COUNT: usize = BUCKET_EDGES_MS.len() + 1;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ToolMetricsSnapshot {
+    calls: u64,
+    errors: u64,
+    total_ms: u64,
+    max_ms: u64,
+    buckets: [u64; BUCKET_COUNT],
+}
+
+impl ToolMetricsSnapshot {
+    fn histogram_count(&self) -> u64 {
+        self.buckets.iter().sum()
+    }
+}
 
 #[derive(Debug)]
 pub struct ToolMetrics {
@@ -43,38 +59,43 @@ impl ToolMetrics {
 
     #[must_use]
     pub fn snapshot(&self) -> Value {
-        let calls = self.calls.load(Ordering::Relaxed);
-        let errors = self.errors.load(Ordering::Relaxed);
-        let total_ms = self.total_ms.load(Ordering::Relaxed);
-        let max_ms = self.max_ms.load(Ordering::Relaxed);
-        let avg_ms = total_ms.checked_div(calls).unwrap_or(0);
-        let p95_ms = percentile_ms(&self.buckets, calls, 95, 100, max_ms);
-        let p99_ms = percentile_ms(&self.buckets, calls, 99, 100, max_ms);
-        let error_rate_bps = errors
+        let snapshot = self.raw_snapshot();
+        let avg_ms = snapshot.total_ms.checked_div(snapshot.calls).unwrap_or(0);
+        let p95_ms = percentile_ms(&snapshot.buckets, snapshot.calls, 95, 100, snapshot.max_ms);
+        let p99_ms = percentile_ms(&snapshot.buckets, snapshot.calls, 99, 100, snapshot.max_ms);
+        let error_rate_bps = snapshot
+            .errors
             .saturating_mul(10_000)
-            .checked_div(calls)
+            .checked_div(snapshot.calls)
             .unwrap_or(0);
 
         let mut buckets = serde_json::Map::new();
-        for (idx, count) in self.buckets.iter().enumerate() {
+        for (idx, count) in snapshot.buckets.iter().enumerate() {
             let label = bucket_label(idx);
-            buckets.insert(
-                label.to_string(),
-                Value::from(count.load(Ordering::Relaxed)),
-            );
+            buckets.insert(label.to_string(), Value::from(*count));
         }
 
         serde_json::json!({
-            "calls": calls,
-            "errors": errors,
+            "calls": snapshot.calls,
+            "errors": snapshot.errors,
             "error_rate_bps": error_rate_bps,
-            "total_ms": total_ms,
+            "total_ms": snapshot.total_ms,
             "avg_ms": avg_ms,
             "p95_ms": p95_ms,
             "p99_ms": p99_ms,
-            "max_ms": max_ms,
+            "max_ms": snapshot.max_ms,
             "buckets": buckets
         })
+    }
+
+    fn raw_snapshot(&self) -> ToolMetricsSnapshot {
+        ToolMetricsSnapshot {
+            calls: self.calls.load(Ordering::Relaxed),
+            errors: self.errors.load(Ordering::Relaxed),
+            total_ms: self.total_ms.load(Ordering::Relaxed),
+            max_ms: self.max_ms.load(Ordering::Relaxed),
+            buckets: std::array::from_fn(|idx| self.buckets[idx].load(Ordering::Relaxed)),
+        }
     }
 
     fn update_max(&self, value: u64) {
@@ -214,6 +235,85 @@ impl ToolMetricsStore {
         }
         Value::Object(out)
     }
+
+    #[must_use]
+    pub fn prometheus_text(&self, ready_for_traffic: bool) -> String {
+        let snapshots = self.sorted_snapshots();
+        let mut out = String::new();
+
+        push_line(
+            &mut out,
+            format_args!(
+                "# HELP nova_manifest_ready_for_traffic 1 when the active manifest/search index is ready to serve traffic."
+            ),
+        );
+        push_line(
+            &mut out,
+            format_args!("# TYPE nova_manifest_ready_for_traffic gauge"),
+        );
+        push_line(
+            &mut out,
+            format_args!(
+                "nova_manifest_ready_for_traffic {}",
+                u8::from(ready_for_traffic)
+            ),
+        );
+
+        push_line(
+            &mut out,
+            format_args!("# HELP nova_tool_calls_total Total MCP tool calls by tool and result."),
+        );
+        push_line(
+            &mut out,
+            format_args!("# TYPE nova_tool_calls_total counter"),
+        );
+        for (tool, snapshot) in &snapshots {
+            let tool = prometheus_label_value(tool);
+            push_line(
+                &mut out,
+                format_args!(
+                    "nova_tool_calls_total{{tool=\"{tool}\",result=\"success\"}} {}",
+                    snapshot.calls.saturating_sub(snapshot.errors)
+                ),
+            );
+            push_line(
+                &mut out,
+                format_args!(
+                    "nova_tool_calls_total{{tool=\"{tool}\",result=\"error\"}} {}",
+                    snapshot.errors
+                ),
+            );
+        }
+
+        push_line(
+            &mut out,
+            format_args!(
+                "# HELP nova_tool_call_duration_milliseconds MCP tool call duration histogram in milliseconds."
+            ),
+        );
+        push_line(
+            &mut out,
+            format_args!("# TYPE nova_tool_call_duration_milliseconds histogram"),
+        );
+        for (tool, snapshot) in &snapshots {
+            write_prometheus_histogram(&mut out, tool, snapshot);
+        }
+
+        out
+    }
+
+    fn sorted_snapshots(&self) -> Vec<(String, ToolMetricsSnapshot)> {
+        let guard = self.inner.lock().unwrap_or_else(|poisoned| {
+            warn!("Tool metrics lock poisoned, recovering");
+            poisoned.into_inner()
+        });
+        let mut snapshots = guard
+            .iter()
+            .map(|(key, metrics)| (key.clone(), metrics.raw_snapshot()))
+            .collect::<Vec<_>>();
+        snapshots.sort_by(|(left, _), (right, _)| left.cmp(right));
+        snapshots
+    }
 }
 
 fn bucket_index(duration_ms: u64) -> usize {
@@ -238,7 +338,7 @@ fn bucket_label(idx: usize) -> &'static str {
 }
 
 fn percentile_ms(
-    buckets: &[AtomicU64; BUCKET_COUNT],
+    buckets: &[u64; BUCKET_COUNT],
     calls: u64,
     numerator: u64,
     denominator: u64,
@@ -250,7 +350,7 @@ fn percentile_ms(
     let target = calls.saturating_mul(numerator).div_ceil(denominator);
     let mut cumulative = 0u64;
     for (idx, bucket) in buckets.iter().enumerate() {
-        cumulative = cumulative.saturating_add(bucket.load(Ordering::Relaxed));
+        cumulative = cumulative.saturating_add(*bucket);
         if cumulative >= target {
             return if idx < BUCKET_EDGES_MS.len() {
                 Some(BUCKET_EDGES_MS[idx])
@@ -260,6 +360,59 @@ fn percentile_ms(
         }
     }
     Some(max_ms)
+}
+
+fn write_prometheus_histogram(out: &mut String, tool: &str, snapshot: &ToolMetricsSnapshot) {
+    let tool = prometheus_label_value(tool);
+    let mut cumulative = 0u64;
+    for (idx, edge) in BUCKET_EDGES_MS.iter().enumerate() {
+        cumulative = cumulative.saturating_add(snapshot.buckets[idx]);
+        push_line(
+            out,
+            format_args!(
+                "nova_tool_call_duration_milliseconds_bucket{{tool=\"{tool}\",le=\"{edge}\"}} {cumulative}"
+            ),
+        );
+    }
+    let histogram_count = snapshot.histogram_count();
+    push_line(
+        out,
+        format_args!(
+            "nova_tool_call_duration_milliseconds_bucket{{tool=\"{tool}\",le=\"+Inf\"}} {histogram_count}"
+        ),
+    );
+    push_line(
+        out,
+        format_args!(
+            "nova_tool_call_duration_milliseconds_sum{{tool=\"{tool}\"}} {}",
+            snapshot.total_ms
+        ),
+    );
+    push_line(
+        out,
+        format_args!(
+            "nova_tool_call_duration_milliseconds_count{{tool=\"{tool}\"}} {histogram_count}"
+        ),
+    );
+}
+
+fn prometheus_label_value(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str(r"\\"),
+            '"' => escaped.push_str(r#"\""#),
+            '\n' => escaped.push_str(r"\n"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+fn push_line(out: &mut String, args: std::fmt::Arguments<'_>) {
+    out.write_fmt(args)
+        .expect("writing Prometheus metrics to String should not fail");
+    out.push('\n');
 }
 
 #[cfg(test)]
@@ -301,6 +454,58 @@ mod tests {
         assert_eq!(snapshot["search"]["errors"].as_u64(), Some(1));
         assert_eq!(snapshot["health"]["calls"].as_u64(), Some(1));
         assert_eq!(snapshot["health"]["errors"].as_u64(), Some(0));
+    }
+
+    #[test]
+    fn prometheus_export_uses_cumulative_histogram_buckets() {
+        let store = ToolMetricsStore::default();
+        store.record("search", 4, true);
+        store.record("search", 12, true);
+        store.record("search", 1250, false);
+        store.record("get_entity.analyst", 10, true);
+
+        let text = store.prometheus_text(true);
+
+        assert!(text.contains("# TYPE nova_manifest_ready_for_traffic gauge"));
+        assert!(text.contains("nova_manifest_ready_for_traffic 1"));
+        assert!(
+            text.contains(r#"nova_tool_calls_total{tool="search",result="success"} 2"#),
+            "{text}"
+        );
+        assert!(
+            text.contains(r#"nova_tool_calls_total{tool="search",result="error"} 1"#),
+            "{text}"
+        );
+        assert!(
+            text.contains(r#"nova_tool_call_duration_milliseconds_bucket{tool="search",le="5"} 1"#),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                r#"nova_tool_call_duration_milliseconds_bucket{tool="search",le="10"} 1"#
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                r#"nova_tool_call_duration_milliseconds_bucket{tool="search",le="50"} 2"#
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                r#"nova_tool_call_duration_milliseconds_bucket{tool="search",le="+Inf"} 3"#
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(r#"nova_tool_call_duration_milliseconds_sum{tool="search"} 1266"#),
+            "{text}"
+        );
+        assert!(
+            text.contains(r#"nova_tool_call_duration_milliseconds_count{tool="search"} 3"#),
+            "{text}"
+        );
     }
 
     #[test]

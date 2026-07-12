@@ -363,7 +363,6 @@ jobs:
             -e DBT_MANIFEST_PATH=/fixtures/nova_manifest.json \
             -e PORT=8080 \
             -e DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true \
-            -e DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest \
             -e DBT_NOVA_SEARCH_ENABLE_VECTOR=false \
             -e DBT_NOVA_SEARCH_ENABLE_SPARSE=false \
             -e DBT_NOVA_SEARCH_ENABLE_RERANKER=false \
@@ -459,7 +458,6 @@ jobs:
             -e DBT_MANIFEST_PATH=/fixtures/nova_manifest.json \
             -e PORT=8080 \
             -e DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true \
-            -e DBT_NOVA_TOOL_DENYLIST=execute_sql,run_recipe,show_config,validate_config,inspect_storage,prune_storage,cleanup_storage,warm_manifest \
             -e DBT_NOVA_SEARCH_ENABLE_VECTOR=false \
             -e DBT_NOVA_SEARCH_ENABLE_SPARSE=false \
             -e DBT_NOVA_SEARCH_ENABLE_RERANKER=false \

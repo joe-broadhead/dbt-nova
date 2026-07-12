@@ -29,6 +29,15 @@ and blocker exit-code workflow.
 
 `SafetyGated` means the MCP tool exists but rejects by default until an operator
 sets the documented opt-in environment variable for local execution or writes.
+The canonical per-tool stability tier, profile membership, and safety-gate
+matrix lives in [Tools Reference](tools.md#stability-and-profiles) and is
+checked against `src/tools/catalog.rs`.
+
+MCP tool bodies and CLI JSON command envelopes both expose the additive
+top-level `api` response contract marker documented in
+[Response Format](response-format.md#api-contract-marker). CLI JSON keeps its
+own command envelope shape; MCP budgeting and pagination metadata remain under
+`_nova_result_meta`.
 
 ## Current Matrix
 
@@ -67,8 +76,12 @@ that:
 
 - MCP router names match the canonical MCP catalog.
 - CLI `tool call` supports the same canonical MCP tool names.
+- Every canonical MCP tool has stability metadata, profile membership, and a
+  docs row in the Tools Reference.
+- MCP and CLI JSON envelope docs cover the shared top-level `api` marker while
+  keeping `_nova_result_meta` as MCP transport metadata.
 - MCP tool count references in core docs match the catalog.
 - CLI leaf commands have an explicit parity row and any gap has an owning issue.
 
-When adding or removing a tool or CLI command, update the catalog, parity matrix,
-docs, and tests in the same change.
+When adding or removing a tool or CLI command, update the catalog, stability
+matrix, parity matrix, docs, and tests in the same change.

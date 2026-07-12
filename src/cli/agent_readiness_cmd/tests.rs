@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use serde_json::json;
+use serde_json::{Value as JsonValue, json};
 use tempfile::TempDir;
 
 use super::patches::append_indicator_meta_patches;
@@ -41,6 +41,335 @@ async fn readiness_report_for_fixture(
     build_agent_readiness_report(&loaded.search, &inputs)
         .await
         .expect("report")
+}
+
+fn assert_object_has_fields(value: &JsonValue, context: &str, fields: &[&str]) {
+    let obj = value
+        .as_object()
+        .unwrap_or_else(|| panic!("{context} must be an object: {value:#?}"));
+    for field in fields {
+        assert!(
+            obj.contains_key(*field),
+            "{context} missing required field `{field}` in {value:#?}"
+        );
+    }
+}
+
+fn assert_non_empty_string(value: &JsonValue, context: &str, field: &str) {
+    let text = value
+        .get(field)
+        .and_then(JsonValue::as_str)
+        .unwrap_or_else(|| panic!("{context}.{field} must be a string: {value:#?}"));
+    assert!(
+        !text.trim().is_empty(),
+        "{context}.{field} must not be empty"
+    );
+}
+
+fn assert_array_field<'a>(value: &'a JsonValue, context: &str, field: &str) -> &'a Vec<JsonValue> {
+    value
+        .get(field)
+        .and_then(JsonValue::as_array)
+        .unwrap_or_else(|| panic!("{context}.{field} must be an array: {value:#?}"))
+}
+
+fn assert_readiness_finding_contract(value: &JsonValue, context: &str) {
+    assert_object_has_fields(
+        value,
+        context,
+        &["severity", "category", "code", "message", "evidence"],
+    );
+    assert_non_empty_string(value, context, "severity");
+    assert_non_empty_string(value, context, "category");
+    assert_non_empty_string(value, context, "code");
+    assert_non_empty_string(value, context, "message");
+    assert!(
+        value.get("evidence").is_some_and(JsonValue::is_object),
+        "{context}.evidence must be an object: {value:#?}"
+    );
+}
+
+fn assert_agent_readiness_top_level_contract(value: &JsonValue, context: &str) {
+    assert_object_has_fields(
+        value,
+        context,
+        &[
+            "schema_version",
+            "generated_at_ms",
+            "manifest",
+            "config",
+            "scoring_contract",
+            "overall_score",
+            "grade",
+            "readiness_band",
+            "gate_status",
+            "summary",
+            "persona_scores",
+            "blocking_findings",
+            "improvement_findings",
+            "entity_findings",
+            "indicator_findings",
+            "suggested_meta_patches",
+            "golden_question_seeds",
+            "eval_status",
+            "next_actions",
+        ],
+    );
+    assert_eq!(value["schema_version"], json!("agent_readiness.v1"));
+    assert!(value["generated_at_ms"].is_number());
+    assert!(value["overall_score"].is_number());
+    assert_non_empty_string(value, context, "grade");
+    assert_non_empty_string(value, context, "readiness_band");
+    assert_non_empty_string(value, context, "gate_status");
+}
+
+fn assert_agent_readiness_manifest_contract(value: &JsonValue) {
+    assert_object_has_fields(
+        &value["manifest"],
+        "agent_readiness.manifest",
+        &[
+            "source",
+            "hash",
+            "version",
+            "entity_count",
+            "resource_counts",
+            "search_ready",
+        ],
+    );
+    assert_non_empty_string(&value["manifest"], "agent_readiness.manifest", "source");
+    assert!(
+        !value["manifest"]["source"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("token="),
+        "manifest source must stay sanitized: {value:#?}"
+    );
+    assert_object_has_fields(
+        &value["manifest"]["search_ready"],
+        "agent_readiness.manifest.search_ready",
+        &["vector", "sparse", "reranker"],
+    );
+}
+
+fn assert_agent_readiness_config_contract(value: &JsonValue) {
+    assert_object_has_fields(
+        &value["config"],
+        "agent_readiness.config",
+        &[
+            "personas",
+            "resource_types",
+            "metadata_only",
+            "read_only",
+            "storage_instance_id",
+            "thresholds",
+        ],
+    );
+    assert!(
+        !assert_array_field(&value["config"], "agent_readiness.config", "personas").is_empty(),
+        "agent_readiness.config.personas must not be empty"
+    );
+    assert_eq!(value["config"]["metadata_only"], json!(true));
+}
+
+fn assert_agent_readiness_summary_contract(value: &JsonValue) {
+    assert_object_has_fields(
+        &value["summary"],
+        "agent_readiness.summary",
+        &[
+            "target_count",
+            "scored_count",
+            "blocker_count",
+            "improvement_count",
+            "indicator_count",
+            "ambiguous_indicator_count",
+            "suggested_meta_patch_count",
+            "golden_question_seed_count",
+            "score_buckets",
+            "grade_buckets",
+            "worst_entities_by_persona",
+            "category_weak_spots",
+            "top_recommendation_fields",
+            "drill_down_hints",
+            "agent_modelling",
+        ],
+    );
+    assert_object_has_fields(
+        &value["summary"]["agent_modelling"],
+        "agent_readiness.summary.agent_modelling",
+        &[
+            "total",
+            "blockers",
+            "high",
+            "medium",
+            "low",
+            "truncated",
+            "top_codes",
+            "top_categories",
+        ],
+    );
+}
+
+fn assert_agent_readiness_persona_scores_contract(value: &JsonValue) {
+    let persona_scores = value["persona_scores"]
+        .as_object()
+        .expect("persona_scores must be an object");
+    assert!(
+        !persona_scores.is_empty(),
+        "persona_scores must not be empty"
+    );
+    for (persona, score) in persona_scores {
+        assert_object_has_fields(
+            score,
+            &format!("agent_readiness.persona_scores.{persona}"),
+            &[
+                "overall_score",
+                "grade",
+                "gate_status",
+                "scored_count",
+                "total_available",
+                "quality_summary",
+                "metadata_summary",
+            ],
+        );
+    }
+}
+
+fn assert_agent_readiness_findings_contract(value: &JsonValue, context: &str) {
+    for (field, item_context) in [
+        ("blocking_findings", "agent_readiness.blocking_findings[]"),
+        (
+            "improvement_findings",
+            "agent_readiness.improvement_findings[]",
+        ),
+    ] {
+        for finding in assert_array_field(value, context, field) {
+            assert_readiness_finding_contract(finding, item_context);
+        }
+    }
+
+    if let Some(entity_finding) = assert_array_field(value, context, "entity_findings").first() {
+        assert_object_has_fields(
+            entity_finding,
+            "agent_readiness.entity_findings[]",
+            &[
+                "unique_id",
+                "overall_score",
+                "grade",
+                "persona_scores",
+                "signals",
+                "diagnostics",
+                "recommendations",
+            ],
+        );
+        assert_object_has_fields(
+            &entity_finding["signals"],
+            "agent_readiness.entity_findings[].signals",
+            &[
+                "has_description",
+                "has_owner",
+                "has_nova_meta",
+                "has_primary_key",
+                "has_tests",
+                "has_compiled_sql",
+                "column_count",
+                "documented_column_count",
+                "test_count",
+                "upstream_count",
+                "downstream_count",
+            ],
+        );
+    }
+
+    if let Some(indicator_finding) =
+        assert_array_field(value, context, "indicator_findings").first()
+    {
+        assert_object_has_fields(
+            indicator_finding,
+            "agent_readiness.indicator_findings[]",
+            &["unique_id", "indicator_type", "issue"],
+        );
+    }
+}
+
+fn assert_agent_readiness_patch_seed_contract(value: &JsonValue, context: &str) {
+    for patch in assert_array_field(value, context, "suggested_meta_patches") {
+        assert_object_has_fields(
+            patch,
+            "agent_readiness.suggested_meta_patches[]",
+            &[
+                "id",
+                "target_type",
+                "unique_id",
+                "field_path",
+                "suggested_value",
+                "placeholder",
+                "rationale",
+                "severity",
+                "confidence",
+                "evidence",
+            ],
+        );
+        assert!(
+            patch["evidence"].is_object(),
+            "suggested_meta_patches[].evidence must be an object: {patch:#?}"
+        );
+    }
+
+    for seed in assert_array_field(value, context, "golden_question_seeds") {
+        assert_object_has_fields(
+            seed,
+            "agent_readiness.golden_question_seeds[]",
+            &[
+                "id",
+                "seed_type",
+                "priority",
+                "persona",
+                "question",
+                "expected_entities",
+                "expected_indicators",
+                "recommended_assertions",
+                "rationale",
+                "review_required",
+                "date_policy",
+            ],
+        );
+    }
+}
+
+fn assert_agent_readiness_eval_actions_contract(value: &JsonValue, context: &str) {
+    assert_object_has_fields(
+        &value["eval_status"],
+        "agent_readiness.eval_status",
+        &[
+            "status",
+            "supplied",
+            "failed_eval_ids",
+            "failed_case_ids",
+            "message",
+        ],
+    );
+
+    for action in assert_array_field(value, context, "next_actions") {
+        assert_object_has_fields(
+            action,
+            "agent_readiness.next_actions[]",
+            &["priority", "category", "action", "evidence"],
+        );
+        assert_non_empty_string(action, "agent_readiness.next_actions[]", "category");
+        assert_non_empty_string(action, "agent_readiness.next_actions[]", "action");
+    }
+}
+
+fn assert_agent_readiness_report_contract(report: &super::AgentReadinessReport, context: &str) {
+    let value = serde_json::to_value(report).expect("serialize readiness report");
+    assert_agent_readiness_top_level_contract(&value, context);
+    assert_agent_readiness_manifest_contract(&value);
+    assert_agent_readiness_config_contract(&value);
+    assert_agent_readiness_summary_contract(&value);
+    assert_agent_readiness_persona_scores_contract(&value);
+    assert_agent_readiness_findings_contract(&value, context);
+    assert_agent_readiness_patch_seed_contract(&value, context);
+    assert_agent_readiness_eval_actions_contract(&value, context);
 }
 
 #[test]
@@ -193,6 +522,36 @@ async fn agent_readiness_report_contains_required_sections() {
     assert!(markdown.contains("# Nova Agent Readiness"));
     assert!(markdown.contains("## Persona Scores"));
     assert!(markdown.contains("## Next Actions"));
+}
+
+#[tokio::test]
+async fn agent_readiness_v1_contract_fixtures_lock_required_json_fields() {
+    let clean_report =
+        readiness_report_for_fixture("perfect_model.json", "agent-readiness-contract-clean").await;
+    assert_agent_readiness_report_contract(&clean_report, "clean agent_readiness.v1 fixture");
+
+    let problematic_report = readiness_report_for_fixture(
+        "agent_modelling_findings.json",
+        "agent-readiness-contract-problematic",
+    )
+    .await;
+    assert_agent_readiness_report_contract(
+        &problematic_report,
+        "problematic agent_readiness.v1 fixture",
+    );
+    assert!(
+        problematic_report.summary.agent_modelling["blockers"]
+            .as_u64()
+            .is_some_and(|count| count > 0),
+        "problematic fixture must keep blocker modelling evidence"
+    );
+    assert!(
+        problematic_report
+            .next_actions
+            .iter()
+            .any(|action| action.category == "modelling"),
+        "problematic fixture must keep modelling next actions"
+    );
 }
 
 #[tokio::test]

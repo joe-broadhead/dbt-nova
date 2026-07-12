@@ -1,11 +1,37 @@
 # Response Format
 
-All tools return a consistent envelope.
+All MCP tools return a consistent JSON envelope. CLI commands that support
+`--json` return a separate command envelope.
+
+## API Contract Marker
+
+Nova-owned MCP response bodies and CLI JSON command envelopes include an
+additive top-level `api` object:
+
+```json
+{
+  "api": {
+    "envelope": "nova.response.v1",
+    "nova_version": "0.0.6"
+  }
+}
+```
+
+`api.envelope` identifies the response envelope contract. `api.nova_version`
+reports the dbt-nova crate version that produced the response. During the
+v0.0.x line, documented response fields follow additive compatibility rules:
+clients should ignore unknown fields, and Nova should document any removal or
+rename as a breaking change. `_nova_result_meta` remains transport and response
+budget metadata; API contract data is not nested under it.
 
 ## Success Response
 
 ```json
 {
+  "api": {
+    "envelope": "nova.response.v1",
+    "nova_version": "0.0.6"
+  },
   "success": true,
   "count": 5,
   "total_available": 100,
@@ -130,6 +156,10 @@ For `search`, `include_sql=false` will omit raw/compiled SQL from full payloads.
 
 ```json
 {
+  "api": {
+    "envelope": "nova.response.v1",
+    "nova_version": "0.0.6"
+  },
   "success": false,
   "error": "Entity 'foo' not found (resource_type: model) Available resource types: analysis, exposure, macro, metric, model, seed, snapshot, source, test",
   "error_code": "NOT_FOUND",
@@ -168,6 +198,10 @@ CLI subcommands that use `--json` return a command envelope (different from MCP 
 
 ```json
 {
+  "api": {
+    "envelope": "nova.response.v1",
+    "nova_version": "0.0.6"
+  },
   "command": "manifest load",
   "status": "success",
   "data": { "...": "..." },

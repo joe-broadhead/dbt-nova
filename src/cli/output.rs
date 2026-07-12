@@ -2,6 +2,7 @@ use serde::Serialize;
 use serde_json::Value as JsonValue;
 
 use crate::error::DbtNovaError;
+use crate::responses::{ApiContract, response_api_contract};
 
 #[derive(Debug, Serialize)]
 pub struct CliMeta {
@@ -15,6 +16,7 @@ pub struct CliEnvelope<T>
 where
     T: Serialize,
 {
+    pub api: ApiContract,
     pub command: String,
     pub status: &'static str,
     pub data: Option<T>,
@@ -29,6 +31,7 @@ where
     #[must_use]
     pub fn success(command: impl Into<String>, data: T, elapsed_ms: u128) -> Self {
         Self {
+            api: response_api_contract(),
             command: command.into(),
             status: "success",
             data: Some(data),
@@ -49,6 +52,7 @@ pub fn error_envelope(
     elapsed_ms: u128,
 ) -> CliEnvelope<JsonValue> {
     CliEnvelope {
+        api: response_api_contract(),
         command: command.into(),
         status: "error",
         data: None,
@@ -88,7 +92,44 @@ fn timestamp_ms() -> u128 {
 mod tests {
     use crate::error::DbtNovaError;
 
-    use super::exit_code;
+    use super::{CliEnvelope, error_envelope, exit_code};
+
+    #[test]
+    fn success_envelope_includes_api_contract_marker() {
+        let envelope = CliEnvelope::success("test command", serde_json::json!({"ok": true}), 7);
+        let payload = serde_json::to_value(envelope).expect("serialize envelope");
+
+        assert_eq!(
+            payload["api"]["envelope"],
+            serde_json::json!(crate::responses::RESPONSE_ENVELOPE_ID)
+        );
+        assert_eq!(
+            payload["api"]["nova_version"],
+            serde_json::json!(env!("CARGO_PKG_VERSION"))
+        );
+        assert!(
+            payload
+                .get("meta")
+                .and_then(|meta| meta.get("api"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn error_envelope_includes_api_contract_marker() {
+        let envelope = error_envelope(
+            "test command",
+            &DbtNovaError::InvalidParams("bad input".to_string()),
+            7,
+        );
+        let payload = serde_json::to_value(envelope).expect("serialize envelope");
+
+        assert_eq!(
+            payload["api"]["envelope"],
+            serde_json::json!(crate::responses::RESPONSE_ENVELOPE_ID)
+        );
+        assert_eq!(payload["status"], serde_json::json!("error"));
+    }
 
     #[test]
     fn exit_code_map_invalid_params_to_one() {

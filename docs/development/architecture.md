@@ -20,6 +20,9 @@ downstream tooling; the runtime loader does not route manifests through them.
 4. **Consolidate Tools** – fewer powerful tools over many tiny ones.
 5. **Consistent Responses** – standard response envelope for all tools.
 
+See [Architecture Decisions](adrs.md) for the accepted v0.0.x product-boundary,
+hosted-security, preset, and metrics decisions.
+
 ## Architecture Overview (Layers)
 
 ```mermaid

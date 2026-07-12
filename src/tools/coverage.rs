@@ -99,7 +99,7 @@ impl ManifestSearch {
                 let is_pk = column_primary_key_bool(col_info);
 
                 if is_pk {
-                    let key = format!("{}:{col_name}", &entity_id);
+                    let key = format!("{entity_id}:{col_name}");
                     let col_tests = self.tests_by_column.get(&key).cloned().unwrap_or_default();
 
                     let has_unique = self.test_exists(&col_tests, "unique").await?;

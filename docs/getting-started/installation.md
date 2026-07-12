@@ -67,7 +67,8 @@ or remote model hydration? See [Modes & Combinations](modes-and-combinations.md)
 
 ### Optional: Install + Pre-Warm Models
 
-If you want users to enable semantic layers without a later model download, pre-warm during install:
+If you want users to enable semantic search components without a later model
+download, pre-warm during install:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/joe-broadhead/dbt-nova/v0.0.6/scripts/install.sh | \
@@ -182,9 +183,9 @@ cargo install --path . --features embeddings --locked
 
 ## Release Artifacts
 
-Published release assets are **slim** (binary only). Semantic layers are disabled
-by default; when you opt in to them, model files can be downloaded on demand or
-pre-warmed with `scripts/warm_models.sh`.
+Published release assets are **slim** (binary only). Semantic search components
+are disabled by default; when you opt in to them, model files can be downloaded
+on demand or pre-warmed with `scripts/warm_models.sh`.
 
 If you request `--bundled` and no bundled artifact exists for that release/target,
 the installer automatically falls back to slim.
@@ -248,7 +249,7 @@ The installer defaults to **slim** and supports:
 | `status: refreshing` | Manifest refreshed in background while existing index is still serving | Confirm `DBT_NOVA_MANIFEST_REFRESH_SECS`, reduce size of source updates if needed, and check for refresh errors in logs |
 | `status: failed` at startup | Manifest source unavailable or malformed manifest | Fix source/path credentials and wait for retry recovery to return to `ready` |
 | `ENOENT manifest.json` | Wrong path | Verify `DBT_MANIFEST_PATH` points to a valid file |
-| Out of memory | Dense vectors enabled on small instance | Leave semantic layers disabled, or set `DBT_NOVA_SEARCH_ENABLE_VECTOR=false` and increase RAM only if you need dense search |
+| Out of memory | Dense vectors enabled on small instance | Leave semantic search components disabled, or set `DBT_NOVA_SEARCH_ENABLE_VECTOR=false` and increase RAM only if you need dense search |
 | Permission denied | Binary not executable | Run `chmod +x dbt-nova` |
 
 ### Debug Logging
@@ -261,8 +262,9 @@ DBT_NOVA_LOG=debug dbt-nova
 
 ### First-Run Model Downloads
 
-Slim/source installs only download models when semantic layers are explicitly enabled.
-This happens once and is cached in the configured `DBT_NOVA_EMBEDDINGS_CACHE_DIR`.
+Slim/source installs only download models when semantic search components are
+explicitly enabled. This happens once and is cached in the configured
+`DBT_NOVA_EMBEDDINGS_CACHE_DIR`.
 If unset, Nova uses `models/` next to the binary when present, otherwise
 `$HOME/.dbt-nova/.fastembed_cache`.
 

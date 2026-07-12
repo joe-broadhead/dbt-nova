@@ -26,7 +26,8 @@ Operational defaults:
   70 percent line coverage floor,
   `mkdocs build --strict` (with `docs/requirements.txt`), `scripts/check_advisory_ignores.sh`,
   `scripts/check_dependency_watchlist.sh`,
-  `scripts/check_config_reference.sh`, and `cargo deny check advisories licenses sources`
+  `scripts/check_config_reference.sh`, `scripts/check_module_size.sh`, and
+  `cargo deny check advisories licenses sources`
 - **Reusable asset contract checks:** calls the reusable producer workflow in
   standard mode and dry-run remote publish mode, then validates:
   - metadata contract artifact correctness
@@ -185,6 +186,7 @@ cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo fmt --check
 scripts/smoke_release_no_warm.sh --manifest-path tests/fixtures/starter_eval_manifest.json
 scripts/check_config_reference.sh
+scripts/check_module_size.sh
 scripts/check_dependency_watchlist.sh
 pip install -r docs/requirements.txt
 mkdocs build --strict

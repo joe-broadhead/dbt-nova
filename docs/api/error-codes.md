@@ -1,6 +1,8 @@
 # Error Codes Reference
 
 All dbt-nova errors include a machine-readable `error_code` for programmatic handling.
+Nova-owned MCP error response bodies also include the top-level `api` response
+contract marker described in [Response Format](response-format.md#api-contract-marker).
 
 ## Error Codes
 
@@ -30,6 +32,10 @@ All dbt-nova errors include a machine-readable `error_code` for programmatic han
 
 ```json
 {
+  "api": {
+    "envelope": "nova.response.v1",
+    "nova_version": "0.0.6"
+  },
   "success": false,
   "error": "Entity 'customer' not found",
   "error_code": "NOT_FOUND"

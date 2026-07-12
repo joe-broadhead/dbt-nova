@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added machine-checked MCP tool stability metadata, profile membership docs,
+  and safety-gate posture for the canonical 53-tool catalog while preserving
+  v0.0.x versioning.
+- Added an additive top-level `api` response contract marker to Nova-owned MCP
+  JSON bodies and CLI JSON envelopes.
+- Added fixture-backed contract tests for `agent_readiness.v1` and
+  `agent_modelling.v1` payload shapes, including queryability execution-surface
+  evidence.
+- Added v0.0.x runtime presets (`local-dev`, `ci-audit`, `hosted-discovery`,
+  and `hosted-sql-trusted`) plus a `config validate` posture checklist for
+  effective tool filters, hosted HTTP proxy posture, and storage/artifact
+  writability.
+- Added a privacy-safe Prometheus-compatible `GET /metrics` endpoint for
+  streamable HTTP mode, backed by the existing tool metrics recorder and
+  readiness signal, with `DBT_NOVA_METRICS_ENABLED=false` as an opt-out.
+- Tightened docs and packaged skill wording around Nova as a metadata bridge,
+  keeping MetricFlow/dbt Semantic Layer references framed as optional manifest
+  evidence or externally owned execution paths.
+- Added CODEOWNERS plus v0.0.x ADR and release-hygiene docs for maintainership,
+  compatibility, hosted security, presets, and metrics posture.
+- Added a CI-backed lexical scale guard with a shared synthetic manifest
+  generator and measured default-mode performance baselines for manifest load,
+  search, inventory, context, and readiness paths.
+- Added a module-size ratchet check, hard-threshold exception register, and
+  maintainer docs so code-bloat follow-up stays narrow and reviewable.
 - Added response-only `direct_sql_queryable` metadata to `search_indicator` and
   `indicator_inventory` so agents can distinguish relation-backed SQL surfaces
   from Semantic Layer-backed indicators that require MetricFlow/dbt Semantic
