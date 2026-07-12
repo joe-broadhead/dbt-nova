@@ -2,7 +2,8 @@ use std::sync::{LazyLock, Mutex};
 
 use super::{
     ArtifactFetchPolicy, CI_AUDIT_TOOL_DENYLIST, DbtNovaConfig, HOSTED_DISCOVERY_TOOL_DENYLIST,
-    HOSTED_SQL_TRUSTED_TOOL_DENYLIST, ResultProfile, RuntimePreset, ServerTransport,
+    HOSTED_SQL_TRUSTED_TOOL_DENYLIST, HostedAuthMode, ResultProfile, RuntimePreset,
+    ServerTransport,
 };
 
 static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -87,6 +88,21 @@ fn server_transport_parse_is_case_insensitive() {
         Some(ServerTransport::StreamableHttp)
     );
     assert_eq!(ServerTransport::parse("unknown"), None);
+}
+
+#[test]
+fn hosted_auth_mode_parse_accepts_planned_modes() {
+    assert_eq!(HostedAuthMode::parse("off"), Some(HostedAuthMode::Off));
+    assert_eq!(
+        HostedAuthMode::parse("proxy_signed_headers"),
+        Some(HostedAuthMode::ProxySignedHeaders)
+    );
+    assert_eq!(
+        HostedAuthMode::parse("proxy-signed-headers"),
+        Some(HostedAuthMode::ProxySignedHeaders)
+    );
+    assert_eq!(HostedAuthMode::parse("jwt"), Some(HostedAuthMode::Jwt));
+    assert_eq!(HostedAuthMode::parse("tenant_router"), None);
 }
 
 #[test]
@@ -197,6 +213,146 @@ fn default_result_profiles_keep_cli_standard_and_mcp_compact() {
     assert_eq!(config.mcp_result_profile, ResultProfile::Compact);
     assert_eq!(config.mcp_default_limit, 10);
     assert_eq!(config.mcp_max_page_size, 100);
+    assert_eq!(config.hosted_auth.mode, HostedAuthMode::Off);
+    assert!(!config.hosted_auth.required);
+    assert_eq!(config.hosted_auth.identity_subject_claim, "sub");
+    assert!(config.hosted_auth.jwt_algorithms.is_empty());
+}
+
+#[test]
+fn from_env_rejects_unknown_hosted_auth_mode() {
+    let config = with_env_vars(
+        &[("DBT_NOVA_AUTH_MODE", Some("tenant_router"))],
+        DbtNovaConfig::from_env,
+    );
+
+    let error = config
+        .validate()
+        .expect_err("unknown hosted auth mode should fail validation");
+    assert!(error.to_string().contains("DBT_NOVA_AUTH_MODE"));
+}
+
+#[test]
+fn from_env_defaults_non_off_hosted_auth_to_required() {
+    let config = with_env_vars(
+        &[
+            ("DBT_NOVA_AUTH_MODE", Some("proxy_signed_headers")),
+            ("DBT_NOVA_PROXY_IDENTITY_HEADER", Some("X-Nova-Identity")),
+            ("DBT_NOVA_PROXY_SIGNATURE_HEADER", Some("X-Nova-Signature")),
+            (
+                "DBT_NOVA_PROXY_IDENTITY_SECRET_FILE",
+                Some("/run/secrets/nova-proxy-key"),
+            ),
+        ],
+        DbtNovaConfig::from_env,
+    );
+
+    assert_eq!(config.hosted_auth.mode, HostedAuthMode::ProxySignedHeaders);
+    assert!(config.hosted_auth.required);
+    let error = config
+        .validate()
+        .expect_err("parsed-but-unimplemented proxy mode should fail closed");
+    assert!(
+        error
+            .to_string()
+            .contains("proxy_signed_headers is parsed but not implemented yet"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn validate_rejects_incomplete_jwt_hosted_auth_skeleton() {
+    let config = with_env_vars(
+        &[("DBT_NOVA_AUTH_MODE", Some("jwt"))],
+        DbtNovaConfig::from_env,
+    );
+
+    let error = config
+        .validate()
+        .expect_err("incomplete jwt mode should fail validation");
+    assert!(
+        error.to_string().contains("DBT_NOVA_JWT_ISSUER"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn validate_rejects_complete_jwt_until_verifier_lands() {
+    let config = with_env_vars(
+        &[
+            ("DBT_NOVA_AUTH_MODE", Some("jwt")),
+            ("DBT_NOVA_IDENTITY_SUBJECT_CLAIM", Some("sub")),
+            ("DBT_NOVA_JWT_ISSUER", Some("https://issuer.example")),
+            ("DBT_NOVA_JWT_AUDIENCE", Some("dbt-nova")),
+            (
+                "DBT_NOVA_JWT_JWKS_URL",
+                Some("https://issuer.example/.well-known/jwks.json"),
+            ),
+            ("DBT_NOVA_JWT_ALGORITHMS", Some("RS256, ES256")),
+        ],
+        DbtNovaConfig::from_env,
+    );
+
+    assert_eq!(config.hosted_auth.mode, HostedAuthMode::Jwt);
+    assert_eq!(
+        config.hosted_auth.jwt_algorithms,
+        vec!["RS256".to_string(), "ES256".to_string()]
+    );
+    let error = config
+        .validate()
+        .expect_err("complete jwt skeleton should still fail closed until implemented");
+    assert!(
+        error
+            .to_string()
+            .contains("jwt is parsed but not implemented yet"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn validate_rejects_non_https_jwt_jwks_url() {
+    let config = with_env_vars(
+        &[
+            ("DBT_NOVA_AUTH_MODE", Some("jwt")),
+            ("DBT_NOVA_AUTH_REQUIRED", Some("true")),
+            ("DBT_NOVA_JWT_ISSUER", Some("https://issuer.example")),
+            ("DBT_NOVA_JWT_AUDIENCE", Some("dbt-nova")),
+            (
+                "DBT_NOVA_JWT_JWKS_URL",
+                Some("http://issuer.example/.well-known/jwks.json"),
+            ),
+            ("DBT_NOVA_JWT_ALGORITHMS", Some("RS256")),
+        ],
+        DbtNovaConfig::from_env,
+    );
+
+    let error = config
+        .validate()
+        .expect_err("http JWKS URL should be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("DBT_NOVA_JWT_JWKS_URL must start with https://"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn validate_rejects_required_auth_when_mode_is_off() {
+    let config = with_env_vars(
+        &[("DBT_NOVA_AUTH_REQUIRED", Some("true"))],
+        DbtNovaConfig::from_env,
+    );
+
+    let error = config
+        .validate()
+        .expect_err("auth_required=true with off mode should fail closed");
+    assert!(
+        error
+            .to_string()
+            .contains("DBT_NOVA_AUTH_REQUIRED=true requires DBT_NOVA_AUTH_MODE"),
+        "unexpected error: {error}"
+    );
 }
 
 #[test]

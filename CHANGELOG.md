@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added a fail-closed hosted auth config skeleton for future proxy/JWT identity
+  work while keeping effective runtime behavior default-off.
 - Added design-only hosted identity and JWT threat-model docs, planned config
   contract docs, and guardrail tests for the default-off identity milestone.
 - Added machine-checked MCP tool stability metadata, profile membership docs,

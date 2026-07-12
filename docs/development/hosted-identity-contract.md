@@ -1,7 +1,8 @@
 # Hosted Identity Contract
 
-Status: planned contract for JOE-665. These settings are not implemented in the
-current runtime configuration reference.
+Status: planned contract for JOE-665 and fail-closed config skeleton for
+JOE-662. These settings are parsed by runtime configuration, but non-`off`
+modes are not enforced yet.
 
 ## Product Boundary
 
@@ -22,12 +23,14 @@ warehouse-level authorization stay outside Nova.
 | `jwt` | Validate bearer JWTs at the Nova HTTP boundary | No |
 
 Unknown modes fail validation. Non-off modes fail closed when required
-validation material is missing or invalid.
+validation material is missing or invalid. Until proxy/JWT verifiers land,
+complete non-`off` configurations also fail validation instead of silently
+running unauthenticated.
 
 ## Planned Config Surface
 
-The names below are the design contract for future implementation. They should
-not appear in `docs/configuration/reference.md` until the runtime parser exists.
+The names below are the design contract and current parser surface. They are
+parsed but not enforced for non-`off` modes yet.
 
 | Setting | Applies to | Contract |
 |---|---|---|
@@ -49,6 +52,8 @@ not appear in `docs/configuration/reference.md` until the runtime parser exists.
 
 Secrets and key material must not be logged or returned by `show_config`.
 Config validation should report presence and posture, not raw values.
+Non-`off` modes are parsed but not enforced and therefore fail closed until a
+verifier implementation lands.
 
 ## Runtime Behavior Contract
 

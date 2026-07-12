@@ -33,15 +33,17 @@ fn hosted_identity_docs_lock_default_off_guardrails() {
 }
 
 #[test]
-fn hosted_identity_contract_is_not_documented_as_runtime_config_yet() {
+fn hosted_identity_contract_is_documented_as_fail_closed_config_skeleton() {
     let contract = read_doc("docs/development/hosted-identity-contract.md");
     let config_reference = read_doc("docs/configuration/reference.md");
 
     assert!(contract.contains("DBT_NOVA_AUTH_MODE"));
     assert!(contract.contains("proxy_signed_headers"));
     assert!(contract.contains("jwt"));
+    assert!(contract.contains("parsed but not enforced"));
+    assert!(config_reference.contains("DBT_NOVA_AUTH_MODE"));
     assert!(
-        !config_reference.contains("DBT_NOVA_AUTH_MODE"),
-        "DBT_NOVA_AUTH_MODE should stay out of the runtime config reference until implemented"
+        config_reference.contains("fail validation until their verifiers are implemented"),
+        "runtime config reference must describe hosted auth as fail-closed skeleton"
     );
 }
