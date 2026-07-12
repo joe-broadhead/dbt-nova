@@ -523,9 +523,7 @@ impl ManifestSearch {
         obj: &mut serde_json::Map<String, JsonValue>,
         entity: &ArchivedEntity,
     ) {
-        let relation_name = entity
-            .relation_name_str()
-            .and_then(|s| if s.trim().is_empty() { None } else { Some(s) });
+        let relation_name = entity.relation_name_str().filter(|s| !s.trim().is_empty());
         obj.insert(
             "relation_name".to_string(),
             json_string_or_null(relation_name),

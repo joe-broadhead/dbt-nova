@@ -160,6 +160,16 @@ jobs:
       - name: Lexical Scale Guard
         run: scripts/check_lexical_scale.sh
 
+  module-size:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Module Size Ratchet
+        run: scripts/check_module_size.sh
+
   tokenomics-bridge-eval:
     runs-on: ubuntu-22.04
     timeout-minutes: 45

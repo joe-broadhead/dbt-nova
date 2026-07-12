@@ -151,6 +151,7 @@ nav:
   - Development:
     - Architecture: development/architecture.md
     - Architecture Decisions: development/adrs.md
+    - Module Size Ratchet: development/module-size-ratchet.md
     - Negative Results Log: development/negative-results.md
     - Agent Tokenomics Plan: development/agent-tokenomics-plan.md
     - Agent Modelling Finding Contract: development/agent-modelling-findings-contract.md

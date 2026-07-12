@@ -51,7 +51,7 @@ impl ManifestSearch {
             .any(|c| c.to_lowercase() == column_lower)
         {
             return Err(DbtNovaError::EntityNotFound {
-                query: format!("{}.{}", &start_id, params.column_name),
+                query: format!("{start_id}.{}", params.column_name),
                 resource_type: None,
                 available_resource_types: Vec::new(),
             });

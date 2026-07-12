@@ -45,6 +45,7 @@ Use this checklist for normal hardening PRs, not just release branches:
 - [ ] Docs changes: `uv run mkdocs build --strict`
 - [ ] Config/default changes: `bash scripts/check_config_reference.sh`
 - [ ] Workflow changes: `actionlint .github/workflows/<workflow>.yml`
+- [ ] Maintainability guardrails: `bash scripts/check_module_size.sh`
 - [ ] Supply-chain/dependency changes: `cargo deny check` and `bash scripts/check_dependency_watchlist.sh`
 - [ ] Public CLI/MCP/workflow/security behavior: update `CHANGELOG.md`
 - [ ] Metadata-bridge boundary: keep Semantic Layer / MetricFlow references
@@ -63,6 +64,7 @@ Before tagging:
 - [ ] `cargo fmt --check` passes
 - [ ] Docs build clean (`mkdocs build --strict`)
 - [ ] Config defaults are current (`scripts/check_config_reference.sh`)
+- [ ] Module-size exceptions are current (`scripts/check_module_size.sh`)
 - [ ] Workflow changes have been linted with `actionlint`
 - [ ] Supply-chain changes have `cargo deny check` and dependency watchlist
       review where applicable

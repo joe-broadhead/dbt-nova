@@ -1,0 +1,5 @@
+# path	owner	review_by	reason
+.github/workflows/nova-build-assets.yml	dbt-nova maintainers	2026-10-31	Reusable asset workflow is operational glue; split only with workflow contract tests.
+src/manifest/embeddings/mod.rs	dbt-nova maintainers	2026-10-31	Optional embedding bootstrap and model-loading surface; split after preserving no-default and cached-asset behavior.
+src/cli/agent_readiness_cmd.rs	dbt-nova maintainers	2026-10-31	CLI orchestration wrapper already delegates to submodules; continue extracting only around stable readiness contracts.
+src/warehouse/snowflake.rs	dbt-nova maintainers	2026-10-31	Warehouse provider still owns SQL API orchestration; split narrowly without regressing existing auth modes.
