@@ -6,6 +6,7 @@ pub mod cli;
 pub mod config;
 pub mod dbt_types;
 pub mod error;
+pub mod logging;
 pub mod manifest;
 pub mod nova_meta;
 pub mod params;

@@ -112,7 +112,20 @@ Runtime enforcement:
 - Non-loopback `streamable_http` binds fail validation unless `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true`.
 - Streamable HTTP requests are rejected when their `Host` header is outside the transport loopback defaults and `DBT_NOVA_HTTP_ALLOWED_HOSTS`.
 - Streamable HTTP request bodies are capped by `DBT_NOVA_HTTP_MAX_BODY_BYTES` before the MCP transport buffers them.
+- Streamable HTTP responses include `X-Request-ID`. Nova propagates safe
+  `X-Request-ID`/`X-Correlation-ID` proxy headers or generates a UUID, then logs
+  request and tool completion with that ID when logging is enabled.
 - Successful `streamable_http` startup logs a warning that the transport has no built-in auth.
+
+Logging privacy:
+
+- `DBT_NOVA_LOG_FORMAT=json` changes formatting only; it does not add request
+  payload logging.
+- Hosted request logs include method, path, status, duration, and request ID.
+  They do not include query strings, request bodies, raw SQL, credentials,
+  manifests, tokens, or private URIs.
+- MCP tool logs include tool name, success/failure, duration, and request ID
+  when one is available. Tool response payload contracts are unchanged.
 
 ## Advisory Exceptions
 

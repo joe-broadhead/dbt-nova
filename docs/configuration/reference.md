@@ -68,7 +68,8 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_S3_MODE` – S3 fetch mode (`https` or `sdk`, default: `https`)
 - `DBT_NOVA_GCS_MODE` – GCS fetch mode (`https` or `sdk`, default: `https`)
 - `DBT_NOVA_RECIPES_DIR` – manifest `original_file_path` prefix used to discover recipe `analysis` nodes (default: `analyses/recipes`). Recipe SQL is resolved from manifest `compiled_code` (or `raw_code` fallback). Recipes are documented in [Analysis Recipes](../features/recipes.md).
-- `DBT_NOVA_LOG` / `RUST_LOG` – enable structured logs to stderr (e.g., `info`, `debug`, `trace`)
+- `DBT_NOVA_LOG` / `RUST_LOG` – enable logs to stderr (e.g., `info`, `debug`, `trace`)
+- `DBT_NOVA_LOG_FORMAT` – log output format when logging is enabled (`human` or `json`, default: `human`; JSON logs are newline-delimited and include request correlation fields for hosted HTTP requests)
 - `DBT_NOVA_DISABLE_TOOL_SCHEMAS` – strip JSON schema hints from MCP tools (useful for strict clients like Gemini; see [MCP Clients](../getting-started/mcp-clients.md))
 - `DBT_NOVA_TOOL_PROFILE` – MCP tool profile (`agent`, `analyst`, `engineer`, `governance`, `ops`, or `all`; default: `agent`)
 - `DBT_NOVA_TOOL_ALLOWLIST` – optional comma-separated allowlist of exact MCP tool names to expose; when set, only these tools are eligible for exposure
@@ -194,6 +195,13 @@ Remote manifest notes:
   that path out of the MCP fallback. Protect `/metrics` with the same
   proxy/network ACL as MCP because it exposes tool names, call counts, latency,
   and readiness posture.
+- Hosted HTTP requests propagate a safe `X-Request-ID` response header. Nova
+  accepts proxy-provided `X-Request-ID` or `X-Correlation-ID` values when they
+  are short printable identifiers, otherwise it generates a UUID. Request logs
+  include method, path, status, duration, and request ID; they do not include
+  query strings, raw SQL, request bodies, credentials, manifests, tokens, or
+  private URIs. MCP tool logs include tool name, duration, success/failure, and
+  request ID only.
 
 Manifest pruning notes:
 - Matching is against dbt `unique_id` (not `fqn`).

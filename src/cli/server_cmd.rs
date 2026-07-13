@@ -6,6 +6,7 @@ use axum::{
     Json, Router,
     extract::State,
     http::{StatusCode, header},
+    middleware,
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -24,6 +25,7 @@ use crate::config::{DbtNovaConfig, ServerTransport};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::bootstrap::prepare_runtime_config;
 use crate::manifest::search::ManifestSearchHandle;
+use crate::server::correlation::correlate_http_request;
 use crate::server::health::build_manifest_health_payload;
 use crate::server::mcp::DbtNovaServer;
 use crate::utils::{ToolMetricsStore, sanitize_uri};
@@ -283,6 +285,7 @@ async fn serve_streamable_http(
     } else {
         app
     };
+    let app = app.layer(middleware::from_fn(correlate_http_request));
 
     let bind_host = settings.host.clone();
     let bind_port = settings.port;
@@ -757,10 +760,18 @@ mod tests {
 
         let liveness = client
             .get(format!("http://127.0.0.1:{port}/healthz"))
+            .header("X-Request-ID", "req-test-001")
             .send()
             .await
             .expect("liveness request should succeed");
         assert_eq!(liveness.status(), reqwest::StatusCode::OK);
+        assert_eq!(
+            liveness
+                .headers()
+                .get("x-request-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("req-test-001")
+        );
         let liveness_body = liveness.json::<Value>().await.expect("liveness JSON");
         assert_eq!(liveness_body["status"], "ok");
         assert_eq!(liveness_body["version"], env!("CARGO_PKG_VERSION"));

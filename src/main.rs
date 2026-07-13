@@ -3,7 +3,6 @@ use dbt_nova::cli::args::{Cli, Command};
 use dbt_nova::cli::output::exit_code;
 use dbt_nova::error::Result;
 use tracing::error;
-use tracing_subscriber::fmt::format::FmtSpan;
 
 enum LaunchTarget {
     Command(Box<Command>),
@@ -12,7 +11,7 @@ enum LaunchTarget {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    init_tracing();
+    dbt_nova::logging::init_tracing_from_env();
 
     match launch_target(Cli::parse()) {
         LaunchTarget::Command(command) => {
@@ -34,22 +33,6 @@ fn launch_target(cli: Cli) -> LaunchTarget {
         LaunchTarget::Command(Box::new(command))
     } else {
         LaunchTarget::Server
-    }
-}
-
-fn init_tracing() {
-    let filter = std::env::var("DBT_NOVA_LOG")
-        .or_else(|_| std::env::var("RUST_LOG"))
-        .ok();
-    if let Some(filter) = filter
-        && let Err(err) = tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .with_writer(std::io::stderr)
-            .with_target(false)
-            .with_span_events(FmtSpan::CLOSE)
-            .try_init()
-    {
-        tracing::warn!(error = %err, "failed to initialize tracing subscriber");
     }
 }
 

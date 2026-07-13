@@ -6,6 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use blake3;
 
 use crate::error::{DbtNovaError, Result};
+use crate::logging::LogFormat;
 use crate::params::DetailLevel;
 use crate::tools::catalog::{
     DEFAULT_MCP_TOOL_PROFILE, MCP_TOOL_NAMES, MCP_TOOL_PROFILE_NAMES, mcp_tool_profile_names,
@@ -410,6 +411,8 @@ pub struct DbtNovaConfig {
     pub artifact_allow_http: bool,
     /// Server transport mode (`stdio` or `streamable_http`)
     pub server_transport: ServerTransport,
+    /// Log output format when `DBT_NOVA_LOG` or `RUST_LOG` enables logs.
+    pub log_format: LogFormat,
     /// Bind host for hosted HTTP mode
     pub http_host: String,
     /// Bind port for hosted HTTP mode
@@ -546,6 +549,7 @@ impl Default for DbtNovaConfig {
             artifact_archive_max_uncompressed_bytes: 10 * 1024 * 1024 * 1024, // 10 GiB
             artifact_allow_http: false,
             server_transport: ServerTransport::Stdio,
+            log_format: LogFormat::Human,
             http_host: "127.0.0.1".to_string(),
             http_port: 8000,
             http_path: "/mcp".to_string(),
@@ -1272,6 +1276,17 @@ impl DbtNovaConfig {
                     "Invalid DBT_NOVA_SERVER_TRANSPORT value '{}'; expected stdio|streamable_http",
                     value
                 );
+            }
+        }
+        if let Some(value) = env_string("DBT_NOVA_LOG_FORMAT")
+            && !value.trim().is_empty()
+        {
+            if let Some(log_format) = LogFormat::parse(&value) {
+                self.log_format = log_format;
+            } else {
+                self.env_errors.push(format!(
+                    "Invalid DBT_NOVA_LOG_FORMAT value '{value}'; expected human|json"
+                ));
             }
         }
 

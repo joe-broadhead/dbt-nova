@@ -30,6 +30,7 @@ pub struct ConfigValidationChecklist {
     pub tool_denylist: Vec<String>,
     pub exposed_tool_count: usize,
     pub tool_exposure: ToolExposureChecklist,
+    pub logging: LoggingPosture,
     pub hosted_http: HostedHttpChecklist,
     pub hosted_auth: HostedAuthPosture,
     pub metrics: MetricsPosture,
@@ -53,6 +54,12 @@ pub struct ExecutionToolExposure {
 pub struct OperationalToolExposure {
     pub admin_tools_exposed: bool,
     pub write_tools_exposed: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LoggingPosture {
+    pub format: String,
+    pub json_enabled: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -369,6 +376,10 @@ fn build_validation_checklist(config: &DbtNovaConfig) -> ConfigValidationCheckli
                     ],
                 ),
             },
+        },
+        logging: LoggingPosture {
+            format: config.log_format.as_str().to_string(),
+            json_enabled: config.log_format == crate::logging::LogFormat::Json,
         },
         hosted_http,
         hosted_auth,
@@ -698,6 +709,14 @@ mod tests {
         );
         assert!(response["data"]["checklist"]["tool_denylist"].is_array());
         assert!(response["data"]["checklist"]["hosted_http"]["enabled"].is_boolean());
+        assert_eq!(
+            response["data"]["checklist"]["logging"]["format"],
+            serde_json::json!("human")
+        );
+        assert_eq!(
+            response["data"]["checklist"]["logging"]["json_enabled"],
+            serde_json::json!(false)
+        );
         assert_eq!(
             response["data"]["checklist"]["hosted_auth"]["mode"],
             serde_json::json!("off")
