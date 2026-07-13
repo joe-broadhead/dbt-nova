@@ -183,6 +183,10 @@ fn assert_agent_readiness_summary_contract(value: &JsonValue) {
             "indicator_count",
             "ambiguous_indicator_count",
             "suggested_meta_patch_count",
+            "suggested_meta_patch_required_count",
+            "suggested_meta_patch_recommended_count",
+            "suggested_meta_patch_refinement_count",
+            "suggested_meta_patch_actionable_count",
             "golden_question_seed_count",
             "score_buckets",
             "grade_buckets",
@@ -312,6 +316,13 @@ fn assert_agent_readiness_patch_seed_contract(value: &JsonValue, context: &str) 
         assert!(
             patch["evidence"].is_object(),
             "suggested_meta_patches[].evidence must be an object: {patch:#?}"
+        );
+        assert!(
+            matches!(
+                patch["severity"].as_str(),
+                Some("required" | "recommended" | "refinement")
+            ),
+            "suggested_meta_patches[].severity must use the remediation enum: {patch:#?}"
         );
     }
 
@@ -555,6 +566,77 @@ async fn agent_readiness_v1_contract_fixtures_lock_required_json_fields() {
 }
 
 #[tokio::test]
+async fn agent_readiness_patch_severity_counts_are_actionable_and_stable() {
+    let minimal_first =
+        readiness_report_for_fixture("minimal.json", "agent-readiness-patches-minimal-first").await;
+    let minimal_second =
+        readiness_report_for_fixture("minimal.json", "agent-readiness-patches-minimal-second")
+            .await;
+    let perfect =
+        readiness_report_for_fixture("perfect_model.json", "agent-readiness-patches-perfect").await;
+
+    let total = minimal_first.suggested_meta_patches.len();
+    let required = minimal_first
+        .suggested_meta_patches
+        .iter()
+        .filter(|patch| patch.severity == "required")
+        .count();
+    let recommended = minimal_first
+        .suggested_meta_patches
+        .iter()
+        .filter(|patch| patch.severity == "recommended")
+        .count();
+    let refinement = minimal_first
+        .suggested_meta_patches
+        .iter()
+        .filter(|patch| patch.severity == "refinement")
+        .count();
+
+    assert_eq!(minimal_first.summary.suggested_meta_patch_count, total);
+    assert_eq!(
+        minimal_first.summary.suggested_meta_patch_required_count,
+        required
+    );
+    assert_eq!(
+        minimal_first.summary.suggested_meta_patch_recommended_count,
+        recommended
+    );
+    assert_eq!(
+        minimal_first.summary.suggested_meta_patch_refinement_count,
+        refinement
+    );
+    assert_eq!(
+        minimal_first.summary.suggested_meta_patch_actionable_count,
+        required + recommended
+    );
+    assert!(minimal_first.summary.suggested_meta_patch_actionable_count > 0);
+    assert!(
+        minimal_first
+            .next_actions
+            .iter()
+            .any(|action| action.category == "remediation"
+                && action.evidence.contains("actionable patch suggestion(s)"))
+    );
+
+    let first_ids = minimal_first
+        .suggested_meta_patches
+        .iter()
+        .map(|patch| patch.id.as_str())
+        .collect::<Vec<_>>();
+    let second_ids = minimal_second
+        .suggested_meta_patches
+        .iter()
+        .map(|patch| patch.id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(first_ids, second_ids, "patch IDs must remain stable");
+    assert!(
+        minimal_first.summary.suggested_meta_patch_actionable_count
+            > perfect.summary.suggested_meta_patch_actionable_count,
+        "more complete metadata should reduce required+recommended patches"
+    );
+}
+
+#[tokio::test]
 async fn agent_readiness_includes_agent_modelling_summary_and_findings() {
     let report =
         readiness_report_for_fixture("agent_modelling_findings.json", "agent-readiness-modeling")
@@ -741,6 +823,10 @@ fn markdown_fixture_report() -> super::AgentReadinessReport {
             indicator_count: 0,
             ambiguous_indicator_count: 0,
             suggested_meta_patch_count: 1,
+            suggested_meta_patch_required_count: 0,
+            suggested_meta_patch_recommended_count: 1,
+            suggested_meta_patch_refinement_count: 0,
+            suggested_meta_patch_actionable_count: 1,
             golden_question_seed_count: 1,
             score_buckets: json!({}),
             grade_buckets: json!({}),
@@ -830,7 +916,7 @@ fn markdown_fixture_meta_patch() -> super::SuggestedMetaPatch {
         suggested_value: json!("__OWNER_OR_TEAM__"),
         placeholder: true,
         rationale: "Add an owner.".to_string(),
-        severity: "improvement",
+        severity: "recommended",
         confidence: 0.95,
         evidence: json!({"signal": "missing_owner"}),
     }

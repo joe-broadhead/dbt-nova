@@ -175,7 +175,14 @@ fn score_synonyms(
             recommendations,
             "semantic",
             12 - score,
-            "Add nova.synonyms for better discoverability".to_string(),
+            array_progress_recommendation(
+                "meta.nova.synonyms",
+                count,
+                score,
+                12,
+                "Add meta.nova.synonyms (e.g. one common search phrase agents should map here).",
+                "2-3 agent-search aliases score full credit.",
+            ),
             "meta.nova.synonyms",
         );
     }
@@ -194,7 +201,14 @@ fn score_domains(
             recommendations,
             "semantic",
             12 - score,
-            "Add nova.domains to clarify domain ownership".to_string(),
+            array_progress_recommendation(
+                "meta.nova.domains",
+                count,
+                score,
+                12,
+                "Add meta.nova.domains (e.g. one primary business domain).",
+                "2-3 well-chosen domains score full credit.",
+            ),
             "meta.nova.domains",
         );
     }
@@ -213,7 +227,14 @@ fn score_use_cases(
             recommendations,
             "semantic",
             12 - score,
-            "Add nova.use_cases to help consumers find this entity".to_string(),
+            array_progress_recommendation(
+                "meta.nova.use_cases",
+                count,
+                score,
+                12,
+                "Add meta.nova.use_cases (e.g. one concrete analyst or agent task).",
+                "2-3 concrete use cases score full credit.",
+            ),
             "meta.nova.use_cases",
         );
     }
@@ -254,13 +275,12 @@ fn score_grain(
 ) -> u8 {
     let score = if grain_present(nova) { 20 } else { 0 };
     if include_recommendations && score == 0 {
-        push_recommendation(
-            recommendations,
-            "semantic",
-            20,
-            "Define meta.nova.grain for this entity or metric".to_string(),
-            "meta.nova.grain",
-        );
+        let message = if nova.and_then(|n| n.get("grain")).is_some() {
+            "Replace meta.nova.grain with an object that declares primary_key, time_field, or metric grain.".to_string()
+        } else {
+            "Define meta.nova.grain for this entity or metric.".to_string()
+        };
+        push_recommendation(recommendations, "semantic", 20, message, "meta.nova.grain");
     }
     score
 }
@@ -276,7 +296,12 @@ fn score_measures(
             recommendations,
             "semantic",
             12 - score.0,
-            "Provide expressions/synonyms for measures".to_string(),
+            indicator_progress_recommendation(
+                "meta.nova.measures",
+                &score.1,
+                "Add meta.nova.measures when this model owns reusable business quantities.",
+                true,
+            ),
             "meta.nova.measures",
         );
     }
@@ -294,11 +319,75 @@ fn score_metrics(
             recommendations,
             "semantic",
             12 - score.0,
-            "Provide expressions/synonyms for metrics".to_string(),
+            indicator_progress_recommendation(
+                "meta.nova.metrics",
+                &score.1,
+                "Add meta.nova.metrics when this entity owns reusable derived metrics.",
+                false,
+            ),
             "meta.nova.metrics",
         );
     }
     score
+}
+
+fn array_progress_recommendation(
+    field_path: &str,
+    count: usize,
+    score: u8,
+    max: u8,
+    absent_message: &str,
+    full_credit_guidance: &str,
+) -> String {
+    if count == 0 {
+        return absent_message.to_string();
+    }
+    let entry = if count == 1 { "entry" } else { "entries" };
+    format!("{field_path} has {count} {entry} ({score}/{max}); {full_credit_guidance}")
+}
+
+fn indicator_progress_recommendation(
+    field_path: &str,
+    breakdown: &JsonValue,
+    absent_message: &str,
+    supports_field: bool,
+) -> String {
+    let count = breakdown
+        .get("count")
+        .and_then(JsonValue::as_u64)
+        .unwrap_or(0);
+    if count == 0 {
+        return absent_message.to_string();
+    }
+    let score = breakdown
+        .get("score")
+        .and_then(JsonValue::as_u64)
+        .unwrap_or(0);
+    let max = breakdown
+        .get("max")
+        .and_then(JsonValue::as_u64)
+        .unwrap_or(0);
+    let has_expression = breakdown
+        .get("has_expression")
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(false);
+    let has_synonyms = breakdown
+        .get("has_synonyms")
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(false);
+    let entry = if count == 1 { "entry" } else { "entries" };
+    let execution_metadata = if supports_field {
+        "expressions or fields"
+    } else {
+        "expressions"
+    };
+    let guidance = match (has_expression, has_synonyms) {
+        (false, false) => format!("add {execution_metadata} plus synonyms to score full credit."),
+        (false, true) => format!("add {execution_metadata} to score full credit."),
+        (true, false) => "add synonyms to score full credit.".to_string(),
+        (true, true) => "review metadata quality to score full credit.".to_string(),
+    };
+    format!("{field_path} has {count} {entry} ({score}/{max}); {guidance}")
 }
 
 fn scores_indicator_metadata(resource_type: Option<&str>) -> bool {

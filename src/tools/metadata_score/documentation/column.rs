@@ -4,7 +4,7 @@ use crate::manifest::search::ManifestSearch;
 
 use crate::tools::metadata_score::CategoryBreakdown;
 use crate::tools::metadata_score::helpers::{
-    description_tier_score, has_owner, push_recommendation,
+    description_progress_recommendation, description_tier_score, has_owner, push_recommendation,
 };
 
 impl ManifestSearch {
@@ -22,11 +22,18 @@ impl ManifestSearch {
             .unwrap_or("");
         let desc_score = description_tier_score(description, 50);
         if include_recommendations && desc_score < 50 {
+            let desc_len = description.trim().len();
             push_recommendation(
                 recommendations,
                 "documentation",
                 50 - desc_score,
-                "Add a descriptive column description".to_string(),
+                description_progress_recommendation(
+                    "columns.description",
+                    desc_len,
+                    desc_score,
+                    50,
+                    "Add a descriptive column description.",
+                ),
                 "columns.description",
             );
         }

@@ -45,6 +45,23 @@ const MAX_GOLDEN_QUESTION_SEEDS: usize = 16;
 const MAX_MARKDOWN_META_PATCHES: usize = 10;
 const MAX_MARKDOWN_GOLDEN_SEEDS: usize = 8;
 
+#[derive(Debug, Clone, Copy, Default)]
+struct MetaPatchSeverityCounts {
+    required: usize,
+    recommended: usize,
+    refinement: usize,
+}
+
+impl MetaPatchSeverityCounts {
+    const fn total(self) -> usize {
+        self.required + self.recommended + self.refinement
+    }
+
+    const fn actionable(self) -> usize {
+        self.required + self.recommended
+    }
+}
+
 mod patches;
 mod render;
 mod seeds;
@@ -334,6 +351,7 @@ async fn build_agent_readiness_report(
     .await?;
     let suggested_meta_patches =
         build_suggested_meta_patches(search, &entity_findings, &indicator_findings)?;
+    let meta_patch_severity_counts = meta_patch_severity_counts(&suggested_meta_patches);
     let golden_question_seeds =
         build_golden_question_seeds(search, &target_ids, &entity_findings, &indicator_findings)?;
 
@@ -347,7 +365,11 @@ async fn build_agent_readiness_report(
         persona_scores: &persona_scores,
         indicator_count,
         ambiguous_indicator_count,
-        suggested_meta_patch_count: suggested_meta_patches.len(),
+        suggested_meta_patch_count: meta_patch_severity_counts.total(),
+        suggested_meta_patch_required_count: meta_patch_severity_counts.required,
+        suggested_meta_patch_recommended_count: meta_patch_severity_counts.recommended,
+        suggested_meta_patch_refinement_count: meta_patch_severity_counts.refinement,
+        suggested_meta_patch_actionable_count: meta_patch_severity_counts.actionable(),
         golden_question_seed_count: golden_question_seeds.len(),
         agent_modelling,
     });
@@ -480,6 +502,8 @@ fn build_readiness_final_sections(input: ReadinessFinalSectionInput<'_>) -> Read
         improvement_findings: input.improvement_findings,
         ambiguous_indicator_count: input.ambiguous_indicator_count,
         suggested_meta_patch_count: input.suggested_meta_patch_count,
+        suggested_meta_patch_actionable_count: input.suggested_meta_patch_actionable_count,
+        suggested_meta_patch_refinement_count: input.suggested_meta_patch_refinement_count,
         golden_question_seed_count: input.golden_question_seed_count,
         modelling_next_actions: &input.agent_modelling.next_actions,
     });
@@ -492,6 +516,10 @@ fn build_readiness_final_sections(input: ReadinessFinalSectionInput<'_>) -> Read
         indicator_count: input.indicator_count,
         ambiguous_indicator_count: input.ambiguous_indicator_count,
         suggested_meta_patch_count: input.suggested_meta_patch_count,
+        suggested_meta_patch_required_count: input.suggested_meta_patch_required_count,
+        suggested_meta_patch_recommended_count: input.suggested_meta_patch_recommended_count,
+        suggested_meta_patch_refinement_count: input.suggested_meta_patch_refinement_count,
+        suggested_meta_patch_actionable_count: input.suggested_meta_patch_actionable_count,
         golden_question_seed_count: input.golden_question_seed_count,
         triage_summary,
         agent_modelling_summary: input.agent_modelling.summary,
@@ -514,6 +542,10 @@ fn build_readiness_summary(input: ReadinessSummaryInput) -> ReadinessSummary {
         indicator_count: input.indicator_count,
         ambiguous_indicator_count: input.ambiguous_indicator_count,
         suggested_meta_patch_count: input.suggested_meta_patch_count,
+        suggested_meta_patch_required_count: input.suggested_meta_patch_required_count,
+        suggested_meta_patch_recommended_count: input.suggested_meta_patch_recommended_count,
+        suggested_meta_patch_refinement_count: input.suggested_meta_patch_refinement_count,
+        suggested_meta_patch_actionable_count: input.suggested_meta_patch_actionable_count,
         golden_question_seed_count: input.golden_question_seed_count,
         score_buckets: input.triage_summary.score_buckets,
         grade_buckets: input.triage_summary.grade_buckets,
@@ -523,6 +555,18 @@ fn build_readiness_summary(input: ReadinessSummaryInput) -> ReadinessSummary {
         drill_down_hints: input.triage_summary.drill_down_hints,
         agent_modelling: input.agent_modelling_summary,
     }
+}
+
+fn meta_patch_severity_counts(patches: &[SuggestedMetaPatch]) -> MetaPatchSeverityCounts {
+    let mut counts = MetaPatchSeverityCounts::default();
+    for patch in patches {
+        match patch.severity {
+            "required" => counts.required += 1,
+            "refinement" => counts.refinement += 1,
+            _ => counts.recommended += 1,
+        }
+    }
+    counts
 }
 
 async fn build_agent_modelling_readiness_result(
@@ -1535,14 +1579,15 @@ fn build_next_actions(input: &NextActionInput<'_>) -> Vec<ReadinessNextAction> {
         });
     }
     actions.extend(input.modelling_next_actions.iter().cloned());
-    if input.suggested_meta_patch_count > 0 {
+    if input.suggested_meta_patch_actionable_count > 0 {
         actions.push(ReadinessNextAction {
             priority: 2,
             category: "remediation",
-            action: "Review suggested_meta_patches and promote safe changes into dbt YAML"
-                .to_string(),
+            action: "Review required and recommended suggested_meta_patches before treating the manifest as ready".to_string(),
             evidence: format!(
-                "{} advisory patch suggestion(s)",
+                "{} actionable patch suggestion(s), {} refinement(s), {} total",
+                input.suggested_meta_patch_actionable_count,
+                input.suggested_meta_patch_refinement_count,
                 input.suggested_meta_patch_count
             ),
         });
