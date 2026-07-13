@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added additive column-lineage evidence for unresolved derived columns and
+  rename planning: `get_column_lineage` can now return defining SQL
+  expressions, candidate upstream columns, and optional metadata/test/recipe
+  references; `get_impact` accepts an optional `column` scope with reference
+  counts by kind.
 - Fixed CLI `tool call --json` output so `.data` contains the tool payload
   directly, matching dedicated CLI commands; tool response metadata now lives
   under `.meta.tool_response`.

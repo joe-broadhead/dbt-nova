@@ -2,10 +2,13 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::config::ConfidenceTier;
 use crate::error::{DbtNovaError, Result};
-use crate::manifest::lineage_sql::{find_sql_aliases, sql_for_matching};
+use crate::manifest::lineage_sql::{
+    SqlColumnDefinition, find_select_column_definition, find_sql_aliases, sql_for_matching,
+};
 use crate::manifest::search::ManifestSearch;
 use crate::params::GetColumnLineageParams;
 use crate::responses::SuccessResponse;
+use crate::tools::column_references::collect_column_references;
 use crate::tools::helpers::dependency_hints_from_json;
 use crate::utils::levenshtein_similarity;
 use serde::Serialize;
@@ -233,7 +236,7 @@ impl ManifestSearch {
         };
 
         let count = results.len();
-        let payload = json!({
+        let mut payload = json!({
             "start_entity": &start_id,
             "start_column": params.column_name,
             "direction": params.direction,
@@ -241,6 +244,41 @@ impl ManifestSearch {
             "lineage_status": lineage_status,
             "lineage_hints": lineage_hints
         });
+        if params.direction == "upstream"
+            && count == 0
+            && hints_total > 0
+            && let Some((definition_source, definition)) =
+                column_definition_from_entity(&start_entity_json, &params.column_name)
+            && let Some(obj) = payload.as_object_mut()
+        {
+            obj.insert(
+                "definition".to_string(),
+                JsonValue::String(definition.expression.clone()),
+            );
+            obj.insert(
+                "definition_source".to_string(),
+                JsonValue::String(definition_source.to_string()),
+            );
+            obj.insert(
+                "definition_confidence".to_string(),
+                JsonValue::String(definition.confidence.to_string()),
+            );
+            obj.insert(
+                "referenced_columns".to_string(),
+                JsonValue::Array(referenced_columns_for_definition(
+                    self,
+                    &start_id,
+                    &definition,
+                )?),
+            );
+        }
+        if params.include_references
+            && let Some(obj) = payload.as_object_mut()
+        {
+            let references = collect_column_references(self, &params.column_name)?;
+            obj.insert("reference_count".to_string(), json!(references.len()));
+            obj.insert("references".to_string(), JsonValue::Array(references));
+        }
         let response = SuccessResponse::new(payload, count);
         let response = if truncated {
             response.with_truncated(true)
@@ -249,6 +287,86 @@ impl ManifestSearch {
         };
         Ok(serde_json::to_value(response)?)
     }
+}
+
+fn column_definition_from_entity(
+    entity_json: &JsonValue,
+    column_name: &str,
+) -> Option<(&'static str, SqlColumnDefinition)> {
+    if let Some(sql) = entity_json.get("compiled_code").and_then(JsonValue::as_str)
+        && let Some(definition) = find_select_column_definition(sql, column_name)
+    {
+        return Some(("compiled_sql", definition));
+    }
+    if let Some(sql) = entity_json.get("raw_code").and_then(JsonValue::as_str)
+        && let Some(definition) = find_select_column_definition(sql, column_name)
+    {
+        return Some(("raw_sql", definition));
+    }
+    None
+}
+
+fn referenced_columns_for_definition(
+    search: &ManifestSearch,
+    start_id: &str,
+    definition: &SqlColumnDefinition,
+) -> Result<Vec<JsonValue>> {
+    let mut parent_ids = search.parent_map.get(start_id).cloned().unwrap_or_default();
+    parent_ids.sort();
+
+    let mut seen = HashSet::new();
+    let mut references = Vec::new();
+    for identifier in &definition.identifiers {
+        let column_name = identifier_column_name(identifier);
+        if column_name.is_empty() || !seen.insert(column_name.to_ascii_lowercase()) {
+            continue;
+        }
+
+        let mut upstream_entities = Vec::new();
+        for parent_id in &parent_ids {
+            let Some(parent) = search.get_entity_archived(parent_id)? else {
+                continue;
+            };
+            let Some(matched_column) = parent
+                .column_names_iter()
+                .find(|candidate| candidate.eq_ignore_ascii_case(&column_name))
+            else {
+                continue;
+            };
+            let parent_json = parent.to_json_value();
+            upstream_entities.push(json!({
+                "unique_id": parent_id,
+                "name": parent_json.get("name"),
+                "resource_type": parent_json.get("resource_type"),
+                "column": matched_column
+            }));
+        }
+
+        references.push(json!({
+            "name": column_name,
+            "expression_identifier": identifier,
+            "upstream_entities": upstream_entities
+        }));
+    }
+
+    references.sort_by(|a, b| {
+        a.get("name")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("")
+            .cmp(b.get("name").and_then(JsonValue::as_str).unwrap_or(""))
+    });
+    Ok(references)
+}
+
+fn identifier_column_name(identifier: &str) -> String {
+    identifier
+        .trim()
+        .trim_matches(|c: char| matches!(c, '`' | '"' | '[' | ']'))
+        .rsplit('.')
+        .next()
+        .unwrap_or(identifier)
+        .trim_matches(|c: char| matches!(c, '`' | '"' | '[' | ']'))
+        .to_string()
 }
 
 fn confidence_rank(conf: &str, default_conf: &str) -> u8 {

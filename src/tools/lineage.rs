@@ -4,8 +4,9 @@ use serde_json::Value as JsonValue;
 
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::search::ManifestSearch;
-use crate::params::{DetailLevel, GetImpactParams, GetLineageParams};
+use crate::params::{DetailLevel, GetColumnLineageParams, GetImpactParams, GetLineageParams};
 use crate::responses::SuccessResponse;
+use crate::tools::column_references::{collect_column_references, reference_counts_by_kind};
 use crate::tools::helpers::dependency_hints_from_json;
 use tracing::{debug, instrument};
 
@@ -269,7 +270,37 @@ impl ManifestSearch {
     #[instrument(skip(self, params), fields(tool = "get_impact", id_or_name = %params.id_or_name))]
     pub async fn get_impact(&self, params: &GetImpactParams) -> Result<JsonValue> {
         let (unique_id, entity) = self.resolve_entity(&params.id_or_name, None).await?;
-        let column_count = entity.column_names().len();
+        let entity_column_count = entity.column_names().len();
+
+        if let Some(column) = params
+            .column
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            if !entity
+                .column_names_iter()
+                .any(|candidate| candidate.eq_ignore_ascii_case(column))
+            {
+                return Err(DbtNovaError::InvalidParams(format!(
+                    "column '{column}' was not found on {unique_id}"
+                )));
+            }
+
+            return self
+                .get_column_impact(unique_id, column, entity_column_count)
+                .await;
+        }
+
+        if params
+            .column
+            .as_deref()
+            .is_some_and(|column| column.trim().is_empty())
+        {
+            return Err(DbtNovaError::InvalidParams(
+                "column cannot be empty".to_string(),
+            ));
+        }
 
         let lineage_params = GetLineageParams {
             id_or_name: unique_id.clone(),
@@ -298,15 +329,78 @@ impl ManifestSearch {
         }
 
         #[allow(clippy::cast_precision_loss)]
-        let impact_score = (downstream_count as f64) * (column_count as f64);
+        let impact_score = (downstream_count as f64) * (entity_column_count as f64);
 
         Ok(serde_json::to_value(SuccessResponse::new(
             serde_json::json!({
                 "unique_id": unique_id,
                 "downstream_count": downstream_count,
-                "column_count": column_count,
+                "column_count": entity_column_count,
                 "by_type": by_type,
                 "impact_score": impact_score
+            }),
+            1,
+        ))?)
+    }
+
+    async fn get_column_impact(
+        &self,
+        unique_id: String,
+        column: &str,
+        entity_column_count: usize,
+    ) -> Result<JsonValue> {
+        let column_lineage_params = GetColumnLineageParams {
+            id_or_name: unique_id.clone(),
+            resource_type: None,
+            column_name: column.to_string(),
+            direction: "downstream".to_string(),
+            depth: None,
+            confidence: Some(self.config.column_lineage.default_confidence.clone()),
+            include_references: false,
+        };
+        let column_lineage = self.get_column_lineage(&column_lineage_params).await?;
+        let lineage_data = column_lineage.get("data").unwrap_or(&JsonValue::Null);
+        let lineage_rows = lineage_data
+            .get("lineage")
+            .and_then(JsonValue::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        let mut downstream_ids = std::collections::BTreeSet::new();
+        let mut by_type: HashMap<String, usize> = HashMap::new();
+        for row in lineage_rows {
+            let Some(row_id) = row.get("unique_id").and_then(JsonValue::as_str) else {
+                continue;
+            };
+            if downstream_ids.insert(row_id.to_string()) {
+                let resource_type = row
+                    .get("resource_type")
+                    .and_then(JsonValue::as_str)
+                    .unwrap_or("unknown");
+                *by_type.entry(resource_type.to_string()).or_default() += 1;
+            }
+        }
+        let downstream_count = downstream_ids.len();
+        let references = collect_column_references(self, column)?;
+        let references_by_kind = reference_counts_by_kind(&references);
+
+        #[allow(clippy::cast_precision_loss)]
+        let impact_score = downstream_count as f64;
+
+        Ok(serde_json::to_value(SuccessResponse::new(
+            serde_json::json!({
+                "unique_id": unique_id,
+                "column": column,
+                "downstream_count": downstream_count,
+                "column_count": 1,
+                "entity_column_count": entity_column_count,
+                "by_type": by_type,
+                "impact_score": impact_score,
+                "column_lineage_status": lineage_data
+                    .get("lineage_status")
+                    .and_then(JsonValue::as_str),
+                "reference_count": references.len(),
+                "references_by_kind": references_by_kind
             }),
             1,
         ))?)

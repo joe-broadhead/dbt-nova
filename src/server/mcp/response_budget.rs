@@ -486,6 +486,13 @@ pub(super) fn normalize_budgeted_response_shape(
             .is_some_and(|original_len| original_len > returned_count);
     }
 
+    if let Some(returned_count) = array_len(data.get("references")) {
+        update_data_returned_count(data, "reference_count", returned_count);
+        data_truncated |= original_shape
+            .original_data_array_len("references")
+            .is_some_and(|original_len| original_len > returned_count);
+    }
+
     if !data.contains_key("rows")
         && let Some(returned_count) = array_len(data.get("columns"))
     {

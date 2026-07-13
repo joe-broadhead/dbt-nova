@@ -616,8 +616,17 @@ Blast‑radius estimate for an entity.
 Required:
 - `id_or_name`
 
+Optional:
+- `column` scopes downstream impact to a single column and adds
+  `reference_count` plus `references_by_kind` totals for metadata, tests, and
+  recipe SQL references to that column name.
+
 ```json
 {"name":"get_impact","arguments":{"id_or_name":"model.jaffle_shop.orders"}}
+```
+
+```json
+{"name":"get_impact","arguments":{"id_or_name":"model.jaffle_shop.orders","column":"customer_id"}}
 ```
 
 ### `get_column_lineage`
@@ -631,13 +640,27 @@ Required:
 Optional:
 - `resource_type` (disambiguates `id_or_name` when name matches multiple entities)
 - `depth`, `confidence` (`high`|`medium`|`low`)
+- `include_references` adds a `references` array for Nova grain dimensions,
+  Nova measure/metric expressions, dbt tests, and manifest-backed recipe SQL
+  that reference the requested column name.
 
 Notes:
 - Response includes `lineage_status` and `lineage_hints` to explain empty lineage results.
+- When upstream lineage is unresolved but dependencies exist, Nova additively
+  returns `definition`, `definition_source`, `definition_confidence`, and
+  `referenced_columns` when the requested column has a select-list expression in
+  compiled SQL or raw SQL.
+- Metadata and test references are exact or tokenized metadata matches. Recipe
+  SQL references are word-boundary textual matches and are labeled
+  `match: "textual"` in `detail`.
 - Requested `depth` is capped by `DBT_NOVA_COLUMN_LINEAGE_MAX_DEPTH` (config `column_lineage.max_depth`).
 
 ```json
 {"name":"get_column_lineage","arguments":{"id_or_name":"model.jaffle_shop.orders","column_name":"customer_id","direction":"upstream","confidence":"high"}}
+```
+
+```json
+{"name":"get_column_lineage","arguments":{"id_or_name":"model.jaffle_shop.orders","column_name":"customer_id","direction":"downstream","include_references":true}}
 ```
 
 ## Code & Schema

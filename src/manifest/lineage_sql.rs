@@ -7,6 +7,13 @@ use sqlparser::ast::{
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SqlColumnDefinition {
+    pub(crate) expression: String,
+    pub(crate) identifiers: Vec<String>,
+    pub(crate) confidence: &'static str,
+}
+
 /// Return the SQL string used for column lineage matching.
 pub(crate) fn sql_for_matching(sql_entity: &JsonValue) -> Option<&str> {
     sql_entity
@@ -79,6 +86,262 @@ pub(crate) fn find_sql_aliases(raw_sql: &str) -> HashMap<String, String> {
     }
 
     aliases
+}
+
+/// Extract the defining select-list expression for a projected column.
+///
+/// This intentionally inspects only the outer projection. It is evidence for
+/// unresolved column lineage, not a full SQL optimizer or semantic lineage graph.
+pub(crate) fn find_select_column_definition(
+    raw_sql: &str,
+    column_name: &str,
+) -> Option<SqlColumnDefinition> {
+    let target = column_name.trim();
+    if target.is_empty() {
+        return None;
+    }
+
+    let dialect = GenericDialect {};
+    let normalized_sql = normalize_sql_for_parser(raw_sql);
+    if let Ok(statements) = Parser::parse_sql(&dialect, &normalized_sql) {
+        for stmt in statements {
+            let mut definition = None;
+            visit_select_items(&stmt, &mut |item| {
+                if definition.is_none() {
+                    definition = definition_from_select_item(item, target, "exact");
+                }
+            });
+            if definition.is_some() {
+                return definition;
+            }
+        }
+    }
+
+    find_select_column_definition_best_effort(raw_sql, target)
+}
+
+fn definition_from_select_item(
+    item: &SelectItem,
+    target: &str,
+    confidence: &'static str,
+) -> Option<SqlColumnDefinition> {
+    match item {
+        SelectItem::ExprWithAlias { expr, alias } if names_equal(&alias.value, target) => {
+            let mut identifiers = Vec::new();
+            collect_identifiers(expr, &mut identifiers);
+            Some(SqlColumnDefinition {
+                expression: expr.to_string(),
+                identifiers: dedupe_identifiers(identifiers),
+                confidence,
+            })
+        }
+        SelectItem::UnnamedExpr(expr) => output_name_for_expr(expr).and_then(|name| {
+            if names_equal(&name, target) {
+                let mut identifiers = Vec::new();
+                collect_identifiers(expr, &mut identifiers);
+                Some(SqlColumnDefinition {
+                    expression: expr.to_string(),
+                    identifiers: dedupe_identifiers(identifiers),
+                    confidence,
+                })
+            } else {
+                None
+            }
+        }),
+        _ => None,
+    }
+}
+
+fn output_name_for_expr(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Identifier(ident) => Some(ident.value.clone()),
+        Expr::CompoundIdentifier(idents) => idents.last().map(|ident| ident.value.clone()),
+        Expr::Nested(expr) | Expr::Cast { expr, .. } => output_name_for_expr(expr),
+        _ => None,
+    }
+}
+
+fn find_select_column_definition_best_effort(
+    raw_sql: &str,
+    target: &str,
+) -> Option<SqlColumnDefinition> {
+    let projection = outer_projection_text(raw_sql)?;
+    for item in split_top_level_commas(projection) {
+        let Some(expression) = expression_before_alias(item, target) else {
+            continue;
+        };
+        let identifiers = identifiers_from_text(expression);
+        return Some(SqlColumnDefinition {
+            expression: expression.trim().to_string(),
+            identifiers,
+            confidence: "best_effort",
+        });
+    }
+    None
+}
+
+fn outer_projection_text(raw_sql: &str) -> Option<&str> {
+    let lower = raw_sql.to_ascii_lowercase();
+    let select_start = lower.find("select")?;
+    let projection_start = select_start + "select".len();
+    let bytes = raw_sql.as_bytes();
+    let mut depth = 0usize;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut cursor = projection_start;
+    while cursor < bytes.len() {
+        let b = bytes[cursor];
+        if in_single {
+            if b == b'\'' {
+                in_single = false;
+            }
+            cursor += 1;
+            continue;
+        }
+        if in_double {
+            if b == b'"' {
+                in_double = false;
+            }
+            cursor += 1;
+            continue;
+        }
+        match b {
+            b'\'' => in_single = true,
+            b'"' => in_double = true,
+            b'(' => depth += 1,
+            b')' => depth = depth.saturating_sub(1),
+            _ if depth == 0 && lower[cursor..].starts_with(" from ") => {
+                return Some(&raw_sql[projection_start..cursor]);
+            }
+            _ => {}
+        }
+        cursor += 1;
+    }
+    None
+}
+
+fn split_top_level_commas(input: &str) -> Vec<&str> {
+    let bytes = input.as_bytes();
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut start = 0usize;
+    for (idx, b) in bytes.iter().enumerate() {
+        if in_single {
+            if *b == b'\'' {
+                in_single = false;
+            }
+            continue;
+        }
+        if in_double {
+            if *b == b'"' {
+                in_double = false;
+            }
+            continue;
+        }
+        match *b {
+            b'\'' => in_single = true,
+            b'"' => in_double = true,
+            b'(' => depth += 1,
+            b')' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => {
+                parts.push(input[start..idx].trim());
+                start = idx + 1;
+            }
+            _ => {}
+        }
+    }
+    let tail = input[start..].trim();
+    if !tail.is_empty() {
+        parts.push(tail);
+    }
+    parts
+}
+
+fn expression_before_alias<'a>(item: &'a str, target: &str) -> Option<&'a str> {
+    let trimmed = item.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    let target_lower = target.to_ascii_lowercase();
+    let as_suffix = format!(" as {target_lower}");
+    if lower.ends_with(&as_suffix) {
+        return Some(&trimmed[..trimmed.len().saturating_sub(as_suffix.len())]);
+    }
+
+    let bare_suffix = format!(" {target_lower}");
+    if lower.ends_with(&bare_suffix) {
+        return Some(&trimmed[..trimmed.len().saturating_sub(bare_suffix.len())]);
+    }
+
+    None
+}
+
+fn identifiers_from_text(input: &str) -> Vec<String> {
+    const KEYWORDS: &[&str] = &[
+        "and",
+        "as",
+        "case",
+        "cast",
+        "count",
+        "date",
+        "distinct",
+        "else",
+        "end",
+        "false",
+        "from",
+        "if",
+        "in",
+        "is",
+        "null",
+        "nullif",
+        "or",
+        "over",
+        "partition",
+        "select",
+        "sum",
+        "then",
+        "true",
+        "when",
+    ];
+
+    let mut identifiers = Vec::new();
+    let mut token = String::new();
+    for ch in input.chars().chain(std::iter::once(' ')) {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' {
+            token.push(ch);
+            continue;
+        }
+        if token
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        {
+            let normalized = token.trim_matches('.').to_string();
+            let lower = normalized.to_ascii_lowercase();
+            if !normalized.is_empty() && !KEYWORDS.contains(&lower.as_str()) {
+                identifiers.push(normalized);
+            }
+        }
+        token.clear();
+    }
+    dedupe_identifiers(identifiers)
+}
+
+fn dedupe_identifiers(identifiers: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for identifier in identifiers {
+        let key = identifier.to_ascii_lowercase();
+        if seen.insert(key) {
+            out.push(identifier);
+        }
+    }
+    out
+}
+
+fn names_equal(left: &str, right: &str) -> bool {
+    left.trim_matches(|c: char| matches!(c, '`' | '"' | '[' | ']'))
+        .eq_ignore_ascii_case(right.trim_matches(|c: char| matches!(c, '`' | '"' | '[' | ']')))
 }
 
 #[derive(Debug, Clone)]
@@ -409,7 +672,7 @@ fn visit_select_items<F: FnMut(&SelectItem)>(stmt: &Statement, f: &mut F) {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_ref_calls, find_sql_aliases};
+    use super::{extract_ref_calls, find_select_column_definition, find_sql_aliases};
 
     #[test]
     fn extract_ref_calls_handles_single_and_qualified_refs() {
@@ -441,5 +704,27 @@ mod tests {
             aliases.get("session_conversion_rate").map(String::as_str),
             Some("order_completed")
         );
+    }
+
+    #[test]
+    fn find_select_column_definition_extracts_aggregate_expression() {
+        let sql = "select channel, count(distinct li.order_id) as orders_count from line_items li group by 1";
+        let definition = find_select_column_definition(sql, "orders_count").expect("definition");
+        assert_eq!(definition.expression, "count(DISTINCT li.order_id)");
+        assert_eq!(definition.identifiers, vec!["order_id", "li.order_id"]);
+        assert_eq!(definition.confidence, "exact");
+    }
+
+    #[test]
+    fn find_select_column_definition_extracts_ratio_expression() {
+        let sql = "select sum(gross_amount) / nullif(count(distinct order_id), 0) as average_order_value from orders";
+        let definition =
+            find_select_column_definition(sql, "average_order_value").expect("definition");
+        assert!(
+            definition
+                .expression
+                .contains("sum(gross_amount) / nullif(count(DISTINCT order_id), 0)")
+        );
+        assert_eq!(definition.identifiers, vec!["gross_amount", "order_id"]);
     }
 }

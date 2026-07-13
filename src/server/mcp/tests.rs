@@ -439,6 +439,56 @@ fn mcp_response_budget_keeps_lineage_count_when_only_edges_are_truncated() {
 }
 
 #[test]
+fn mcp_response_budget_updates_reference_count_when_references_are_truncated() {
+    let config = crate::config::DbtNovaConfig {
+        mcp_max_response_bytes: 8192,
+        mcp_max_string_chars: 64,
+        ..Default::default()
+    };
+    let references: Vec<_> = (0..100)
+        .map(|idx| {
+            serde_json::json!({
+                "kind": "recipe_sql",
+                "unique_id": format!("analysis.pkg.recipe_{idx:03}"),
+                "detail": {
+                    "match": "textual",
+                    "snippet": "type_of_channel ".repeat(50)
+                }
+            })
+        })
+        .collect();
+    let response = serde_json::json!({
+        "success": true,
+        "count": 0,
+        "data": {
+            "start_entity": "model.pkg.sales_daily_channel",
+            "start_column": "type_of_channel",
+            "lineage": [],
+            "reference_count": references.len(),
+            "references": references
+        }
+    });
+
+    let budgeted = apply_mcp_response_budget(response, &config);
+    let returned_references = budgeted["data"]["references"]
+        .as_array()
+        .map_or(0, Vec::len);
+
+    assert!(
+        returned_references < 100,
+        "references were not truncated: returned_references={returned_references}"
+    );
+    assert!(returned_references > 0);
+    assert_eq!(budgeted["count"], serde_json::json!(0));
+    assert_eq!(
+        budgeted["data"]["reference_count"],
+        serde_json::json!(returned_references)
+    );
+    assert_eq!(budgeted["truncated"], serde_json::json!(true));
+    assert_eq!(budgeted["data"]["truncated"], serde_json::json!(true));
+}
+
+#[test]
 fn mcp_response_budget_updates_undocumented_summary_counts_when_truncated() {
     let config = crate::config::DbtNovaConfig {
         mcp_max_response_bytes: 8192,

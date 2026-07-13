@@ -7,6 +7,7 @@ async fn test_get_impact() {
     let searcher = get_searcher();
     let params = GetImpactParams {
         id_or_name: "model.nova_test.stg__traffic_sessions".to_string(),
+        column: None,
     };
     let result = searcher.get_impact(&params).await.json();
     let success = result
@@ -30,6 +31,7 @@ async fn test_get_impact_not_found() {
     let searcher = get_searcher();
     let params = GetImpactParams {
         id_or_name: "nonexistent.model".to_string(),
+        column: None,
     };
     let result = searcher.get_impact(&params).await.json();
     let success = result
