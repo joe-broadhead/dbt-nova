@@ -36,8 +36,10 @@ checked against `src/tools/catalog.rs`.
 MCP tool bodies and CLI JSON command envelopes both expose the additive
 top-level `api` response contract marker documented in
 [Response Format](response-format.md#api-contract-marker). CLI JSON keeps its
-own command envelope shape; MCP budgeting and pagination metadata remain under
-`_nova_result_meta`.
+own command envelope shape. CLI `tool call --json` unwraps the MCP-style tool
+body so `.data` is the payload itself and tool bookkeeping lives under
+`.meta.tool_response`; MCP budgeting and pagination metadata remain under
+`_nova_result_meta` in MCP responses.
 
 ## Current Matrix
 
@@ -78,8 +80,9 @@ that:
 - CLI `tool call` supports the same canonical MCP tool names.
 - Every canonical MCP tool has stability metadata, profile membership, and a
   docs row in the Tools Reference.
-- MCP and CLI JSON envelope docs cover the shared top-level `api` marker while
-  keeping `_nova_result_meta` as MCP transport metadata.
+- MCP and CLI JSON envelope docs cover the shared top-level `api` marker, CLI
+  tool-call payload unwrapping, and `_nova_result_meta` as MCP transport
+  metadata.
 - MCP tool count references in core docs match the catalog.
 - CLI leaf commands have an explicit parity row and any gap has an owning issue.
 

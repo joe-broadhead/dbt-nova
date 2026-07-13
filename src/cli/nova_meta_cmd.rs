@@ -61,11 +61,7 @@ pub fn run_nova_meta_command(args: &NovaMetaAuditArgs) -> DispatchResult {
                 command: "audit nova-meta",
                 status: "error",
                 data: &report,
-                meta: CliMeta {
-                    elapsed_ms,
-                    timestamp_ms: timestamp_ms(),
-                    version: env!("CARGO_PKG_VERSION"),
-                },
+                meta: CliMeta::new(elapsed_ms),
                 error: Some(
                     DbtNovaError::ServerError(format!(
                         "nova meta validation failed ({} error(s), {} warning(s))",
@@ -157,13 +153,6 @@ pub fn build_nova_meta_tool_response(
 
     serde_json::to_value(SuccessResponse::new(payload, 1))
         .map_err(|error| DbtNovaError::ServerError(error.to_string()))
-}
-
-fn timestamp_ms() -> u128 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_millis())
 }
 
 fn print_human_report(

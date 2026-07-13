@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed CLI `tool call --json` output so `.data` contains the tool payload
+  directly, matching dedicated CLI commands; tool response metadata now lives
+  under `.meta.tool_response`.
 - Fixed `manifest warm`/`warm_manifest` so no-flag warmup respects the resolved
   semantic search config, added governance/tier/canonical `list_entities`
   filters for structured inventory, and accepted `analyst`/`governance`

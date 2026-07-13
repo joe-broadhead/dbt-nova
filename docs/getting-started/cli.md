@@ -329,9 +329,11 @@ dbt-nova tool call reload_manifest \
   --json
 ```
 
-`tool call reload_manifest` runs as a one-shot reload and returns a
-`SuccessResponse` payload with updated manifest settings and loaded manifest
-metadata (`manifest_hash`, `manifest_version`, `entity_count`).
+`tool call reload_manifest` runs as a one-shot reload and returns updated
+manifest settings and loaded manifest metadata (`manifest_hash`,
+`manifest_version`, `entity_count`) under the CLI envelope's `.data` field.
+Tool-response bookkeeping such as `count` is available under
+`.meta.tool_response`.
 
 If both `manifest_uri` and `manifest_path` are provided in params, `manifest_path`
 takes precedence.
