@@ -6,6 +6,9 @@ per observed Nova tool call. Use the `trace` commands to inspect, summarize,
 redact, and replay those files before attaching evidence to PRs, eval
 artifacts, or support threads.
 
+Hosted HTTP tool calls include `request_id` when request correlation is active,
+so redacted trace artifacts can be matched back to hosted request logs.
+
 Trace commands operate on local files only. Inspect, summarize, and redact do
 not replay tool calls, call providers, execute SQL, upload artifacts, or read
 arbitrary provider logs. `trace replay` replays only supported deterministic

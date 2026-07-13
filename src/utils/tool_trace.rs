@@ -90,6 +90,8 @@ struct ToolTraceRow {
     success: bool,
     duration_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    request_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     error_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     params_summary: Option<Value>,
@@ -207,6 +209,27 @@ pub fn record_tool_call(
     success: bool,
     duration_ms: u64,
 ) {
+    record_tool_call_with_request_id(
+        transport,
+        tool,
+        params,
+        response,
+        success,
+        duration_ms,
+        None,
+    );
+}
+
+/// Append a sanitized tool-call trace row with optional request correlation.
+pub fn record_tool_call_with_request_id(
+    transport: &str,
+    tool: &str,
+    params: Option<&Value>,
+    response: Option<&Value>,
+    success: bool,
+    duration_ms: u64,
+    request_id: Option<&str>,
+) {
     let Ok(path) = std::env::var(TRACE_ENV) else {
         return;
     };
@@ -227,11 +250,14 @@ pub fn record_tool_call(
     let row = build_tool_trace_row(
         trace_path,
         transport,
-        tool,
-        params,
-        response,
-        success,
-        duration_ms,
+        &ToolTraceRowInput {
+            tool,
+            params,
+            response,
+            success,
+            duration_ms,
+            request_id,
+        },
     );
 
     let serialized = match serde_json::to_string(&row) {
@@ -245,30 +271,41 @@ pub fn record_tool_call(
     append_serialized_trace_row(trace_path, &serialized);
 }
 
+struct ToolTraceRowInput<'a> {
+    tool: &'a str,
+    params: Option<&'a Value>,
+    response: Option<&'a Value>,
+    success: bool,
+    duration_ms: u64,
+    request_id: Option<&'a str>,
+}
+
 fn build_tool_trace_row(
     trace_path: &Path,
     transport: &str,
-    tool: &str,
-    params: Option<&Value>,
-    response: Option<&Value>,
-    success: bool,
-    duration_ms: u64,
+    input: &ToolTraceRowInput<'_>,
 ) -> ToolTraceRow {
     ToolTraceRow {
         timestamp_ms: timestamp_ms(),
         tool_call_index: next_tool_call_index(trace_path),
         transport: transport.to_string(),
-        tool: tool.to_string(),
-        success,
-        duration_ms,
-        error_code: response.and_then(extract_error_code),
-        params_summary: params.map(summarize_params),
-        response_bytes: response.map_or(0, serialized_len),
-        response_truncated: response.is_some_and(extract_response_truncated),
-        result_count: response.and_then(|value| value.get("count").and_then(Value::as_u64)),
-        total_available: response.and_then(total_available_from_response),
-        selected_unique_ids: response.map(extract_unique_ids).unwrap_or_default(),
-        top_unique_ids: response.map(extract_top_unique_ids).unwrap_or_default(),
+        tool: input.tool.to_string(),
+        success: input.success,
+        duration_ms: input.duration_ms,
+        request_id: input.request_id.map(ToOwned::to_owned),
+        error_code: input.response.and_then(extract_error_code),
+        params_summary: input.params.map(summarize_params),
+        response_bytes: input.response.map_or(0, serialized_len),
+        response_truncated: input.response.is_some_and(extract_response_truncated),
+        result_count: input
+            .response
+            .and_then(|value| value.get("count").and_then(Value::as_u64)),
+        total_available: input.response.and_then(total_available_from_response),
+        selected_unique_ids: input.response.map(extract_unique_ids).unwrap_or_default(),
+        top_unique_ids: input
+            .response
+            .map(extract_top_unique_ids)
+            .unwrap_or_default(),
     }
 }
 
@@ -864,6 +901,7 @@ fn redact_trace_row(row: &Value, fields_removed: &mut usize, fields_masked: &mut
     copy_string_field(map, &mut out, "tool", fields_removed, fields_masked);
     copy_bool_field(map, &mut out, "success", fields_removed);
     copy_u64_field(map, &mut out, "duration_ms", fields_removed);
+    copy_string_field(map, &mut out, "request_id", fields_removed, fields_masked);
     copy_string_field(map, &mut out, "error_code", fields_removed, fields_masked);
     if let Some(params) = map.get("params_summary") {
         let redacted = redact_params_summary(params, fields_removed, fields_masked);
@@ -907,6 +945,7 @@ fn is_redacted_top_level_key(key: &str) -> bool {
             | "tool"
             | "success"
             | "duration_ms"
+            | "request_id"
             | "error_code"
             | "response_bytes"
             | "response_truncated"
@@ -1398,7 +1437,8 @@ mod tests {
     use super::{
         MAX_SELECTED_UNIQUE_IDS, TRACE_ENV, TRACE_MAX_BYTES_ENV, extract_response_truncated,
         extract_top_unique_ids, extract_unique_ids, read_tool_trace_file, record_tool_call,
-        redact_tool_trace_file, summarize_params, summarize_tool_trace,
+        record_tool_call_with_request_id, redact_tool_trace_file, summarize_params,
+        summarize_tool_trace,
     };
 
     static ENV_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
@@ -1633,6 +1673,41 @@ mod tests {
     }
 
     #[test]
+    fn record_tool_call_with_request_id_adds_safe_correlation_without_raw_payloads() {
+        let _env_guard = lock_env();
+        let dir = TempDir::new().expect("dir");
+        let trace_path = dir.path().join("trace.jsonl");
+        let _path_restore = EnvVarRestore::set(TRACE_ENV, &trace_path.to_string_lossy());
+        let _max_restore = EnvVarRestore::set(TRACE_MAX_BYTES_ENV, "65536");
+
+        record_tool_call_with_request_id(
+            "mcp",
+            "execute_sql",
+            Some(&json!({
+                "query": "revenue",
+                "authorization": "Bearer raw-token",
+            })),
+            Some(&json!({
+                "success": false,
+                "error_code": "SQL_ERROR",
+                "error": "query failed",
+            })),
+            false,
+            9,
+            Some("req-123"),
+        );
+
+        let read = read_tool_trace_file(&trace_path);
+        assert_eq!(read.rows.len(), 1);
+        let row = &read.rows[0];
+        assert_eq!(row["request_id"], json!("req-123"));
+        assert_eq!(row["tool"], json!("execute_sql"));
+        assert_eq!(row["success"], json!(false));
+        let serialized = row.to_string();
+        assert!(!serialized.contains("raw-token"));
+    }
+
+    #[test]
     fn summarize_tool_trace_reports_order_budgets_and_semantic_first() {
         let trace = NamedTempFile::new().expect("trace");
         std::fs::write(
@@ -1677,6 +1752,7 @@ mod tests {
                 "\"params_summary\":{\"query\":\"s3://bucket/path?token=secret\",",
                 "\"limit\":5,\"keys\":[\"query\",\"token\"],",
                 "\"parameters\":{\"password\":\"secret\"}},",
+                "\"request_id\":\"req-123\",",
                 "\"manifest_uri\":\"s3://bucket/manifest.json?token=secret\",",
                 "\"provider_raw_output\":\"secret stdout\",",
                 "\"response_bytes\":10,\"response_truncated\":false,",
@@ -1702,6 +1778,7 @@ mod tests {
         assert!(!redacted.contains("parameters"));
         assert!(redacted.contains("[REDACTED]"));
         assert!(redacted.contains("model.pkg.orders"));
+        assert!(redacted.contains("\"request_id\":\"req-123\""));
 
         let read = read_tool_trace_file(dir.path().join("trace.redacted.jsonl").as_path());
         let summary = summarize_tool_trace(&read);

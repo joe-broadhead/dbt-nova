@@ -5,6 +5,7 @@ use super::{
     HOSTED_SQL_TRUSTED_TOOL_DENYLIST, HostedAuthMode, ResultProfile, RuntimePreset,
     ServerTransport,
 };
+use crate::logging::LogFormat;
 
 static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -213,10 +214,35 @@ fn default_result_profiles_keep_cli_standard_and_mcp_compact() {
     assert_eq!(config.mcp_result_profile, ResultProfile::Compact);
     assert_eq!(config.mcp_default_limit, 10);
     assert_eq!(config.mcp_max_page_size, 100);
+    assert_eq!(config.log_format, LogFormat::Human);
     assert_eq!(config.hosted_auth.mode, HostedAuthMode::Off);
     assert!(!config.hosted_auth.required);
     assert_eq!(config.hosted_auth.identity_subject_claim, "sub");
     assert!(config.hosted_auth.jwt_algorithms.is_empty());
+}
+
+#[test]
+fn from_env_reads_json_log_format() {
+    let config = with_env_vars(
+        &[("DBT_NOVA_LOG_FORMAT", Some("json"))],
+        DbtNovaConfig::from_env,
+    );
+
+    assert_eq!(config.log_format, LogFormat::Json);
+    config.validate().expect("json log format should validate");
+}
+
+#[test]
+fn from_env_records_invalid_log_format() {
+    let config = with_env_vars(
+        &[("DBT_NOVA_LOG_FORMAT", Some("xml"))],
+        DbtNovaConfig::from_env,
+    );
+
+    let error = config
+        .validate()
+        .expect_err("invalid log format should fail validation");
+    assert!(error.to_string().contains("DBT_NOVA_LOG_FORMAT"));
 }
 
 #[test]

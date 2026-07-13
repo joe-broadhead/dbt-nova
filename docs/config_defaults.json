@@ -128,6 +128,7 @@
   "layer_rules": [],
   "lineage_max_depth": 200,
   "lineage_max_results": 10000,
+  "log_format": "human",
   "manifest_allow_http": false,
   "manifest_cache_dir": "",
   "manifest_fetch_timeout_secs": 300,

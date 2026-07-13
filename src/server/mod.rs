@@ -1,3 +1,4 @@
+pub mod correlation;
 pub mod health;
 pub mod mcp;
 

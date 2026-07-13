@@ -61,6 +61,8 @@ export DBT_NOVA_HTTP_PATH=/mcp
 export DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true
 export DBT_NOVA_HTTP_ALLOWED_HOSTS=nova.example.com
 export DBT_NOVA_HTTP_MAX_BODY_BYTES=16777216
+export DBT_NOVA_LOG=info
+export DBT_NOVA_LOG_FORMAT=json
 # Optional if the proxy/network cannot restrict scrapes:
 # export DBT_NOVA_METRICS_ENABLED=false
 export DBT_NOVA_STORAGE_DIR=/tmp/dbt-nova
@@ -85,6 +87,9 @@ Why these defaults matter:
 - `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` is required for non-loopback hosted binds and documents that an authenticating reverse proxy is in front of Nova.
 - `DBT_NOVA_HTTP_ALLOWED_HOSTS` allows the public/proxy `Host` header while the transport still rejects unexpected hosts.
 - `DBT_NOVA_HTTP_MAX_BODY_BYTES` caps request bodies before the mounted MCP transport buffers them; keep it bounded unless a stricter proxy limit is enforced.
+- `DBT_NOVA_LOG=info` plus `DBT_NOVA_LOG_FORMAT=json` emits newline-delimited
+  JSON logs that are suitable for hosted collectors. Leave
+  `DBT_NOVA_LOG_FORMAT` unset for the default human-readable stderr format.
 - `GET /metrics` is enabled by default for hosted HTTP. It does not include
   query text, entity names, paths, user IDs, or credentials, but it does expose
   readiness, tool names, call counts, error counts, and latency histograms.
@@ -97,6 +102,30 @@ Why these defaults matter:
 - `DBT_NOVA_EMBEDDINGS_CACHE_DIR=/tmp/dbt-nova/models` keeps model cache resolution deterministic.
 - `DBT_NOVA_BOOTSTRAP_URI` should point at the stable bootstrap alias published by the reusable asset workflow.
 - First start should **not** use strict read-only mode. Nova may need to materialize prebuilt assets locally before it can serve traffic.
+
+## Request Correlation
+
+Hosted HTTP mode adds request correlation without implementing identity. Nova
+accepts a proxy-provided `X-Request-ID` first, then `X-Correlation-ID`, when the
+value is a short printable identifier. If neither header is present or the value
+is unsafe, Nova generates a UUID. Every hosted HTTP response echoes the effective
+ID in `X-Request-ID`.
+
+Example probe:
+
+```bash
+curl -i \
+  -H 'X-Request-ID: deploy-smoke-001' \
+  http://127.0.0.1:8080/healthz
+```
+
+With `DBT_NOVA_LOG=info DBT_NOVA_LOG_FORMAT=json`, request logs include the
+request ID, method, path, status, and duration. MCP tool logs include request
+ID, tool name, duration, and success/failure. These logs intentionally omit
+query strings, request bodies, raw SQL, credentials, manifests, tokens, and
+private URIs. When `DBT_NOVA_TRACE_TOOL_CALLS_PATH` is enabled, MCP trace rows
+also include `request_id` so a redacted trace artifact can be matched back to
+hosted request logs.
 
 ## Hosted SQL-Enabled Profile
 

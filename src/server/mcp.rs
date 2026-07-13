@@ -51,6 +51,7 @@ use crate::params::{
     ValidateEvalSuiteParams, ValidateNovaMetaParams, WarmManifestParams,
 };
 use crate::responses::{SuccessResponse, attach_response_api_contract};
+use crate::server::correlation::current_request_id;
 use crate::server::health::build_manifest_health_payload;
 use crate::utils::{ToolMetricsStore, ToolRateLimiter};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -219,15 +220,18 @@ impl DbtNovaServer {
                 let out = Self::error_response(&err);
                 let duration_ms = elapsed_ms_to_u64(start.elapsed());
                 let parsed_trace_response = serde_json::from_str::<serde_json::Value>(&out).ok();
-                crate::utils::tool_trace::record_tool_call(
+                let request_id = current_request_id();
+                crate::utils::tool_trace::record_tool_call_with_request_id(
                     "mcp",
                     tool,
                     None,
                     parsed_trace_response.as_ref(),
                     success,
                     duration_ms,
+                    request_id.as_deref(),
                 );
                 self.record_metrics(tool, persona, duration_ms, success);
+                Self::log_tool_call(tool, duration_ms, success, request_id.as_deref());
                 return Err(out);
             }
         };
@@ -240,15 +244,18 @@ impl DbtNovaServer {
             }));
             let duration_ms = elapsed_ms_to_u64(start.elapsed());
             let parsed_trace_response = serde_json::from_str::<serde_json::Value>(&out).ok();
-            crate::utils::tool_trace::record_tool_call(
+            let request_id = current_request_id();
+            crate::utils::tool_trace::record_tool_call_with_request_id(
                 "mcp",
                 tool,
                 None,
                 parsed_trace_response.as_ref(),
                 success,
                 duration_ms,
+                request_id.as_deref(),
             );
             self.record_metrics(tool, persona, duration_ms, success);
+            Self::log_tool_call(tool, duration_ms, success, request_id.as_deref());
             return Err(out);
         }
 
@@ -269,15 +276,18 @@ impl DbtNovaServer {
         };
         let duration_ms = elapsed_ms_to_u64(start.elapsed());
         let parsed_trace_response = serde_json::from_str::<serde_json::Value>(&out).ok();
-        crate::utils::tool_trace::record_tool_call(
+        let request_id = current_request_id();
+        crate::utils::tool_trace::record_tool_call_with_request_id(
             "mcp",
             tool,
             None,
             parsed_trace_response.as_ref(),
             success,
             duration_ms,
+            request_id.as_deref(),
         );
         self.record_metrics(tool, persona, duration_ms, success);
+        Self::log_tool_call(tool, duration_ms, success, request_id.as_deref());
         if success { Ok(out) } else { Err(out) }
     }
 }
@@ -291,6 +301,27 @@ impl DbtNovaServer {
         if let Some(persona) = persona {
             let key = format!("{}.{}", tool, persona.to_lowercase());
             self.metrics.record(&key, duration_ms, success);
+        }
+    }
+
+    fn log_tool_call(tool: &str, duration_ms: u64, success: bool, request_id: Option<&str>) {
+        match (success, request_id) {
+            (true, Some(request_id)) => tracing::info!(
+                tool,
+                duration_ms,
+                success,
+                request_id,
+                "mcp tool call completed"
+            ),
+            (true, None) => tracing::info!(tool, duration_ms, success, "mcp tool call completed"),
+            (false, Some(request_id)) => tracing::warn!(
+                tool,
+                duration_ms,
+                success,
+                request_id,
+                "mcp tool call failed"
+            ),
+            (false, None) => tracing::warn!(tool, duration_ms, success, "mcp tool call failed"),
         }
     }
 
