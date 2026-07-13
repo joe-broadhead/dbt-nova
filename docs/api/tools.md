@@ -843,9 +843,13 @@ report-ready JSON.
 Optional:
 - `selection_mode` (`project`, `changed`, `entities`; default `project`)
 - `changed_files_json`: JSON array of changed file paths for `changed`
+- `changed_files`: typed array alias for `changed_files_json`
 - `entity_ids_json`: JSON array of ids or names for `entities`
+- `entity_ids`: typed array alias for `entity_ids_json`
 - `resource_types_json`: JSON array, defaulting to `["model"]`
+- `resource_types`: typed array alias for `resource_types_json`
 - `personas_json`: JSON array, defaulting to `["engineer"]`
+- `personas`: typed array alias for `personas_json`
 - `thresholds_json`: JSON required/advisory threshold configuration
 - `include_breakdown`, `include_recommendations`
 - `fail_on_no_targets`
@@ -859,6 +863,9 @@ drill-down hints.
 ```json
 {"name":"get_metadata_audit","arguments":{"selection_mode":"changed","changed_files_json":"[\"models/marts/orders.sql\"]"}}
 ```
+
+Unknown top-level tool parameters are rejected instead of ignored. Use either a
+typed array alias or its `*_json` form for the same setting, not both.
 
 See `docs/features/metadata-audit.md` for report fields and threshold examples.
 
@@ -1219,6 +1226,8 @@ Notes:
 - Snowflake provider is available via `DBT_NOVA_SQL_PROVIDER=snowflake`; named parameters are rewritten to SQL API positional binds and null values require explicit `parameter_types`.
 - DuckDB provider is available via `DBT_NOVA_SQL_PROVIDER=duckdb`; named parameters are supported, but `parameter_types` is not. Ad-hoc DuckDB file-scan functions in `execute_sql` text are rejected. Connection-level external access for trusted file-backed database objects is disabled unless `DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS=true` is paired with `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH`.
 - DuckDB reuses pooled read-only connections per `(duckdb_path,file_search_path,external_access)` key (`DBT_NOVA_DUCKDB_POOL_MAX_SIZE`).
+- DuckDB DATE, TIMESTAMP, and TIME result cells are serialized as ISO-style
+  strings while `column_types` retains the provider type names.
 - Object-level preflight checks (`preflight_catalog`, `preflight_schema`, `preflight_relation`) require a non-empty probe result across providers; missing/inaccessible targets return `ok=false`.
 - BigQuery credentials can come from OAuth token env vars, `GOOGLE_APPLICATION_CREDENTIALS`, or gcloud ADC (same auth family used by GCS SDK mode).
 - Snowflake credentials can use key-pair JWT, a supplied OAuth bearer token, a Snowflake programmatic access token, or local interactive external browser SSO (`DBT_NOVA_SNOWFLAKE_AUTH=externalbrowser`). Snowflake SQL API workload identity federation is not implemented yet.

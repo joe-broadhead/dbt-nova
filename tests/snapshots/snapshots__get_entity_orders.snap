@@ -12,6 +12,21 @@ expression: result
     "name": "fct__orders",
     "original_file_path": "models/marts/sales/fct__orders.sql",
     "package_name": "nova_test",
+    "provenance": {
+      "freshness": {
+        "reason": "no_freshness_timestamp",
+        "status": "unknown"
+      },
+      "readiness": {
+        "doc_coverage_pct": 100.0,
+        "has_nova_meta": false,
+        "has_owner": false,
+        "metadata_grade": "F",
+        "metadata_score": 2,
+        "tests_total": 0
+      },
+      "tier": "curated"
+    },
     "resource_type": "model",
     "schema": "dbt_test",
     "unique_id": "model.nova_test.fct__orders"

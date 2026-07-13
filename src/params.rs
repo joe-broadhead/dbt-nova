@@ -18,6 +18,7 @@ pub fn default_true() -> bool {
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone, Copy, Default)]
+#[serde(deny_unknown_fields)]
 #[serde(default)]
 pub struct PaginationParams {
     /// Maximum results. Omit or pass 0 to use the configured default limit.
@@ -27,6 +28,7 @@ pub struct PaginationParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Clone, Copy)]
+#[serde(deny_unknown_fields)]
 #[serde(default)]
 pub struct ContextLimits {
     /// Maximum depth for lineage traversal (default: 1 for immediate only)
@@ -73,6 +75,7 @@ pub enum ParentGroupMode {
 /// Parameters for the search tool.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct SearchParams {
     /// Search query - matches names, descriptions, SQL code, file paths, column names.
     /// Supports boolean operators, phrases, field-specific queries, and prefix wildcards.
@@ -108,6 +111,7 @@ pub struct SearchParams {
 
 /// Parameters for the search_indicator tool.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SearchIndicatorParams {
     /// Search query - resolves Nova measures and metrics by name, synonym, field, description, or expression.
     #[serde(default)]
@@ -163,6 +167,7 @@ impl Default for SearchIndicatorParams {
 
 /// Parameters for the indicator_inventory tool.
 #[derive(Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct IndicatorInventoryParams {
     /// Filter parent entities by resource types (for example: model, source).
     #[serde(default)]
@@ -179,6 +184,7 @@ pub struct IndicatorInventoryParams {
 
 /// Parameters for the search_columns tool.
 #[derive(Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct SearchColumnsParams {
     /// Search query - resolves columns by name, synonym, description, role, semantic_type, or example_values.
     #[serde(default)]
@@ -201,6 +207,7 @@ pub struct SearchColumnsParams {
 
 /// Parameters for the column_inventory tool.
 #[derive(Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct ColumnInventoryParams {
     /// Filter parent entities by resource types (for example: model, source).
     #[serde(default)]
@@ -220,6 +227,7 @@ pub struct ColumnInventoryParams {
 
 /// Parameters for the compare_grains tool.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CompareGrainsParams {
     /// First entity unique ID or name
     pub entity1: String,
@@ -235,6 +243,7 @@ pub struct CompareGrainsParams {
 
 /// Parameters for the find_entity_overlap tool.
 #[derive(Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct FindEntityOverlapParams {
     /// Optional focus entity unique ID or name. When set, only overlap pairs involving this entity are returned.
     #[serde(default)]
@@ -254,6 +263,7 @@ pub struct FindEntityOverlapParams {
 
 /// Parameters for the modelling_consistency_report tool.
 #[derive(Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct ModellingConsistencyReportParams {
     /// Filter candidate entities by resource types (for example: model, source).
     #[serde(default)]
@@ -268,6 +278,7 @@ pub struct ModellingConsistencyReportParams {
 
 /// Parameters for the get_entity tool.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetEntityParams {
     /// Unique ID (e.g., "model.package.name") or entity name
     #[serde(alias = "unique_id")]
@@ -281,6 +292,7 @@ pub struct GetEntityParams {
 
 /// Parameters for the list_entities tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ListEntitiesParams {
     /// Resource type: model, source, macro, doc, test, seed, snapshot, analysis, exposure, metric, group
     pub resource_type: String,
@@ -300,6 +312,7 @@ pub struct ListEntitiesParams {
 
 /// Parameters for searching and discovering recipe templates.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SearchRecipesParams {
     /// Optional text filter on recipe id, description, or tags.
     #[serde(default)]
@@ -316,6 +329,7 @@ pub struct SearchRecipesParams {
 
 /// Parameters for loading a recipe definition.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetRecipeParams {
     /// Recipe identifier derived from manifest analysis path (e.g. `weekly_country_kpi_report` or `marketplace/weekly_report`)
     pub recipe_id: String,
@@ -339,6 +353,7 @@ pub struct GetRecipeParams {
 
 /// Parameters for running a recipe as a reusable, deterministic analysis sequence.
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct RunRecipeParams {
     /// Recipe identifier derived from manifest analysis path (e.g. `weekly_country_kpi_report` or `marketplace/weekly_report`)
     pub recipe_id: String,
@@ -396,6 +411,7 @@ pub struct RunRecipeParams {
 
 /// Parameters for the get_lineage tool.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetLineageParams {
     /// Unique ID or name of the entity
     pub id_or_name: String,
@@ -413,6 +429,7 @@ pub struct GetLineageParams {
 
 /// Parameters for the get_sql tool.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetSqlParams {
     /// Unique ID or name of the model
     pub id_or_name: String,
@@ -423,6 +440,7 @@ pub struct GetSqlParams {
 
 /// Parameters for the get_columns tool.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetColumnsParams {
     /// Unique ID or name of the model/source
     pub id_or_name: String,
@@ -430,6 +448,7 @@ pub struct GetColumnsParams {
 
 /// Parameters for the diff_entities tool.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DiffEntitiesParams {
     /// First entity unique ID or name
     pub entity1: String,
@@ -448,6 +467,7 @@ pub struct DiffEntitiesParams {
 
 /// Parameters for the get_impact tool.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetImpactParams {
     /// Unique ID or name of the entity to assess
     pub id_or_name: String,
@@ -455,6 +475,7 @@ pub struct GetImpactParams {
 
 /// Parameters for the get_column_lineage tool.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetColumnLineageParams {
     /// Unique ID or name of the model/source
     pub id_or_name: String,
@@ -474,6 +495,7 @@ pub struct GetColumnLineageParams {
 
 /// Parameters for the get_test_coverage tool.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetTestCoverageParams {
     /// Unique ID or name of the model/source to analyze
     pub id_or_name: String,
@@ -490,6 +512,7 @@ pub struct GetTestCoverageParams {
 
 /// Parameters for the batch_get_entities tool.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BatchGetParams {
     /// List of unique IDs to retrieve
     pub unique_ids: Vec<String>,
@@ -500,6 +523,7 @@ pub struct BatchGetParams {
 
 /// Parameters for the find_by_path tool.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FindByPathParams {
     /// File path pattern to match (e.g., "models/staging/**", "models/*.sql")
     pub path_pattern: String,
@@ -515,6 +539,7 @@ pub struct FindByPathParams {
 
 /// Parameters for the get_undocumented tool.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetUndocumentedParams {
     /// Resource type to check: model, source, macro, etc.
     pub resource_type: String,
@@ -547,6 +572,7 @@ pub enum ValidateDagDetail {
 
 /// Parameters for the validate_dag tool.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ValidateDagParams {
     /// Detail level: full or summary (default: full)
     #[serde(default)]
@@ -555,6 +581,7 @@ pub struct ValidateDagParams {
 
 /// Parameters for the get_context tool.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct GetContextParams {
     /// Unique ID or name of the entity to get context for
@@ -599,6 +626,7 @@ pub enum ContextMode {
 
 /// Parameters for the get_metadata_score tool.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetMetadataScoreParams {
     /// Entity to score (optional for project scope)
     #[serde(default)]
@@ -647,6 +675,7 @@ impl Default for GetMetadataScoreParams {
 
 /// Parameters for the get_agent_readiness tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct GetAgentReadinessParams {
     /// JSON array of personas to score. Defaults to `["engineer","analyst","governance"]`.
     #[serde(default)]
@@ -674,6 +703,7 @@ pub enum MetadataAuditSelectionModeParam {
 
 /// Parameters for the get_metadata_audit tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct GetMetadataAuditParams {
     /// Audit selection mode. Defaults to project.
     #[serde(default)]
@@ -681,15 +711,27 @@ pub struct GetMetadataAuditParams {
     /// JSON array of changed file paths for changed selection mode.
     #[serde(default)]
     pub changed_files_json: Option<String>,
+    /// Typed alias for `changed_files_json`.
+    #[serde(default)]
+    pub changed_files: Vec<String>,
     /// JSON array of entity ids or names for entities selection mode.
     #[serde(default)]
     pub entity_ids_json: Option<String>,
+    /// Typed alias for `entity_ids_json`.
+    #[serde(default)]
+    pub entity_ids: Vec<String>,
     /// JSON array of resource types. Defaults to `["model"]`.
     #[serde(default)]
     pub resource_types_json: Option<String>,
+    /// Typed alias for `resource_types_json`.
+    #[serde(default)]
+    pub resource_types: Vec<String>,
     /// JSON array of personas. Defaults to `["engineer"]`.
     #[serde(default)]
     pub personas_json: Option<String>,
+    /// Typed alias for `personas_json`.
+    #[serde(default)]
+    pub personas: Vec<String>,
     /// JSON threshold configuration for required/advisory gates.
     #[serde(default)]
     pub thresholds_json: Option<String>,
@@ -720,6 +762,7 @@ pub enum NovaMetaResourceKindParam {
 
 /// Parameters for the validate_nova_meta tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct ValidateNovaMetaParams {
     /// dbt project directory to scan. Relative paths are resolved under the server working directory.
     #[serde(default)]
@@ -740,6 +783,7 @@ pub struct ValidateNovaMetaParams {
 
 /// Parameters for the validate_eval_suite tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct ValidateEvalSuiteParams {
     /// YAML or JSON eval suite path under the server working directory.
     pub suite: String,
@@ -747,6 +791,7 @@ pub struct ValidateEvalSuiteParams {
 
 /// Parameters for the get_eval_gate tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct GetEvalGateParams {
     /// Eval suite name to check in telemetry.
     pub suite: String,
@@ -754,6 +799,7 @@ pub struct GetEvalGateParams {
 
 /// Parameters for the get_eval_history tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct GetEvalHistoryParams {
     /// Eval suite name to read history for.
     pub suite: String,
@@ -763,6 +809,7 @@ pub struct GetEvalHistoryParams {
 
 /// Parameters for the compare_eval_runs tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct CompareEvalRunsParams {
     /// Before eval result directory or results.json path under the server working directory.
     pub before: String,
@@ -772,6 +819,7 @@ pub struct CompareEvalRunsParams {
 
 /// Parameters for the run_eval tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct RunEvalParams {
     /// YAML or JSON eval suite path under the server working directory.
     pub suite: String,
@@ -794,6 +842,7 @@ pub struct RunEvalParams {
 
 /// Parameters for the init_eval_suite tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct InitEvalSuiteParams {
     /// Persona to use in the generated starter suite. Defaults to analyst.
     #[serde(default)]
@@ -807,6 +856,7 @@ pub struct InitEvalSuiteParams {
 
 /// Parameters for the run_agent_eval tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct RunAgentEvalParams {
     /// YAML or JSON eval suite path under the server working directory.
     pub suite: String,
@@ -859,6 +909,7 @@ pub struct RunAgentEvalParams {
 
 /// Parameters for the inspect_tool_trace tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct TraceInspectParams {
     /// JSONL tool trace path under the server working directory.
     pub path: String,
@@ -866,6 +917,7 @@ pub struct TraceInspectParams {
 
 /// Parameters for the summarize_tool_trace tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct TraceSummarizeParams {
     /// JSONL tool trace path under the server working directory.
     pub path: String,
@@ -876,6 +928,7 @@ pub struct TraceSummarizeParams {
 
 /// Parameters for the redact_tool_trace tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct TraceRedactParams {
     /// JSONL tool trace path under the server working directory.
     pub path: String,
@@ -885,6 +938,7 @@ pub struct TraceRedactParams {
 
 /// Parameters for the replay_tool_trace tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct TraceReplayParams {
     /// JSONL tool trace path under the server working directory.
     pub path: String,
@@ -892,6 +946,7 @@ pub struct TraceReplayParams {
 
 /// Parameters for the show_config tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct ConfigShowParams {
     /// Return default configuration instead of the active runtime configuration.
     #[serde(default)]
@@ -900,10 +955,12 @@ pub struct ConfigShowParams {
 
 /// Parameters for the validate_config tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct ConfigValidateParams {}
 
 /// Parameters for the reload_manifest tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct ReloadManifestParams {
     /// Manifest URI to load (e.g. http(s)://, s3://, gs://, dbfs://)
     pub manifest_uri: Option<String>,
@@ -933,6 +990,7 @@ fn non_empty_param(value: Option<&str>) -> bool {
 
 /// Parameters for the warm_manifest tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct WarmManifestParams {
     /// Warm vector embedding query/model caches.
@@ -951,6 +1009,7 @@ pub struct WarmManifestParams {
 
 /// Parameters for the inspect_storage tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct StorageInspectParams {
     /// Optional storage instance id to inspect as the configured instance.
     #[serde(default)]
@@ -959,6 +1018,7 @@ pub struct StorageInspectParams {
 
 /// Parameters for the prune_storage tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct StoragePruneParams {
     /// Number of stale storage instances to retain. Defaults to storage policy.
     #[serde(default)]
@@ -973,6 +1033,7 @@ pub struct StoragePruneParams {
 
 /// Parameters for the cleanup_storage tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone, Default)]
+#[serde(deny_unknown_fields)]
 pub struct StorageCleanupParams {
     /// Optional storage instance id to clean up.
     #[serde(default)]
@@ -981,6 +1042,7 @@ pub struct StorageCleanupParams {
 
 /// Parameters for the execute_sql tool.
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct ExecuteSqlParams {
     /// SQL statement to execute.
     /// Optional when `preflight_only=true`.
@@ -1033,7 +1095,7 @@ pub struct ExecuteSqlParams {
 mod tests {
     use serde_json::json;
 
-    use super::{ExecuteSqlParams, GetEntityParams};
+    use super::{ExecuteSqlParams, GetEntityParams, GetMetadataAuditParams, ListEntitiesParams};
 
     #[test]
     fn get_entity_accepts_unique_id_alias() {
@@ -1049,5 +1111,31 @@ mod tests {
             serde_json::from_value(json!({"sql": "select 1"})).expect("params");
 
         assert_eq!(params.statement, "select 1");
+    }
+
+    #[test]
+    fn params_reject_unknown_fields_for_mcp_deserialization() {
+        let err = serde_json::from_value::<ListEntitiesParams>(
+            json!({"resource_type": "model", "governance_pii": "possible"}),
+        )
+        .expect_err("unknown params should fail");
+
+        assert!(err.to_string().contains("unknown field `governance_pii`"));
+    }
+
+    #[test]
+    fn metadata_audit_accepts_typed_alias_fields() {
+        let params: GetMetadataAuditParams = serde_json::from_value(json!({
+            "personas": ["governance"],
+            "resource_types": ["model"],
+            "changed_files": ["models/marts/orders.sql"],
+            "entity_ids": ["model.pkg.orders"]
+        }))
+        .expect("typed params");
+
+        assert_eq!(params.personas, vec!["governance"]);
+        assert_eq!(params.resource_types, vec!["model"]);
+        assert_eq!(params.changed_files, vec!["models/marts/orders.sql"]);
+        assert_eq!(params.entity_ids, vec!["model.pkg.orders"]);
     }
 }

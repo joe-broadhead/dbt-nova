@@ -3,8 +3,10 @@ use std::io::Read;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
 
+use schemars::{JsonSchema, SchemaGenerator};
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
+use std::collections::BTreeSet;
 
 use crate::cli::agent_readiness_cmd::build_agent_readiness_tool_response;
 use crate::cli::args::{ManifestLoadArgs, ManifestReloadArgs, ToolCallArgs};
@@ -537,10 +539,86 @@ fn parse_params_payload(source: &str, raw: &str) -> Result<JsonValue> {
     })
 }
 
-fn decode_tool_params<T: DeserializeOwned>(tool_name: &str, value: JsonValue) -> Result<T> {
+fn decode_tool_params<T>(tool_name: &str, value: JsonValue) -> Result<T>
+where
+    T: DeserializeOwned + JsonSchema,
+{
+    validate_known_param_keys::<T>(tool_name, &value)?;
     serde_json::from_value(value).map_err(|error| {
         DbtNovaError::InvalidParams(format!("invalid params for '{tool_name}': {error}"))
     })
+}
+
+fn validate_known_param_keys<T: JsonSchema>(tool_name: &str, value: &JsonValue) -> Result<()> {
+    let Some(params) = value.as_object() else {
+        return Ok(());
+    };
+    if params.is_empty() {
+        return Ok(());
+    }
+
+    let supported = supported_param_keys::<T>(tool_name);
+    for key in params.keys() {
+        if !supported.contains(key) {
+            return Err(DbtNovaError::InvalidParams(format!(
+                "unknown parameter '{key}' for '{tool_name}'; supported parameters: {}",
+                supported.into_iter().collect::<Vec<_>>().join(", ")
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn supported_param_keys<T: JsonSchema>(tool_name: &str) -> BTreeSet<String> {
+    let mut generator = SchemaGenerator::default();
+    let schema = generator.root_schema_for::<T>().to_value();
+    let mut keys = BTreeSet::new();
+    collect_schema_properties(&schema, &schema, &mut keys);
+    for alias in serde_param_aliases(tool_name) {
+        keys.insert((*alias).to_string());
+    }
+    keys
+}
+
+fn collect_schema_properties(schema: &JsonValue, root: &JsonValue, keys: &mut BTreeSet<String>) {
+    let Some(object) = schema.as_object() else {
+        return;
+    };
+
+    if let Some(reference) = object.get("$ref").and_then(JsonValue::as_str) {
+        if let Some(target) = resolve_local_schema_ref(root, reference) {
+            collect_schema_properties(target, root, keys);
+        }
+        return;
+    }
+
+    if let Some(properties) = object.get("properties").and_then(JsonValue::as_object) {
+        keys.extend(properties.keys().cloned());
+    }
+
+    for keyword in ["allOf", "anyOf", "oneOf"] {
+        if let Some(schemas) = object.get(keyword).and_then(JsonValue::as_array) {
+            for schema in schemas {
+                collect_schema_properties(schema, root, keys);
+            }
+        }
+    }
+}
+
+fn resolve_local_schema_ref<'a>(root: &'a JsonValue, reference: &str) -> Option<&'a JsonValue> {
+    reference
+        .strip_prefix('#')
+        .and_then(|pointer| root.pointer(pointer))
+}
+
+fn serde_param_aliases(tool_name: &str) -> &'static [&'static str] {
+    match tool_name {
+        "get_entity" => &["unique_id"],
+        "validate_nova_meta" => &["path"],
+        "execute_sql" => &["sql"],
+        _ => &[],
+    }
 }
 
 fn decode_empty_params(tool_name: &str, value: JsonValue) -> Result<()> {
@@ -983,18 +1061,17 @@ fn dispatch_cleanup_storage(searcher: &ManifestSearch, params: JsonValue) -> Too
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use tempfile::NamedTempFile;
 
     use super::{
-        build_reload_args_from_tool_call, dispatch_tool, resolve_params_value_with_stdin,
-        run_call_command, run_search_with_timeout, tool_registry_names,
+        build_reload_args_from_tool_call, decode_tool_params, dispatch_tool,
+        resolve_params_value_with_stdin, run_call_command, run_search_with_timeout,
+        tool_registry_names,
     };
     use crate::cli::args::{ManifestLoadArgs, ToolCallArgs};
     use crate::cli::manifest::{build_manifest_load_config, execute_manifest_load};
-    use crate::params::ReloadManifestParams;
-    use crate::tests::common::fixture_manifest_path_string;
+    use crate::params::{ExecuteSqlParams, ReloadManifestParams};
+    use crate::tests::common::{fixture_manifest_path_string, get_searcher_with_fixture};
     use crate::tools::catalog::MCP_TOOL_NAMES;
 
     async fn fixture_searcher() -> crate::manifest::search::ManifestSearch {
@@ -1084,6 +1161,129 @@ mod tests {
         .await
         .expect("search");
         assert!(result["data"].is_array());
+    }
+
+    #[tokio::test]
+    async fn dispatch_rejects_unknown_params_before_tool_execution() {
+        let searcher = fixture_searcher().await;
+        let err = dispatch_tool(
+            &searcher,
+            "list_entities",
+            serde_json::json!({
+                "resource_type": "model",
+                "governance_pii": "possible"
+            }),
+        )
+        .await
+        .expect_err("unknown params should fail");
+
+        assert!(
+            err.to_string()
+                .contains("unknown parameter 'governance_pii' for 'list_entities'")
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_rejects_unknown_params_across_registered_tools() {
+        let searcher = fixture_searcher().await;
+        let empty_param_tools = [
+            "show_metadata",
+            "health",
+            "list_tags",
+            "list_packages",
+            "list_databases",
+        ];
+
+        for tool in tool_registry_names() {
+            if tool == "reload_manifest" {
+                continue;
+            }
+            let err = dispatch_tool(
+                &searcher,
+                tool,
+                serde_json::json!({
+                    "__bogus_param": true
+                }),
+            )
+            .await
+            .expect_err("tool should reject bogus params");
+            let message = err.to_string();
+            if empty_param_tools.contains(&tool) {
+                assert!(
+                    message.contains("does not accept parameters"),
+                    "unexpected error for {tool}: {message}"
+                );
+            } else {
+                assert!(
+                    message.contains("unknown parameter '__bogus_param'"),
+                    "unexpected error for {tool}: {message}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn decode_tool_params_keeps_serde_aliases() {
+        let params: ExecuteSqlParams = decode_tool_params(
+            "execute_sql",
+            serde_json::json!({
+                "sql": "select 1"
+            }),
+        )
+        .expect("sql alias should be supported");
+
+        assert_eq!(params.statement, "select 1");
+    }
+
+    #[tokio::test]
+    async fn dispatch_get_metadata_audit_honors_typed_aliases() {
+        let searcher = fixture_searcher().await;
+        let result = dispatch_tool(
+            &searcher,
+            "get_metadata_audit",
+            serde_json::json!({
+                "selection_mode": "project",
+                "resource_types": ["model"],
+                "personas": ["governance"],
+                "include_recommendations": false
+            }),
+        )
+        .await
+        .expect("metadata audit");
+
+        assert_eq!(result["success"], serde_json::json!(true));
+        assert_eq!(
+            result["data"]["personas"],
+            serde_json::json!(["governance"])
+        );
+        assert_eq!(
+            result["data"]["summary"]["worst_entities_by_persona"][0]["persona"],
+            serde_json::json!("governance")
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_get_entity_includes_governance_and_owner_projection() {
+        let searcher = get_searcher_with_fixture("perfect_model.json");
+        let result = dispatch_tool(
+            &searcher,
+            "get_entity",
+            serde_json::json!({
+                "id_or_name": "model.nova_test.perfect_model"
+            }),
+        )
+        .await
+        .expect("get entity");
+
+        assert_eq!(result["success"], serde_json::json!(true));
+        assert_eq!(
+            result["data"]["nova_summary"]["governance"]["sensitivity"],
+            serde_json::json!("high")
+        );
+        assert_eq!(
+            result["data"]["provenance"]["owner"],
+            serde_json::json!("test.owner@example.com")
+        );
     }
 
     #[tokio::test]
@@ -1286,8 +1486,7 @@ cases:
     #[tokio::test]
     async fn run_search_with_timeout_enforces_timeout() {
         let err = run_search_with_timeout(1, async {
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            Ok(serde_json::json!({"ok": true}))
+            std::future::pending::<crate::error::Result<serde_json::Value>>().await
         })
         .await
         .expect_err("timeout should fail");
