@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use schemars::{JsonSchema, SchemaGenerator};
 use serde::de::DeserializeOwned;
-use serde_json::Value as JsonValue;
+use serde_json::{Map as JsonMap, Value as JsonValue};
 use std::collections::BTreeSet;
 
 use crate::cli::agent_readiness_cmd::build_agent_readiness_tool_response;
@@ -326,7 +326,7 @@ pub async fn run_call_command(args: &ToolCallArgs) -> DispatchResult {
     );
 
     if args.json {
-        let envelope = CliEnvelope::success(
+        let envelope = tool_call_success_envelope(
             format!("tool call {}", args.tool_name),
             result,
             started.elapsed().as_millis(),
@@ -385,7 +385,7 @@ async fn run_reload_manifest_tool_call(args: &ToolCallArgs, started: Instant) ->
     );
 
     if args.json {
-        let envelope = CliEnvelope::success(
+        let envelope = tool_call_success_envelope(
             format!("tool call {}", args.tool_name),
             result,
             started.elapsed().as_millis(),
@@ -403,6 +403,35 @@ async fn run_reload_manifest_tool_call(args: &ToolCallArgs, started: Instant) ->
     }
 
     Ok(())
+}
+
+fn tool_call_success_envelope(
+    command: impl Into<String>,
+    result: JsonValue,
+    elapsed_ms: u128,
+) -> CliEnvelope<JsonValue> {
+    let (data, tool_response_meta) = split_tool_success_response(result);
+    CliEnvelope::success_with_tool_response(command, data, tool_response_meta, elapsed_ms)
+}
+
+fn split_tool_success_response(result: JsonValue) -> (JsonValue, Option<JsonValue>) {
+    let JsonValue::Object(mut response) = result else {
+        return (result, None);
+    };
+    let Some(data) = response.remove("data") else {
+        return (JsonValue::Object(response), None);
+    };
+
+    // The CLI envelope already owns success/error status. Keep tool result
+    // bookkeeping in metadata without duplicating status or nesting payloads.
+    response.remove("success");
+    let mut meta = JsonMap::new();
+    for (key, value) in response {
+        meta.insert(key, value);
+    }
+
+    let meta = (!meta.is_empty()).then_some(JsonValue::Object(meta));
+    (data, meta)
 }
 
 fn build_reload_args_from_tool_call(
@@ -1066,7 +1095,7 @@ mod tests {
     use super::{
         build_reload_args_from_tool_call, decode_tool_params, dispatch_tool,
         resolve_params_value_with_stdin, run_call_command, run_search_with_timeout,
-        tool_registry_names,
+        tool_call_success_envelope, tool_registry_names,
     };
     use crate::cli::args::{ManifestLoadArgs, ToolCallArgs};
     use crate::cli::manifest::{build_manifest_load_config, execute_manifest_load};
@@ -1322,6 +1351,111 @@ mod tests {
         assert_eq!(
             result["data"]["eval_status"]["status"],
             serde_json::json!("allowed")
+        );
+    }
+
+    fn assert_cli_envelope_schema(payload: &serde_json::Value) {
+        let schema: serde_json::Value =
+            serde_json::from_str(include_str!("../../schemas/response/cli_envelope_v1.json"))
+                .expect("CLI envelope schema");
+        let compiled = jsonschema::draft202012::options()
+            .build(&schema)
+            .expect("compile CLI envelope schema");
+        if !compiled.is_valid(payload) {
+            let messages: Vec<String> = compiled
+                .iter_errors(payload)
+                .take(5)
+                .map(|error| error.to_string())
+                .collect();
+            panic!("CLI envelope does not match schema: {messages:?}");
+        }
+    }
+
+    #[test]
+    fn tool_call_json_envelope_unwraps_payload_and_moves_tool_metadata() {
+        let envelope = tool_call_success_envelope(
+            "tool call search",
+            serde_json::json!({
+                "success": true,
+                "count": 2,
+                "total_available": 5,
+                "truncated": true,
+                "persona": "analyst",
+                "suggestions": ["orders"],
+                "_nova_result_meta": {
+                    "next_offset": 2
+                },
+                "data": [
+                    {"unique_id": "model.pkg.orders"},
+                    {"unique_id": "model.pkg.customers"}
+                ]
+            }),
+            7,
+        );
+        let payload = serde_json::to_value(envelope).expect("serialize CLI envelope");
+
+        assert_cli_envelope_schema(&payload);
+        assert!(payload["data"].as_array().is_some());
+        assert_eq!(
+            payload["data"][0]["unique_id"],
+            serde_json::json!("model.pkg.orders")
+        );
+        assert_eq!(
+            payload["meta"]["tool_response"]["count"],
+            serde_json::json!(2)
+        );
+        assert_eq!(
+            payload["meta"]["tool_response"]["total_available"],
+            serde_json::json!(5)
+        );
+        assert_eq!(
+            payload["meta"]["tool_response"]["truncated"],
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            payload["meta"]["tool_response"]["persona"],
+            serde_json::json!("analyst")
+        );
+        assert_eq!(
+            payload["meta"]["tool_response"]["_nova_result_meta"]["next_offset"],
+            serde_json::json!(2)
+        );
+        assert!(
+            payload["meta"]["tool_response"]
+                .as_object()
+                .is_some_and(|meta| !meta.contains_key("success") && !meta.contains_key("data"))
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_call_json_envelope_matches_agent_readiness_cli_payload_path() {
+        let searcher = fixture_searcher().await;
+        let result = dispatch_tool(
+            &searcher,
+            "get_agent_readiness",
+            serde_json::json!({
+                "personas_json": "[\"engineer\"]"
+            }),
+        )
+        .await
+        .expect("agent readiness");
+        let envelope = tool_call_success_envelope("tool call get_agent_readiness", result, 9);
+        let payload = serde_json::to_value(envelope).expect("serialize CLI envelope");
+
+        assert_cli_envelope_schema(&payload);
+        assert_eq!(
+            payload["data"]["schema_version"],
+            serde_json::json!("agent_readiness.v1")
+        );
+        assert!(payload["data"]["overall_score"].is_number());
+        assert!(
+            payload["data"]
+                .as_object()
+                .is_some_and(|data| !data.contains_key("data") && !data.contains_key("success"))
+        );
+        assert_eq!(
+            payload["meta"]["tool_response"]["count"],
+            serde_json::json!(1)
         );
     }
 

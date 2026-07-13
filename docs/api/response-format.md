@@ -214,6 +214,20 @@ CLI subcommands that use `--json` return a command envelope (different from MCP 
 }
 ```
 
+`schemas/response/cli_envelope_v1.json` defines the machine-checkable CLI
+envelope shape.
+
+For `dbt-nova tool call <tool> --json`, `data` is the tool payload itself, not a
+nested MCP-style success wrapper. Tool-response bookkeeping such as `count`,
+`total_available`, `truncated`, `persona`, `suggestions`, and
+`_nova_result_meta` moves to `meta.tool_response`. The inner tool `success` flag
+is not duplicated because CLI success/error state is carried by `status` and
+`error`.
+
+For example, both `dbt-nova audit agent-readiness --json` and
+`dbt-nova tool call get_agent_readiness --json` expose the readiness report at
+`.data.overall_score`; the tool-call form also exposes `.meta.tool_response.count`.
+
 For errors, `status` is `"error"` and `error` contains the standard Nova error object.
 
 ### CLI Exit Codes

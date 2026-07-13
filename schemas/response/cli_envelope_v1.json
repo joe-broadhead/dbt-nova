@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.dbt-nova.dev/response/cli_envelope_v1.json",
+  "title": "dbt-nova CLI JSON envelope",
+  "type": "object",
+  "required": ["api", "command", "status", "data", "meta", "error"],
+  "additionalProperties": false,
+  "properties": {
+    "api": {
+      "type": "object",
+      "required": ["envelope", "nova_version"],
+      "additionalProperties": false,
+      "properties": {
+        "envelope": {
+          "const": "nova.response.v1"
+        },
+        "nova_version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "command": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "enum": ["success", "error"]
+    },
+    "data": true,
+    "meta": {
+      "type": "object",
+      "required": ["elapsed_ms", "timestamp_ms", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timestamp_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tool_response": {
+          "type": "object",
+          "description": "Tool response metadata moved out of the MCP-style tool response wrapper for CLI tool-call output. The payload itself is always in top-level data.",
+          "not": {
+            "anyOf": [
+              { "required": ["data"] },
+              { "required": ["success"] }
+            ]
+          }
+        }
+      }
+    },
+    "error": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "object" }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": { "const": "success" }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "error": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": { "const": "error" }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "data": { "type": "null" },
+          "error": { "type": "object" }
+        }
+      }
+    }
+  ]
+}

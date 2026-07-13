@@ -9,6 +9,26 @@ pub struct CliMeta {
     pub elapsed_ms: u128,
     pub timestamp_ms: u128,
     pub version: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_response: Option<JsonValue>,
+}
+
+impl CliMeta {
+    #[must_use]
+    pub(crate) fn new(elapsed_ms: u128) -> Self {
+        Self {
+            elapsed_ms,
+            timestamp_ms: timestamp_ms(),
+            version: env!("CARGO_PKG_VERSION"),
+            tool_response: None,
+        }
+    }
+
+    #[must_use]
+    fn with_tool_response(mut self, tool_response: Option<JsonValue>) -> Self {
+        self.tool_response = tool_response;
+        self
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -35,11 +55,24 @@ where
             command: command.into(),
             status: "success",
             data: Some(data),
-            meta: CliMeta {
-                elapsed_ms,
-                timestamp_ms: timestamp_ms(),
-                version: env!("CARGO_PKG_VERSION"),
-            },
+            meta: CliMeta::new(elapsed_ms),
+            error: None,
+        }
+    }
+
+    #[must_use]
+    pub fn success_with_tool_response(
+        command: impl Into<String>,
+        data: T,
+        tool_response: Option<JsonValue>,
+        elapsed_ms: u128,
+    ) -> Self {
+        Self {
+            api: response_api_contract(),
+            command: command.into(),
+            status: "success",
+            data: Some(data),
+            meta: CliMeta::new(elapsed_ms).with_tool_response(tool_response),
             error: None,
         }
     }
@@ -56,11 +89,7 @@ pub fn error_envelope(
         command: command.into(),
         status: "error",
         data: None,
-        meta: CliMeta {
-            elapsed_ms,
-            timestamp_ms: timestamp_ms(),
-            version: env!("CARGO_PKG_VERSION"),
-        },
+        meta: CliMeta::new(elapsed_ms),
         error: Some(error.to_response()),
     }
 }
