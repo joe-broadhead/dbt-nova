@@ -62,6 +62,25 @@ pub fn description_tier_score(text: &str, max_points: u8) -> u8 {
 }
 
 #[must_use]
+pub(crate) fn description_progress_recommendation(
+    field_path: &str,
+    chars: usize,
+    score: u8,
+    max: u8,
+    absent_message: &str,
+) -> String {
+    if chars == 0 {
+        return absent_message.to_string();
+    }
+    let guidance = if chars < 50 {
+        "50+ chars earn stronger description credit; 100+ chars score full credit."
+    } else {
+        "100+ chars score full description credit."
+    };
+    format!("{field_path} has {chars} character(s) ({score}/{max}); {guidance}")
+}
+
+#[must_use]
 pub fn array_tier_score(count: usize, max_points: u8) -> u8 {
     let tier = match count {
         0 => 0.0,

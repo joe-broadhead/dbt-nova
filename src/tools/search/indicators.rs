@@ -397,6 +397,7 @@ impl ManifestSearch {
     ) -> Result<Vec<IndicatorSearchRow>> {
         let min_word_len = search_config.min_word_length.max(1);
         let token_set: HashSet<&str> = tokens.iter().map(String::as_str).collect();
+        let query_text = tokens.join(" ");
         let query_token_count = token_set.len();
         let mut rows: Vec<IndicatorSearchRow> = Vec::new();
         let mut scanned = 0usize;
@@ -420,6 +421,7 @@ impl ManifestSearch {
             let support_signals = collect_metadata_support_signals(
                 entity,
                 nova,
+                &query_text,
                 &token_set,
                 min_word_len,
                 &search_config.metadata_support,
@@ -435,6 +437,7 @@ impl ManifestSearch {
                 support_signals,
                 indicator_config: &search_config.indicator_ranking,
                 metadata_config: &search_config.metadata_support,
+                phrase_boost_enabled: search_config.enable_phrase_boost,
             };
 
             if indicator_type_selected(indicator_filter, "measure") {
@@ -886,6 +889,10 @@ pub(super) fn indicator_match_explain_with_grain(
     );
     let metadata_support_bonus =
         metadata_support_bonus(context.support_signals.as_ref(), context.metadata_config);
+    let phrase_match_bonus = phrase_match_bonus(
+        context.support_signals.as_ref(),
+        context.phrase_boost_enabled,
+    );
     let time_field_bonus = preferred_grain
         .and_then(|grain| {
             grain
@@ -911,6 +918,7 @@ pub(super) fn indicator_match_explain_with_grain(
     score += generic_label_bonus;
     score += parent_synonym_bonus;
     score += metadata_support_bonus;
+    score += phrase_match_bonus;
     score += time_field_bonus;
     score += dimension_bonus;
     if context
@@ -927,6 +935,7 @@ pub(super) fn indicator_match_explain_with_grain(
         generic_label_bonus: non_zero_option(generic_label_bonus),
         parent_synonym_bonus: non_zero_option(parent_synonym_bonus),
         metadata_support_bonus: non_zero_option(metadata_support_bonus),
+        phrase_match_bonus: non_zero_option(phrase_match_bonus),
         time_field_bonus: non_zero_option(time_field_bonus),
         dimension_bonus: non_zero_option(dimension_bonus),
         parent_coherence_bonus: None,
@@ -1013,6 +1022,29 @@ pub(super) fn metadata_support_bonus(
     })
 }
 
+pub(super) fn phrase_match_bonus(signals: Option<&MetadataSupportSignals>, enabled: bool) -> f32 {
+    if !enabled {
+        return 0.0;
+    }
+    let Some(signals) = signals else {
+        return 0.0;
+    };
+    let coverage = signals
+        .best_single_field_query_coverage
+        .unwrap_or_default()
+        .clamp(0.0, 1.0);
+    if !signals.exact_phrases.is_empty() {
+        return 6.0 + (coverage * 2.0);
+    }
+    if coverage >= 0.75 {
+        coverage * 3.0
+    } else if coverage >= 0.5 {
+        coverage
+    } else {
+        0.0
+    }
+}
+
 pub(super) fn semantic_label_precision_bonus(
     semantic_matches: &NovaSemanticMatches,
     query_token_set: &HashSet<&str>,
@@ -1083,6 +1115,7 @@ pub(super) fn token_overlap_count(
 pub(super) fn collect_metadata_support_signals(
     entity: &ArchivedEntity,
     nova: &ArchivedNovaMeta,
+    query_text: &str,
     query_token_set: &HashSet<&str>,
     min_word_len: usize,
     config: &MetadataSupportConfig,
@@ -1113,12 +1146,16 @@ pub(super) fn collect_metadata_support_signals(
             config.max_values_per_field,
         )
     });
+    let (matched_exact_phrases, best_single_field_query_coverage) =
+        collect_phrase_support_values(entity, nova, query_text, min_word_len, config);
 
     let mut signals = MetadataSupportSignals {
         parent_synonyms: matched_parent_synonyms,
         domains: matched_domains,
         use_cases: matched_use_cases,
         dimensions: matched_dimensions,
+        exact_phrases: matched_exact_phrases,
+        best_single_field_query_coverage,
         ..MetadataSupportSignals::default()
     };
     for column in entity.column_meta() {
@@ -1138,8 +1175,166 @@ pub(super) fn collect_metadata_support_signals(
         || !signals.column_names.is_empty()
         || !signals.column_roles.is_empty()
         || !signals.column_semantic_types.is_empty()
-        || !signals.example_values.is_empty())
+        || !signals.example_values.is_empty()
+        || !signals.exact_phrases.is_empty()
+        || signals.best_single_field_query_coverage.is_some())
     .then_some(signals)
+}
+
+fn collect_phrase_support_values(
+    entity: &ArchivedEntity,
+    nova: &ArchivedNovaMeta,
+    query_text: &str,
+    min_word_len: usize,
+    config: &MetadataSupportConfig,
+) -> (Vec<String>, Option<f32>) {
+    let query_tokens = tokenize_alnum_lowercase(query_text, min_word_len);
+    if query_tokens.is_empty() {
+        return (Vec::new(), None);
+    }
+    let query_phrase = query_tokens.join(" ");
+    let mut exact_phrases = Vec::new();
+    let mut best_coverage = 0.0f32;
+
+    observe_phrase_value(
+        entity.name_str(),
+        &query_tokens,
+        &query_phrase,
+        min_word_len,
+        config.max_values_per_field,
+        &mut exact_phrases,
+        &mut best_coverage,
+    );
+    observe_phrase_value(
+        entity.alias_str(),
+        &query_tokens,
+        &query_phrase,
+        min_word_len,
+        config.max_values_per_field,
+        &mut exact_phrases,
+        &mut best_coverage,
+    );
+    if let Some(last) = entity.unique_id.as_str().split('.').next_back() {
+        observe_phrase_value(
+            Some(last),
+            &query_tokens,
+            &query_phrase,
+            min_word_len,
+            config.max_values_per_field,
+            &mut exact_phrases,
+            &mut best_coverage,
+        );
+    }
+    for value in nova.synonyms.iter().map(ArchivedString::as_str) {
+        observe_phrase_value(
+            Some(value),
+            &query_tokens,
+            &query_phrase,
+            min_word_len,
+            config.max_values_per_field,
+            &mut exact_phrases,
+            &mut best_coverage,
+        );
+    }
+    for measure in nova.measures.iter() {
+        observe_phrase_value(
+            Some(measure.name.as_str()),
+            &query_tokens,
+            &query_phrase,
+            min_word_len,
+            config.max_values_per_field,
+            &mut exact_phrases,
+            &mut best_coverage,
+        );
+        for synonym in measure.synonyms.iter().map(ArchivedString::as_str) {
+            observe_phrase_value(
+                Some(synonym),
+                &query_tokens,
+                &query_phrase,
+                min_word_len,
+                config.max_values_per_field,
+                &mut exact_phrases,
+                &mut best_coverage,
+            );
+        }
+    }
+    for metric in nova.metric.iter().chain(nova.metrics.iter()) {
+        observe_phrase_value(
+            Some(metric.name.as_str()),
+            &query_tokens,
+            &query_phrase,
+            min_word_len,
+            config.max_values_per_field,
+            &mut exact_phrases,
+            &mut best_coverage,
+        );
+        for synonym in metric.synonyms.iter().map(ArchivedString::as_str) {
+            observe_phrase_value(
+                Some(synonym),
+                &query_tokens,
+                &query_phrase,
+                min_word_len,
+                config.max_values_per_field,
+                &mut exact_phrases,
+                &mut best_coverage,
+            );
+        }
+    }
+
+    (
+        exact_phrases,
+        (best_coverage >= 0.5).then_some(best_coverage),
+    )
+}
+
+fn observe_phrase_value(
+    value: Option<&str>,
+    query_tokens: &[String],
+    query_phrase: &str,
+    min_word_len: usize,
+    max_values_per_field: usize,
+    exact_phrases: &mut Vec<String>,
+    best_coverage: &mut f32,
+) {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return;
+    };
+    let value_tokens = tokenize_alnum_lowercase(value, min_word_len);
+    if value_tokens.is_empty() {
+        return;
+    }
+    let matched_query_tokens = query_tokens
+        .iter()
+        .filter(|query_token| {
+            value_tokens
+                .iter()
+                .any(|value_token| value_token == *query_token)
+        })
+        .count();
+    let coverage = usize_to_f32(matched_query_tokens) / usize_to_f32(query_tokens.len());
+    *best_coverage = (*best_coverage).max(coverage);
+
+    if query_tokens.len() > 1 && value_tokens.len() > 1 {
+        let value_phrase = value_tokens.join(" ");
+        if phrase_contains(query_phrase, &value_phrase)
+            || phrase_contains(&value_phrase, query_phrase)
+        {
+            push_unique_string(exact_phrases, value.to_string(), max_values_per_field);
+        }
+    }
+}
+
+fn phrase_contains(haystack: &str, needle: &str) -> bool {
+    if haystack == needle {
+        return true;
+    }
+    let Some(start) = haystack.find(needle) else {
+        return false;
+    };
+    let end = start + needle.len();
+    let before_ok = start == 0 || haystack.as_bytes().get(start - 1) == Some(&b' ');
+    let after_ok = end == haystack.len() || haystack.as_bytes().get(end) == Some(&b' ');
+    before_ok && after_ok
 }
 
 pub(super) fn collect_matching_values<'a>(

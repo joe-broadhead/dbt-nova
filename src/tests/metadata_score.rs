@@ -309,6 +309,194 @@ async fn metadata_score_diagnostics_cover_agent_feedback_cases() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn metadata_score_accepts_aggregate_grain_as_primary_key_evidence() {
+    let searcher = get_searcher_with_fixture("resource_shape_scoring.json");
+    let aggregate_params = GetMetadataScoreParams {
+        id_or_name: Some("model.pkg.aggregate_sales_daily_category".to_string()),
+        include_breakdown: true,
+        include_recommendations: true,
+        ..Default::default()
+    };
+    let fabricated_params = GetMetadataScoreParams {
+        id_or_name: Some("model.pkg.fabricated_pk_sales_daily_category".to_string()),
+        include_breakdown: true,
+        include_recommendations: true,
+        ..Default::default()
+    };
+
+    let aggregate = searcher.get_metadata_score(&aggregate_params).await.json();
+    let fabricated = searcher.get_metadata_score(&fabricated_params).await.json();
+    let aggregate_data = &aggregate["data"];
+    let fabricated_data = &fabricated["data"];
+
+    assert_eq!(
+        aggregate_data["scoring_contract"]["schema_version"],
+        json!("metadata_score_contract.v2")
+    );
+    assert_eq!(
+        aggregate_data["breakdown"]["quality"]["primary_key"]["score"],
+        json!(20)
+    );
+    assert_eq!(
+        aggregate_data["breakdown"]["quality"]["primary_key_integrity"]["score"],
+        json!(10)
+    );
+    assert_eq!(
+        aggregate_data["breakdown"]["quality"]["declared_grain"]["evidence"],
+        json!("meta.nova.grain.time_field_dimensions_unique_test")
+    );
+    assert!(
+        aggregate_data["overall_score"].as_u64().unwrap_or(0)
+            >= fabricated_data["overall_score"].as_u64().unwrap_or(0),
+        "aggregate grain with matching uniqueness evidence should score at least as well as a fabricated column PK"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn metadata_score_does_not_score_source_indicator_metadata() {
+    let searcher = get_searcher_with_fixture("resource_shape_scoring.json");
+    let params = GetMetadataScoreParams {
+        id_or_name: Some("source.pkg.raw.orders".to_string()),
+        resource_type: Some("source".to_string()),
+        include_breakdown: true,
+        include_recommendations: true,
+        ..Default::default()
+    };
+
+    let result = searcher.get_metadata_score(&params).await.json();
+    let data = &result["data"];
+    assert_eq!(
+        data["breakdown"]["semantic"]["measures"]["applicable"],
+        json!(false)
+    );
+    assert_eq!(
+        data["breakdown"]["semantic"]["metrics"]["applicable"],
+        json!(false)
+    );
+    let recommendations = data["recommendations"]
+        .as_array()
+        .expect("recommendations array");
+    assert!(
+        recommendations.iter().all(|recommendation| {
+            !matches!(
+                recommendation["field"].as_str(),
+                Some("meta.nova.measures" | "meta.nova.metrics")
+            )
+        }),
+        "sources should not receive measure/metric scoring recommendations"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn metadata_score_recommendations_are_state_aware() {
+    let searcher = get_searcher_with_fixture("metadata_diagnostics.json");
+    let params = GetMetadataScoreParams {
+        id_or_name: Some("model.pkg.bad_grain_orders".to_string()),
+        persona: Some("governance".to_string()),
+        scope: Some("entity".to_string()),
+        include_breakdown: true,
+        include_recommendations: true,
+        ..Default::default()
+    };
+
+    let result = searcher.get_metadata_score(&params).await.json();
+    let recommendations = result["data"]["recommendations"]
+        .as_array()
+        .expect("recommendations array");
+    let recommendation_text = |field: &str| {
+        recommendations
+            .iter()
+            .find(|recommendation| recommendation["field"] == json!(field))
+            .and_then(|recommendation| recommendation["message"].as_str())
+            .unwrap_or_else(|| panic!("missing recommendation for {field}: {recommendations:#?}"))
+            .to_string()
+    };
+
+    let domains = recommendation_text("meta.nova.domains");
+    assert!(domains.contains("has 1 entry (5/12)"));
+    assert!(domains.contains("2-3 well-chosen domains"));
+    assert!(
+        !domains.starts_with("Add "),
+        "present domains should not be described as absent: {domains}"
+    );
+
+    let use_cases = recommendation_text("meta.nova.use_cases");
+    assert!(use_cases.contains("has 1 entry (5/12)"));
+    assert!(
+        !use_cases.starts_with("Add "),
+        "present use_cases should not be described as absent: {use_cases}"
+    );
+
+    let synonyms = recommendation_text("meta.nova.synonyms");
+    assert!(synonyms.contains("has 1 entry (5/12)"));
+    assert!(
+        !synonyms.starts_with("Add "),
+        "present synonyms should not be described as absent: {synonyms}"
+    );
+
+    let grain = recommendation_text("meta.nova.grain");
+    assert!(grain.starts_with("Replace meta.nova.grain"));
+
+    let description = recommendation_text("description");
+    assert!(description.contains("description has"));
+    assert!(
+        !description.starts_with("Add "),
+        "present descriptions should not be described as absent: {description}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn metadata_score_indicator_recommendations_are_state_aware() {
+    let measure_searcher = get_searcher_with_fixture("measure_test.json");
+    let measure_result = measure_searcher
+        .get_metadata_score(&GetMetadataScoreParams {
+            id_or_name: Some("model.nova_test.measures_no_expression".to_string()),
+            include_recommendations: true,
+            ..Default::default()
+        })
+        .await
+        .json();
+    let measure_recommendations = measure_result["data"]["recommendations"]
+        .as_array()
+        .expect("measure recommendations");
+    let measure_message = measure_recommendations
+        .iter()
+        .find(|recommendation| recommendation["field"] == json!("meta.nova.measures"))
+        .and_then(|recommendation| recommendation["message"].as_str())
+        .expect("measure recommendation");
+    assert!(measure_message.contains("has 1 entry"));
+    assert!(measure_message.contains("expressions or fields"));
+    assert!(
+        !measure_message.starts_with("Add "),
+        "present measures should not be described as absent: {measure_message}"
+    );
+
+    let metric_searcher = get_searcher_with_fixture("metric_test.json");
+    let metric_result = metric_searcher
+        .get_metadata_score(&GetMetadataScoreParams {
+            id_or_name: Some("model.nova_test.metrics_no_expression".to_string()),
+            include_recommendations: true,
+            ..Default::default()
+        })
+        .await
+        .json();
+    let metric_recommendations = metric_result["data"]["recommendations"]
+        .as_array()
+        .expect("metric recommendations");
+    let metric_message = metric_recommendations
+        .iter()
+        .find(|recommendation| recommendation["field"] == json!("meta.nova.metrics"))
+        .and_then(|recommendation| recommendation["message"].as_str())
+        .expect("metric recommendation");
+    assert!(metric_message.contains("has 1 entry"));
+    assert!(metric_message.contains("expressions"));
+    assert!(
+        !metric_message.starts_with("Add "),
+        "present metrics should not be described as absent: {metric_message}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn metadata_score_column_diagnostics_expose_description_and_array_tiers() {
     let searcher = get_searcher_with_fixture("metadata_diagnostics.json");
     let params = GetMetadataScoreParams {
@@ -340,6 +528,19 @@ async fn metadata_score_column_diagnostics_expose_description_and_array_tiers() 
             && diagnostic["next_useful_count"] == json!(2)
             && diagnostic["full_credit_count"] == json!(3)
     }));
+    let recommendations = order_id["recommendations"]
+        .as_array()
+        .expect("column recommendations");
+    let description_recommendation = recommendations
+        .iter()
+        .find(|recommendation| recommendation["field"] == json!("columns.description"))
+        .and_then(|recommendation| recommendation["message"].as_str())
+        .expect("description recommendation");
+    assert!(description_recommendation.contains("columns.description has"));
+    assert!(
+        !description_recommendation.starts_with("Add "),
+        "present column descriptions should not be described as absent: {description_recommendation}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

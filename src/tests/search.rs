@@ -40,6 +40,18 @@ fn semantic_preview_env() -> TestSearchEnv {
     )
 }
 
+fn keyword_phrase_env() -> TestSearchEnv {
+    get_searcher_with_fixture_config(
+        "keyword_phrase_ranking.json",
+        SearchConfig {
+            enable_vector_search: false,
+            enable_sparse_search: false,
+            enable_reranker: false,
+            ..Default::default()
+        },
+    )
+}
+
 fn search_params(query: &str, persona: Option<&str>) -> SearchParams {
     SearchParams {
         query: query.to_string(),
@@ -104,6 +116,94 @@ fn indicator_row_position(
                 && row.get("indicator_name").and_then(JsonValue::as_str) == Some(indicator_name)
         })
         .unwrap_or_else(|| panic!("missing indicator row for {parent_unique_id}:{indicator_name}"))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn keyword_search_prefers_exact_business_phrase_support() {
+    let searcher = keyword_phrase_env();
+    let result = searcher
+        .search(&search_params(
+            "customer cohort retention monthly",
+            Some("analyst"),
+        ))
+        .await
+        .json();
+    let rows = result_rows(&result);
+
+    assert!(!rows.is_empty());
+    assert_eq!(
+        rows[0].get("unique_id").and_then(JsonValue::as_str),
+        Some("model.pkg.mart__customer_cohort_monthly")
+    );
+    let support = rows[0]
+        .get("support_signals")
+        .and_then(JsonValue::as_object)
+        .expect("expected support signals");
+    let exact_phrases = support
+        .get("matched_exact_phrases")
+        .and_then(JsonValue::as_array)
+        .expect("expected exact phrase support");
+    assert!(
+        exact_phrases
+            .iter()
+            .any(|value| { value.as_str() == Some("customer cohort retention monthly") })
+    );
+    assert!(
+        support
+            .get("best_single_field_query_coverage")
+            .and_then(JsonValue::as_f64)
+            .is_some_and(|coverage| coverage >= 0.99)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn keyword_indicator_search_prefers_exact_metric_phrase() {
+    let searcher = keyword_phrase_env();
+    let result = searcher
+        .search_indicator(&SearchIndicatorParams {
+            query: "retention rate".to_string(),
+            resource_types: vec!["model".to_string()],
+            indicator_types: vec!["metric".to_string()],
+            persona: Some("analyst".to_string()),
+            pagination: PaginationParams {
+                limit: Some(10),
+                offset: 0,
+            },
+            explain: true,
+            ..Default::default()
+        })
+        .await
+        .json();
+    let rows = result_rows(&result);
+
+    assert!(!rows.is_empty());
+    assert_eq!(
+        rows[0].get("indicator_name").and_then(JsonValue::as_str),
+        Some("customer_retention_rate")
+    );
+    assert_eq!(
+        rows[0].get("parent_unique_id").and_then(JsonValue::as_str),
+        Some("model.pkg.mart__customer_cohort_monthly")
+    );
+    let support = rows[0]
+        .get("support_signals")
+        .and_then(JsonValue::as_object)
+        .expect("expected support signals");
+    let exact_phrases = support
+        .get("matched_exact_phrases")
+        .and_then(JsonValue::as_array)
+        .expect("expected exact phrase support");
+    assert!(
+        exact_phrases
+            .iter()
+            .any(|value| value.as_str() == Some("retention rate"))
+    );
+    assert!(
+        rows[0]
+            .pointer("/explain/phrase_match_bonus")
+            .and_then(JsonValue::as_f64)
+            .is_some_and(|bonus| bonus > 0.0)
+    );
 }
 
 // Search Tool Tests

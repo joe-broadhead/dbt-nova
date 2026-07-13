@@ -905,12 +905,14 @@ Optional:
 
 The tool returns the same `agent_readiness.v1` report contract as
 `dbt-nova audit agent-readiness --json`, without writing report files or applying
-CLI exit semantics. Reports include advisory `suggested_meta_patches` for
-reviewable dbt metadata remediation and draft `golden_question_seeds` for eval
-authoring. Suggested patches never edit files, and generated seeds should be
-reviewed before becoming CI gates. Reports also include the shared metadata
-`scoring_contract` and compact `summary` triage fields for score buckets, weak
-spots, repeated fields, agent-modelling counts/top codes, and drill-down hints.
+CLI exit semantics. Reports include `suggested_meta_patches` for reviewable dbt
+metadata remediation, split by `required`, `recommended`, and `refinement`
+severity, plus draft `golden_question_seeds` for eval authoring. Suggested
+patches never edit files, and generated seeds should be reviewed before becoming
+CI gates. Reports also include the shared metadata `scoring_contract` and
+compact `summary` triage fields for score buckets, weak spots, repeated fields,
+suggested patch totals/actionable counts, agent-modelling counts/top codes, and
+drill-down hints.
 Deterministic modelling blockers are returned as readiness blockers; high and
 medium modelling findings and advisory count threshold misses are returned as
 improvements, while required count threshold misses are blockers.

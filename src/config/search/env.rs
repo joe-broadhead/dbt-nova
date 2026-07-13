@@ -708,6 +708,7 @@ fn apply_nova_semantic_env(config: &mut SearchConfig) {
         parse_f32,
         |v: &f32| *v >= 0.0
     );
+    apply_nova_phrase_env(config);
     crate::env_config!(
         config,
         nova_canonical_multiplier,
@@ -735,6 +736,15 @@ fn apply_nova_semantic_env(config: &mut SearchConfig) {
         "DBT_NOVA_SEARCH_ENGINEER_EXACT_MATCH_MULTIPLIER",
         parse_f32,
         |v: &f32| *v >= 0.0
+    );
+}
+
+fn apply_nova_phrase_env(config: &mut SearchConfig) {
+    crate::env_config!(
+        config,
+        enable_phrase_boost,
+        "DBT_NOVA_SEARCH_PHRASE_BOOST",
+        parse_bool
     );
 }
 

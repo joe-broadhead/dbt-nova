@@ -1,0 +1,214 @@
+{
+  "metadata": {
+    "dbt_version": "1.10.2",
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json"
+  },
+  "nodes": {
+    "model.pkg.aggregate_sales_daily_category": {
+      "unique_id": "model.pkg.aggregate_sales_daily_category",
+      "name": "aggregate_sales_daily_category",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "analytics",
+      "schema": "marts",
+      "raw_code": "select order_date, category, sum(net_sales) as net_sales from source group by 1, 2",
+      "description": "Daily category sales aggregate used by analysts to track sales trends by category.",
+      "columns": {
+        "order_date": {
+          "name": "order_date",
+          "data_type": "date",
+          "description": "Calendar date for the daily sales aggregate.",
+          "meta": {
+            "nova": {
+              "role": "time",
+              "semantic_type": "date"
+            }
+          }
+        },
+        "category": {
+          "name": "category",
+          "data_type": "string",
+          "description": "Business category for the daily sales aggregate.",
+          "meta": {
+            "nova": {
+              "role": "dimension",
+              "semantic_type": "category"
+            }
+          }
+        },
+        "net_sales": {
+          "name": "net_sales",
+          "data_type": "numeric",
+          "description": "Net sales amount for the date and category.",
+          "meta": {
+            "nova": {
+              "role": "measure",
+              "semantic_type": "currency"
+            }
+          }
+        }
+      },
+      "meta": {
+        "owner": "analytics",
+        "nova": {
+          "synonyms": ["daily category sales", "net sales by category", "category revenue"],
+          "domains": ["commerce", "finance", "operations"],
+          "use_cases": ["daily sales reporting", "category trend analysis", "finance reconciliation"],
+          "grain": {
+            "time_field": "order_date",
+            "dimensions": ["category"]
+          },
+          "measures": [
+            {
+              "name": "net_sales",
+              "expression": "sum(net_sales)",
+              "synonyms": ["net revenue"]
+            }
+          ],
+          "governance": {
+            "sensitivity": "internal",
+            "pii": false,
+            "compliance": ["SOX", "GDPR", "CCPA"]
+          }
+        }
+      }
+    },
+    "model.pkg.fabricated_pk_sales_daily_category": {
+      "unique_id": "model.pkg.fabricated_pk_sales_daily_category",
+      "name": "fabricated_pk_sales_daily_category",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "analytics",
+      "schema": "marts",
+      "raw_code": "select order_date, category, sum(net_sales) as net_sales from source group by 1, 2",
+      "description": "Daily category sales aggregate with an intentionally fabricated category primary key.",
+      "columns": {
+        "order_date": {
+          "name": "order_date",
+          "data_type": "date",
+          "description": "Calendar date for the daily sales aggregate.",
+          "meta": {
+            "nova": {
+              "role": "time",
+              "semantic_type": "date"
+            }
+          }
+        },
+        "category": {
+          "name": "category",
+          "data_type": "string",
+          "description": "Business category for the daily sales aggregate.",
+          "meta": {
+            "primary_key": true,
+            "nova": {
+              "role": "dimension",
+              "semantic_type": "category"
+            }
+          }
+        },
+        "net_sales": {
+          "name": "net_sales",
+          "data_type": "numeric",
+          "description": "Net sales amount for the date and category.",
+          "meta": {
+            "nova": {
+              "role": "measure",
+              "semantic_type": "currency"
+            }
+          }
+        }
+      },
+      "meta": {
+        "owner": "analytics",
+        "nova": {
+          "synonyms": ["daily category sales", "net sales by category", "category revenue"],
+          "domains": ["commerce", "finance", "operations"],
+          "use_cases": ["daily sales reporting", "category trend analysis", "finance reconciliation"],
+          "grain": {
+            "time_field": "order_date",
+            "dimensions": ["category"]
+          },
+          "measures": [
+            {
+              "name": "net_sales",
+              "expression": "sum(net_sales)",
+              "synonyms": ["net revenue"]
+            }
+          ],
+          "governance": {
+            "sensitivity": "internal",
+            "pii": false,
+            "compliance": ["SOX", "GDPR", "CCPA"]
+          }
+        }
+      }
+    },
+    "test.pkg.unique_combination_aggregate_sales_daily_category": {
+      "unique_id": "test.pkg.unique_combination_aggregate_sales_daily_category",
+      "name": "unique_combination_aggregate_sales_daily_category",
+      "resource_type": "test",
+      "package_name": "pkg",
+      "attached_node": "model.pkg.aggregate_sales_daily_category",
+      "test_metadata": {
+        "name": "unique_combination_of_columns",
+        "kwargs": {
+          "combination_of_columns": ["order_date", "category"]
+        }
+      }
+    }
+  },
+  "sources": {
+    "source.pkg.raw.orders": {
+      "unique_id": "source.pkg.raw.orders",
+      "name": "orders",
+      "source_name": "raw",
+      "resource_type": "source",
+      "package_name": "pkg",
+      "description": "Raw order events from the operational system.",
+      "database": "raw",
+      "schema": "landing",
+      "identifier": "orders",
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "data_type": "string",
+          "description": "Operational order identifier."
+        }
+      },
+      "meta": {
+        "owner": "data-ingest",
+        "nova": {
+          "domains": ["commerce"],
+          "grain": {
+            "primary_key": ["order_id"]
+          },
+          "governance": {
+            "sensitivity": "internal",
+            "pii": false,
+            "compliance": ["SOX"]
+          }
+        }
+      }
+    }
+  },
+  "macros": {},
+  "docs": {},
+  "groups": {},
+  "exposures": {},
+  "metrics": {},
+  "parent_map": {
+    "model.pkg.aggregate_sales_daily_category": [],
+    "model.pkg.fabricated_pk_sales_daily_category": [],
+    "test.pkg.unique_combination_aggregate_sales_daily_category": [
+      "model.pkg.aggregate_sales_daily_category"
+    ],
+    "source.pkg.raw.orders": []
+  },
+  "child_map": {
+    "model.pkg.aggregate_sales_daily_category": [
+      "test.pkg.unique_combination_aggregate_sales_daily_category"
+    ],
+    "model.pkg.fabricated_pk_sales_daily_category": [],
+    "source.pkg.raw.orders": []
+  }
+}

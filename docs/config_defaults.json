@@ -173,7 +173,8 @@
         "quality": 0.15000000596046448,
         "semantic": 0.15000000596046448
       }
-    }
+    },
+    "scoring_contract_version": "v2"
   },
   "metrics_enabled": true,
   "models_artifact_uri": "",
@@ -207,6 +208,7 @@
     "embedding_model": "intfloat/multilingual-e5-base",
     "embeddings_max_decompressed_bytes": 4294967296,
     "enable_ngram": true,
+    "enable_phrase_boost": true,
     "enable_reranker": false,
     "enable_rrf": true,
     "enable_sparse_search": false,

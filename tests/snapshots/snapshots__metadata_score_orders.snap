@@ -139,6 +139,14 @@ expression: result
           "credit_percent": 100
         }
       ],
+      "declared_grain": {
+        "full_credit_evidence": [
+          "columns.meta.primary_key",
+          "meta.nova.grain.primary_key",
+          "meta.nova.grain.time_field + meta.nova.grain.dimensions with matching unique/unique_combination_of_columns test"
+        ],
+        "primary_key_breakdown_compatibility": true
+      },
       "description_tiers": [
         {
           "credit_percent": 0,
@@ -209,7 +217,29 @@ expression: result
         ],
         "warehouse_introspection": false
       },
-      "schema_version": "metadata_score_contract.v1"
+      "resource_type_expectations": {
+        "model": {
+          "grain_evidence": [
+            "primary_key",
+            "aggregate_grain"
+          ],
+          "scores_indicators": true
+        },
+        "seed": {
+          "scores_indicators": true
+        },
+        "snapshot": {
+          "scores_indicators": true
+        },
+        "source": {
+          "indicator_fields_not_applicable": [
+            "meta.nova.measures",
+            "meta.nova.metrics"
+          ],
+          "scores_indicators": false
+        }
+      },
+      "schema_version": "metadata_score_contract.v2"
     },
     "unique_id": "model.nova_test.fct__orders"
   },

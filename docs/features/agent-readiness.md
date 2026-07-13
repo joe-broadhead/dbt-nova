@@ -276,8 +276,9 @@ JSON reports use `schema_version: "agent_readiness.v1"` and include:
 - lowest-scoring or signal-poor entity findings with top recommendations and
   metadata score diagnostics
 - ambiguous Nova indicator definitions that need stronger execution metadata
-- advisory `suggested_meta_patches` for missing or weak `meta`, `meta.nova`,
-  and column metadata fields
+- `suggested_meta_patches` for missing or weak `meta`, `meta.nova`, and column
+  metadata fields, with severity split into `required`, `recommended`, and
+  `refinement`
 - draft `golden_question_seeds` that can be reviewed before copying into eval
   suites
 - eval gate status, if supplied
@@ -316,6 +317,11 @@ issues or PR tasks based on their `category`, `priority`, and evidence.
 Use `suggested_meta_patches` as reviewable dbt YAML work, not as automatic
 edits. Assign owner, grain, primary-key, sensitivity, and indicator metadata
 placeholders to the people who can supply real project truth.
+`summary.suggested_meta_patch_count` remains the raw suggestion count, while
+`summary.suggested_meta_patch_actionable_count` reports only `required` plus
+`recommended` suggestions. `next_actions` uses the actionable count so optional
+refinements can grow without making real metadata improvement read as a
+regression.
 
 Use `golden_question_seeds` as an eval backlog starter. Review each seed,
 replace placeholders or date-sensitive wording, then copy approved cases into
@@ -338,6 +344,15 @@ file edits. Each suggestion includes:
   `columns.order_id.meta.primary_key`
 - `suggested_value`
 - `placeholder`, `rationale`, `severity`, `confidence`, and evidence
+
+Patch `severity` values are:
+
+- `required`: malformed metadata shapes that must be fixed before Nova can
+  safely reason about the field
+- `recommended`: missing metadata blocks or fields that materially improve
+  ownership, grain, governance, and routing
+- `refinement`: present-but-thin metadata or lower-confidence enrichments that
+  are useful to review but should not inflate headline remediation counts
 
 When Nova lacks enough evidence, suggestions use explicit placeholders such as
 `__OWNER_OR_TEAM__`, `__PRIMARY_KEY_COLUMN__`, `__SENSITIVITY__`, or

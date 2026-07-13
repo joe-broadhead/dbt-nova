@@ -59,7 +59,7 @@ pub(super) fn append_readiness_triage_summary(out: &mut String, report: &AgentRe
 pub(super) fn append_markdown_summary(out: &mut String, report: &AgentReadinessReport) {
     let _ = write!(
         out,
-        "- gate_status: `{}`\n- readiness_band: `{}`\n- overall_score: `{}` ({})\n- target_count: `{}`\n- blockers: `{}`\n- improvements: `{}`\n- suggested_meta_patches: `{}`\n- golden_question_seeds: `{}`\n\n",
+        "- gate_status: `{}`\n- readiness_band: `{}`\n- overall_score: `{}` ({})\n- target_count: `{}`\n- blockers: `{}`\n- improvements: `{}`\n- suggested_meta_patches: `{}` total, `{}` actionable, `{}` refinement\n- golden_question_seeds: `{}`\n\n",
         report.gate_status,
         report.readiness_band,
         report.overall_score,
@@ -68,6 +68,8 @@ pub(super) fn append_markdown_summary(out: &mut String, report: &AgentReadinessR
         report.summary.blocker_count,
         report.summary.improvement_count,
         report.summary.suggested_meta_patch_count,
+        report.summary.suggested_meta_patch_actionable_count,
+        report.summary.suggested_meta_patch_refinement_count,
         report.summary.golden_question_seed_count
     );
 }
@@ -158,8 +160,8 @@ pub(super) fn append_suggested_meta_patches_table(
 ) {
     if !patches.is_empty() {
         out.push_str("## Suggested Meta Patches\n\n");
-        out.push_str("| Target | Field | Suggested value | Rationale |\n");
-        out.push_str("|---|---|---|---|\n");
+        out.push_str("| Target | Severity | Field | Suggested value | Rationale |\n");
+        out.push_str("|---|---|---|---|---|\n");
         for patch in patches.iter().take(MAX_MARKDOWN_META_PATCHES) {
             let target = patch
                 .column_name
@@ -168,8 +170,9 @@ pub(super) fn append_suggested_meta_patches_table(
                 .unwrap_or(patch.unique_id.as_str());
             let _ = writeln!(
                 out,
-                "| `{}` | `{}` | `{}` | {} |",
+                "| `{}` | `{}` | `{}` | `{}` | {} |",
                 target,
+                patch.severity,
                 patch.field_path,
                 escape_markdown_table_cell(&json_inline(&patch.suggested_value)),
                 escape_markdown_table_cell(&patch.rationale)
@@ -178,7 +181,7 @@ pub(super) fn append_suggested_meta_patches_table(
         if patches.len() > MAX_MARKDOWN_META_PATCHES {
             let _ = writeln!(
                 out,
-                "| `_truncated` | `-` | `-` | {} additional suggestion(s) omitted from Markdown; see JSON report. |",
+                "| `_truncated` | `-` | `-` | `-` | {} additional suggestion(s) omitted from Markdown; see JSON report. |",
                 patches.len() - MAX_MARKDOWN_META_PATCHES
             );
         }

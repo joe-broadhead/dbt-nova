@@ -1,0 +1,220 @@
+{
+  "metadata": {
+    "dbt_version": "1.10.2",
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json"
+  },
+  "nodes": {
+    "model.pkg.mart__customer_cohort_monthly": {
+      "unique_id": "model.pkg.mart__customer_cohort_monthly",
+      "name": "mart__customer_cohort_monthly",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "analytics",
+      "schema": "marts",
+      "alias": "customer_cohort_monthly",
+      "raw_code": "select cohort_month, retained_customers, active_customers from customer_cohorts",
+      "description": "Monthly customer cohort retention model for analyst questions about retained customers.",
+      "columns": {
+        "cohort_month": {
+          "name": "cohort_month",
+          "data_type": "date",
+          "description": "Customer signup cohort month.",
+          "meta": {
+            "nova": {
+              "role": "time",
+              "semantic_type": "month"
+            }
+          }
+        },
+        "customer_segment": {
+          "name": "customer_segment",
+          "data_type": "string",
+          "description": "Customer segment used to slice retention.",
+          "meta": {
+            "nova": {
+              "role": "dimension",
+              "semantic_type": "customer_segment"
+            }
+          }
+        },
+        "retention_rate": {
+          "name": "retention_rate",
+          "data_type": "numeric",
+          "description": "Monthly retention rate for the cohort.",
+          "meta": {
+            "nova": {
+              "role": "measure",
+              "semantic_type": "rate"
+            }
+          }
+        }
+      },
+      "meta": {
+        "owner": "analytics",
+        "nova": {
+          "canonical": true,
+          "synonyms": [
+            "customer cohort retention monthly",
+            "monthly customer retention",
+            "cohort retention"
+          ],
+          "domains": ["customer", "growth", "subscriptions"],
+          "use_cases": [
+            "customer cohort retention monthly reporting",
+            "retention rate analysis",
+            "cohort health review"
+          ],
+          "grain": {
+            "time_field": "cohort_month",
+            "dimensions": ["customer_segment"]
+          },
+          "metrics": [
+            {
+              "name": "customer_retention_rate",
+              "description": "Retention rate for customer cohorts by month.",
+              "expression": "retained_customers / nullif(active_customers, 0)",
+              "synonyms": ["retention rate", "customer retention rate"],
+              "canonical": true
+            }
+          ],
+          "governance": {
+            "sensitivity": "internal",
+            "pii": false,
+            "compliance": ["SOX"]
+          }
+        }
+      }
+    },
+    "model.pkg.metric__inventory_daily_availability": {
+      "unique_id": "model.pkg.metric__inventory_daily_availability",
+      "name": "metric__inventory_daily_availability",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "analytics",
+      "schema": "marts",
+      "raw_code": "select date_day, sku, stock_availability_rate from inventory_daily",
+      "description": "Daily inventory availability and stockout rate model used for supply operations.",
+      "columns": {
+        "date_day": {
+          "name": "date_day",
+          "data_type": "date",
+          "description": "Inventory snapshot date.",
+          "meta": {
+            "nova": {
+              "role": "time",
+              "semantic_type": "date"
+            }
+          }
+        },
+        "sku": {
+          "name": "sku",
+          "data_type": "string",
+          "description": "Inventory item identifier.",
+          "meta": {
+            "nova": {
+              "role": "dimension",
+              "semantic_type": "sku"
+            }
+          }
+        },
+        "stock_availability_rate": {
+          "name": "stock_availability_rate",
+          "data_type": "numeric",
+          "description": "Share of sellable inventory available.",
+          "meta": {
+            "nova": {
+              "role": "measure",
+              "semantic_type": "rate"
+            }
+          }
+        }
+      },
+      "meta": {
+        "owner": "operations",
+        "nova": {
+          "canonical": true,
+          "synonyms": [
+            "availability rate",
+            "stockout rate",
+            "inventory rate"
+          ],
+          "domains": ["inventory", "operations", "supply"],
+          "use_cases": [
+            "daily availability rate reporting",
+            "inventory stockout rate monitoring",
+            "supply health review"
+          ],
+          "grain": {
+            "time_field": "date_day",
+            "dimensions": ["sku"]
+          },
+          "metrics": [
+            {
+              "name": "stock_availability_rate",
+              "description": "Rate of inventory available for sale.",
+              "expression": "available_units / nullif(total_units, 0)",
+              "synonyms": ["availability rate", "stockout rate"],
+              "canonical": true
+            }
+          ],
+          "governance": {
+            "sensitivity": "internal",
+            "pii": false,
+            "compliance": ["SOX"]
+          }
+        }
+      }
+    },
+    "model.pkg.customer_annual_value": {
+      "unique_id": "model.pkg.customer_annual_value",
+      "name": "customer_annual_value",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "database": "analytics",
+      "schema": "marts",
+      "raw_code": "select customer_id, annual_value from customers",
+      "description": "Customer annual value model that mentions customer retention planning in documentation.",
+      "columns": {
+        "customer_id": {
+          "name": "customer_id",
+          "data_type": "string",
+          "description": "Customer identifier."
+        },
+        "annual_value": {
+          "name": "annual_value",
+          "data_type": "numeric",
+          "description": "Annual customer value."
+        }
+      },
+      "meta": {
+        "owner": "finance",
+        "nova": {
+          "synonyms": ["customer value", "annual retention value"],
+          "domains": ["customer", "finance"],
+          "use_cases": ["customer planning", "retention planning"],
+          "governance": {
+            "sensitivity": "internal",
+            "pii": false,
+            "compliance": ["SOX"]
+          }
+        }
+      }
+    }
+  },
+  "sources": {},
+  "macros": {},
+  "docs": {},
+  "groups": {},
+  "exposures": {},
+  "metrics": {},
+  "parent_map": {
+    "model.pkg.mart__customer_cohort_monthly": [],
+    "model.pkg.metric__inventory_daily_availability": [],
+    "model.pkg.customer_annual_value": []
+  },
+  "child_map": {
+    "model.pkg.mart__customer_cohort_monthly": [],
+    "model.pkg.metric__inventory_daily_availability": [],
+    "model.pkg.customer_annual_value": []
+  }
+}

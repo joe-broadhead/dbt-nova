@@ -54,7 +54,9 @@ impl ManifestSearch {
             "persona": persona,
             "overall_score": avg_overall,
             "grade": grade_from_score(avg_overall),
-            "scoring_contract": metadata_score_scoring_contract(),
+            "scoring_contract": metadata_score_scoring_contract(
+                &self.config().metadata_score.scoring_contract_version
+            ),
             "columns": scored_columns
         });
 

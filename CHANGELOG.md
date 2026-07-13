@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Bumped the metadata scoring contract to v2 with resource-shape-aware declared
+  grain scoring: aggregate marts can earn primary-key quality credit from
+  `time_field` + `dimensions` plus matching uniqueness tests, and raw sources no
+  longer receive measure/metric scoring recommendations or meta patch seeds.
+- Added keyword phrase boosting for search and `search_indicator` so exact
+  multi-word business names, synonyms, and indicator phrases surface above
+  per-token noise, with phrase evidence exposed in `support_signals`.
+- Made metadata-score recommendations state-aware and split agent-readiness
+  `suggested_meta_patches` into `required`, `recommended`, and `refinement`
+  severities while preserving the raw patch total.
 - Added additive column-lineage evidence for unresolved derived columns and
   rename planning: `get_column_lineage` can now return defining SQL
   expressions, candidate upstream columns, and optional metadata/test/recipe

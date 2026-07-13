@@ -43,6 +43,7 @@ performance tuning. The defaults are chosen for high signal with minimal noise.
 | `1.15` | `DBT_NOVA_SEARCH_MEASURE_MATCH_MULTIPLIER` | Boost results whose `meta.nova.measures` align with query terms |
 | `1.2` | `DBT_NOVA_SEARCH_METRIC_MATCH_MULTIPLIER` | Boost KPI/metric term matches |
 | `1.2` | `DBT_NOVA_SEARCH_SYNONYM_MATCH_MULTIPLIER` | Boost business synonym matches |
+| `true` | `DBT_NOVA_SEARCH_PHRASE_BOOST` | Prefer exact multi-word business phrases and high single-field query coverage |
 | `1.08` | `DBT_NOVA_SEARCH_CANONICAL_MATCH_MULTIPLIER` | Baseline uplift for canonical entities |
 | `1.35` | `DBT_NOVA_SEARCH_CANONICAL_META_MATCH_MULTIPLIER` | Extra uplift when canonical + meta terms both match |
 | `2.5` | `DBT_NOVA_SEARCH_CANONICAL_META_MATCH_BONUS` | Additive bonus for strong canonical/meta alignment |

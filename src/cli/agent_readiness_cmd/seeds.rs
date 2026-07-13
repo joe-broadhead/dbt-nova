@@ -333,6 +333,7 @@ pub(super) fn entity_patch(
         MetaPatchTarget::Indicator { name, kind } => ("indicator", None, name, Some(kind)),
     };
     let unique_id = entity.unique_id.as_str().to_string();
+    let severity = meta_patch_severity(&content);
     SuggestedMetaPatch {
         id: stable_meta_patch_id(
             &unique_id,
@@ -353,10 +354,59 @@ pub(super) fn entity_patch(
         suggested_value: content.suggested_value,
         placeholder: content.placeholder,
         rationale: content.rationale.to_string(),
-        severity: "improvement",
+        severity,
         confidence: content.confidence,
         evidence: content.evidence,
     }
+}
+
+fn meta_patch_severity(content: &MetaPatchContent<'_>) -> &'static str {
+    let diagnostic = content
+        .evidence
+        .get("diagnostic")
+        .and_then(JsonValue::as_str);
+    if matches!(diagnostic, Some("invalid_grain_shape")) {
+        return "required";
+    }
+
+    let indicator_issue = content
+        .evidence
+        .get("indicator_issue")
+        .and_then(JsonValue::as_str)
+        .unwrap_or_default();
+    if indicator_issue.contains("not an object") {
+        return "required";
+    }
+    if !indicator_issue.is_empty() {
+        return "refinement";
+    }
+
+    let signal = content
+        .evidence
+        .get("signal")
+        .and_then(JsonValue::as_str)
+        .unwrap_or_default();
+    if content
+        .evidence
+        .get("existing_grain")
+        .and_then(JsonValue::as_bool)
+        == Some(true)
+    {
+        return "refinement";
+    }
+    if matches!(
+        signal,
+        "missing_canonical_flag"
+            | "missing_column_role"
+            | "missing_column_semantic_type"
+            | "missing_nova_indicators"
+    ) {
+        return "refinement";
+    }
+    if content.confidence < 0.65 {
+        return "refinement";
+    }
+    "recommended"
 }
 
 pub(super) fn push_meta_patch(
