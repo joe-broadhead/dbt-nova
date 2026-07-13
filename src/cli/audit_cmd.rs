@@ -7,19 +7,20 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
+mod tool_params;
+
 use crate::cli::args::{MetadataAuditArgs, MetadataAuditSelectionModeArg};
 use crate::cli::manifest::{build_manifest_load_config, execute_manifest_load};
 use crate::cli::output::CliEnvelope;
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::entity::ArchivedEntity;
 use crate::manifest::search::ManifestSearch;
-use crate::params::{
-    GetMetadataAuditParams, GetMetadataScoreParams, MetadataAuditSelectionModeParam,
-};
+use crate::params::{GetMetadataAuditParams, GetMetadataScoreParams};
 use crate::responses::SuccessResponse;
 use crate::tools::metadata_score::metadata_score_scoring_contract;
 use crate::utils::SearchPersona;
 
+use self::tool_params::metadata_audit_args_from_tool_params;
 use super::{DispatchError, DispatchResult};
 
 const DEFAULT_RESOURCE_TYPES_JSON: &str = "[\"model\"]";
@@ -243,36 +244,11 @@ pub(crate) async fn build_metadata_audit_tool_response(
     search: &ManifestSearch,
     params: &GetMetadataAuditParams,
 ) -> Result<JsonValue> {
-    let args = metadata_audit_args_from_tool_params(params);
+    let args = metadata_audit_args_from_tool_params(params)?;
     let audit_inputs = parse_audit_inputs(&args)?;
     let report = build_metadata_audit_report(search, &audit_inputs, &args).await?;
     serde_json::to_value(SuccessResponse::new(report, 1))
         .map_err(|error| DbtNovaError::ServerError(error.to_string()))
-}
-
-fn metadata_audit_args_from_tool_params(params: &GetMetadataAuditParams) -> MetadataAuditArgs {
-    MetadataAuditArgs {
-        selection_mode: metadata_audit_selection_mode_from_param(params.selection_mode),
-        changed_files_json: params.changed_files_json.clone(),
-        entity_ids_json: params.entity_ids_json.clone(),
-        resource_types_json: params.resource_types_json.clone(),
-        personas_json: params.personas_json.clone(),
-        thresholds_json: params.thresholds_json.clone(),
-        include_breakdown: params.include_breakdown,
-        include_recommendations: params.include_recommendations,
-        fail_on_no_targets: params.fail_on_no_targets,
-        ..MetadataAuditArgs::default()
-    }
-}
-
-fn metadata_audit_selection_mode_from_param(
-    mode: MetadataAuditSelectionModeParam,
-) -> MetadataAuditSelectionModeArg {
-    match mode {
-        MetadataAuditSelectionModeParam::Project => MetadataAuditSelectionModeArg::Project,
-        MetadataAuditSelectionModeParam::Changed => MetadataAuditSelectionModeArg::Changed,
-        MetadataAuditSelectionModeParam::Entities => MetadataAuditSelectionModeArg::Entities,
-    }
 }
 
 fn parse_audit_inputs(args: &MetadataAuditArgs) -> Result<AuditInputs> {

@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use base64::Engine as _;
 use duckdb::params_from_iter;
-use duckdb::types::Value as DuckValue;
+use duckdb::types::{TimeUnit, Value as DuckValue};
 use duckdb::{AccessMode, Config, Connection};
 use serde_json::{Map as JsonMap, Value, json};
 use tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore};
@@ -532,10 +532,11 @@ fn duck_value_to_json(value: DuckValue) -> Value {
         DuckValue::Boolean(value) => json!(value),
         DuckValue::TinyInt(value) => json!(value),
         DuckValue::SmallInt(value) => json!(value),
-        DuckValue::Int(value) | DuckValue::Date32(value) => json!(value),
-        DuckValue::BigInt(value) | DuckValue::Timestamp(_, value) | DuckValue::Time64(_, value) => {
-            json!(value)
-        }
+        DuckValue::Int(value) => json!(value),
+        DuckValue::Date32(value) => Value::String(date32_to_iso(value)),
+        DuckValue::BigInt(value) => json!(value),
+        DuckValue::Timestamp(unit, value) => Value::String(timestamp_to_iso(unit, value)),
+        DuckValue::Time64(unit, value) => Value::String(time64_to_iso(unit, value)),
         DuckValue::HugeInt(value) => Value::String(value.to_string()),
         DuckValue::UTinyInt(value) => json!(value),
         DuckValue::USmallInt(value) => json!(value),
@@ -574,6 +575,93 @@ fn duck_value_to_json(value: DuckValue) -> Value {
         ),
         DuckValue::Union(value) => duck_value_to_json(*value),
     }
+}
+
+fn date32_to_iso(days_since_epoch: i32) -> String {
+    let (year, month, day) = civil_from_days(i64::from(days_since_epoch));
+    format_date(year, month, day)
+}
+
+fn timestamp_to_iso(unit: TimeUnit, value: i64) -> String {
+    let (seconds, nanos) = match unit {
+        TimeUnit::Second => (value, 0),
+        TimeUnit::Millisecond => {
+            let (seconds, millis) = div_rem_floor(value, 1_000);
+            (seconds, millis * 1_000_000)
+        }
+        TimeUnit::Microsecond => {
+            let (seconds, micros) = div_rem_floor(value, 1_000_000);
+            (seconds, micros * 1_000)
+        }
+        TimeUnit::Nanosecond => div_rem_floor(value, 1_000_000_000),
+    };
+    let (days, seconds_of_day) = div_rem_floor(seconds, 86_400);
+    let (year, month, day) = civil_from_days(days);
+    format!(
+        "{}T{}",
+        format_date(year, month, day),
+        format_time_of_day(seconds_of_day, nanos)
+    )
+}
+
+fn time64_to_iso(unit: TimeUnit, value: i64) -> String {
+    let nanos = match unit {
+        TimeUnit::Second => value.saturating_mul(1_000_000_000),
+        TimeUnit::Millisecond => value.saturating_mul(1_000_000),
+        TimeUnit::Microsecond => value.saturating_mul(1_000),
+        TimeUnit::Nanosecond => value,
+    };
+    let (_, nanos_of_day) = div_rem_floor(nanos, 86_400_000_000_000);
+    let seconds_of_day = nanos_of_day / 1_000_000_000;
+    let fraction_nanos = nanos_of_day % 1_000_000_000;
+    format_time_of_day(seconds_of_day, fraction_nanos)
+}
+
+fn div_rem_floor(value: i64, divisor: i64) -> (i64, i64) {
+    let mut quotient = value / divisor;
+    let mut remainder = value % divisor;
+    if remainder < 0 {
+        quotient -= 1;
+        remainder += divisor;
+    }
+    (quotient, remainder)
+}
+
+fn civil_from_days(days_since_epoch: i64) -> (i64, i64, i64) {
+    let days = days_since_epoch + 719_468;
+    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
+    let day_of_era = days - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_phase = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_phase + 2) / 5 + 1;
+    let month = month_phase + if month_phase < 10 { 3 } else { -9 };
+    let year = year + i64::from(month <= 2);
+    (year, month, day)
+}
+
+fn format_date(year: i64, month: i64, day: i64) -> String {
+    if (0..=9999).contains(&year) {
+        format!("{year:04}-{month:02}-{day:02}")
+    } else {
+        format!("{year}-{month:02}-{day:02}")
+    }
+}
+
+fn format_time_of_day(seconds_of_day: i64, nanos: i64) -> String {
+    let hours = seconds_of_day / 3_600;
+    let minutes = (seconds_of_day % 3_600) / 60;
+    let seconds = seconds_of_day % 60;
+    if nanos == 0 {
+        return format!("{hours:02}:{minutes:02}:{seconds:02}");
+    }
+    let mut fraction = format!("{nanos:09}");
+    while fraction.ends_with('0') {
+        fraction.pop();
+    }
+    format!("{hours:02}:{minutes:02}:{seconds:02}.{fraction}")
 }
 
 fn normalized_limit(limit: Option<u64>, fallback: u64) -> u64 {
@@ -1016,8 +1104,9 @@ mod tests {
         DuckDbConfig, build_bind_values, catalog_preflight_statement,
         configuration_failure_preflight_payload, missing_configuration_preflight_payload,
         normalize_preflight_relation, relation_preflight_statement, resolve_duckdb_pool_max_size,
-        rewrite_named_parameters, schema_preflight_statement,
+        rewrite_named_parameters, schema_preflight_statement, time64_to_iso,
     };
+    use duckdb::types::TimeUnit;
     use serde_json::json;
     use std::collections::HashMap;
     use std::path::PathBuf;
@@ -1182,5 +1271,15 @@ mod tests {
     fn resolve_duckdb_pool_max_size_clamps_zero_to_one() {
         assert_eq!(resolve_duckdb_pool_max_size(Some(0), None), 1);
         assert_eq!(resolve_duckdb_pool_max_size(None, Some(0)), 1);
+    }
+
+    #[test]
+    fn time64_to_iso_preserves_nanosecond_precision() {
+        let nanos = 12 * 3_600_000_000_000 + 34 * 60_000_000_000 + 56 * 1_000_000_000 + 123_456_789;
+
+        assert_eq!(
+            time64_to_iso(TimeUnit::Nanosecond, nanos),
+            "12:34:56.123456789"
+        );
     }
 }

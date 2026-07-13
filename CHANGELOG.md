@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Hardened MCP/CLI tool parameter handling so unknown top-level params fail
+  fast instead of being silently ignored, and added typed
+  `get_metadata_audit` aliases for `personas`, `resource_types`,
+  `changed_files`, and `entity_ids`.
+- Fixed `get_entity` summary projection drift by including Nova governance
+  metadata in `nova_summary` and the established `provenance.owner` block.
+- Fixed DuckDB `execute_sql`/`run_recipe` temporal result cells so DATE,
+  TIMESTAMP, and TIME values serialize as ISO-style strings instead of raw
+  epoch-day or tick integers.
 - Added a fail-closed hosted auth config skeleton for future proxy/JWT identity
   work while keeping effective runtime behavior default-off.
 - Added design-only hosted identity and JWT threat-model docs, planned config

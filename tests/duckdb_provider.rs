@@ -241,6 +241,36 @@ fn duckdb_execute_supports_named_params_and_row_limit_truncation() {
 }
 
 #[test]
+fn duckdb_execute_serializes_temporal_values_as_strings() {
+    let _env_lock = lock_env();
+    let (_temp_dir, db_path) = create_fixture_database();
+    let _env_guard = configure_duckdb_env(Some(&db_path), None);
+
+    let params = base_params(
+        "SELECT
+             DATE '2026-07-09' AS order_date,
+             TIMESTAMP '2026-07-09 12:34:56.789123' AS observed_at,
+             TIME '12:34:56.123456' AS observed_time",
+    );
+
+    let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let payload = runtime
+        .block_on(DUCKDB_PROVIDER.execute(&params))
+        .expect("duckdb execute should succeed");
+
+    assert_eq!(payload["success"], json!(true));
+    assert_eq!(
+        payload["data"]["rows"][0],
+        json!([
+            "2026-07-09",
+            "2026-07-09T12:34:56.789123",
+            "12:34:56.123456"
+        ])
+    );
+    assert_eq!(payload["data"]["column_types"][0], json!("Date32"));
+}
+
+#[test]
 fn duckdb_execute_honors_byte_limit_truncation() {
     let _env_lock = lock_env();
     let (_temp_dir, db_path) = create_fixture_database();

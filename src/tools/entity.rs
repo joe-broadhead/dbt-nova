@@ -1,7 +1,7 @@
 use serde_json::Value as JsonValue;
 
 use crate::error::{DbtNovaError, Result};
-use crate::manifest::entity::normalized_column_meta_json;
+use crate::manifest::entity::{ArchivedEntity, normalized_column_meta_json};
 use crate::manifest::search::ManifestSearch;
 use crate::params::{BatchGetParams, DetailLevel, GetColumnsParams, GetEntityParams, GetSqlParams};
 use crate::responses::SuccessResponse;
@@ -27,7 +27,11 @@ impl ManifestSearch {
             let mut matches: Vec<JsonValue> = Vec::new();
             for k in &keys {
                 if let Some(entity) = self.get_entity_archived(k)? {
-                    matches.push(self.summary_for_standard(k, entity));
+                    matches.push(self.add_entity_provenance(
+                        k,
+                        entity,
+                        self.summary_for_standard(k, entity),
+                    ));
                 }
             }
             return Ok(serde_json::to_value(SuccessResponse::new(
@@ -38,13 +42,29 @@ impl ManifestSearch {
 
         let entity = self.get_entity_archived(&keys[0])?.map_or_else(
             || JsonValue::Null,
-            |entity| match detail {
-                DetailLevel::Full => entity.to_json_value(),
-                DetailLevel::Compact => self.summary_for_compact(&keys[0], entity),
-                DetailLevel::Standard => self.summary_for_standard(&keys[0], entity),
+            |entity| {
+                let payload = match detail {
+                    DetailLevel::Full => entity.to_json_value(),
+                    DetailLevel::Compact => self.summary_for_compact(&keys[0], entity),
+                    DetailLevel::Standard => self.summary_for_standard(&keys[0], entity),
+                };
+                self.add_entity_provenance(&keys[0], entity, payload)
             },
         );
         Ok(serde_json::to_value(SuccessResponse::new(entity, 1))?)
+    }
+
+    fn add_entity_provenance(
+        &self,
+        unique_id: &str,
+        entity: &ArchivedEntity,
+        mut payload: JsonValue,
+    ) -> JsonValue {
+        let provenance = self.provenance_for_archived(unique_id, entity);
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("provenance".to_string(), provenance);
+        }
+        payload
     }
 
     /// Get raw or compiled SQL for a model.

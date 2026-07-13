@@ -266,6 +266,9 @@ impl ManifestSearch {
         if let Some(grain) = nova.grain.as_ref().and_then(Self::nova_grain_summary) {
             obj.insert("grain".to_string(), grain);
         }
+        if let Some(governance) = Self::nova_governance_summary(nova) {
+            obj.insert("governance".to_string(), governance);
+        }
         let measures = Self::nova_measures_summary(nova);
         if !measures.is_empty() {
             obj.insert("measures".to_string(), JsonValue::Array(measures));
@@ -310,6 +313,9 @@ impl ManifestSearch {
         let mut obj = serde_json::Map::new();
         if let Some(grain) = nova.grain.as_ref().and_then(Self::nova_grain_summary) {
             obj.insert("grain".to_string(), grain);
+        }
+        if let Some(governance) = Self::nova_governance_summary(nova) {
+            obj.insert("governance".to_string(), governance);
         }
         if nova.canonical {
             obj.insert("canonical".to_string(), JsonValue::from(true));
