@@ -190,6 +190,13 @@ pub(super) struct MetadataSupportSignals {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub(super) example_values: Vec<String>,
+    #[serde(
+        rename = "matched_exact_phrases",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub(super) exact_phrases: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) best_single_field_query_coverage: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -239,6 +246,8 @@ pub(super) struct SearchScoreExplain {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) synonym_match_multiplier: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) phrase_match_multiplier: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) strongest_match_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) semantic_match_multiplier: Option<f32>,
@@ -282,6 +291,8 @@ pub(super) struct IndicatorScoreExplain {
     pub(super) parent_synonym_bonus: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) metadata_support_bonus: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) phrase_match_bonus: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) time_field_bonus: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -328,6 +339,7 @@ impl MetadataSupportSignals {
             + usize::from(!self.column_roles.is_empty())
             + usize::from(!self.column_semantic_types.is_empty())
             + usize::from(!self.example_values.is_empty())
+            + usize::from(!self.exact_phrases.is_empty())
     }
 
     pub(super) fn merge_from(&mut self, other: &Self, max_values_per_field: usize) {
@@ -363,6 +375,19 @@ impl MetadataSupportSignals {
             &other.example_values,
             max_values_per_field,
         );
+        merge_signal_values(
+            &mut self.exact_phrases,
+            &other.exact_phrases,
+            max_values_per_field,
+        );
+        self.best_single_field_query_coverage = match (
+            self.best_single_field_query_coverage,
+            other.best_single_field_query_coverage,
+        ) {
+            (Some(left), Some(right)) => Some(left.max(right)),
+            (Some(value), None) | (None, Some(value)) => Some(value),
+            (None, None) => None,
+        };
     }
 }
 
@@ -411,6 +436,7 @@ pub(super) struct IndicatorSearchContext<'a> {
     pub(super) support_signals: Option<MetadataSupportSignals>,
     pub(super) indicator_config: &'a IndicatorRankingConfig,
     pub(super) metadata_config: &'a MetadataSupportConfig,
+    pub(super) phrase_boost_enabled: bool,
 }
 
 #[derive(Clone, Copy)]

@@ -303,6 +303,7 @@
                     column_roles: vec![],
                     column_semantic_types: vec![],
                     example_values: vec!["alpha".to_string()],
+                    ..MetadataSupportSignals::default()
                 }),
                 explain: None,
             },
@@ -335,6 +336,7 @@
                     column_roles: vec![],
                     column_semantic_types: vec![],
                     example_values: vec!["alpha".to_string()],
+                    ..MetadataSupportSignals::default()
                 }),
                 explain: None,
             },
@@ -423,6 +425,7 @@
                     column_roles: vec![],
                     column_semantic_types: vec![],
                     example_values: vec!["alpha".to_string(), "beta".to_string()],
+                    ..MetadataSupportSignals::default()
                 }),
                 explain: None,
             },
@@ -459,6 +462,7 @@
                         "delta".to_string(),
                         "epsilon".to_string(),
                     ],
+                    ..MetadataSupportSignals::default()
                 }),
                 explain: None,
             },

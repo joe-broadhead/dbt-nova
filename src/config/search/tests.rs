@@ -54,6 +54,17 @@ fn semantic_components_are_disabled_by_default() {
     assert!(!config.enable_vector_search);
     assert!(!config.enable_sparse_search);
     assert!(!config.enable_reranker);
+    assert!(config.enable_phrase_boost);
+}
+
+#[test]
+fn phrase_boost_env_override_applies() {
+    let _guard = ENV_LOCK.lock().expect("env lock");
+    let config = with_env_vars(
+        &[("DBT_NOVA_SEARCH_PHRASE_BOOST", Some("false"))],
+        SearchConfig::from_env,
+    );
+    assert!(!config.enable_phrase_boost);
 }
 
 #[test]

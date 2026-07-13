@@ -2,10 +2,10 @@ use super::{
     AnalystSemanticConfig, Arc, ArchivedEntity, ArchivedNovaGrain, ArchivedNovaMeta, BTreeMap,
     ColumnInventoryRow, ColumnSearchRow, DbtNovaError, DetailLevel, Duration, FusedHitBundle,
     FusedHitContext, HashMap, HashSet, IndicatorInventoryRow, IndicatorSearchRow, Instant,
-    JsonValue, ManifestSearch, Ordering, PersonaWeights, Result, RetrievalExplain,
-    RetrieverContribution, SearchCandidate, SearchConfig, SearchHit, SearchParams, SearchPersona,
-    SearchRequest, SearchResponse, SearchScope, SearchScoreContext, SearchScoreExplain,
-    SearchScoreOutcome, TantivySearcher, apply_parent_coherence_bonus,
+    JsonValue, ManifestSearch, MetadataSupportSignals, Ordering, PersonaWeights, Result,
+    RetrievalExplain, RetrieverContribution, SearchCandidate, SearchConfig, SearchHit,
+    SearchParams, SearchPersona, SearchRequest, SearchResponse, SearchScope, SearchScoreContext,
+    SearchScoreExplain, SearchScoreOutcome, TantivySearcher, apply_parent_coherence_bonus,
     build_search_explain_payload, collect_metadata_support_signals, debug,
     dedupe_indicator_parent_ids, embedding_text_from_archived, has_query_syntax,
     match_nova_semantics, metadata_support_bonus, normalized_indicator_parent_scores,
@@ -254,6 +254,7 @@ impl ManifestSearch {
                     collect_metadata_support_signals(
                         entity_ref,
                         nova,
+                        params.query.as_str(),
                         &token_set,
                         min_word_len,
                         &self.config.search.metadata_support,
@@ -761,6 +762,7 @@ impl ManifestSearch {
                     measure_match_multiplier: None,
                     metric_match_multiplier: None,
                     synonym_match_multiplier: None,
+                    phrase_match_multiplier: None,
                     strongest_match_type: None,
                     semantic_match_multiplier: None,
                     query_coverage_multiplier: None,
@@ -803,6 +805,7 @@ impl ManifestSearch {
             measure_match_multiplier: None,
             metric_match_multiplier: None,
             synonym_match_multiplier: None,
+            phrase_match_multiplier: None,
             strongest_match_type: None,
             semantic_match_multiplier: None,
             query_coverage_multiplier: None,
@@ -960,6 +963,16 @@ impl ManifestSearch {
             adjusted *= synonym_match_multiplier;
             if let Some(debug) = &mut explain_payload {
                 debug.synonym_match_multiplier = Some(synonym_match_multiplier);
+            }
+        }
+        if let Some(phrase_match_multiplier) = phrase_match_multiplier(
+            context.support_signals,
+            context.token_set.len(),
+            self.config.search.enable_phrase_boost,
+        ) {
+            adjusted *= phrase_match_multiplier;
+            if let Some(debug) = &mut explain_payload {
+                debug.phrase_match_multiplier = Some(phrase_match_multiplier);
             }
         }
         let canonical = nova.canonical;
@@ -1413,6 +1426,31 @@ pub(super) fn analyst_query_coverage_multiplier(
     } else {
         1.0
     }
+}
+
+pub(super) fn phrase_match_multiplier(
+    signals: Option<&MetadataSupportSignals>,
+    query_token_count: usize,
+    enabled: bool,
+) -> Option<f32> {
+    if !enabled || query_token_count <= 1 {
+        return None;
+    }
+    let signals = signals?;
+    let coverage = signals
+        .best_single_field_query_coverage
+        .unwrap_or_default()
+        .clamp(0.0, 1.0);
+    let multiplier = if !signals.exact_phrases.is_empty() {
+        3.0 + coverage
+    } else if coverage >= 0.75 {
+        1.0 + (coverage * 1.5)
+    } else if coverage >= 0.5 {
+        1.0 + (coverage * 0.5)
+    } else {
+        1.0
+    };
+    non_neutral_option(multiplier)
 }
 
 pub(super) fn preferred_grain_for_scoring(nova: &ArchivedNovaMeta) -> Option<&ArchivedNovaGrain> {

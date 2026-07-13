@@ -145,6 +145,7 @@ DBT_NOVA_SEARCH_SEMANTIC_DEFINITION_MATCH_MULTIPLIER=1.03
 DBT_NOVA_SEARCH_SEMANTIC_CANONICAL_MATCH_MULTIPLIER=1.25
 DBT_NOVA_SEARCH_SEMANTIC_CANONICAL_MATCH_BONUS=1.5
 DBT_NOVA_SEARCH_SYNONYM_MATCH_MULTIPLIER=1.20
+DBT_NOVA_SEARCH_PHRASE_BOOST=true
 DBT_NOVA_SEARCH_CANONICAL_MATCH_MULTIPLIER=1.08
 DBT_NOVA_SEARCH_CANONICAL_META_MATCH_MULTIPLIER=1.35
 DBT_NOVA_SEARCH_CANONICAL_META_MATCH_BONUS=2.5
@@ -153,7 +154,10 @@ DBT_NOVA_SEARCH_ENGINEER_EXACT_MATCH_MULTIPLIER=2.0
 
 ## Ranking Behavior
 
-1) **Exact business terms** (synonyms/metric names) score close to `name` matches.  
+1) **Exact business terms** (synonyms/metric names) score close to `name` matches.
+   Multi-word phrase matches and high single-field query coverage add
+   `matched_exact_phrases` / `best_single_field_query_coverage` support signals
+   and are controlled by `DBT_NOVA_SEARCH_PHRASE_BOOST`.
 2) **Nova measures and metrics** are next‑highest so KPI‑driven queries surface
    the canonical model even without a standalone dbt metric resource.
 3) **Domains/use_cases** provide intent routing but stay below synonyms/measures.

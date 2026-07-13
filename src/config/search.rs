@@ -404,6 +404,8 @@ pub struct SearchConfig {
     pub nova_semantic_canonical_match_bonus: f32,
     /// Multiplier applied when query tokens match nova synonyms
     pub nova_synonym_match_multiplier: f32,
+    /// Enable phrase-level name/synonym/indicator boosts in keyword ranking.
+    pub enable_phrase_boost: bool,
     /// Multiplier applied for canonical models
     pub nova_canonical_multiplier: f32,
     /// Additional multiplier when canonical models match nova meta terms
@@ -530,6 +532,7 @@ impl Default for SearchConfig {
             nova_semantic_canonical_match_multiplier: 1.25,
             nova_semantic_canonical_match_bonus: 1.5,
             nova_synonym_match_multiplier: 1.2,
+            enable_phrase_boost: true,
             nova_canonical_multiplier: 1.08,
             nova_canonical_match_multiplier: 1.35,
             nova_canonical_match_bonus: 2.5,
