@@ -87,7 +87,8 @@ Always pass `persona: "governance"` for discovery. This boosts compliance-releva
 fields (sensitivity, pii, compliance tags) and documentation signals.
 
 ### Inventory
-Use `list_entities` scoped by package or tags.
+Use `list_entities` scoped by package, tags, or structured Nova governance
+metadata.
 
 ??? example "list_entities Example"
     ```json
@@ -96,7 +97,10 @@ Use `list_entities` scoped by package or tags.
       "arguments": {
         "resource_type": "model",
         "package": "nova_test",
-        "tags": [],
+        "governance": {
+          "pii": ["possible", "yes"],
+          "declared": true
+        },
         "detail": "standard",
         "limit": 50
       }

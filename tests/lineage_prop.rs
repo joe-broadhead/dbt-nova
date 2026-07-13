@@ -42,6 +42,9 @@ proptest! {
             package: None,
             tags: vec![],
             database_schema: None,
+            governance: None,
+            tier: vec![],
+            canonical: None,
             detail: Some(DetailLevel::Standard),
             pagination: PaginationParams { limit: Some(100), offset: 0 },
 };

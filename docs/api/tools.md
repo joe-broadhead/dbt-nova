@@ -520,10 +520,12 @@ Required:
 
 Optional:
 - `package`, `tags`, `database_schema`
+- `governance` with optional `pii`, `sensitivity`, `compliance_includes`, and `declared`
+- `tier`, `canonical`
 - `detail` (`compact` | `standard` | `full`), `limit`, `offset`
 
 ```json
-{"name":"list_entities","arguments":{"resource_type":"model","tags":["pii"],"detail":"standard","limit":100}}
+{"name":"list_entities","arguments":{"resource_type":"model","governance":{"pii":["possible","yes"],"declared":true},"tier":["gold"],"canonical":true,"detail":"standard","limit":100}}
 ```
 
 ### `batch_get_entities`
@@ -571,7 +573,7 @@ One-shot context bundle. Returns lineage, columns, tests, docs, and summary stat
 | `include_tests` | bool | No | Include test coverage (default: true) |
 | `include_docs` | bool | No | Include documentation (default: true) |
 | `include_sql` | bool | No | Include raw/compiled SQL in entity context (default: false) |
-| `context_mode` | string | No | Output shaping (`standard` \| `engineer`, default: `standard`) |
+| `context_mode` | string | No | Output shaping (`standard` \| `analyst` \| `engineer` \| `governance`, default: `standard`; analyst/governance currently use the standard projection) |
 | `lineage_depth` | int | No | Depth for lineage traversal (default: 1) |
 
 Notes:
@@ -1288,10 +1290,11 @@ Optional:
 - `vector`, `sparse`, `reranker`
 - `force`: require freshly rebuilt manifest-scoped cache files
 
-When no component flag is supplied, `warm_manifest` requests vector and sparse
-warmup, matching `dbt-nova manifest warm`. The tool uses the manifest source and
-storage instance already configured for the running server or CLI `tool call`
-load; it does not accept a new manifest path or URI.
+When no component flag is supplied, `warm_manifest` warms only the semantic
+components enabled in the resolved runtime config. Explicit component flags
+override that default. The tool uses the manifest source and storage instance
+already configured for the running server or CLI `tool call` load; it does not
+accept a new manifest path or URI.
 
 This cache-write capability is disabled unless
 `DBT_NOVA_MCP_ENABLE_MANIFEST_WARM=1` is set. Read-only storage is rejected.

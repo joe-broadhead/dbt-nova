@@ -15,7 +15,7 @@ machine-checked stability tier, profile, and safety-gate matrix.
 | `search_columns` | Search columns by names and semantic hints | `query`, `resource_types`, `roles`, `semantic_types`, `limit`, `offset` |
 | `column_inventory` | List columns with semantic context | `resource_types`, `roles`, `semantic_types`, `limit`, `offset` |
 | `get_entity` | Fetch single entity by ID or name | `id_or_name` (`unique_id` alias), `resource_type`, `detail` |
-| `list_entities` | List entities by type with filters | `resource_type`, `package`, `tags`, `detail` |
+| `list_entities` | List entities by type with filters | `resource_type`, `package`, `tags`, `governance`, `tier`, `canonical`, `detail` |
 | `batch_get_entities` | Retrieve multiple entities at once | `unique_ids`, `detail` |
 | `find_by_path` | Find entities by file path glob | `path_pattern`, `resource_types`, `detail` |
 

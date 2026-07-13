@@ -303,11 +303,38 @@ pub struct ListEntitiesParams {
     pub tags: Vec<String>,
     /// Filter by database.schema pattern
     pub database_schema: Option<String>,
+    /// Optional governance filters over meta.nova.governance.
+    #[serde(default)]
+    pub governance: Option<ListEntitiesGovernanceFilter>,
+    /// Filter by meta.nova.tier. Matches any listed value.
+    #[serde(default)]
+    pub tier: Vec<String>,
+    /// Filter by meta.nova.canonical.
+    #[serde(default)]
+    pub canonical: Option<bool>,
     /// Response detail level: compact, standard, or full. Omit to use the active result profile.
     #[serde(default)]
     pub detail: Option<DetailLevel>,
     #[serde(default, flatten)]
     pub pagination: PaginationParams,
+}
+
+/// Governance filters for `list_entities`.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ListEntitiesGovernanceFilter {
+    /// Match any listed meta.nova.governance.pii value.
+    #[serde(default)]
+    pub pii: Vec<String>,
+    /// Match any listed meta.nova.governance.sensitivity value.
+    #[serde(default)]
+    pub sensitivity: Vec<String>,
+    /// Require all listed compliance tags.
+    #[serde(default)]
+    pub compliance_includes: Vec<String>,
+    /// Filter by whether the governance block is declared.
+    #[serde(default)]
+    pub declared: Option<bool>,
 }
 
 /// Parameters for searching and discovering recipe templates.
@@ -620,8 +647,12 @@ pub enum ContextMode {
     /// Standard context output (default).
     #[default]
     Standard,
+    /// Analyst persona alias for standard context output.
+    Analyst,
     /// Engineer-focused output (suppresses long descriptions).
     Engineer,
+    /// Governance persona alias for standard context output.
+    Governance,
 }
 
 /// Parameters for the get_metadata_score tool.
@@ -1095,7 +1126,10 @@ pub struct ExecuteSqlParams {
 mod tests {
     use serde_json::json;
 
-    use super::{ExecuteSqlParams, GetEntityParams, GetMetadataAuditParams, ListEntitiesParams};
+    use super::{
+        ContextMode, ExecuteSqlParams, GetContextParams, GetEntityParams, GetMetadataAuditParams,
+        ListEntitiesParams,
+    };
 
     #[test]
     fn get_entity_accepts_unique_id_alias() {
@@ -1121,6 +1155,23 @@ mod tests {
         .expect_err("unknown params should fail");
 
         assert!(err.to_string().contains("unknown field `governance_pii`"));
+    }
+
+    #[test]
+    fn get_context_accepts_persona_context_mode_aliases() {
+        let analyst: GetContextParams = serde_json::from_value(json!({
+            "id_or_name": "model.pkg.orders",
+            "context_mode": "analyst"
+        }))
+        .expect("analyst context mode");
+        let governance: GetContextParams = serde_json::from_value(json!({
+            "id_or_name": "model.pkg.orders",
+            "context_mode": "governance"
+        }))
+        .expect("governance context mode");
+
+        assert_eq!(analyst.context_mode, ContextMode::Analyst);
+        assert_eq!(governance.context_mode, ContextMode::Governance);
     }
 
     #[test]

@@ -18,6 +18,9 @@ async fn loads_minimal_manifest_and_indexes() {
         package: None,
         tags: vec![],
         database_schema: None,
+        governance: None,
+        tier: vec![],
+        canonical: None,
         detail: Some(DetailLevel::Standard),
         pagination: PaginationParams {
             limit: Some(10),
