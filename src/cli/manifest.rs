@@ -9,6 +9,7 @@ use serde_json::Value as JsonValue;
 use crate::cli::args::{ManifestLoadArgs, ManifestReloadArgs, ManifestWarmArgs};
 use crate::cli::output::{CliEnvelope, error_envelope};
 use crate::config::DbtNovaConfig;
+use crate::config::search::SearchConfig;
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::bootstrap::prepare_runtime_config;
 use crate::manifest::rkyv_embeddings::{self, EmbeddingsCacheLoad};
@@ -108,7 +109,6 @@ pub async fn run_reload_command(args: &ManifestReloadArgs) -> DispatchResult {
 pub async fn run_warm_command(args: &ManifestWarmArgs) -> DispatchResult {
     let started = Instant::now();
     let warm_started_at = std::time::SystemTime::now();
-    let requested = requested_warm_components(args);
     let config = build_manifest_warm_config(args).map_err(|error| {
         render_or_propagate_error(
             "manifest warm",
@@ -117,6 +117,7 @@ pub async fn run_warm_command(args: &ManifestWarmArgs) -> DispatchResult {
             started.elapsed().as_millis(),
         )
     })?;
+    let requested = requested_warm_components(args, &config.search);
     let mut load_result = execute_manifest_load(config).await.map_err(|error| {
         render_or_propagate_error(
             "manifest warm",
@@ -178,9 +179,13 @@ pub async fn build_manifest_warm_tool_response(
 
     let started_at = Instant::now();
     let warm_started_at = std::time::SystemTime::now();
-    let requested =
-        requested_warm_components_from_flags(params.vector, params.sparse, params.reranker);
     let mut config = search.config().clone();
+    let requested = requested_warm_components_from_flags(
+        params.vector,
+        params.sparse,
+        params.reranker,
+        &config.search,
+    );
     apply_manifest_warm_settings(&mut config, requested, params.force)?;
     let mut load_result = execute_manifest_load(config).await?;
     warm_requested_query_models(&mut load_result.search, requested)?;
@@ -425,7 +430,7 @@ pub fn build_manifest_warm_config(args: &ManifestWarmArgs) -> Result<DbtNovaConf
         false,
         false,
     )?;
-    let requested = requested_warm_components(args);
+    let requested = requested_warm_components(args, &config.search);
     apply_manifest_warm_settings(&mut config, requested, args.force)?;
     finalize_manifest_config(config)
 }
@@ -525,20 +530,29 @@ pub(crate) async fn execute_manifest_load(
         .map_err(|error| DbtNovaError::ServerError(error.to_string()))?
 }
 
-fn requested_warm_components(args: &ManifestWarmArgs) -> SearchReadyInfo {
-    requested_warm_components_from_flags(args.vector, args.sparse, args.reranker)
+fn requested_warm_components(args: &ManifestWarmArgs, search: &SearchConfig) -> SearchReadyInfo {
+    requested_warm_components_from_flags(args.vector, args.sparse, args.reranker, search)
 }
 
 fn requested_warm_components_from_flags(
     vector: bool,
     sparse: bool,
     reranker: bool,
+    search: &SearchConfig,
 ) -> SearchReadyInfo {
     let any_explicit = vector || sparse || reranker;
-    SearchReadyInfo {
-        vector: vector || !any_explicit,
-        sparse: sparse || !any_explicit,
-        reranker,
+    if any_explicit {
+        SearchReadyInfo {
+            vector,
+            sparse,
+            reranker,
+        }
+    } else {
+        SearchReadyInfo {
+            vector: search.enable_vector_search,
+            sparse: search.enable_sparse_search,
+            reranker: search.enable_reranker,
+        }
     }
 }
 
@@ -821,6 +835,7 @@ mod tests {
     };
     use crate::cli::args::{ManifestLoadArgs, ManifestReloadArgs, ManifestWarmArgs};
     use crate::config::DbtNovaConfig;
+    use crate::config::SearchConfig;
     use crate::manifest::rkyv_embeddings::save_embeddings;
     use crate::manifest::rkyv_sparse_embeddings::save_sparse_embeddings;
     use crate::manifest::rkyv_types::{
@@ -936,19 +951,55 @@ mod tests {
     }
 
     #[test]
-    fn requested_warm_components_defaults_to_vector_and_sparse() {
-        let requested = requested_warm_components(&ManifestWarmArgs::default());
-        assert!(requested.vector);
+    fn requested_warm_components_defaults_to_enabled_config_components() {
+        let mut search = SearchConfig {
+            enable_vector_search: false,
+            enable_sparse_search: false,
+            enable_reranker: false,
+            ..Default::default()
+        };
+        let requested = requested_warm_components(&ManifestWarmArgs::default(), &search);
+        assert!(!requested.vector);
+        assert!(!requested.sparse);
+        assert!(!requested.reranker);
+
+        search.enable_sparse_search = true;
+        let requested = requested_warm_components(&ManifestWarmArgs::default(), &search);
+        assert!(!requested.vector);
         assert!(requested.sparse);
         assert!(!requested.reranker);
     }
 
     #[test]
+    fn requested_warm_components_explicit_flags_override_config() {
+        let search = SearchConfig {
+            enable_vector_search: false,
+            enable_sparse_search: false,
+            enable_reranker: false,
+            ..Default::default()
+        };
+        let requested = requested_warm_components(
+            &ManifestWarmArgs {
+                vector: true,
+                ..ManifestWarmArgs::default()
+            },
+            &search,
+        );
+        assert!(requested.vector);
+        assert!(!requested.sparse);
+        assert!(!requested.reranker);
+    }
+
+    #[test]
     fn requested_warm_components_honors_explicit_reranker() {
-        let requested = requested_warm_components(&ManifestWarmArgs {
-            reranker: true,
-            ..ManifestWarmArgs::default()
-        });
+        let search = SearchConfig::default();
+        let requested = requested_warm_components(
+            &ManifestWarmArgs {
+                reranker: true,
+                ..ManifestWarmArgs::default()
+            },
+            &search,
+        );
         assert!(!requested.vector);
         assert!(!requested.sparse);
         assert!(requested.reranker);

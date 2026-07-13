@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed `manifest warm`/`warm_manifest` so no-flag warmup respects the resolved
+  semantic search config, added governance/tier/canonical `list_entities`
+  filters for structured inventory, and accepted `analyst`/`governance`
+  `get_context` modes as standard-projection persona aliases.
 - Hardened MCP/CLI tool parameter handling so unknown top-level params fail
   fast instead of being silently ignored, and added typed
   `get_metadata_audit` aliases for `personas`, `resource_types`,
