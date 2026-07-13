@@ -400,7 +400,9 @@ async fn build_metadata_audit_report(
         manifest_hash: search.manifest_hash.clone(),
         manifest_version: search.manifest_version.clone(),
         manifest_source: search.manifest_source_uri.clone(),
-        scoring_contract: metadata_score_scoring_contract(),
+        scoring_contract: metadata_score_scoring_contract(
+            &search.config().metadata_score.scoring_contract_version,
+        ),
         resource_types: inputs.resource_types.clone(),
         personas: inputs.personas.clone(),
         changed_files: inputs.changed_files.clone(),

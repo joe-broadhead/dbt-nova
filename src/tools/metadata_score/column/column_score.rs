@@ -102,7 +102,7 @@ impl ManifestSearch {
         );
         obj.insert(
             "scoring_contract".to_string(),
-            metadata_score_scoring_contract(),
+            metadata_score_scoring_contract(&self.config().metadata_score.scoring_contract_version),
         );
 
         if include_breakdown {

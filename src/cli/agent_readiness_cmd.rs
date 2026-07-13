@@ -357,7 +357,9 @@ async fn build_agent_readiness_report(
         generated_at_ms: current_timestamp_ms(),
         manifest: build_manifest_summary(search),
         config: build_config_summary(search, inputs, &resource_types, &effective_thresholds),
-        scoring_contract: metadata_score_scoring_contract(),
+        scoring_contract: metadata_score_scoring_contract(
+            &search.config().metadata_score.scoring_contract_version,
+        ),
         overall_score,
         grade: grade.to_string(),
         readiness_band: final_sections.readiness_band,

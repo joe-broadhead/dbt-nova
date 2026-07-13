@@ -173,7 +173,8 @@
         "quality": 0.15000000596046448,
         "semantic": 0.15000000596046448
       }
-    }
+    },
+    "scoring_contract_version": "v2"
   },
   "metrics_enabled": true,
   "models_artifact_uri": "",

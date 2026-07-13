@@ -941,6 +941,26 @@ async fn readiness_uses_score_diagnostics_for_invalid_grain_patch() {
 }
 
 #[tokio::test]
+async fn readiness_does_not_seed_indicator_patches_for_sources() {
+    let report = readiness_report_for_fixture(
+        "resource_shape_scoring.json",
+        "agent-readiness-source-resource-shape",
+    )
+    .await;
+
+    assert!(
+        report.suggested_meta_patches.iter().all(|patch| {
+            patch.unique_id != "source.pkg.raw.orders"
+                || !matches!(
+                    patch.field_path.as_str(),
+                    "meta.nova.measures" | "meta.nova.metrics"
+                )
+        }),
+        "source resources should not receive measure/metric meta patch suggestions"
+    );
+}
+
+#[tokio::test]
 async fn readiness_suggests_metric_patches_without_guessing_ground_truth() {
     let report =
         readiness_report_for_fixture("metric_test.json", "agent-readiness-suggestions-metric")

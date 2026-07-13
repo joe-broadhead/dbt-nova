@@ -148,7 +148,12 @@ pub(super) fn append_grain_meta_patches(
         .and_then(|grain| grain.get("primary_key"))
         .and_then(JsonValue::as_array)
         .is_some_and(|keys| !keys.is_empty());
-    if !primary_keys && !finding.signals.has_primary_key && finding.signals.column_count > 0 {
+    let aggregate_grain = has_aggregate_grain(nova);
+    if !primary_keys
+        && !aggregate_grain
+        && !finding.signals.has_primary_key
+        && finding.signals.column_count > 0
+    {
         let candidate = infer_primary_key_column(entity_json);
         let suggested_value = candidate.as_ref().map_or_else(
             || json!(["__PRIMARY_KEY_COLUMN__"]),
@@ -422,7 +427,10 @@ pub(super) fn append_indicator_seed_patch(
     patches: &mut Vec<SuggestedMetaPatch>,
     seen: &mut BTreeSet<String>,
 ) {
-    if nova.is_none() || indicator_count_in_nova(nova) > 0 {
+    if entity.resource_type_str() == Some("source")
+        || nova.is_none()
+        || indicator_count_in_nova(nova) > 0
+    {
         return;
     }
     push_meta_patch(
@@ -450,6 +458,26 @@ pub(super) fn append_indicator_seed_patch(
             },
         ),
     );
+}
+
+fn has_aggregate_grain(nova: Option<&JsonValue>) -> bool {
+    let Some(grain) = nova.and_then(|nova| nova.get("grain")) else {
+        return false;
+    };
+    let has_time_field = grain
+        .get("time_field")
+        .and_then(JsonValue::as_str)
+        .is_some_and(|value| !value.trim().is_empty());
+    let has_dimensions = grain
+        .get("dimensions")
+        .and_then(JsonValue::as_array)
+        .is_some_and(|values| {
+            values
+                .iter()
+                .filter_map(JsonValue::as_str)
+                .any(|value| !value.trim().is_empty())
+        });
+    has_time_field && has_dimensions
 }
 
 pub(super) fn append_indicator_meta_patches(

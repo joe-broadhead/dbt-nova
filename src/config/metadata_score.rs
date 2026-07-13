@@ -1,3 +1,5 @@
+use crate::config::env_string;
+
 use serde::{Deserialize, Serialize};
 
 /// Category weights for metadata scoring.
@@ -58,16 +60,39 @@ impl Default for MetadataScoreWeightProfiles {
 }
 
 /// Metadata scoring configuration.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct MetadataScoreConfig {
     pub persona_weights: MetadataScoreWeightProfiles,
+    pub scoring_contract_version: String,
+}
+
+impl Default for MetadataScoreConfig {
+    fn default() -> Self {
+        Self {
+            persona_weights: MetadataScoreWeightProfiles::default(),
+            scoring_contract_version: "v2".to_string(),
+        }
+    }
 }
 
 impl MetadataScoreConfig {
     /// Load metadata score configuration overrides from environment variables.
     #[must_use]
     pub fn from_env() -> Self {
-        Self::default()
+        let mut config = Self::default();
+        if let Some(version) = env_string("DBT_NOVA_METADATA_SCORE_CONTRACT_VERSION")
+            && matches!(
+                version.trim(),
+                "v1" | "1"
+                    | "metadata_score_contract.v1"
+                    | "v2"
+                    | "2"
+                    | "metadata_score_contract.v2"
+            )
+        {
+            config.scoring_contract_version = version.trim().to_string();
+        }
+        config
     }
 }

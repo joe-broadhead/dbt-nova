@@ -71,7 +71,9 @@ impl ManifestSearch {
             "categories": score.categories,
             "breakdown": score.breakdown,
             "diagnostics": score.diagnostics,
-            "scoring_contract": metadata_score_scoring_contract(),
+            "scoring_contract": metadata_score_scoring_contract(
+                &self.config().metadata_score.scoring_contract_version
+            ),
             "recommendations": score.recommendations
         });
 
@@ -169,7 +171,9 @@ impl ManifestSearch {
                 page_truncated,
                 next_offset: page_truncated.then_some(scanned),
             }),
-            "scoring_contract": metadata_score_scoring_contract()
+            "scoring_contract": metadata_score_scoring_contract(
+                &self.config().metadata_score.scoring_contract_version
+            )
         });
 
         let mut response = SuccessResponse::new(response, count).with_total(total_available);

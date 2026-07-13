@@ -459,6 +459,9 @@ Metadata scoring uses the weight defaults under `metadata_score.persona_weights`
 `docs/config_defaults.json` (sourced from `src/config/metadata_score.rs`). There are
 currently no environment overrides for these weights.
 
+- `DBT_NOVA_METADATA_SCORE_CONTRACT_VERSION` - reported metadata scoring
+  contract version (`v2` default; `v1` accepted for migration labels).
+
 ## Governance Gate Policy
 
 - `DBT_NOVA_GOV_GATE_PROFILE` – preset governance gate policy (`strict`|`standard`|`advisory`)

@@ -1,6 +1,8 @@
 use serde_json::Value as JsonValue;
 
-use crate::manifest::entity::{column_nova_meta_json, column_primary_key_bool};
+use crate::manifest::entity::{
+    column_nova_meta_json, column_primary_key_bool, entity_nova_meta_json,
+};
 use crate::manifest::search::ManifestSearch;
 
 use crate::tools::metadata_score::CategoryBreakdown;
@@ -21,7 +23,7 @@ impl ManifestSearch {
         let columns = columns_from_entity(entity_json);
         let expects_columns_flag = expects_columns(resource_type);
         let tests = summarize_tests(self, unique_id, &columns, expects_columns_flag);
-        let pk = summarize_primary_keys(self, unique_id, &columns);
+        let pk = summarize_primary_keys(self, unique_id, entity_json, &columns);
         let constraints = summarize_constraints(&columns);
         apply_quality_recommendations(
             &tests,
@@ -63,6 +65,8 @@ struct TestSummary {
 
 struct PrimaryKeySummary {
     pk_columns: Vec<String>,
+    declared_grain_columns: Vec<String>,
+    evidence: &'static str,
     pk_score: u8,
     pk_integrity_score: u8,
     has_pk: bool,
@@ -115,12 +119,21 @@ fn build_quality_breakdown(
             "score": pk.pk_score,
             "max": 20,
             "present": pk.has_pk,
-            "columns": pk.pk_columns
+            "columns": pk.pk_columns,
+            "evidence": pk.evidence
+        },
+        "declared_grain": {
+            "score": pk.pk_score,
+            "max": 20,
+            "present": pk.has_pk,
+            "columns": pk.declared_grain_columns,
+            "evidence": pk.evidence
         },
         "primary_key_integrity": {
             "score": pk.pk_integrity_score,
             "max": 10,
-            "ok": pk.pk_integrity
+            "ok": pk.pk_integrity,
+            "evidence": pk.evidence
         },
         "constraints": {
             "score": constraints.score,
@@ -403,22 +416,69 @@ fn column_role(col: &JsonValue) -> Option<String> {
 fn summarize_primary_keys(
     search: &ManifestSearch,
     unique_id: &str,
+    entity_json: &JsonValue,
     columns: &serde_json::Map<String, JsonValue>,
 ) -> PrimaryKeySummary {
-    let (pk_columns, has_pk) = primary_keys(columns);
-    let pk_score = if has_pk { 20 } else { 0 };
-    let pk_integrity = if has_pk {
-        pk_integrity_ok(search, unique_id, &pk_columns)
-    } else {
-        false
-    };
+    let (column_pk_columns, has_column_pk) = primary_keys(columns);
+    if has_column_pk {
+        return primary_key_summary(
+            search,
+            unique_id,
+            column_pk_columns,
+            "columns.meta.primary_key",
+        );
+    }
+
+    if let Some(grain_pk_columns) = nova_grain_primary_keys(entity_json) {
+        return primary_key_summary(
+            search,
+            unique_id,
+            grain_pk_columns,
+            "meta.nova.grain.primary_key",
+        );
+    }
+
+    if let Some(grain_columns) = aggregate_grain_columns(entity_json)
+        && unique_test_covers_columns(search, unique_id, &grain_columns)
+    {
+        return PrimaryKeySummary {
+            pk_columns: grain_columns.clone(),
+            declared_grain_columns: grain_columns,
+            evidence: "meta.nova.grain.time_field_dimensions_unique_test",
+            pk_score: 20,
+            pk_integrity_score: 10,
+            has_pk: true,
+            pk_integrity: true,
+        };
+    }
+
+    PrimaryKeySummary {
+        pk_columns: Vec::new(),
+        declared_grain_columns: Vec::new(),
+        evidence: "missing",
+        pk_score: 0,
+        pk_integrity_score: 0,
+        has_pk: false,
+        pk_integrity: false,
+    }
+}
+
+fn primary_key_summary(
+    search: &ManifestSearch,
+    unique_id: &str,
+    pk_columns: Vec<String>,
+    evidence: &'static str,
+) -> PrimaryKeySummary {
+    let pk_integrity = pk_integrity_ok(search, unique_id, &pk_columns);
     let pk_integrity_score = if pk_integrity { 10 } else { 0 };
 
     PrimaryKeySummary {
+        declared_grain_columns: pk_columns.clone(),
         pk_columns,
-        pk_score,
+        evidence,
+        pk_score: 20,
         pk_integrity_score,
-        has_pk,
+        has_pk: true,
         pk_integrity,
     }
 }
@@ -473,6 +533,138 @@ fn pk_integrity_ok(search: &ManifestSearch, unique_id: &str, pk_columns: &[Strin
         }
     }
     true
+}
+
+fn nova_grain_primary_keys(entity_json: &JsonValue) -> Option<Vec<String>> {
+    let keys = entity_nova_meta_json(entity_json)
+        .as_deref()
+        .and_then(|nova| nova.get("grain"))
+        .and_then(|grain| grain.get("primary_key"))
+        .and_then(JsonValue::as_array)?
+        .iter()
+        .filter_map(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    (!keys.is_empty()).then_some(keys)
+}
+
+fn aggregate_grain_columns(entity_json: &JsonValue) -> Option<Vec<String>> {
+    let nova = entity_nova_meta_json(entity_json);
+    let grain = nova.as_deref()?.get("grain")?;
+    let time_field = grain
+        .get("time_field")
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let dimensions = grain
+        .get("dimensions")
+        .and_then(JsonValue::as_array)?
+        .iter()
+        .filter_map(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if dimensions.is_empty() {
+        return None;
+    }
+    let mut columns = Vec::with_capacity(dimensions.len() + 1);
+    columns.push(time_field.to_string());
+    columns.extend(dimensions);
+    Some(columns)
+}
+
+fn unique_test_covers_columns(
+    search: &ManifestSearch,
+    unique_id: &str,
+    expected_columns: &[String],
+) -> bool {
+    let Some(test_ids) = search.tests_by_entity.get(unique_id) else {
+        return false;
+    };
+    let expected = normalized_column_set(expected_columns);
+    for test_id in test_ids {
+        let Ok(Some(test)) = search.get_entity_archived(test_id) else {
+            continue;
+        };
+        let test_json = test.to_json_value();
+        let Some(test_columns) = unique_test_columns(&test_json) else {
+            continue;
+        };
+        if normalized_column_set(&test_columns) == expected {
+            return true;
+        }
+    }
+    false
+}
+
+fn unique_test_columns(test_json: &JsonValue) -> Option<Vec<String>> {
+    let test_name = test_json
+        .get("test_metadata")
+        .and_then(|metadata| metadata.get("name"))
+        .and_then(JsonValue::as_str)?;
+    match test_name {
+        "unique" => test_json
+            .get("column_name")
+            .and_then(JsonValue::as_str)
+            .map(|column| vec![column.to_string()]),
+        "unique_combination_of_columns" | "dbt_utils.unique_combination_of_columns" => {
+            test_argument_columns(test_json, "combination_of_columns")
+        }
+        _ => None,
+    }
+}
+
+fn test_argument_columns(test_json: &JsonValue, key: &str) -> Option<Vec<String>> {
+    for pointer in [
+        format!("/test_metadata/kwargs/{key}"),
+        format!("/test_metadata/arguments/{key}"),
+        format!("/kwargs/{key}"),
+        format!("/arguments/{key}"),
+    ] {
+        if let Some(columns) = test_json.pointer(&pointer).and_then(json_string_array) {
+            return Some(columns);
+        }
+    }
+    None
+}
+
+fn json_string_array(value: &JsonValue) -> Option<Vec<String>> {
+    match value {
+        JsonValue::Array(values) => {
+            let columns = values
+                .iter()
+                .filter_map(JsonValue::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            (!columns.is_empty()).then_some(columns)
+        }
+        JsonValue::String(value) => {
+            let columns = value
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            (!columns.is_empty()).then_some(columns)
+        }
+        _ => None,
+    }
+}
+
+fn normalized_column_set(columns: &[String]) -> Vec<String> {
+    let mut normalized = columns
+        .iter()
+        .map(|column| column.trim().to_lowercase())
+        .filter(|column| !column.is_empty())
+        .collect::<Vec<_>>();
+    normalized.sort_unstable();
+    normalized.dedup();
+    normalized
 }
 
 fn constraint_count(columns: &serde_json::Map<String, JsonValue>) -> usize {

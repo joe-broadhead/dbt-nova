@@ -13,9 +13,10 @@ const ARRAY_FULL_CREDIT_COUNT: usize = 3;
 const MAX_COLUMN_DIAGNOSTICS: usize = 12;
 
 #[must_use]
-pub(crate) fn metadata_score_scoring_contract() -> JsonValue {
-    json!({
-        "schema_version": "metadata_score_contract.v1",
+pub(crate) fn metadata_score_scoring_contract(version: &str) -> JsonValue {
+    let version = normalized_contract_version(version);
+    let mut contract = json!({
+        "schema_version": format!("metadata_score_contract.{version}"),
         "grade_bands": grade_bands_json(),
         "description_tiers": [
             {"min_chars": 0, "max_chars": 0, "credit_percent": 0},
@@ -43,7 +44,43 @@ pub(crate) fn metadata_score_scoring_contract() -> JsonValue {
             "evidence_source": "dbt manifest test metadata only",
             "warehouse_introspection": false
         }
-    })
+    });
+
+    if version == "v2" {
+        contract["declared_grain"] = json!({
+            "full_credit_evidence": [
+                "columns.meta.primary_key",
+                "meta.nova.grain.primary_key",
+                "meta.nova.grain.time_field + meta.nova.grain.dimensions with matching unique/unique_combination_of_columns test"
+            ],
+            "primary_key_breakdown_compatibility": true
+        });
+        contract["resource_type_expectations"] = json!({
+            "model": {
+                "scores_indicators": true,
+                "grain_evidence": ["primary_key", "aggregate_grain"]
+            },
+            "source": {
+                "scores_indicators": false,
+                "indicator_fields_not_applicable": ["meta.nova.measures", "meta.nova.metrics"]
+            },
+            "seed": {
+                "scores_indicators": true
+            },
+            "snapshot": {
+                "scores_indicators": true
+            }
+        });
+    }
+
+    contract
+}
+
+fn normalized_contract_version(version: &str) -> &'static str {
+    match version.trim() {
+        "v1" | "1" | "metadata_score_contract.v1" => "v1",
+        _ => "v2",
+    }
 }
 
 #[must_use]

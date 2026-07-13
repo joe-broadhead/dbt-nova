@@ -50,7 +50,7 @@ Notes:
     "persona": "analyst",
     "overall_score": 72,
     "grade": "C",
-    "scoring_contract": { "schema_version": "metadata_score_contract.v1" },
+    "scoring_contract": { "schema_version": "metadata_score_contract.v2" },
     "categories": {
       "documentation": { "score": 85, "weight": 0.20, "weighted": 17.0 },
       "semantic": { "score": 65, "weight": 0.45, "weighted": 29.25 },
@@ -70,9 +70,12 @@ the response as `truncated` when more sample rows are available. It also returns
 `quality_summary.test_coverage`, aggregated across all matching entities.
 
 All scopes include `scoring_contract.schema_version:
-"metadata_score_contract.v1"` so agents can explain scores without reading
+"metadata_score_contract.v2"` so agents can explain scores without reading
 source code. The contract includes grade bands, description tiers, array-count
-tiers, canonical grain shape, and the primary-key integrity evidence rule.
+tiers, canonical grain shape, declared-grain evidence, resource-type
+expectations, and the primary-key integrity evidence rule. Set
+`DBT_NOVA_METADATA_SCORE_CONTRACT_VERSION=v1` only when a downstream gate needs
+the legacy contract label during migration.
 
 Nova also scores derived semantic metadata from dbt Semantic Layer / MetricFlow
 artifacts. Manifest `metrics` and `semantic_models` contribute Nova metric,
@@ -153,6 +156,11 @@ Based on `meta.nova` fields:
 - `metric` / `metrics` (expression + synonyms)
 - Column semantic coverage (% columns with role/semantic_type)
 
+For `resource_type: source`, analytical indicator fields (`meta.nova.measures`
+and `meta.nova.metrics`) are not scored and do not produce recommendations.
+Sources should remain landing-table metadata surfaces rather than analytical
+metric definitions.
+
 Note: `example_values` improves discovery but is **not** scored today.
 
 ### Governance (0–100)
@@ -169,8 +177,12 @@ Note: `example_values` improves discovery but is **not** scored today.
   - Critical coverage: identifier, measure, time (higher weight)
   - Dimension coverage: lighter weight for analytic slicing
   - Baseline credit if any tests exist (avoids “all‑or‑nothing”)
-- Primary key present
-- PK integrity (unique + not_null tests on PK)
+- Declared grain present. Full-credit evidence can be column
+  `meta.primary_key`, `meta.nova.grain.primary_key`, or aggregate
+  `meta.nova.grain.time_field` + `dimensions` with a matching
+  `unique`/`unique_combination_of_columns` dbt test over exactly those columns.
+- Grain integrity. Identifier PKs need `unique` + `not_null` test evidence;
+  aggregate grain receives integrity credit from the matching uniqueness test.
 - Constraints (tiered count of not_null / unique / foreign_key)
 
 `get_metadata_score` also surfaces a lightweight quality summary under

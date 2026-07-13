@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Bumped the metadata scoring contract to v2 with resource-shape-aware declared
+  grain scoring: aggregate marts can earn primary-key quality credit from
+  `time_field` + `dimensions` plus matching uniqueness tests, and raw sources no
+  longer receive measure/metric scoring recommendations or meta patch seeds.
 - Added additive column-lineage evidence for unresolved derived columns and
   rename planning: `get_column_lineage` can now return defining SQL
   expressions, candidate upstream columns, and optional metadata/test/recipe

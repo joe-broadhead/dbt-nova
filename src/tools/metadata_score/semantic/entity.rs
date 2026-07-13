@@ -30,6 +30,7 @@ impl ManifestSearch {
             nova.as_deref(),
             &columns,
             expects_columns,
+            resource_type,
             include_recommendations,
             recommendations,
         );
@@ -88,6 +89,7 @@ fn collect_semantic_scores(
     nova: Option<&JsonValue>,
     columns: &serde_json::Map<String, JsonValue>,
     expects_columns: bool,
+    resource_type: Option<&str>,
     include_recommendations: bool,
     recommendations: &mut Vec<JsonValue>,
 ) -> SemanticScores {
@@ -110,12 +112,21 @@ fn collect_semantic_scores(
         recommendations,
     );
     let grain = score_grain(nova, include_recommendations, recommendations);
+    let score_indicator_metadata = scores_indicator_metadata(resource_type);
     let measures = {
-        let (score, breakdown) = score_measures(nova, include_recommendations, recommendations);
+        let (score, breakdown) = if score_indicator_metadata {
+            score_measures(nova, include_recommendations, recommendations)
+        } else {
+            not_applicable_indicator_score(nova, "measures")
+        };
         ScoreDetail { score, breakdown }
     };
     let metrics = {
-        let (score, breakdown) = score_metrics(nova, include_recommendations, recommendations);
+        let (score, breakdown) = if score_indicator_metadata {
+            score_metrics(nova, include_recommendations, recommendations)
+        } else {
+            not_applicable_indicator_score(nova, "metrics")
+        };
         ScoreDetail { score, breakdown }
     };
 
@@ -288,6 +299,39 @@ fn score_metrics(
         );
     }
     score
+}
+
+fn scores_indicator_metadata(resource_type: Option<&str>) -> bool {
+    !matches!(resource_type, Some("source"))
+}
+
+fn not_applicable_indicator_score(nova: Option<&JsonValue>, key: &str) -> (u8, JsonValue) {
+    let count = match key {
+        "measures" => array_len(nova, "measures"),
+        "metrics" => metric_count(nova),
+        _ => 0,
+    };
+    (
+        0,
+        serde_json::json!({
+            "score": 0,
+            "max": 0,
+            "count": count,
+            "applicable": false,
+            "reason": "not_scored_for_resource_type"
+        }),
+    )
+}
+
+fn metric_count(nova: Option<&JsonValue>) -> usize {
+    nova.and_then(|n| n.get("metrics").or_else(|| n.get("metric")))
+        .map_or(0, |metrics| {
+            if let Some(values) = metrics.as_array() {
+                values.len()
+            } else {
+                usize::from(metrics.is_object())
+            }
+        })
 }
 
 fn column_semantic_coverage(

@@ -309,6 +309,85 @@ async fn metadata_score_diagnostics_cover_agent_feedback_cases() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn metadata_score_accepts_aggregate_grain_as_primary_key_evidence() {
+    let searcher = get_searcher_with_fixture("resource_shape_scoring.json");
+    let aggregate_params = GetMetadataScoreParams {
+        id_or_name: Some("model.pkg.aggregate_sales_daily_category".to_string()),
+        include_breakdown: true,
+        include_recommendations: true,
+        ..Default::default()
+    };
+    let fabricated_params = GetMetadataScoreParams {
+        id_or_name: Some("model.pkg.fabricated_pk_sales_daily_category".to_string()),
+        include_breakdown: true,
+        include_recommendations: true,
+        ..Default::default()
+    };
+
+    let aggregate = searcher.get_metadata_score(&aggregate_params).await.json();
+    let fabricated = searcher.get_metadata_score(&fabricated_params).await.json();
+    let aggregate_data = &aggregate["data"];
+    let fabricated_data = &fabricated["data"];
+
+    assert_eq!(
+        aggregate_data["scoring_contract"]["schema_version"],
+        json!("metadata_score_contract.v2")
+    );
+    assert_eq!(
+        aggregate_data["breakdown"]["quality"]["primary_key"]["score"],
+        json!(20)
+    );
+    assert_eq!(
+        aggregate_data["breakdown"]["quality"]["primary_key_integrity"]["score"],
+        json!(10)
+    );
+    assert_eq!(
+        aggregate_data["breakdown"]["quality"]["declared_grain"]["evidence"],
+        json!("meta.nova.grain.time_field_dimensions_unique_test")
+    );
+    assert!(
+        aggregate_data["overall_score"].as_u64().unwrap_or(0)
+            >= fabricated_data["overall_score"].as_u64().unwrap_or(0),
+        "aggregate grain with matching uniqueness evidence should score at least as well as a fabricated column PK"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn metadata_score_does_not_score_source_indicator_metadata() {
+    let searcher = get_searcher_with_fixture("resource_shape_scoring.json");
+    let params = GetMetadataScoreParams {
+        id_or_name: Some("source.pkg.raw.orders".to_string()),
+        resource_type: Some("source".to_string()),
+        include_breakdown: true,
+        include_recommendations: true,
+        ..Default::default()
+    };
+
+    let result = searcher.get_metadata_score(&params).await.json();
+    let data = &result["data"];
+    assert_eq!(
+        data["breakdown"]["semantic"]["measures"]["applicable"],
+        json!(false)
+    );
+    assert_eq!(
+        data["breakdown"]["semantic"]["metrics"]["applicable"],
+        json!(false)
+    );
+    let recommendations = data["recommendations"]
+        .as_array()
+        .expect("recommendations array");
+    assert!(
+        recommendations.iter().all(|recommendation| {
+            !matches!(
+                recommendation["field"].as_str(),
+                Some("meta.nova.measures" | "meta.nova.metrics")
+            )
+        }),
+        "sources should not receive measure/metric scoring recommendations"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn metadata_score_column_diagnostics_expose_description_and_array_tiers() {
     let searcher = get_searcher_with_fixture("metadata_diagnostics.json");
     let params = GetMetadataScoreParams {
