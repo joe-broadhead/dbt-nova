@@ -966,7 +966,7 @@ impl DbtNovaServer {
     /// Analyze the downstream impact of changing an entity.
     #[tool(
         name = "get_impact",
-        description = "Quick blast-radius estimate. Returns downstream count and an impact score to gauge risk before making changes."
+        description = "Quick blast-radius estimate. Returns downstream count and an impact score to gauge risk before making changes. Add column to scope the estimate and include metadata/test/recipe reference counts for rename planning."
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn get_impact(&self, params: Parameters<GetImpactParams>) -> ToolCallResponse {
@@ -1389,7 +1389,7 @@ impl DbtNovaServer {
     /// Trace column lineage upstream or downstream.
     #[tool(
         name = "get_column_lineage",
-        description = "Column-level lineage. Trace a column upstream (origins) or downstream (usage). Uses SQL parsing + heuristics. Use confidence=high for exact matches, medium (default) for SQL-based matches, low for fuzzy."
+        description = "Column-level lineage. Trace a column upstream (origins) or downstream (usage). Uses SQL parsing + heuristics, returns definition evidence when upstream resolution is empty, and can include metadata/test/recipe references."
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn get_column_lineage(

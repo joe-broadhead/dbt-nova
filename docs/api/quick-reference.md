@@ -30,8 +30,8 @@ machine-checked stability tier, profile, and safety-gate matrix.
 | Tool | Purpose | Key Parameters |
 |------|---------|----------------|
 | `get_lineage` | Traverse entity lineage | `id_or_name`, `direction`, `depth`, `resource_types`, `detail` |
-| `get_impact` | Blast-radius estimate | `id_or_name` |
-| `get_column_lineage` | Trace column upstream/downstream | `id_or_name`, `resource_type`, `column_name`, `direction`, `confidence` |
+| `get_impact` | Blast-radius estimate | `id_or_name`, `column` |
+| `get_column_lineage` | Trace column upstream/downstream | `id_or_name`, `resource_type`, `column_name`, `direction`, `confidence`, `include_references` |
 
 ## Code & Schema
 

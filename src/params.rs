@@ -498,6 +498,9 @@ pub struct DiffEntitiesParams {
 pub struct GetImpactParams {
     /// Unique ID or name of the entity to assess
     pub id_or_name: String,
+    /// Optional column name to scope downstream impact and reference counts
+    #[serde(default)]
+    pub column: Option<String>,
 }
 
 /// Parameters for the get_column_lineage tool.
@@ -518,6 +521,9 @@ pub struct GetColumnLineageParams {
     /// Confidence threshold: "high", "medium", or "low"
     #[serde(default)]
     pub confidence: Option<String>,
+    /// Include metadata, test, and recipe SQL references to this column name
+    #[serde(default)]
+    pub include_references: bool,
 }
 
 /// Parameters for the get_test_coverage tool.

@@ -1,5 +1,6 @@
 pub mod catalog;
 pub mod column_lineage;
+pub(crate) mod column_references;
 pub mod context;
 pub mod coverage;
 pub mod diff;

@@ -84,6 +84,7 @@ async fn test_full_workflow() {
     // 6. Get impact to validate downstream dependency reporting.
     let impact_params = GetImpactParams {
         id_or_name: unique_id.to_string(),
+        column: None,
     };
     let impact_result = searcher.get_impact(&impact_params).await.json();
     let success = impact_result

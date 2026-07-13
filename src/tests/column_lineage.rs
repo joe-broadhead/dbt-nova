@@ -12,6 +12,7 @@ async fn test_get_column_lineage_entity_not_found() {
         direction: "upstream".to_string(),
         depth: None,
         confidence: Some("medium".to_string()),
+        include_references: false,
     };
     let result = searcher.get_column_lineage(&params).await.json();
     let success = result
@@ -36,6 +37,7 @@ async fn test_get_column_lineage_column_not_found() {
         direction: "upstream".to_string(),
         depth: None,
         confidence: Some("medium".to_string()),
+        include_references: false,
     };
     let result = searcher.get_column_lineage(&params).await.json();
     let success = result
@@ -62,6 +64,7 @@ async fn test_get_column_lineage_invalid_direction() {
         direction: "invalid".to_string(),
         depth: None,
         confidence: Some("medium".to_string()),
+        include_references: false,
     };
     let result = searcher.get_column_lineage(&params).await.json();
     let success = result
@@ -93,6 +96,7 @@ async fn test_get_column_lineage_upstream_high_confidence() {
         direction: "upstream".to_string(),
         depth: Some(1),
         confidence: Some("high".to_string()),
+        include_references: false,
     };
     let result = searcher.get_column_lineage(&params).await.json();
     let success = result
@@ -143,6 +147,7 @@ async fn test_get_column_lineage_downstream() {
         direction: "downstream".to_string(),
         depth: Some(2),
         confidence: Some("medium".to_string()),
+        include_references: false,
     };
     let result = searcher.get_column_lineage(&params).await.json();
     let success = result
@@ -175,6 +180,7 @@ async fn test_get_column_lineage_depth_limit() {
         direction: "upstream".to_string(),
         depth: Some(1),
         confidence: Some("low".to_string()),
+        include_references: false,
     };
     let result = searcher.get_column_lineage(&params).await.json();
     let success = result
@@ -218,6 +224,7 @@ async fn test_get_column_lineage_confidence_levels() {
         direction: "upstream".to_string(),
         depth: Some(3),
         confidence: Some("high".to_string()),
+        include_references: false,
     };
     let result_high = searcher.get_column_lineage(&params_high).await.json();
     // Low confidence
@@ -228,6 +235,7 @@ async fn test_get_column_lineage_confidence_levels() {
         direction: "upstream".to_string(),
         depth: Some(3),
         confidence: Some("low".to_string()),
+        include_references: false,
     };
     let result_low = searcher.get_column_lineage(&params_low).await.json();
     // Low confidence should have >= results than high confidence
@@ -259,6 +267,7 @@ async fn test_get_column_lineage_response_structure() {
         direction: "upstream".to_string(),
         depth: None,
         confidence: Some("low".to_string()),
+        include_references: false,
     };
     let result = searcher.get_column_lineage(&params).await.json();
     let success = result
@@ -319,6 +328,7 @@ async fn test_get_column_lineage_ambiguous_name_returns_error() {
         direction: "upstream".to_string(),
         depth: Some(1),
         confidence: Some("medium".to_string()),
+        include_references: false,
     };
     let result = searcher.get_column_lineage(&params).await;
     match result {

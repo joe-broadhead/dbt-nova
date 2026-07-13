@@ -449,6 +449,10 @@ pub const MCP_BUDGETABLE_DATA_ARRAY_FIELDS: &[McpBudgetableDataArrayField] = &[
         returned_count_field: None,
     },
     McpBudgetableDataArrayField {
+        field: "references",
+        returned_count_field: Some("reference_count"),
+    },
+    McpBudgetableDataArrayField {
         field: "not_found",
         returned_count_field: Some("not_found_count"),
     },
@@ -477,7 +481,7 @@ pub const MCP_RESPONSE_BUDGET_CONTRACTS: &[McpResponseBudgetContract] = &[
     },
     McpResponseBudgetContract {
         tool: "get_column_lineage",
-        data_array_fields: &["edges"],
+        data_array_fields: &["lineage", "references"],
     },
     McpResponseBudgetContract {
         tool: "get_undocumented",
