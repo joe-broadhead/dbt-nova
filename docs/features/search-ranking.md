@@ -194,6 +194,12 @@ DBT_NOVA_SEARCH_ENGINEER_EXACT_MATCH_MULTIPLIER=2.0
 12) **Analyst near-tie hinting** emits `analysis_hints` when top candidates are within a small score
    gap, prompting `get_entity`/`get_context` validation before SQL generation.
 
+The executable guard for the first ranking tier is
+`evals/search-ranking-regressions.yml`. It runs against the synthetic
+`tests/fixtures/keyword_phrase_ranking.json` manifest and fails if exact entity
+names, two-token metric names, or declared multi-word metric synonyms no longer
+rank first with lexical search.
+
 ## Persona Candidate Metadata
 
 Use `meta.nova.search.candidates` when a model should remain searchable but

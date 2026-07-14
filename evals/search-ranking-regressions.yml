@@ -1,0 +1,42 @@
+version: 1
+name: search-ranking-regressions
+purpose: Guard keyword and phrase ranking behavior for entity names, metric names, and declared synonyms.
+manifest_scope: tests/fixtures/keyword_phrase_ranking.json synthetic keyword/phrase ranking manifest
+known_gaps:
+  - Does not execute warehouse SQL.
+  - Covers deterministic lexical ranking only; vector, sparse, and reranker behavior are intentionally out of scope.
+gate:
+  threshold: 1.0
+defaults:
+  persona: analyst
+  top_k: 5
+
+cases:
+  - id: exact_entity_name_ranks_first
+    question: Exact normalized entity-name queries should keep the matching model first.
+    assertions:
+      - type: search_rank
+        query: mart customer cohort monthly
+        expected_unique_id: model.pkg.mart__customer_cohort_monthly
+        max_rank: 1
+        resource_types: [model]
+
+  - id: two_token_metric_query_ranks_declaring_entity_first
+    question: Two-token metric-name queries should rank the declaring entity above broad rate collisions.
+    assertions:
+      - type: search_indicator_rank
+        query: retention rate
+        expected: customer_retention_rate
+        max_rank: 1
+        resource_types: [model]
+        indicator_types: [metric]
+
+  - id: exact_metric_synonym_ranks_first
+    question: Declared multi-word metric synonyms should rank the owning metric first.
+    assertions:
+      - type: search_indicator_rank
+        query: availability rate
+        expected: stock_availability_rate
+        max_rank: 1
+        resource_types: [model]
+        indicator_types: [metric]
