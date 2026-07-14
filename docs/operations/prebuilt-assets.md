@@ -183,6 +183,10 @@ Publish target auth requirements:
 | `gcs` | Token via one of `DBT_NOVA_GCP_ACCESS_TOKEN`, `DBT_NOVA_BIGQUERY_ACCESS_TOKEN`, `GCP_ACCESS_TOKEN`, `GOOGLE_OAUTH_ACCESS_TOKEN`, or GitHub OIDC via `gcp_workload_identity_provider` + `gcp_service_account` |
 | `dbfs` | `DATABRICKS_HOST` and `DATABRICKS_ACCESS_TOKEN` |
 
+OIDC-backed GCS publish is intentionally not allowed in the same reusable job
+that generates a manifest from caller dbt code. Generate the manifest before
+calling the reusable workflow, or use token-based GCS credentials for that run.
+
 Common downstream pattern: keep a repo-local `workflow_dispatch` wrapper and
 call this reusable workflow from it. This lets each repo set its own target
 defaults, storage instance naming, and publish prefixes without forking Nova's
@@ -277,6 +281,8 @@ GitHub OIDC notes for GCS:
 - pass `gcp_workload_identity_provider` and `gcp_service_account`
 - optional `gcp_project_id` is forwarded to `google-github-actions/auth`
 - if OIDC is configured, you do not need a static `DBT_NOVA_GCP_ACCESS_TOKEN`
+- OIDC-backed GCS publish requires an existing `manifest_path` or
+  `manifest_uri`; it cannot be combined with `dbt_generate_manifest=true`
 
 Installer mode guidance:
 

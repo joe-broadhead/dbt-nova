@@ -4,12 +4,6 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Existing release tag to publish (for example: v0.0.1)"
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -27,14 +21,13 @@ jobs:
       - name: Resolve tag
         id: resolve_tag
         shell: bash
-        env:
-          INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          release_tag="${GITHUB_REF_NAME}"
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            release_tag="${INPUT_TAG}"
+          if [[ "${GITHUB_REF}" != refs/tags/* ]]; then
+            echo "Release workflow must run from a tag ref."
+            exit 1
           fi
+          release_tag="${GITHUB_REF_NAME}"
           if ! [[ "${release_tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Invalid release tag: ${release_tag}"
             exit 1
@@ -319,7 +312,7 @@ jobs:
             COSIGN_EXPERIMENTAL=1 cosign verify-blob \
               --certificate "${asset}.tar.gz.crt" \
               --signature "${asset}.tar.gz.sig" \
-              --certificate-identity-regexp "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/(tags/${RELEASE_TAG}|heads/master)" \
+              --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/${RELEASE_TAG}" \
               --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
               "${asset}.tar.gz"
           done
@@ -394,7 +387,7 @@ jobs:
           scanners: vuln
           vuln-type: os,library
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
-          ignore-unfixed: true
+          ignore-unfixed: false
           trivyignores: .trivyignore.yaml
           format: json
           output: dbt-nova-oci-trivy.json
@@ -409,7 +402,7 @@ jobs:
           scanners: vuln
           vuln-type: os,library
           severity: HIGH,CRITICAL
-          ignore-unfixed: true
+          ignore-unfixed: false
           trivyignores: .trivyignore.yaml
           format: table
           exit-code: "1"
@@ -430,14 +423,17 @@ jobs:
           set -euo pipefail
           docker push "${AMD64_IMAGE}"
 
-      - name: Build and push ARM64 image
+      - name: Build ARM64 image
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
         with:
           context: .
           file: Dockerfile.oci
           platforms: linux/arm64
-          push: true
-          tags: ${{ steps.image.outputs.arm64_tag }}
+          load: true
+          push: false
+          tags: |
+            dbt-nova:release-smoke-arm64
+            ${{ steps.image.outputs.arm64_tag }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: TARGETARCH=arm64
           provenance: false
@@ -445,7 +441,7 @@ jobs:
       - name: Smoke ARM64 HTTP container
         shell: bash
         env:
-          ARM64_IMAGE: ${{ steps.image.outputs.arm64_tag }}
+          ARM64_IMAGE: dbt-nova:release-smoke-arm64
         run: |
           set -euo pipefail
           docker rm -f dbt-nova-arm64-release-smoke >/dev/null 2>&1 || true
@@ -480,6 +476,50 @@ jobs:
 
           test "$health_ok" -eq 1
           test "$ready_ok" -eq 1
+
+      - name: Scan smoke-tested ARM64 image report
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: image
+          image-ref: dbt-nova:release-smoke-arm64
+          scanners: vuln
+          vuln-type: os,library
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          trivyignores: .trivyignore.yaml
+          format: json
+          output: dbt-nova-oci-arm64-trivy.json
+          exit-code: "0"
+          timeout: 10m
+
+      - name: Gate smoke-tested ARM64 image vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: image
+          image-ref: dbt-nova:release-smoke-arm64
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          trivyignores: .trivyignore.yaml
+          format: table
+          exit-code: "1"
+          timeout: 10m
+
+      - name: Publish ARM64 OCI scan report
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
+        with:
+          tag_name: ${{ needs.validate.outputs.release_tag }}
+          overwrite_files: true
+          files: dbt-nova-oci-arm64-trivy.json
+
+      - name: Push smoke-tested ARM64 image
+        shell: bash
+        env:
+          ARM64_IMAGE: ${{ steps.image.outputs.arm64_tag }}
+        run: |
+          set -euo pipefail
+          docker push "${ARM64_IMAGE}"
 
       - name: Publish multi-arch manifest
         id: manifest

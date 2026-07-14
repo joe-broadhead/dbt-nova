@@ -130,7 +130,7 @@ Operational defaults:
 ### Release Build
 
 - **File:** `.github/workflows/release.yml`
-- **Trigger:** `v*` tag push (or manual `workflow_dispatch` with `tag` input)
+- **Trigger:** `v*` tag push
 - **Action:**
   - validates tag is on `master`
   - validates `Cargo.toml` and `CHANGELOG.md` match the release tag version

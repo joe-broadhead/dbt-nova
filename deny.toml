@@ -1,7 +1,7 @@
 [advisories]
 db-path = "$CARGO_HOME/advisory-dbs"
 db-urls = ["https://github.com/rustsec/advisory-db"]
-yanked = "warn"
+yanked = "deny"
 unmaintained = "transitive"
 unsound = "transitive"
 ignore = [
@@ -37,6 +37,6 @@ allow = [
 confidence-threshold = 0.8
 
 [sources]
-unknown-registry = "warn"
-unknown-git = "warn"
+unknown-registry = "deny"
+unknown-git = "deny"
 allow-git = []

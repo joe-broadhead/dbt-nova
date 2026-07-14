@@ -59,12 +59,12 @@ Before tagging:
 - [ ] `CHANGELOG.md` updated for the version
 - [ ] `Cargo.toml` version bumped
 - [ ] `Cargo.toml` version matches the intended tag exactly
-- [ ] `cargo test --all-features` passes
+- [ ] `cargo test --locked --all-features` passes
 - [ ] `cargo clippy --locked --all-targets --all-features -- -D warnings` passes
 - [ ] `cargo fmt --check` passes
-- [ ] Docs build clean (`mkdocs build --strict`)
-- [ ] Config defaults are current (`scripts/check_config_reference.sh`)
-- [ ] Module-size exceptions are current (`scripts/check_module_size.sh`)
+- [ ] Docs build clean (`uv run mkdocs build --strict`)
+- [ ] Config defaults are current (`bash scripts/check_config_reference.sh`)
+- [ ] Module-size exceptions are current (`bash scripts/check_module_size.sh`)
 - [ ] Workflow changes have been linted with `actionlint`
 - [ ] Supply-chain changes have `cargo deny check` and dependency watchlist
       review where applicable
@@ -97,8 +97,6 @@ This repo uses four GitHub Actions workflows for releases and documentation:
 
 3. **Release Build** (`.github/workflows/release.yml`)
    - Trigger: `v*` tag push
-   - Manual fallback: `workflow_dispatch` with `tag` input (useful when a tag exists
-     but was pushed in a way that did not trigger downstream workflows)
    - Actions:
      - validates tag is on `master`
      - validates the crate version and changelog entry match the tag
