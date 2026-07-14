@@ -894,6 +894,7 @@ Optional:
 - `personas_json`: JSON array, defaulting to `["engineer"]`
 - `personas`: typed array alias for `personas_json`
 - `thresholds_json`: JSON required/advisory threshold configuration
+- `thresholds`: typed object alias for `thresholds_json`
 - `include_breakdown`, `include_recommendations`
 - `fail_on_no_targets`
 
@@ -904,11 +905,12 @@ category weak spots, repeated recommendation fields with estimated impact, and
 drill-down hints.
 
 ```json
-{"name":"get_metadata_audit","arguments":{"selection_mode":"changed","changed_files_json":"[\"models/marts/orders.sql\"]"}}
+{"name":"get_metadata_audit","arguments":{"selection_mode":"changed","changed_files":["models/marts/orders.sql"],"resource_types":["model"]}}
 ```
 
-Unknown top-level tool parameters are rejected instead of ignored. Use either a
-typed array alias or its `*_json` form for the same setting, not both.
+Unknown top-level tool parameters are rejected instead of ignored. Prefer typed
+aliases for MCP calls. The older `*_json` string fields remain accepted; if both
+forms are supplied for one setting, they must represent the same value.
 
 See `docs/features/metadata-audit.md` for report fields and threshold examples.
 
@@ -918,8 +920,11 @@ Manifest-level readiness report for agent workflows.
 Optional:
 - `personas_json`: JSON array of personas, defaulting to
   `["engineer","analyst","governance"]`
+- `personas`: typed array alias for `personas_json`
 - `thresholds_json`: JSON readiness threshold configuration
+- `thresholds`: typed object alias for `thresholds_json`
 - `eval_gate_json`: raw `eval gate` report JSON or the full CLI JSON envelope
+- `eval_gate`: typed object alias for `eval_gate_json`
 
 The tool returns the same `agent_readiness.v1` report contract as
 `dbt-nova audit agent-readiness --json`, without writing report files or applying
@@ -942,7 +947,7 @@ Large reports use the standard MCP response-budget behavior; check
 `_nova_result_meta.truncated` when response budgeting is enabled.
 
 ```json
-{"name":"get_agent_readiness","arguments":{"personas_json":"[\"engineer\",\"analyst\"]"}}
+{"name":"get_agent_readiness","arguments":{"personas":["engineer","analyst"]}}
 ```
 
 See `docs/features/agent-readiness.md` for report fields and threshold examples.

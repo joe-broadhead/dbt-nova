@@ -16,6 +16,7 @@ pub mod output;
 pub mod server_cmd;
 pub mod storage_cmd;
 pub mod tool;
+mod tool_param_aliases;
 pub mod trace_cmd;
 
 pub struct DispatchError {

@@ -363,6 +363,157 @@ models:
 }
 
 #[test]
+fn validate_nova_meta_warns_on_project_scope_canonical_indicator_conflicts() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    write_fixture(
+        &temp_dir,
+        "models/canonical-conflicts.yml",
+        r#"
+version: 2
+models:
+  - name: mart_orders_monthly
+    meta:
+      nova:
+        grain:
+          time_field: month_start
+          dimensions: ["store_id"]
+        measures:
+          - name: gross_sales
+            type: sum
+            expression: "sum(gross_sales)"
+            description: "Gross sales."
+            canonical: true
+    columns:
+      - name: month_start
+      - name: store_id
+      - name: gross_sales
+  - name: mart_orders_daily
+    meta:
+      nova:
+        grain:
+          time_field: order_date
+          dimensions: ["store_id"]
+        measures:
+          - name: gross_sales
+            type: sum
+            expression: "sum(gross_sales)"
+            description: "Gross sales."
+            canonical: true
+    columns:
+      - name: order_date
+      - name: store_id
+      - name: gross_sales
+  - name: mart_orders_monthly_copy
+    meta:
+      nova:
+        grain:
+          time_field: month_start
+          dimensions: ["store_id"]
+        measures:
+          - name: gross_sales
+            type: sum
+            expression: "sum(gross_sales)"
+            description: "Gross sales."
+            canonical: true
+    columns:
+      - name: month_start
+      - name: store_id
+      - name: gross_sales
+"#,
+    );
+
+    let report = validate_nova_meta(&NovaMetaValidationOptions {
+        project_dir: temp_dir.path().to_path_buf(),
+        paths: Vec::new(),
+        selector: NovaMetaTargetSelector::default(),
+    });
+
+    assert_eq!(report.error_count, 0);
+    assert!(
+        report.findings.iter().any(|finding| {
+            finding.code == "canonical_indicator_conflict"
+                && finding.severity == NovaMetaFindingSeverity::Warning
+                && finding.message.contains("mart_orders_daily")
+                && finding.message.contains("mart_orders_monthly")
+        }),
+        "{:#?}",
+        report.findings
+    );
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|finding| finding.code == "duplicate_canonical_surface"
+                && finding.message.contains("mart_orders_monthly_copy")),
+        "{:#?}",
+        report.findings
+    );
+}
+
+#[test]
+fn validate_nova_meta_allows_grain_scoped_canonical_indicators() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    write_fixture(
+        &temp_dir,
+        "models/canonical-scope.yml",
+        r#"
+version: 2
+models:
+  - name: mart_orders_monthly
+    meta:
+      nova:
+        grain:
+          time_field: month_start
+          dimensions: ["store_id"]
+        measures:
+          - name: gross_sales
+            type: sum
+            expression: "sum(gross_sales)"
+            description: "Gross sales."
+            canonical: true
+            canonical_scope: grain
+    columns:
+      - name: month_start
+      - name: store_id
+      - name: gross_sales
+  - name: mart_orders_daily
+    meta:
+      nova:
+        grain:
+          time_field: order_date
+          dimensions: ["store_id"]
+        measures:
+          - name: gross_sales
+            type: sum
+            expression: "sum(gross_sales)"
+            description: "Gross sales."
+            canonical: true
+            canonical_scope: grain
+    columns:
+      - name: order_date
+      - name: store_id
+      - name: gross_sales
+"#,
+    );
+
+    let report = validate_nova_meta(&NovaMetaValidationOptions {
+        project_dir: temp_dir.path().to_path_buf(),
+        paths: Vec::new(),
+        selector: NovaMetaTargetSelector::default(),
+    });
+
+    assert_eq!(report.error_count, 0);
+    assert!(
+        !report
+            .findings
+            .iter()
+            .any(|finding| finding.code == "canonical_indicator_conflict"),
+        "{:#?}",
+        report.findings
+    );
+}
+
+#[test]
 fn validate_nova_meta_skips_field_existence_checks_for_metric_resources() {
     let temp_dir = TempDir::new().expect("temp dir");
     write_fixture(

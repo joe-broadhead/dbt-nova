@@ -73,7 +73,9 @@ to additional domains.
 - `grain`: both `primary_key` and `time_field` are populated.
 - `measures`: each measure uses `name`, `expression`, `description`, `type`, `field`,
   `synonyms`, and can optionally set `canonical: true` when the same business
-  term exists on multiple models.
+  term exists on multiple models. Use `canonical_scope: grain` only when a
+  measure is intentionally canonical for that model grain instead of globally
+  canonical for the measure name.
 - `governance`: `sensitivity` is `low` or `medium`; `pii` is `none` or `possible`;
   `compliance` includes `gdpr`.
 
@@ -138,6 +140,11 @@ Measures are **model‑bound**: they belong to the model where the underlying da
 
 Use `canonical: true` on a measure when the same business term exists on multiple
 models but one definition should surface first in analyst search.
+
+If the same measure name is intentionally canonical at multiple grains, add
+`canonical_scope: grain` on those measure entries. This keeps project validation
+from treating the definitions as competing global canonicals while preserving the
+metadata-bridge signal that each parent owns the measure at its declared grain.
 
 ### How to Detect Measures in a Model
 

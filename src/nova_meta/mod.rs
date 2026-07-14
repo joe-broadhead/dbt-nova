@@ -11,6 +11,8 @@ use serde_yaml::{Mapping as YamlMapping, Value as YamlValue};
 
 use crate::error::{DbtNovaError, Result};
 
+mod canonical;
+
 const NOVA_META_SCHEMA_VERSION: &str = "v0";
 const ENTITY_ONLY_FIELDS: [&str; 8] = [
     "canonical",
@@ -178,6 +180,7 @@ pub fn validate_nova_meta(options: &NovaMetaValidationOptions) -> NovaMetaValida
     match selected_targets {
         Ok(selected) => {
             let selected_count = selected.len();
+            findings.extend(canonical::validate_project_canonical_indicators(&selected));
             for target in selected {
                 findings.extend(validate_target_schema(target));
                 findings.extend(validate_target_semantics(target));

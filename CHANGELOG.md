@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added opt-in `diff_entities` sections for manifest-native modelling
   comparison: `grain`, `indicators`, `governance`, `tests`, and `all`, while
   preserving the columns-only default.
+- Added project-scope `validate_nova_meta` warnings for duplicate global
+  canonical indicators, plus `canonical_scope: grain` for intentional
+  grain-scoped canonical measure/metric definitions.
+- Added typed MCP aliases for metadata-audit and agent-readiness JSON inputs
+  while keeping the existing `*_json` fields compatible.
 - Hardened agent-facing defaults: `get_context` now counts lineage test nodes
   without letting them consume upstream/downstream entity slots by default,
   `modelling_consistency_report` applies a bounded default overlap threshold

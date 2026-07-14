@@ -45,13 +45,15 @@ dbt-nova audit metadata-score \
 ## MCP Tool
 
 ```json
-{"name":"get_metadata_audit","arguments":{"selection_mode":"changed","changed_files_json":"[\"models/marts/orders.sql\"]","resource_types_json":"[\"model\"]"}}
+{"name":"get_metadata_audit","arguments":{"selection_mode":"changed","changed_files":["models/marts/orders.sql"],"resource_types":["model"]}}
 ```
 
 The MCP tool returns the same JSON report contract as the CLI audit command,
 but does not write JSON/Markdown files and does not convert required threshold
 failures into transport errors. Check `data.gate_status` and `data.summary` for
-gate results.
+gate results. Prefer typed MCP fields such as `changed_files`, `resource_types`,
+`personas`, and `thresholds`; compatible `*_json` string fields remain accepted
+for clients that cannot send nested JSON values.
 
 ## Threshold Contract
 
