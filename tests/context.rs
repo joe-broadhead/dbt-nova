@@ -1,6 +1,7 @@
 //! Integration tests for get_context tool behavior.
 use dbt_nova::params::ContextLimits;
 use dbt_nova::params::{ContextMode, GetContextParams};
+use dbt_nova::{DbtNovaConfig, ManifestSearch};
 use serde_json::json;
 use std::io::Write;
 #[path = "support/config.rs"]
@@ -107,7 +108,12 @@ fn create_test_manifest() -> tempfile::NamedTempFile {
         },
         "child_map": {
             "source.test.raw.users": ["model.test.customers"],
-            "model.test.customers": ["model.test.orders"]
+            "model.test.customers": [
+                "test.test.unique_customers_customer_id",
+                "test.test.not_null_customers_customer_id",
+                "test.test.not_null_customers_email",
+                "model.test.orders"
+            ]
         }
     });
 
@@ -131,7 +137,9 @@ async fn context_includes_entity_basics() {
         resource_type: None,
         include_columns: true,
         include_upstream: false,
+        upstream_include_tests: false,
         include_downstream: false,
+        downstream_include_tests: false,
         include_tests: false,
         include_docs: false,
         include_sql: false,
@@ -163,7 +171,9 @@ async fn context_includes_columns_with_tests() {
         resource_type: None,
         include_columns: true,
         include_upstream: false,
+        upstream_include_tests: false,
         include_downstream: false,
+        downstream_include_tests: false,
         include_tests: false,
         include_docs: false,
         include_sql: false,
@@ -201,7 +211,9 @@ async fn context_includes_upstream_lineage() {
         resource_type: None,
         include_columns: false,
         include_upstream: true,
+        upstream_include_tests: false,
         include_downstream: false,
+        downstream_include_tests: false,
         include_tests: false,
         include_docs: false,
         include_sql: false,
@@ -233,7 +245,45 @@ async fn context_includes_downstream_lineage() {
         resource_type: None,
         include_columns: false,
         include_upstream: false,
+        upstream_include_tests: false,
         include_downstream: true,
+        downstream_include_tests: false,
+        include_tests: false,
+        include_docs: false,
+        include_sql: false,
+        context_mode: ContextMode::Standard,
+        limits: ContextLimits {
+            lineage_depth: 1,
+            upstream_limit: 10,
+            downstream_limit: 1,
+        },
+    };
+
+    let result = searcher.get_context(&params).await.unwrap();
+    let downstream = result["data"]["downstream"].as_object().unwrap();
+
+    assert_eq!(downstream["count"], 1);
+    assert_eq!(downstream["by_type"]["model"], 1);
+    assert_eq!(downstream["by_type"]["test"], 3);
+    assert_eq!(downstream["tests_total"], 3);
+
+    let entities = downstream["entities"].as_array().unwrap();
+    assert_eq!(entities[0]["unique_id"], "model.test.orders");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn context_can_include_test_nodes_in_downstream_lineage() {
+    let manifest_file = create_test_manifest();
+    let searcher = create_searcher(&manifest_file);
+
+    let params = GetContextParams {
+        id_or_name: "model.test.customers".to_string(),
+        resource_type: None,
+        include_columns: false,
+        include_upstream: false,
+        upstream_include_tests: false,
+        include_downstream: true,
+        downstream_include_tests: true,
         include_tests: false,
         include_docs: false,
         include_sql: false,
@@ -248,11 +298,19 @@ async fn context_includes_downstream_lineage() {
     let result = searcher.get_context(&params).await.unwrap();
     let downstream = result["data"]["downstream"].as_object().unwrap();
 
-    assert_eq!(downstream["count"], 1);
+    assert_eq!(downstream["count"], 4);
     assert_eq!(downstream["by_type"]["model"], 1);
+    assert_eq!(downstream["by_type"]["test"], 3);
+    assert!(downstream.get("tests_total").is_none());
 
-    let entities = downstream["entities"].as_array().unwrap();
-    assert_eq!(entities[0]["unique_id"], "model.test.orders");
+    let entity_ids: Vec<&str> = downstream["entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entity| entity["unique_id"].as_str())
+        .collect();
+    assert!(entity_ids.contains(&"test.test.unique_customers_customer_id"));
+    assert!(entity_ids.contains(&"model.test.orders"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -265,7 +323,9 @@ async fn context_includes_test_coverage() {
         resource_type: None,
         include_columns: false,
         include_upstream: false,
+        upstream_include_tests: false,
         include_downstream: false,
+        downstream_include_tests: false,
         include_tests: true,
         include_docs: false,
         include_sql: false,
@@ -300,7 +360,9 @@ async fn context_includes_related_docs() {
         resource_type: None,
         include_columns: false,
         include_upstream: false,
+        upstream_include_tests: false,
         include_downstream: false,
+        downstream_include_tests: false,
         include_tests: false,
         include_docs: true,
         include_sql: false,
@@ -330,7 +392,9 @@ async fn context_resolves_by_name() {
         resource_type: Some("model".to_string()),
         include_columns: false,
         include_upstream: false,
+        upstream_include_tests: false,
         include_downstream: false,
+        downstream_include_tests: false,
         include_tests: false,
         include_docs: false,
         include_sql: false,
@@ -356,7 +420,9 @@ async fn context_entity_not_found() {
         resource_type: None,
         include_columns: false,
         include_upstream: false,
+        upstream_include_tests: false,
         include_downstream: false,
+        downstream_include_tests: false,
         include_tests: false,
         include_docs: false,
         include_sql: false,
@@ -383,7 +449,9 @@ async fn context_respects_lineage_depth() {
         resource_type: None,
         include_columns: false,
         include_upstream: true,
+        upstream_include_tests: false,
         include_downstream: false,
+        downstream_include_tests: false,
         include_tests: false,
         include_docs: false,
         include_sql: false,
@@ -412,7 +480,9 @@ async fn context_respects_lineage_limit() {
         resource_type: None,
         include_columns: false,
         include_upstream: false,
+        upstream_include_tests: false,
         include_downstream: true,
+        downstream_include_tests: false,
         include_tests: false,
         include_docs: false,
         include_sql: false,
@@ -433,6 +503,97 @@ async fn context_respects_lineage_limit() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn context_lineage_limit_clamps_to_config_max_results() {
+    let manifest = json!({
+        "metadata": {"dbt_version": "1.10.0"},
+        "nodes": {
+            "model.test.root": {
+                "name": "root",
+                "resource_type": "model",
+                "package_name": "test"
+            },
+            "model.test.child_a": {
+                "name": "child_a",
+                "resource_type": "model",
+                "package_name": "test"
+            },
+            "model.test.child_b": {
+                "name": "child_b",
+                "resource_type": "model",
+                "package_name": "test"
+            },
+            "model.test.child_c": {
+                "name": "child_c",
+                "resource_type": "model",
+                "package_name": "test"
+            }
+        },
+        "sources": {},
+        "macros": {},
+        "docs": {},
+        "groups": {},
+        "exposures": {},
+        "metrics": {},
+        "saved_queries": {},
+        "semantic_models": {},
+        "unit_tests": {},
+        "parent_map": {
+            "model.test.child_a": ["model.test.root"],
+            "model.test.child_b": ["model.test.root"],
+            "model.test.child_c": ["model.test.root"]
+        },
+        "child_map": {
+            "model.test.root": [
+                "model.test.child_a",
+                "model.test.child_b",
+                "model.test.child_c"
+            ]
+        }
+    });
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    file.write_all(manifest.to_string().as_bytes()).unwrap();
+
+    let guard = support_config::TestStorageGuard::new();
+    let mut cfg = DbtNovaConfig {
+        manifest_path: file.path().to_string_lossy().to_string(),
+        lineage_max_results: 2,
+        search: support_config::test_search_config(),
+        ..Default::default()
+    };
+    support_config::apply_test_storage(&mut cfg, &guard);
+    let searcher = ManifestSearch::new(cfg)
+        .expect("synthetic manifest should load")
+        .search;
+
+    let result = searcher
+        .get_context(&GetContextParams {
+            id_or_name: "model.test.root".to_string(),
+            resource_type: None,
+            include_columns: false,
+            include_upstream: false,
+            upstream_include_tests: false,
+            include_downstream: true,
+            downstream_include_tests: false,
+            include_tests: false,
+            include_docs: false,
+            include_sql: false,
+            context_mode: ContextMode::Standard,
+            limits: ContextLimits {
+                lineage_depth: 1,
+                upstream_limit: 100,
+                downstream_limit: 100,
+            },
+        })
+        .await
+        .unwrap();
+    let downstream = result["data"]["downstream"].as_object().unwrap();
+
+    assert_eq!(downstream["count"], 2);
+    assert_eq!(downstream["by_type"]["model"], 2);
+    assert_eq!(downstream["truncated"].as_bool(), Some(true));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn context_full_aggregation() {
     let manifest_file = create_test_manifest();
     let searcher = create_searcher(&manifest_file);
@@ -442,7 +603,9 @@ async fn context_full_aggregation() {
         resource_type: None,
         include_columns: true,
         include_upstream: true,
+        upstream_include_tests: false,
         include_downstream: true,
+        downstream_include_tests: false,
         include_tests: true,
         include_docs: true,
         include_sql: false,

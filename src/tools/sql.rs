@@ -1,10 +1,11 @@
 use serde_json::Value as JsonValue;
 
 use crate::config::DbtNovaConfig;
+use crate::config::warehouse::DEFAULT_SQL_PROVIDER;
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::search::ManifestSearch;
 use crate::params::ExecuteSqlParams;
-use crate::warehouse::resolve_sql_provider;
+use crate::warehouse::{available_sql_provider_names, resolve_sql_provider};
 use sqlparser::ast::{Expr, ObjectName, Query, SetExpr, Statement, TableFactor, Visit, Visitor};
 use sqlparser::dialect::{GenericDialect, SnowflakeDialect};
 use sqlparser::parser::Parser;
@@ -225,13 +226,108 @@ impl ManifestSearch {
     pub async fn execute_sql(&self, params: &ExecuteSqlParams) -> Result<JsonValue> {
         let bounded = self.apply_sql_limits(params);
         let provider = resolve_sql_provider(self.config())?;
-        provider.validate_runtime(self.config())?;
+        provider
+            .validate_runtime(self.config())
+            .map_err(|err| sql_provider_configuration_error(self.config(), provider.name(), err))?;
         if bounded.preflight_only {
-            return provider.preflight(&bounded).await;
+            return provider.preflight(&bounded).await.map_err(|err| {
+                sql_provider_configuration_error(self.config(), provider.name(), err)
+            });
         }
         let statement = bounded.statement.trim();
         validate_sql_statement_for_provider(statement, provider.name())?;
-        provider.execute(&bounded).await
+        provider
+            .execute(&bounded)
+            .await
+            .map_err(|err| sql_provider_configuration_error(self.config(), provider.name(), err))
+    }
+}
+
+fn sql_provider_configuration_error(
+    config: &DbtNovaConfig,
+    provider_name: &str,
+    err: DbtNovaError,
+) -> DbtNovaError {
+    let message = err.to_string();
+    if !is_sql_provider_configuration_error(provider_name, &message) {
+        return err;
+    }
+
+    let configured = config.sql_provider.trim();
+    let selected_by =
+        if configured.is_empty() || configured.eq_ignore_ascii_case(DEFAULT_SQL_PROVIDER) {
+            format!("default `{DEFAULT_SQL_PROVIDER}`")
+        } else {
+            format!("configured `sql_provider={configured}`")
+        };
+    let detail = strip_sql_provider_error_prefixes(&message);
+    let available = available_sql_provider_names().join(", ");
+
+    DbtNovaError::ServerError(format!(
+        "execute_sql selected SQL provider `{provider_name}` ({selected_by}), but provider configuration is incomplete: {detail}. Set DBT_NOVA_SQL_PROVIDER or config sql_provider to choose a provider. Available providers: {available}"
+    ))
+}
+
+fn is_sql_provider_configuration_error(provider_name: &str, message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    match provider_name.to_ascii_lowercase().as_str() {
+        "databricks" => [
+            "databricks_host",
+            "databricks_access_token",
+            "databricks_http_path",
+            "databricks_sql_warehouse_id",
+            "environment variable not set",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle)),
+        "bigquery" => [
+            "bigquery project id",
+            "bigquery access token",
+            "google_application_credentials",
+            "gcloud",
+            "application default credentials",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle)),
+        "duckdb" => [
+            "dbt_nova_duckdb_path",
+            "duckdb path",
+            "duckdb database path",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle)),
+        "snowflake" => [
+            "dbt_nova_snowflake",
+            "snowflake account",
+            "snowflake warehouse",
+            "snowflake user",
+            "snowflake role",
+            "snowflake database",
+            "snowflake schema",
+            "snowflake private key",
+            "snowflake oauth",
+            "externalbrowser",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle)),
+        _ => false,
+    }
+}
+
+fn strip_sql_provider_error_prefixes(message: &str) -> String {
+    let mut detail = message.trim();
+    loop {
+        let stripped = detail
+            .strip_prefix("Server error: ")
+            .or_else(|| detail.strip_prefix("Invalid parameter: "))
+            .or_else(|| detail.strip_prefix("Databricks error: "))
+            .or_else(|| detail.strip_prefix("BigQuery error: "))
+            .or_else(|| detail.strip_prefix("DuckDB error: "))
+            .or_else(|| detail.strip_prefix("Snowflake error: "));
+        match stripped {
+            Some(next) => detail = next.trim(),
+            None => return detail.to_string(),
+        }
     }
 }
 
@@ -384,6 +480,60 @@ mod tests {
         assert_eq!(bounded.max_chunks, Some(10));
         assert_eq!(bounded.max_poll_seconds, Some(45));
         assert_eq!(bounded.poll_interval_ms, Some(250));
+    }
+
+    #[test]
+    fn provider_configuration_error_explains_default_selection() {
+        let config = DbtNovaConfig::default();
+        let err = sql_provider_configuration_error(
+            &config,
+            "databricks",
+            DbtNovaError::ServerError(
+                "Databricks error: DATABRICKS_HOST environment variable not set".to_string(),
+            ),
+        );
+        let message = err.to_string();
+
+        assert!(message.contains("execute_sql selected SQL provider `databricks`"));
+        assert!(message.contains("default `databricks`"));
+        assert!(message.contains("DATABRICKS_HOST environment variable not set"));
+        assert!(message.contains("DBT_NOVA_SQL_PROVIDER"));
+        assert!(message.contains("Available providers: databricks, bigquery, duckdb, snowflake"));
+        assert!(!message.contains("Databricks error: Databricks error"));
+    }
+
+    #[test]
+    fn provider_configuration_error_explains_explicit_selection() {
+        let config = DbtNovaConfig {
+            sql_provider: "duckdb".to_string(),
+            ..DbtNovaConfig::default()
+        };
+        let err = sql_provider_configuration_error(
+            &config,
+            "duckdb",
+            DbtNovaError::InvalidParams(
+                "DBT_NOVA_DUCKDB_PATH must be set for DuckDB execute_sql".to_string(),
+            ),
+        );
+        let message = err.to_string();
+
+        assert!(message.contains("configured `sql_provider=duckdb`"));
+        assert!(message.contains("DBT_NOVA_DUCKDB_PATH must be set"));
+    }
+
+    #[test]
+    fn provider_configuration_error_leaves_query_failures_unchanged() {
+        let config = DbtNovaConfig::default();
+        let err = sql_provider_configuration_error(
+            &config,
+            "databricks",
+            DbtNovaError::ServerError("Databricks error: syntax error near from".to_string()),
+        );
+
+        assert_eq!(
+            err.to_string(),
+            "Server error: Databricks error: syntax error near from"
+        );
     }
 
     #[test]

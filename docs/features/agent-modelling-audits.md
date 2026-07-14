@@ -203,6 +203,11 @@ dbt-nova tool call modelling_consistency_report \
   --json > out/modelling-consistency.json
 ```
 
+By default, the report keeps overlap rows to candidates with score `>= 50.0` and
+uses a 10-row section page when `limit` is omitted. Set `"min_score":0` to
+restore exhaustive overlap rows for offline review while keeping the same
+duplicate-indicator, grain, and agent-modelling finding sections.
+
 Then run readiness with modelling thresholds:
 
 ```bash

@@ -667,7 +667,9 @@ pub(super) fn build_modelling_consistency_summary(
 
     json!({
         "section_counts": {
-            "overlap_candidates": overlap_rows.len(),
+            "overlap_candidates": page.overlap_candidates_above_threshold,
+            "overlap_candidates_total": page.overlap_candidates_total,
+            "overlap_candidates_above_threshold": page.overlap_candidates_above_threshold,
             "duplicate_indicators": duplicate_indicator_rows.len(),
             "canonical_indicator_conflicts": canonical_conflict_rows.len(),
             "entities_with_multiple_grain_variants": multi_grain_entity_rows.len(),
@@ -681,6 +683,9 @@ pub(super) fn build_modelling_consistency_summary(
             "limit": page.limit,
             "offset": page.offset,
             "next_offset": next_offset,
+            "applied_min_score": page.applied_min_score,
+            "overlap_candidates_total": page.overlap_candidates_total,
+            "overlap_candidates_above_threshold": page.overlap_candidates_above_threshold,
             "overlap_candidate_generation_truncated": page.overlap_candidate_generation_truncated
         },
         "overlap_evidence_categories": overlap_evidence_categories,
@@ -688,7 +693,7 @@ pub(super) fn build_modelling_consistency_summary(
         "top_duplicate_indicator_groups": top_duplicate_indicator_groups,
         "top_canonical_conflicts": top_canonical_conflicts,
         "top_multi_grain_entities": top_multi_grain_entities,
-        "drill_down_hints": modelling_drill_down_hints(params, page.limit, page.offset, overlap_rows, duplicate_indicator_rows, canonical_conflict_rows, multi_grain_entity_rows)
+        "drill_down_hints": modelling_drill_down_hints(params, page, overlap_rows, duplicate_indicator_rows, canonical_conflict_rows, multi_grain_entity_rows)
     })
 }
 

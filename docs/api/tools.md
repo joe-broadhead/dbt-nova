@@ -460,18 +460,19 @@ drift, and deterministic agent-modelling risks.
 
 Common:
 - `resource_types`
-- `limit` (max rows per report section)
-- `min_score` (applies to overlap section)
+- `limit` (max rows per report section; default: 10)
+- `min_score` (applies to overlap section; default: 50.0, set `0` for exhaustive overlap rows)
 
 ```json
 {"name":"modelling_consistency_report","arguments":{"resource_types":["model"],"limit":20}}
 ```
 
-Responses include a compact `summary` with section counts, top duplicate
-indicator groups, top canonical conflicts, overlap evidence category counts,
-bounded overlap examples, multi-grain entity highlights, `agent_modelling`
-finding counts, and drill-down hints. The existing detail arrays remain paged
-by `limit` and `offset`.
+Responses include a compact `summary` with section counts, the applied overlap
+threshold, raw and above-threshold overlap counts, top duplicate indicator
+groups, top canonical conflicts, overlap evidence category counts, bounded
+overlap examples, multi-grain entity highlights, `agent_modelling` finding
+counts, and drill-down hints. The existing detail arrays remain paged by
+`limit` and `offset`.
 
 The report includes `agent_modelling_schema_version` set to
 `"agent_modelling.v1"`, `agent_modelling_finding_count`, and
@@ -569,7 +570,9 @@ One-shot context bundle. Returns lineage, columns, tests, docs, and summary stat
 | `resource_type` | string | No | Filter by type when using name |
 | `include_columns` | bool | No | Include column details (default: true) |
 | `include_upstream` | bool | No | Include upstream lineage (default: true) |
+| `upstream_include_tests` | bool | No | Include test nodes in upstream lineage entity rows (default: false) |
 | `include_downstream` | bool | No | Include downstream lineage (default: true) |
+| `downstream_include_tests` | bool | No | Include test nodes in downstream lineage entity rows (default: false) |
 | `include_tests` | bool | No | Include test coverage (default: true) |
 | `include_docs` | bool | No | Include documentation (default: true) |
 | `include_sql` | bool | No | Include raw/compiled SQL in entity context (default: false) |
@@ -580,6 +583,13 @@ Notes:
 - The `entity` object includes `nova_summary` and `grain_summary` when available.
 - The `entity` object and upstream/downstream lineage entities include the same
   `provenance` object used by search results.
+- Upstream/downstream lineage counts tests in `by_type` and `tests_total`
+  without letting test nodes consume entity slots by default; set
+  `upstream_include_tests` or `downstream_include_tests` to include test nodes in
+  the lineage `entities` array.
+- Requested `lineage_depth` is capped by `DBT_NOVA_MAX_LINEAGE_DEPTH`, and
+  traversal uses the configured lineage result cap before applying the
+  upstream/downstream entity display limits.
 - The `tests` object includes `columns_tested`, `columns_total`, and a limited `columns_without_tests` list.
 - The `tests.gaps` array includes `missing_pk_test` and `untested_column` entries (limited).
 - `analysis_hints` explains empty lineage or missing dependency metadata when detected.
@@ -1248,6 +1258,10 @@ Optional:
 Notes:
 - `row_limit`, `byte_limit`, `max_chunks`, and `max_poll_seconds` are clamped by server config.
 - `poll_interval_ms` is raised to a configured minimum when too low.
+- Provider configuration failures name the selected/default provider, mention
+  `DBT_NOVA_SQL_PROVIDER`/`sql_provider`, and list available providers so
+  missing Databricks defaults can be distinguished from an intentional BigQuery,
+  Snowflake, or DuckDB setup.
 - Databricks supports named parameters and preflight checks.
 - BigQuery provider is available via `DBT_NOVA_SQL_PROVIDER=bigquery` and supports named scalar parameters with optional `parameter_types`.
 - Snowflake provider is available via `DBT_NOVA_SQL_PROVIDER=snowflake`; named parameters are rewritten to SQL API positional binds and null values require explicit `parameter_types`.

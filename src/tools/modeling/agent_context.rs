@@ -4,8 +4,9 @@ use super::{
     ArchivedNovaMeta, ArchivedNovaMetric, ArchivedString, BTreeMap, BTreeSet,
     DuplicateIndicatorParent, DuplicateIndicatorRow, EntityOverlapProfile, EntityOverlapRow,
     EntityRef, GrainVariant, HashSet, JsonMap, JsonValue, ManifestSearch, ModelingEntityRef,
-    ModelingIndicatorRef, ModellingConsistencyReportParams, MultiGrainEntityRow, Ordering, Result,
-    build_entity_grain_variants, column_nova_meta_json, json, tokenize_alnum_lowercase,
+    ModelingIndicatorRef, ModellingConsistencyReportParams, ModellingReportPage,
+    MultiGrainEntityRow, Ordering, Result, build_entity_grain_variants, column_nova_meta_json,
+    json, tokenize_alnum_lowercase,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1033,8 +1034,7 @@ pub(super) fn duplicate_indicator_summary_row(row: &DuplicateIndicatorRow) -> Js
 
 pub(super) fn modelling_drill_down_hints(
     params: &ModellingConsistencyReportParams,
-    section_limit: usize,
-    section_offset: usize,
+    page: ModellingReportPage,
     overlap_rows: &[EntityOverlapRow],
     duplicate_indicator_rows: &[DuplicateIndicatorRow],
     canonical_conflict_rows: &[DuplicateIndicatorRow],
@@ -1042,8 +1042,8 @@ pub(super) fn modelling_drill_down_hints(
 ) -> Vec<JsonValue> {
     let mut hints = Vec::new();
     if modelling_has_next_page(
-        section_limit,
-        section_offset,
+        page.limit,
+        page.offset,
         overlap_rows,
         duplicate_indicator_rows,
         canonical_conflict_rows,
@@ -1054,9 +1054,9 @@ pub(super) fn modelling_drill_down_hints(
             "tool": "modelling_consistency_report",
             "arguments": {
                 "resource_types": &params.resource_types,
-                "limit": section_limit,
-                "offset": section_offset.saturating_add(section_limit),
-                "min_score": params.min_score
+                "limit": page.limit,
+                "offset": page.offset.saturating_add(page.limit),
+                "min_score": page.applied_min_score
             }
         }));
     }
