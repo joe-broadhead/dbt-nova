@@ -1,0 +1,126 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
+    "dbt_version": "1.10.0",
+    "project_name": "diff_sections"
+  },
+  "nodes": {
+    "model.pkg.sales_monthly_store": {
+      "name": "sales_monthly_store",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.sales_monthly_store",
+      "columns": {
+        "store_id": {"name": "store_id", "data_type": "string"},
+        "month_start": {"name": "month_start", "data_type": "date"},
+        "gross_sales": {"name": "gross_sales", "data_type": "numeric"},
+        "orders_count": {"name": "orders_count", "data_type": "integer"},
+        "customers_count": {"name": "customers_count", "data_type": "integer"},
+        "avg_order_value": {"name": "avg_order_value", "data_type": "numeric"},
+        "region": {"name": "region", "data_type": "string"}
+      },
+      "meta": {
+        "owner": "finance_analytics",
+        "nova": {
+          "grain": {
+            "primary_key": ["store_id", "month_start"],
+            "time_field": "month_start",
+            "dimensions": ["store_id"]
+          },
+          "measures": [
+            {"name": "gross_sales", "expression": "sum(gross_sales)", "canonical": true},
+            {"name": "orders_count", "expression": "count(order_id)", "canonical": true},
+            {"name": "customers_count", "expression": "count(distinct customer_id)", "canonical": true},
+            {"name": "avg_order_value", "expression": "gross_sales / orders_count"}
+          ],
+          "governance": {
+            "sensitivity": "low",
+            "pii": "none",
+            "compliance": ["sox"]
+          }
+        }
+      },
+      "depends_on": {"nodes": [], "macros": []}
+    },
+    "model.pkg.store_productivity_monthly": {
+      "name": "store_productivity_monthly",
+      "resource_type": "model",
+      "package_name": "pkg",
+      "relation_name": "analytics.pkg.store_productivity_monthly",
+      "columns": {
+        "store_id": {"name": "store_id", "data_type": "string"},
+        "month_start": {"name": "month_start", "data_type": "date"},
+        "gross_sales": {"name": "gross_sales", "data_type": "numeric"},
+        "orders_count": {"name": "orders_count", "data_type": "integer"},
+        "customers_count": {"name": "customers_count", "data_type": "integer"},
+        "revenue_per_order": {"name": "revenue_per_order", "data_type": "numeric"},
+        "labor_hours": {"name": "labor_hours", "data_type": "numeric"}
+      },
+      "meta": {
+        "owner": "ops_analytics",
+        "nova": {
+          "grain": {
+            "primary_key": ["store_id", "month_start"],
+            "time_field": "month_start",
+            "dimensions": ["store_id"]
+          },
+          "measures": [
+            {"name": "gross_sales", "expression": "sum(gross_sales)", "canonical": true},
+            {"name": "orders_count", "expression": "count(order_id)", "canonical": true},
+            {"name": "customers_count", "expression": "count(distinct customer_id)", "canonical": true},
+            {"name": "revenue_per_order", "expression": "gross_sales/orders_count"}
+          ],
+          "governance": {
+            "sensitivity": "medium",
+            "pii": "none",
+            "compliance": ["sox", "internal"]
+          }
+        }
+      },
+      "depends_on": {"nodes": [], "macros": []}
+    },
+    "test.pkg.not_null_sales_store_id": {
+      "name": "not_null_sales_store_id",
+      "resource_type": "test",
+      "package_name": "pkg",
+      "attached_node": "model.pkg.sales_monthly_store",
+      "column_name": "store_id",
+      "test_metadata": {"name": "not_null"}
+    },
+    "test.pkg.unique_sales_store_id": {
+      "name": "unique_sales_store_id",
+      "resource_type": "test",
+      "package_name": "pkg",
+      "attached_node": "model.pkg.sales_monthly_store",
+      "column_name": "store_id",
+      "test_metadata": {"name": "unique"}
+    },
+    "test.pkg.not_null_productivity_store_id": {
+      "name": "not_null_productivity_store_id",
+      "resource_type": "test",
+      "package_name": "pkg",
+      "attached_node": "model.pkg.store_productivity_monthly",
+      "column_name": "store_id",
+      "test_metadata": {"name": "not_null"}
+    },
+    "test.pkg.not_null_productivity_month_start": {
+      "name": "not_null_productivity_month_start",
+      "resource_type": "test",
+      "package_name": "pkg",
+      "attached_node": "model.pkg.store_productivity_monthly",
+      "column_name": "month_start",
+      "test_metadata": {"name": "not_null"}
+    }
+  },
+  "sources": {},
+  "macros": {},
+  "docs": {},
+  "groups": {},
+  "exposures": {},
+  "metrics": {},
+  "saved_queries": {},
+  "semantic_models": {},
+  "unit_tests": {},
+  "parent_map": {},
+  "child_map": {}
+}

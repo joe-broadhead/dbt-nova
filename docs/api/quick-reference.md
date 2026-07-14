@@ -39,7 +39,7 @@ machine-checked stability tier, profile, and safety-gate matrix.
 |------|---------|----------------|
 | `get_columns` | Inspect column names, types, metadata | `id_or_name` |
 | `get_sql` | Return raw or compiled SQL | `id_or_name`, `compiled` |
-| `diff_entities` | Compare two entities side-by-side | `entity1`, `entity2`, `entity1_resource_type`, `entity2_resource_type`, `compare_fields` |
+| `diff_entities` | Compare two entities side-by-side | `entity1`, `entity2`, `entity1_resource_type`, `entity2_resource_type`, `compare_fields` (`columns` default; `all` for built-in modelling sections) |
 
 ## Analysis
 

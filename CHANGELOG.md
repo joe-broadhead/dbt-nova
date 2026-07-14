@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added opt-in `diff_entities` sections for manifest-native modelling
+  comparison: `grain`, `indicators`, `governance`, `tests`, and `all`, while
+  preserving the columns-only default.
 - Hardened agent-facing defaults: `get_context` now counts lineage test nodes
   without letting them consume upstream/downstream entity slots by default,
   `modelling_consistency_report` applies a bounded default overlap threshold
