@@ -487,7 +487,7 @@ pub struct DiffEntitiesParams {
     /// Optional resource_type to disambiguate entity2 when using name
     #[serde(default)]
     pub entity2_resource_type: Option<String>,
-    /// Fields to compare (default: columns)
+    /// Fields to compare (default: columns). Built-ins: columns, tags, grain, indicators, governance, tests, all.
     #[serde(default)]
     pub compare_fields: Vec<String>,
 }

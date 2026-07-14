@@ -717,13 +717,21 @@ Required:
 - `entity2`
 
 Optional:
-- `compare_fields`
+- `compare_fields` (default: `["columns"]`; built-ins: `columns`, `tags`,
+  `grain`, `indicators`, `governance`, `tests`, or `all`)
 - `entity1_resource_type` (disambiguates `entity1` when passed as a name)
 - `entity2_resource_type` (disambiguates `entity2` when passed as a name)
 
 ```json
 {"name":"diff_entities","arguments":{"entity1":"model.pkg.orders_v1","entity2":"model.pkg.orders_v2","compare_fields":["columns","sql","config"]}}
 ```
+
+Use `grain`, `indicators`, `governance`, and `tests` when comparing candidate
+model consolidations. These sections are manifest-native and additive: they
+report shared grain dimensions/primary keys, shared or conflicting
+measures/metrics, identical-expression near duplicates, owner/governance drift,
+and schema-test count or shared-column coverage differences. Omit
+`compare_fields` to keep the legacy columns-only response.
 
 ## Analysis
 
