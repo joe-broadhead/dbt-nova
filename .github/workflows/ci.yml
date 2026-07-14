@@ -340,7 +340,7 @@ jobs:
         run: scripts/check_dependency_watchlist.sh
 
       - name: Cargo Deny
-        run: cargo deny check advisories licenses sources
+        run: cargo deny check
 
   reusable-assets-producer:
     name: reusable-assets-producer

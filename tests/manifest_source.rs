@@ -73,6 +73,43 @@ fn file_manifest_resolves_local_path() {
 }
 
 #[test]
+fn file_manifest_rejects_local_path_over_size_limit() {
+    let temp = TempDir::new().expect("temp dir");
+    let manifest_path = temp.path().join("manifest-file.json");
+    fs::write(&manifest_path, br#"{"too_large":true}"#).expect("write manifest");
+
+    let cfg = DbtNovaConfig {
+        manifest_path: manifest_path.to_string_lossy().to_string(),
+        manifest_uri: String::new(),
+        manifest_max_bytes: 4,
+        ..Default::default()
+    };
+
+    let err = resolve_manifest(&cfg).expect_err("oversized local manifest should fail");
+    assert!(
+        err.to_string().contains("exceeded size limit"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn file_manifest_size_limit_can_be_disabled() {
+    let temp = TempDir::new().expect("temp dir");
+    let manifest_path = temp.path().join("manifest-file.json");
+    fs::write(&manifest_path, br#"{"large":true}"#).expect("write manifest");
+
+    let cfg = DbtNovaConfig {
+        manifest_path: manifest_path.to_string_lossy().to_string(),
+        manifest_uri: String::new(),
+        manifest_max_bytes: 0,
+        ..Default::default()
+    };
+
+    let res = resolve_manifest(&cfg).expect("size limit disabled");
+    assert_eq!(res.local_path, manifest_path);
+}
+
+#[test]
 fn http_manifest_rejected_by_default() {
     let cfg = DbtNovaConfig {
         manifest_uri: "http://example.com/manifest-http-default-check.json".to_string(),

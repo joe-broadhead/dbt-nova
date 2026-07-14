@@ -393,11 +393,13 @@ fn resolve_catalog(
     if !sibling_catalog.exists() {
         return Ok(None);
     }
-    Ok(Some(ManifestResolution {
-        local_path: sibling_catalog.clone(),
-        source_uri: sibling_catalog.to_string_lossy().to_string(),
-        cached: false,
-    }))
+    let mut catalog_config = config.clone();
+    catalog_config.manifest_uri = String::new();
+    catalog_config.manifest_path = sibling_catalog.to_string_lossy().to_string();
+    catalog_config.manifest_path_explicit = true;
+    resolve_manifest(&catalog_config).map(Some).map_err(|err| {
+        DbtNovaError::ManifestError(format!("Failed to resolve sibling catalog: {err}"))
+    })
 }
 
 fn apply_catalog_signature(
@@ -1424,6 +1426,34 @@ mod tests {
         assert_ne!(
             scoped_manifest_hash(&pruned),
             scoped_manifest_hash(&search_scoped)
+        );
+    }
+
+    #[test]
+    fn resolve_catalog_rejects_oversized_sibling_catalog() {
+        let temp = tempdir().unwrap_or_else(|err| panic!("tempdir failed: {err}"));
+        let manifest_path = temp.path().join("manifest.json");
+        let catalog_path = temp.path().join("catalog.json");
+        std::fs::write(&manifest_path, br"{}").expect("write manifest");
+        std::fs::write(&catalog_path, br#"{"too_large":true}"#).expect("write catalog");
+
+        let config = DbtNovaConfig {
+            manifest_path: manifest_path.to_string_lossy().to_string(),
+            manifest_max_bytes: 4,
+            ..DbtNovaConfig::default()
+        };
+        let manifest_resolution = ManifestResolution {
+            local_path: manifest_path,
+            source_uri: "manifest.json".to_string(),
+            cached: false,
+        };
+
+        let err = resolve_catalog(&config, &manifest_resolution)
+            .expect_err("oversized sibling catalog should fail");
+
+        assert!(
+            err.to_string().contains("exceeded size limit"),
+            "unexpected error: {err}"
         );
     }
 

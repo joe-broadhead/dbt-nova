@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Hardened Databricks and BigQuery SQL execution so local poll timeouts attempt
+  provider-side cancellation, and Databricks now enforces local row/byte caps
+  while merging inline and fetched result chunks.
+- Enforced `manifest_max_bytes` for local manifest paths and auto-discovered
+  sibling `catalog.json` files before parsing.
+- Tightened release and reusable-workflow supply-chain posture: releases are
+  tag-triggered only, release asset verification now requires tag-scoped
+  identities, ARM64 images are smoked and Trivy-gated before push, Trivy no
+  longer globally ignores unfixed HIGH/CRITICAL findings, OIDC-backed GCS
+  publish cannot run alongside caller dbt manifest generation, and CI now runs
+  the full `cargo deny check` with yanked/unknown sources denied.
 - Bumped the metadata scoring contract to v2 with resource-shape-aware declared
   grain scoring: aggregate marts can earn primary-key quality credit from
   `time_field` + `dimensions` plus matching uniqueness tests, and raw sources no

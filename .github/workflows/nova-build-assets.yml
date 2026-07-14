@@ -598,6 +598,11 @@ jobs:
                 echo "gcp_workload_identity_provider and gcp_service_account must both be set when using OIDC-backed GCS publish."
                 exit 1
               fi
+              if [[ "${dbt_generate_manifest}" == "true" ]]; then
+                echo "OIDC-backed GCS publish cannot run in the same reusable workflow job that generates a manifest from caller dbt code."
+                echo "Generate and validate the manifest before invoking this workflow, or publish with non-OIDC credentials until publish is split into a separate job."
+                exit 1
+              fi
             fi
           fi
           if [[ ",${publish_targets_normalized}," == *,dbfs,* ]]; then

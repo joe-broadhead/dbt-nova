@@ -10,6 +10,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value};
 use tokio::sync::RwLock;
+use tracing::warn;
 
 use crate::error::{DbtNovaError, Result};
 use crate::params::ExecuteSqlParams;
@@ -436,6 +437,10 @@ fn query_page_url(api_base_url: &str, project_id: &str, job_id: &str) -> String 
     format!("{api_base_url}/bigquery/v2/projects/{project_id}/queries/{job_id}")
 }
 
+fn job_cancel_url(api_base_url: &str, project_id: &str, job_id: &str) -> String {
+    format!("{api_base_url}/bigquery/v2/projects/{project_id}/jobs/{job_id}/cancel")
+}
+
 async fn send_json<T: DeserializeOwned>(builder: reqwest::RequestBuilder) -> Result<T> {
     let response = builder
         .send()
@@ -496,6 +501,20 @@ async fn get_query_page(
         .bearer_auth(&config.access_token)
         .query(&params);
     send_json(builder).await
+}
+
+async fn cancel_query_job(
+    client: &Client,
+    config: &BigQueryConfig,
+    job_id: &str,
+    location: Option<&str>,
+) -> Result<()> {
+    let url = job_cancel_url(&config.api_base_url, &config.project_id, job_id);
+    let mut builder = client.post(url).bearer_auth(&config.access_token);
+    if let Some(location) = location {
+        builder = builder.query(&[("location", location)]);
+    }
+    send_json::<Value>(builder).await.map(|_| ())
 }
 
 fn infer_parameter_type(value: &Value) -> Result<&'static str> {
@@ -686,13 +705,31 @@ async fn run_query(
         let poll_started = Instant::now();
         loop {
             if poll_started.elapsed() > settings.max_poll {
-                return Err(bq_err(format!(
-                    "query polling timed out after {}s (job_id={job_id})",
-                    settings.max_poll.as_secs()
-                )));
+                return Err(query_poll_timeout_error(
+                    client,
+                    config,
+                    &job_id,
+                    location.as_deref(),
+                    settings.max_poll,
+                )
+                .await);
             }
 
-            tokio::time::sleep(settings.poll_interval).await;
+            let remaining = settings
+                .max_poll
+                .checked_sub(poll_started.elapsed())
+                .unwrap_or_else(|| Duration::from_secs(0));
+            tokio::time::sleep(settings.poll_interval.min(remaining)).await;
+            if poll_started.elapsed() >= settings.max_poll {
+                return Err(query_poll_timeout_error(
+                    client,
+                    config,
+                    &job_id,
+                    location.as_deref(),
+                    settings.max_poll,
+                )
+                .await);
+            }
             response = get_query_page(
                 client,
                 config,
@@ -712,6 +749,26 @@ async fn run_query(
     }
 
     Ok((response, job_id, location))
+}
+
+async fn query_poll_timeout_error(
+    client: &Client,
+    config: &BigQueryConfig,
+    job_id: &str,
+    location: Option<&str>,
+    max_poll: Duration,
+) -> DbtNovaError {
+    if let Err(err) = cancel_query_job(client, config, job_id, location).await {
+        warn!(
+            job_id,
+            error = %err,
+            "failed to cancel BigQuery job after local poll timeout"
+        );
+    }
+    bq_err(format!(
+        "query polling timed out after {}s (job_id={job_id})",
+        max_poll.as_secs()
+    ))
 }
 
 #[derive(Debug)]
@@ -1203,6 +1260,63 @@ mod tests {
         assert_eq!(result.total_row_count, Some(2));
         assert_eq!(result.total_byte_count, Some(128));
         assert!(!result.truncated);
+    }
+
+    #[tokio::test]
+    async fn bigquery_query_cancels_job_on_local_poll_timeout() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/bigquery/v2/projects/test-project/queries"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jobComplete": false,
+                "jobReference": {
+                    "jobId": "job_slow",
+                    "location": "US"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path(
+                "/bigquery/v2/projects/test-project/jobs/job_slow/cancel",
+            ))
+            .and(query_param("location", "US"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "kind": "bigquery#jobCancelResponse"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let config = BigQueryConfig {
+            project_id: "test-project".to_string(),
+            location: Some("US".to_string()),
+            access_token: "test-token".to_string(),
+            timeout: Duration::from_secs(5),
+            api_base_url: server.uri(),
+        };
+        let client = build_bigquery_client(config.timeout).expect("client");
+        let settings = ExecuteSettings {
+            row_limit: 10,
+            byte_limit: 1_000,
+            wait_timeout_s: Some(1),
+            poll_interval: Duration::from_millis(10),
+            max_poll: Duration::from_millis(1),
+            fetch_all_chunks: true,
+            max_chunks: 5,
+            parameters: Vec::new(),
+        };
+
+        let err = execute_bigquery_statement_with_runtime(&client, &config, "select 1", &settings)
+            .await
+            .expect_err("poll timeout should fail");
+
+        assert!(
+            err.to_string().contains("timed out"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

@@ -350,19 +350,36 @@ impl DatabricksSqlClient {
     ) -> Result<StatementResponse> {
         let start = Instant::now();
         loop {
-            if start.elapsed() > max_poll {
-                return Err(dbx_err(format!(
-                    "Statement polling timed out after {max_poll:?} (id={statement_id})"
-                )));
+            if start.elapsed() >= max_poll {
+                return Err(self.poll_timeout_error(statement_id, max_poll).await);
             }
 
-            tokio::time::sleep(poll_interval).await;
+            let remaining = max_poll
+                .checked_sub(start.elapsed())
+                .unwrap_or_else(|| Duration::from_secs(0));
+            tokio::time::sleep(poll_interval.min(remaining)).await;
+            if start.elapsed() >= max_poll {
+                return Err(self.poll_timeout_error(statement_id, max_poll).await);
+            }
 
             let resp = self.sql_get_statement(statement_id).await?;
             if is_terminal_state(&resp.status.state) {
                 return Ok(resp);
             }
         }
+    }
+
+    async fn poll_timeout_error(&self, statement_id: &str, max_poll: Duration) -> DbtNovaError {
+        if let Err(err) = self.sql_cancel_statement(statement_id).await {
+            warn!(
+                statement_id,
+                error = %err,
+                "failed to cancel Databricks statement after local poll timeout"
+            );
+        }
+        dbx_err(format!(
+            "Statement polling timed out after {max_poll:?} (id={statement_id})"
+        ))
     }
 
     async fn process_success(
@@ -372,7 +389,8 @@ impl DatabricksSqlClient {
         opts: ExecuteOptions,
     ) -> Result<QueryResult> {
         let manifest = resp.manifest.as_ref();
-        let truncated = manifest.and_then(|m| m.truncated).unwrap_or(false);
+        let provider_truncated = manifest.and_then(|m| m.truncated).unwrap_or(false);
+        let mut local_truncated = false;
 
         // Columns/types (be tolerant: DDL can return no manifest).
         let (columns, column_types, stats, chunk_indices) = if let Some(m) = manifest {
@@ -407,12 +425,18 @@ impl DatabricksSqlClient {
             (vec![], vec![], QueryStats::default(), vec![])
         };
 
-        // Rows: start with whatever chunk we got inline.
-        let mut rows: Vec<Vec<Value>> = resp
-            .result
-            .as_ref()
-            .and_then(|r| r.data_array.clone())
-            .unwrap_or_default();
+        let mut rows: Vec<Vec<Value>> = Vec::new();
+        let mut approx_bytes = 0u64;
+        if let Some(data) = resp.result.as_ref().and_then(|r| r.data_array.as_ref()) {
+            append_limited_rows(
+                &mut rows,
+                data,
+                opts.row_limit,
+                opts.byte_limit,
+                &mut approx_bytes,
+                &mut local_truncated,
+            )?;
+        }
 
         let mut included_chunks: HashSet<u32> = HashSet::new();
         if let Some(r) = resp.result.as_ref()
@@ -424,15 +448,25 @@ impl DatabricksSqlClient {
         let mut fetched_chunks = included_chunks.len() as u64;
 
         // Optionally fetch remaining chunks (kept small + bounded).
-        if opts.fetch_all_chunks && !chunk_indices.is_empty() {
+        if opts.fetch_all_chunks && !chunk_indices.is_empty() && !local_truncated {
             let max_chunks = opts.max_chunks.unwrap_or(50);
             for idx in chunk_indices.into_iter().take(max_chunks) {
+                if local_truncated {
+                    break;
+                }
                 if included_chunks.contains(&idx) {
                     continue;
                 }
                 let chunk = self.sql_get_result_chunk(statement_id, idx).await?;
-                if let Some(data) = chunk.data_array {
-                    rows.extend(data);
+                if let Some(data) = chunk.data_array.as_ref() {
+                    append_limited_rows(
+                        &mut rows,
+                        data,
+                        opts.row_limit,
+                        opts.byte_limit,
+                        &mut approx_bytes,
+                        &mut local_truncated,
+                    )?;
                 }
                 included_chunks.insert(idx);
                 fetched_chunks += 1;
@@ -442,7 +476,7 @@ impl DatabricksSqlClient {
         Ok(QueryResult {
             statement_id: statement_id.to_string(),
             state: "SUCCEEDED".to_string(),
-            truncated,
+            truncated: provider_truncated || local_truncated,
 
             columns,
             column_types,
@@ -849,6 +883,43 @@ fn backoff_delay(attempt_1_based: usize) -> Duration {
     let pow = u32::try_from((attempt_1_based.saturating_sub(1)).min(6)).unwrap_or(0);
     let ms = base_ms.saturating_mul(2u64.saturating_pow(pow)).min(5_000);
     Duration::from_millis(ms)
+}
+
+fn append_limited_rows(
+    rows: &mut Vec<Vec<Value>>,
+    chunk_rows: &[Vec<Value>],
+    row_limit: Option<u64>,
+    byte_limit: Option<u64>,
+    approx_bytes: &mut u64,
+    truncated: &mut bool,
+) -> Result<()> {
+    for row in chunk_rows {
+        if let Some(limit) = row_limit {
+            let row_count = u64::try_from(rows.len()).unwrap_or(u64::MAX);
+            if row_count >= limit {
+                *truncated = true;
+                break;
+            }
+        }
+
+        let row_bytes = u64::try_from(
+            serde_json::to_vec(row)
+                .map_err(|err| dbx_err(format!("failed to serialize result row: {err}")))?
+                .len(),
+        )
+        .unwrap_or(u64::MAX);
+
+        if let Some(limit) = byte_limit
+            && approx_bytes.saturating_add(row_bytes) > limit
+        {
+            *truncated = true;
+            break;
+        }
+
+        *approx_bytes = approx_bytes.saturating_add(row_bytes);
+        rows.push(row.clone());
+    }
+    Ok(())
 }
 
 /// Build Databricks SQL statement parameters from values and optional types.
