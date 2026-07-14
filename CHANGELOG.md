@@ -20,8 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `modelling_consistency_report` applies a bounded default overlap threshold
   with explicit raw/filtered counts, and `execute_sql` provider-configuration
   errors now explain the selected/default provider and provider-selection knobs.
-- Added fixture-backed keyword/phrase ranking regressions for business-term and
-  indicator discovery queries.
+- Added a bundled `evals/search-ranking-regressions.yml` suite and CI guard for
+  business-term and indicator discovery ranking regressions.
 - Hardened Databricks and BigQuery SQL execution so local poll timeouts attempt
   provider-side cancellation, and Databricks now enforces local row/byte caps
   while merging inline and fetched result chunks.

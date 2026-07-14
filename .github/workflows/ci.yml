@@ -204,6 +204,16 @@ jobs:
             --fail-under 1.0 \
             --json
 
+      - name: Run Search Ranking Regression Eval
+        run: |
+          cargo run --locked --no-default-features -- eval run \
+            --suite evals/search-ranking-regressions.yml \
+            --manifest-path tests/fixtures/keyword_phrase_ranking.json \
+            --storage-instance-id search-ranking-regressions-ci \
+            --cleanup-storage-on-start \
+            --fail-under 1.0 \
+            --json
+
   check-no-default:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
