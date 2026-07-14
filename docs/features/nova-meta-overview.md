@@ -94,14 +94,14 @@ columns:
 | `search.candidates` | object | Persona-specific ranking hints (`analyst`, `engineer`, `governance`) |
 
 `measures[]` fields:
-- `name` (required), `type` (required), `expression`, `description`, `field`, `synonyms`, `canonical`
+- `name` (required), `type` (required), `expression`, `description`, `field`, `synonyms`, `canonical`, `canonical_scope`
 
 ### Metric fields (metric models)
 
 Use **either** `metric` (single KPI) or `metrics` (array).
 
 `metric`/`metrics[]` fields:
-- `name` (required), `description`, `expression`, `synonyms`, `template`, `canonical`
+- `name` (required), `description`, `expression`, `synonyms`, `template`, `canonical`, `canonical_scope`
 - `grain`: `time_field`, `dimensions`, and optional `primary_key`
 - `recommended_filters`: `field`, `operator`, `values`, `label`
 
@@ -180,7 +180,8 @@ The validator enforces both:
 
 - schema conformance against `schemas/nova/v0.json`
 - local semantic checks such as field existence, duplicate semantic names,
-  grain overlap, and invalid `recommended_filters` value combinations
+  grain overlap, invalid `recommended_filters` value combinations, and
+  duplicate canonical indicator declarations across the scanned project
 
 Project-wide scans skip common generated and vendor directories by default,
 including `.git`, `.venv`, `venv`, `target`, `dbt_packages`, and
@@ -197,6 +198,9 @@ behind the same authentication posture used for the rest of the MCP surface.
 
 - Keep meta **small and stable** (avoid high‑churn data).
 - Use **canonical** for exactly one model per concept.
+- Use `canonical_scope: grain` only when a measure or metric is intentionally
+  canonical for its own grain rather than globally canonical for the indicator
+  name.
 - Prefer 2–8 high‑signal synonyms over exhaustive lists.
 - Use `grain.dimensions` only for **default** breakdowns.
 

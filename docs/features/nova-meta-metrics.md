@@ -194,6 +194,8 @@ models:
 
 - `name`: Canonical metric name.
 - `canonical`: Mark the preferred definition when the same KPI exists on multiple models.
+- `canonical_scope`: Optional `grain` escape hatch when the metric is
+  intentionally canonical only at its declared grain.
 - `template`: Set `true` to signal this model is a reusable template (analysts adapt time/filters).
 - `description`: Business definition.
 - `expression`: Plain‑text formula (not parsed).

@@ -723,12 +723,21 @@ pub struct GetAgentReadinessParams {
     /// JSON array of personas to score. Defaults to `["engineer","analyst","governance"]`.
     #[serde(default)]
     pub personas_json: Option<String>,
+    /// Typed alias for `personas_json`.
+    #[serde(default)]
+    pub personas: Vec<String>,
     /// JSON threshold configuration. Defaults to advisory readiness thresholds.
     #[serde(default)]
     pub thresholds_json: Option<String>,
+    /// Typed alias for `thresholds_json`.
+    #[serde(default)]
+    pub thresholds: Option<JsonValue>,
     /// Inline JSON from `dbt-nova eval gate <SUITE> --json` or the raw gate report.
     #[serde(default)]
     pub eval_gate_json: Option<String>,
+    /// Typed alias for `eval_gate_json`.
+    #[serde(default)]
+    pub eval_gate: Option<JsonValue>,
 }
 
 /// Selection mode for the get_metadata_audit tool.
@@ -778,6 +787,9 @@ pub struct GetMetadataAuditParams {
     /// JSON threshold configuration for required/advisory gates.
     #[serde(default)]
     pub thresholds_json: Option<String>,
+    /// Typed alias for `thresholds_json`.
+    #[serde(default)]
+    pub thresholds: Option<JsonValue>,
     /// Include per-check metadata score breakdowns. Defaults to true.
     #[serde(default)]
     pub include_breakdown: Option<bool>,

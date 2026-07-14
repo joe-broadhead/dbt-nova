@@ -45,7 +45,8 @@
         "description": { "type": "string" },
         "field": { "type": "string" },
         "synonyms": { "type": "array", "items": { "type": "string" } },
-        "canonical": { "type": "boolean" }
+        "canonical": { "type": "boolean" },
+        "canonical_scope": { "enum": ["grain"] }
       },
       "required": ["name", "type"]
     },
@@ -58,6 +59,7 @@
         "synonyms": { "type": "array", "items": { "type": "string" } },
         "template": { "type": "boolean" },
         "canonical": { "type": "boolean" },
+        "canonical_scope": { "enum": ["grain"] },
         "grain": { "$ref": "#/$defs/NovaGrain" },
         "recommended_filters": {
           "type": "array",

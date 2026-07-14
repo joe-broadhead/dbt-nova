@@ -9,9 +9,10 @@ Use it before enabling a manifest for production agent analysis, launch reviews,
 or recurring CI evidence.
 
 MCP clients can request the same JSON report with `get_agent_readiness`.
-The MCP tool accepts inline `personas_json`, `thresholds_json`, and
-`eval_gate_json`, and returns the report without writing files or applying CLI
-exit semantics.
+The MCP tool accepts typed `personas`, `thresholds`, and `eval_gate` fields, or
+the compatible `personas_json`, `thresholds_json`, and `eval_gate_json` string
+fields. It returns the report without writing files or applying CLI exit
+semantics.
 
 ## Local Command
 
@@ -394,11 +395,12 @@ cases should be anchored manually with explicit dates before becoming CI gates.
 ## MCP Tool
 
 ```json
-{"name":"get_agent_readiness","arguments":{"personas_json":"[\"engineer\",\"analyst\"]"}}
+{"name":"get_agent_readiness","arguments":{"personas":["engineer","analyst"]}}
 ```
 
 To include eval gate evidence, pass either the raw gate report or the full
-`eval gate --json` CLI envelope as `eval_gate_json`.
+`eval gate --json` CLI envelope as `eval_gate`. The older `eval_gate_json`
+string field remains accepted for clients that cannot send nested JSON objects.
 
 See also:
 

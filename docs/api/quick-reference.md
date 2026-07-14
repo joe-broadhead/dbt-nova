@@ -47,8 +47,8 @@ machine-checked stability tier, profile, and safety-gate matrix.
 |------|---------|----------------|
 | `get_test_coverage` | Schema/data test coverage | `id_or_name`, `resource_type`, `include_full`, `columns_limit` |
 | `get_metadata_score` | Metadata quality score | `id_or_name`, `persona`, `scope` |
-| `get_metadata_audit` | Metadata audit report and gate | `selection_mode`, `changed_files`/`changed_files_json`, `entity_ids`/`entity_ids_json`, `personas`/`personas_json`, `thresholds_json` |
-| `get_agent_readiness` | Agent-readiness report | `personas_json`, `thresholds_json`, `eval_gate_json` |
+| `get_metadata_audit` | Metadata audit report and gate | `selection_mode`, `changed_files`/`changed_files_json`, `entity_ids`/`entity_ids_json`, `personas`/`personas_json`, `thresholds`/`thresholds_json` |
+| `get_agent_readiness` | Agent-readiness report | `personas`/`personas_json`, `thresholds`/`thresholds_json`, `eval_gate`/`eval_gate_json` |
 | `get_undocumented` | Find entities missing descriptions | `resource_type`, `include_columns`, `package`, `path_prefix` |
 | `search_recipes` | Find analysis recipe templates + parameter contracts | `topic`, `query`, `include_queries`, `limit`, `offset` |
 | `get_recipe` | Load a recipe, SQL, and parameter requirements | `recipe_id`, `include_sql`, `include_queries`, `parameters`, `placeholder_types` |

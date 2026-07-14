@@ -440,6 +440,57 @@ fn parse_readiness_inputs_preserves_persona_order() {
 }
 
 #[test]
+fn parse_readiness_tool_inputs_accepts_typed_aliases() {
+    let inputs = super::parse_readiness_tool_inputs(&GetAgentReadinessParams {
+        personas: vec!["engineer".to_string(), "analyst".to_string()],
+        thresholds: Some(json!({
+            "modelling": {
+                "max_high": {"value": 2, "severity": "advisory"}
+            }
+        })),
+        eval_gate: Some(json!({
+            "allowed": true,
+            "blocked": false,
+            "message": "gate passed"
+        })),
+        ..GetAgentReadinessParams::default()
+    })
+    .expect("typed params");
+
+    assert_eq!(
+        inputs.personas,
+        vec!["engineer".to_string(), "analyst".to_string()]
+    );
+    assert_eq!(
+        inputs
+            .thresholds
+            .modelling
+            .max_high
+            .expect("max high")
+            .value,
+        2
+    );
+    assert_eq!(inputs.eval_status.status, "allowed");
+}
+
+#[test]
+fn parse_readiness_tool_inputs_rejects_conflicting_aliases() {
+    let error = super::parse_readiness_tool_inputs(&GetAgentReadinessParams {
+        personas_json: Some(r#"["engineer"]"#.to_string()),
+        personas: vec!["analyst".to_string()],
+        ..GetAgentReadinessParams::default()
+    })
+    .expect_err("conflicting aliases should fail");
+
+    assert!(
+        error
+            .to_string()
+            .contains("personas and personas_json differ"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn evaluate_threshold_supports_required_and_advisory() {
     let required = ThresholdRule {
         min_score: Some(80),

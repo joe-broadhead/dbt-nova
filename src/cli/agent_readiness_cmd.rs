@@ -23,6 +23,7 @@ use crate::responses::SuccessResponse;
 use crate::tools::metadata_score::{grade_from_score, metadata_score_scoring_contract};
 use crate::utils::{SearchPersona, sanitize_uri};
 
+use super::tool_param_aliases::{typed_array_or_json, typed_json_or_json};
 use super::{DispatchError, DispatchResult};
 
 const DEFAULT_PERSONAS_JSON: &str = r#"["engineer","analyst","governance"]"#;
@@ -246,12 +247,31 @@ fn parse_readiness_inputs(args: &AgentReadinessArgs) -> Result<ReadinessInputs> 
 }
 
 fn parse_readiness_tool_inputs(params: &GetAgentReadinessParams) -> Result<ReadinessInputs> {
-    parse_readiness_inputs_from_sources(
+    let personas_json = typed_array_or_json(
+        "personas",
+        &params.personas,
+        "personas_json",
         params.personas_json.as_deref(),
-        None,
+    )?;
+    let thresholds_json = typed_json_or_json(
+        "thresholds",
+        params.thresholds.as_ref(),
+        "thresholds_json",
         params.thresholds_json.as_deref(),
-        None,
+    )?;
+    let eval_gate_json = typed_json_or_json(
+        "eval_gate",
+        params.eval_gate.as_ref(),
+        "eval_gate_json",
         params.eval_gate_json.as_deref(),
+    )?;
+
+    parse_readiness_inputs_from_sources(
+        personas_json.as_deref(),
+        None,
+        thresholds_json.as_deref(),
+        None,
+        eval_gate_json.as_deref(),
         None,
     )
 }
