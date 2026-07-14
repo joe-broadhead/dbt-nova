@@ -20,6 +20,8 @@ use crate::utils::tokenize_alnum_lowercase;
 
 const AGENT_MODELLING_SCHEMA_VERSION: &str = "agent_modelling.v1";
 const AGENT_MODELLING_TOP_BUCKETS: usize = 5;
+const DEFAULT_MODELLING_OVERLAP_MIN_SCORE: f32 = 50.0;
+const DEFAULT_MODELLING_SECTION_LIMIT: usize = 10;
 const MAX_OVERLAP_BUCKET_SIZE: usize = 512;
 const MAX_OVERLAP_CANDIDATE_PAIRS: usize = 250_000;
 const AGENT_MODELLING_SEVERITY_ORDER: [AgentModellingSeverity; 4] = [
@@ -28,6 +30,14 @@ const AGENT_MODELLING_SEVERITY_ORDER: [AgentModellingSeverity; 4] = [
     AgentModellingSeverity::Medium,
     AgentModellingSeverity::Low,
 ];
+
+struct ModellingOverlapSection {
+    rows: Vec<EntityOverlapRow>,
+    total: usize,
+    above_threshold: usize,
+    applied_min_score: f32,
+    candidate_pairs_truncated: bool,
+}
 
 mod agent_context;
 mod agent_findings;
@@ -167,17 +177,10 @@ impl ManifestSearch {
 
         let resource_filter = normalized_resource_type_filter(&params.resource_types);
         let profiles = self.collect_overlap_profiles(resource_filter.as_ref())?;
-        let section_limit = self.page_limit(params.pagination.limit);
+        let section_limit = self.modelling_section_limit(params.pagination.limit);
         let section_offset = params.pagination.offset;
-
-        let overlap_result = overlap_rows(&profiles, None);
-        let overlap_candidate_generation_truncated = overlap_result.candidate_pairs_truncated;
-        let mut overlap_rows_all = overlap_result.rows;
-        if let Some(min_score) = params.min_score {
-            overlap_rows_all.retain(|row| row.score >= min_score);
-        }
-        let overlap_count = overlap_rows_all.len();
-        let overlap = paginate_section(&overlap_rows_all, section_offset, section_limit);
+        let overlap_section = modelling_overlap_section(&profiles, params.min_score);
+        let overlap = paginate_section(&overlap_section.rows, section_offset, section_limit);
 
         let duplicate_indicator_rows = duplicate_indicator_rows(&profiles, usize::MAX);
         let duplicate_indicator_count = duplicate_indicator_rows.len();
@@ -219,9 +222,12 @@ impl ManifestSearch {
             ModellingReportPage {
                 limit: section_limit,
                 offset: section_offset,
-                overlap_candidate_generation_truncated,
+                applied_min_score: overlap_section.applied_min_score,
+                overlap_candidates_total: overlap_section.total,
+                overlap_candidates_above_threshold: overlap_section.above_threshold,
+                overlap_candidate_generation_truncated: overlap_section.candidate_pairs_truncated,
             },
-            &overlap_rows_all,
+            &overlap_section.rows,
             &duplicate_indicator_rows,
             &canonical_conflict_rows,
             &multi_grain_entity_rows_all,
@@ -235,7 +241,10 @@ impl ManifestSearch {
             summary,
             agent_modelling_schema_version: AGENT_MODELLING_SCHEMA_VERSION,
             entity_count: profiles.len(),
-            overlap_candidate_count: overlap_count,
+            applied_min_score: overlap_section.applied_min_score,
+            overlap_candidates_total: overlap_section.total,
+            overlap_candidates_above_threshold: overlap_section.above_threshold,
+            overlap_candidate_count: overlap_section.above_threshold,
             duplicate_indicator_count,
             canonical_conflict_count,
             multi_grain_entity_count,
@@ -248,6 +257,10 @@ impl ManifestSearch {
         };
 
         Ok(serde_json::to_value(SuccessResponse::new(report, 1))?)
+    }
+
+    fn modelling_section_limit(&self, requested: Option<usize>) -> usize {
+        self.page_limit(requested.or(Some(DEFAULT_MODELLING_SECTION_LIMIT)))
     }
 
     fn collect_overlap_profiles(
@@ -272,6 +285,27 @@ impl ManifestSearch {
         }
         profiles.sort_by(|left, right| left.unique_id.cmp(&right.unique_id));
         Ok(profiles)
+    }
+}
+
+fn modelling_overlap_section(
+    profiles: &[EntityOverlapProfile],
+    min_score: Option<f32>,
+) -> ModellingOverlapSection {
+    let overlap_result = overlap_rows(profiles, None);
+    let mut rows = overlap_result.rows;
+    let total = rows.len();
+    let applied_min_score = min_score.unwrap_or(DEFAULT_MODELLING_OVERLAP_MIN_SCORE);
+    if applied_min_score > 0.0 {
+        rows.retain(|row| row.score >= applied_min_score);
+    }
+
+    ModellingOverlapSection {
+        above_threshold: rows.len(),
+        rows,
+        total,
+        applied_min_score,
+        candidate_pairs_truncated: overlap_result.candidate_pairs_truncated,
     }
 }
 

@@ -159,12 +159,17 @@ fn assert_agent_modelling_report_contract(report: &JsonValue) {
             "summary",
             "agent_modelling_schema_version",
             "entity_count",
+            "applied_min_score",
+            "overlap_candidates_total",
+            "overlap_candidates_above_threshold",
             "overlap_candidate_count",
             "duplicate_indicator_count",
             "canonical_conflict_count",
             "multi_grain_entity_count",
             "agent_modelling_finding_count",
             "overlap_candidates",
+            "overlap_candidates_total",
+            "overlap_candidates_above_threshold",
             "duplicate_indicators",
             "canonical_indicator_conflicts",
             "entities_with_multiple_grain_variants",
@@ -196,6 +201,19 @@ fn assert_agent_modelling_report_contract(report: &JsonValue) {
             "canonical_indicator_conflicts",
             "entities_with_multiple_grain_variants",
             "agent_modelling_findings",
+        ],
+    );
+    assert_object_has_fields(
+        &data["summary"]["page"],
+        "modelling_consistency_report.data.summary.page",
+        &[
+            "limit",
+            "offset",
+            "next_offset",
+            "applied_min_score",
+            "overlap_candidates_total",
+            "overlap_candidates_above_threshold",
+            "overlap_candidate_generation_truncated",
         ],
     );
     assert_object_has_fields(
@@ -748,6 +766,34 @@ async fn agent_modelling_findings_use_catalog_and_semantic_artifact_evidence() {
             .await,
     );
     assert_agent_modelling_report_contract(&report);
+    assert_eq!(report["data"]["applied_min_score"].as_f64(), Some(50.0));
+    assert_eq!(
+        report["data"]["summary"]["page"]["applied_min_score"].as_f64(),
+        Some(50.0)
+    );
+
+    let exhaustive_report = json(
+        searcher
+            .modelling_consistency_report(&ModellingConsistencyReportParams {
+                resource_types: vec![],
+                pagination: PaginationParams {
+                    limit: Some(100),
+                    offset: 0,
+                },
+                min_score: Some(0.0),
+            })
+            .await,
+    );
+    assert_agent_modelling_report_contract(&exhaustive_report);
+    assert_eq!(
+        exhaustive_report["data"]["applied_min_score"].as_f64(),
+        Some(0.0)
+    );
+    assert_eq!(
+        exhaustive_report["data"]["overlap_candidate_count"],
+        exhaustive_report["data"]["overlap_candidates_total"],
+        "min_score=0 should restore exhaustive overlap rows"
+    );
     let findings = report["data"]["agent_modelling_findings"]
         .as_array()
         .expect("agent modelling findings");

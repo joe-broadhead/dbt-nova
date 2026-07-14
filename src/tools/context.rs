@@ -81,6 +81,8 @@ pub struct LineageContext {
     pub count: usize,
     pub truncated: bool,
     pub by_type: HashMap<String, usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tests_total: Option<usize>,
     pub entities: Vec<LineageEntity>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lineage_status: Option<String>,
@@ -96,6 +98,26 @@ pub struct LineageEntity {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub provenance: JsonValue,
+}
+
+#[derive(Clone, Copy)]
+struct LineageContextRequest {
+    direction: &'static str,
+    depth: usize,
+    limit: usize,
+    context_mode: ContextMode,
+    include_tests: bool,
+}
+
+struct LineageTraversal {
+    ids: Vec<String>,
+    truncated: bool,
+}
+
+struct LineageDisplaySelection {
+    by_type: HashMap<String, usize>,
+    tests_total: usize,
+    ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -163,10 +185,13 @@ impl ManifestSearch {
             Some(self.build_lineage_context(
                 &entity_id,
                 &entity_json,
-                "upstream",
-                params.limits.lineage_depth,
-                params.limits.upstream_limit,
-                params.context_mode,
+                LineageContextRequest {
+                    direction: "upstream",
+                    depth: params.limits.lineage_depth,
+                    limit: params.limits.upstream_limit,
+                    context_mode: params.context_mode,
+                    include_tests: params.upstream_include_tests,
+                },
             )?)
         } else {
             None
@@ -176,10 +201,13 @@ impl ManifestSearch {
             Some(self.build_lineage_context(
                 &entity_id,
                 &entity_json,
-                "downstream",
-                params.limits.lineage_depth,
-                params.limits.downstream_limit,
-                params.context_mode,
+                LineageContextRequest {
+                    direction: "downstream",
+                    depth: params.limits.lineage_depth,
+                    limit: params.limits.downstream_limit,
+                    context_mode: params.context_mode,
+                    include_tests: params.downstream_include_tests,
+                },
             )?)
         } else {
             None
@@ -371,34 +399,86 @@ impl ManifestSearch {
         &self,
         entity_id: &str,
         entity_json: &JsonValue,
-        direction: &str,
-        depth: usize,
-        limit: usize,
-        context_mode: ContextMode,
+        request: LineageContextRequest,
     ) -> Result<LineageContext> {
-        let map = match direction {
+        let map = match request.direction {
             "upstream" => &self.parent_map,
             "downstream" => &self.child_map,
             _ => return Err(DbtNovaError::InvalidParams("Invalid direction".into())),
         };
 
+        let traversal = self.collect_lineage_ids(map, entity_id, request);
+        let (lineage_hints, hints_total) = dependency_hints_from_json(entity_json);
+        let lineage_status = if traversal.ids.is_empty() {
+            if hints_total == 0 {
+                Some("no_dependencies_recorded".to_string())
+            } else {
+                Some("dependencies_unresolved_or_filtered".to_string())
+            }
+        } else {
+            Some("ok".to_string())
+        };
+
+        let display_limit = request.limit.min(self.config.lineage_max_results.max(1));
+        let mut display = self.lineage_display_selection(&traversal.ids, request.include_tests)?;
+        let truncated = if request.include_tests {
+            traversal.truncated || traversal.ids.len() > display_limit
+        } else {
+            traversal.truncated || display.ids.len() > display_limit
+        };
+        display.ids.truncate(display_limit);
+        let entities = self.lineage_entities(&display.ids, request.context_mode)?;
+
+        Ok(LineageContext {
+            count: entities.len(),
+            truncated,
+            by_type: display.by_type,
+            tests_total: (!request.include_tests && display.tests_total > 0)
+                .then_some(display.tests_total),
+            entities,
+            lineage_status,
+            lineage_hints: Some(lineage_hints),
+        })
+    }
+
+    fn collect_lineage_ids(
+        &self,
+        map: &HashMap<String, Vec<String>>,
+        entity_id: &str,
+        request: LineageContextRequest,
+    ) -> LineageTraversal {
         let mut visited = std::collections::HashSet::new();
         let mut result: Vec<String> = Vec::new();
         let mut current_level: Vec<String> = vec![entity_id.to_string()];
         let mut current_depth = 0;
+        let max_depth = request.depth.min(self.config.lineage_max_depth);
+        let configured_limit = self.config.lineage_max_results.max(1);
+        let traversal_limit = if request.include_tests {
+            request.limit.min(configured_limit).max(1)
+        } else {
+            configured_limit
+        };
 
         visited.insert(entity_id.to_string());
 
-        while !current_level.is_empty() && current_depth < depth && result.len() < limit {
+        while !current_level.is_empty()
+            && current_depth < max_depth
+            && result.len() < traversal_limit
+            && (!request.include_tests || result.len() < request.limit)
+        {
             let mut next_level: Vec<String> = Vec::new();
 
             for id in &current_level {
-                if result.len() >= limit {
+                if result.len() >= traversal_limit
+                    || (request.include_tests && result.len() >= request.limit)
+                {
                     break;
                 }
                 if let Some(related) = map.get(id) {
                     for rel_id in related {
-                        if result.len() >= limit {
+                        if result.len() >= traversal_limit
+                            || (request.include_tests && result.len() >= request.limit)
+                        {
                             break;
                         }
                         if !visited.contains(rel_id) {
@@ -414,27 +494,53 @@ impl ManifestSearch {
             current_depth += 1;
         }
 
-        let truncated = result.len() >= limit;
+        LineageTraversal {
+            truncated: result.len() >= traversal_limit
+                || (request.include_tests && result.len() >= request.limit),
+            ids: result,
+        }
+    }
 
-        let (lineage_hints, hints_total) = dependency_hints_from_json(entity_json);
-        let lineage_status = if result.is_empty() {
-            if hints_total == 0 {
-                Some("no_dependencies_recorded".to_string())
-            } else {
-                Some("dependencies_unresolved_or_filtered".to_string())
-            }
-        } else {
-            Some("ok".to_string())
-        };
-
-        // Build by_type summary
+    fn lineage_display_selection(
+        &self,
+        ids: &[String],
+        include_tests: bool,
+    ) -> Result<LineageDisplaySelection> {
         let mut by_type: HashMap<String, usize> = HashMap::new();
-        let mut entities: Vec<LineageEntity> = Vec::new();
+        let mut tests_total = 0usize;
+        let mut display_ids: Vec<String> = Vec::new();
 
-        for id in &result {
+        for id in ids {
             if let Some(entity) = self.get_entity_archived(id)? {
                 let rt = entity.resource_type_str().unwrap_or("unknown");
                 *by_type.entry(rt.to_string()).or_default() += 1;
+                if rt == "test" {
+                    tests_total += 1;
+                    if include_tests {
+                        display_ids.push(id.clone());
+                    }
+                } else {
+                    display_ids.push(id.clone());
+                }
+            }
+        }
+
+        Ok(LineageDisplaySelection {
+            by_type,
+            tests_total,
+            ids: display_ids,
+        })
+    }
+
+    fn lineage_entities(
+        &self,
+        display_ids: &[String],
+        context_mode: ContextMode,
+    ) -> Result<Vec<LineageEntity>> {
+        let mut entities: Vec<LineageEntity> = Vec::new();
+        for id in display_ids {
+            if let Some(entity) = self.get_entity_archived(id)? {
+                let rt = entity.resource_type_str().unwrap_or("unknown");
 
                 let description = if context_mode == ContextMode::Engineer {
                     None
@@ -456,14 +562,7 @@ impl ManifestSearch {
             }
         }
 
-        Ok(LineageContext {
-            count: entities.len(),
-            truncated,
-            by_type,
-            entities,
-            lineage_status,
-            lineage_hints: Some(lineage_hints),
-        })
+        Ok(entities)
     }
 
     #[allow(clippy::too_many_lines)]

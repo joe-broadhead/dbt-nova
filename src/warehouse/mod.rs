@@ -4,6 +4,7 @@ use std::pin::Pin;
 use serde_json::Value as JsonValue;
 
 use crate::config::DbtNovaConfig;
+use crate::config::warehouse::DEFAULT_SQL_PROVIDER;
 use crate::error::{DbtNovaError, Result};
 use crate::params::ExecuteSqlParams;
 
@@ -68,13 +69,23 @@ impl SqlProviderRegistry {
     }
 }
 
+/// Return the registered SQL provider names in provider selection order.
+#[must_use]
+pub fn available_sql_provider_names() -> Vec<&'static str> {
+    SqlProviderRegistry::default().names()
+}
+
 /// Resolve the configured SQL provider.
 ///
 /// # Errors
 /// Returns an error if the configured provider name is unknown.
 pub fn resolve_sql_provider(config: &DbtNovaConfig) -> Result<&'static dyn SqlProvider> {
     let name = config.sql_provider.trim();
-    let name = if name.is_empty() { "databricks" } else { name };
+    let name = if name.is_empty() {
+        DEFAULT_SQL_PROVIDER
+    } else {
+        name
+    };
 
     let registry = SqlProviderRegistry::default();
     if let Some(provider) = registry.by_name(name) {

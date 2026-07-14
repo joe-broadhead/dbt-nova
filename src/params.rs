@@ -271,7 +271,7 @@ pub struct ModellingConsistencyReportParams {
     /// Maximum results per report section.
     #[serde(default, flatten)]
     pub pagination: PaginationParams,
-    /// Minimum overlap score threshold for the overlap section (0.0+, default: no threshold).
+    /// Minimum overlap score threshold for the overlap section (0.0+, default: 50.0; set 0 for exhaustive overlap rows).
     #[serde(default)]
     pub min_score: Option<f32>,
 }
@@ -627,9 +627,15 @@ pub struct GetContextParams {
     /// Include upstream lineage (default: true)
     #[serde(default = "default_true")]
     pub include_upstream: bool,
+    /// Include test nodes in upstream lineage entity lists (default: false). Test counts remain in by_type and tests_total.
+    #[serde(default)]
+    pub upstream_include_tests: bool,
     /// Include downstream lineage (default: true)
     #[serde(default = "default_true")]
     pub include_downstream: bool,
+    /// Include test nodes in downstream lineage entity lists (default: false). Test counts remain in by_type and tests_total.
+    #[serde(default)]
+    pub downstream_include_tests: bool,
     /// Include test coverage analysis (default: true)
     #[serde(default = "default_true")]
     pub include_tests: bool,

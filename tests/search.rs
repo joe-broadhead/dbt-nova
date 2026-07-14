@@ -11,6 +11,45 @@ use dbt_nova::params::{DetailLevel, SearchParams};
 use support_fixtures::load_fixture;
 use support_json::json;
 
+fn standard_search_params(query: &str, limit: usize) -> SearchParams {
+    SearchParams {
+        query: query.to_string(),
+        resource_types: vec!["model".to_string()],
+        persona: None,
+        detail: Some(DetailLevel::Compact),
+        min_score: None,
+        fuzzy: false,
+        include_highlights: false,
+        include_sql: false,
+        explain: false,
+        pagination: PaginationParams {
+            limit: Some(limit),
+            offset: 0,
+        },
+    }
+}
+
+fn ranked_unique_ids(result: &serde_json::Value) -> Vec<&str> {
+    result["data"]
+        .as_array()
+        .expect("search data array")
+        .iter()
+        .filter_map(|row| row["unique_id"].as_str())
+        .collect()
+}
+
+fn assert_rank_at_most(ids: &[&str], expected: &str, max_rank: usize, query: &str) {
+    let rank = ids
+        .iter()
+        .position(|id| *id == expected)
+        .map(|index| index + 1)
+        .unwrap_or(usize::MAX);
+    assert!(
+        rank <= max_rank,
+        "expected {expected} within rank {max_rank} for query `{query}`, got {ids:#?}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn rejects_too_short_query() {
     let searcher = load_fixture("minimal.json").unwrap();
@@ -35,6 +74,45 @@ async fn rejects_too_short_query() {
         result.get("error_code").and_then(|v| v.as_str()),
         Some("INVALID_PARAMS")
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn keyword_phrase_ranking_regressions_keep_business_terms_high_signal() {
+    let searcher = load_fixture("keyword_phrase_ranking.json").unwrap();
+    let cases = [
+        (
+            "monthly customer retention",
+            "model.pkg.mart__customer_cohort_monthly",
+            1usize,
+        ),
+        (
+            "customer cohort monthly",
+            "model.pkg.mart__customer_cohort_monthly",
+            1usize,
+        ),
+        (
+            "inventory availability rate",
+            "model.pkg.metric__inventory_daily_availability",
+            1usize,
+        ),
+        (
+            "stockout rate",
+            "model.pkg.metric__inventory_daily_availability",
+            2usize,
+        ),
+    ];
+
+    for (query, expected, max_rank) in cases {
+        let params = standard_search_params(query, 5);
+        let result = json(searcher.search(&params).await);
+        assert_eq!(
+            result.get("success").and_then(|value| value.as_bool()),
+            Some(true),
+            "query `{query}` failed: {result:#?}"
+        );
+        let ids = ranked_unique_ids(&result);
+        assert_rank_at_most(&ids, expected, max_rank, query);
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

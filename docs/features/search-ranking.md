@@ -9,6 +9,15 @@ without increasing metadata maintenance overhead.
 - Allow analysts to search by business terms (synonyms, use cases, domains).
 - Support KPI discovery without creating duplicate per‑slice metric models.
 
+## Regression Coverage
+
+Keyword and phrase-ranking behavior is covered by
+`tests/fixtures/keyword_phrase_ranking.json` and the
+`keyword_phrase_ranking_regressions_keep_business_terms_high_signal` integration
+test. The fixture locks down exact business-term, synonym, and indicator-name
+queries so lexical ranking changes preserve the intended agent-discovery
+properties before broader eval suites are run.
+
 ## Indexed Nova Fields
 
 Nova meta is indexed into dedicated search fields:

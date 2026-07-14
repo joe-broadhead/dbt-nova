@@ -172,6 +172,9 @@ pub(super) struct ModellingConsistencyReport {
     pub(super) summary: JsonValue,
     pub(super) agent_modelling_schema_version: &'static str,
     pub(super) entity_count: usize,
+    pub(super) applied_min_score: f32,
+    pub(super) overlap_candidates_total: usize,
+    pub(super) overlap_candidates_above_threshold: usize,
     pub(super) overlap_candidate_count: usize,
     pub(super) duplicate_indicator_count: usize,
     pub(super) canonical_conflict_count: usize,
@@ -216,6 +219,9 @@ pub(super) struct CandidatePairs {
 pub(super) struct ModellingReportPage {
     pub(super) limit: usize,
     pub(super) offset: usize,
+    pub(super) applied_min_score: f32,
+    pub(super) overlap_candidates_total: usize,
+    pub(super) overlap_candidates_above_threshold: usize,
     pub(super) overlap_candidate_generation_truncated: bool,
 }
 
