@@ -4,7 +4,7 @@
 //! - `core`: Core settings (manifest, storage, logging)
 //! - `search`: Search configuration and persona weights
 //! - `column_lineage`: Column lineage tracing settings
-//! - `hosted_auth`: Default-off hosted HTTP authentication config skeleton
+//! - `hosted_auth`: Default-off hosted HTTP authentication config
 //! - `metadata_score`: Metadata scoring configuration
 //! - `warehouse`: Warehouse connection settings
 

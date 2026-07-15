@@ -433,7 +433,7 @@ pub struct DbtNovaConfig {
     pub http_max_body_bytes: usize,
     /// Expose the Prometheus-compatible `/metrics` endpoint in hosted HTTP mode.
     pub metrics_enabled: bool,
-    /// Default-off hosted HTTP identity/authentication skeleton.
+    /// Default-off hosted HTTP identity/authentication config.
     pub hosted_auth: HostedAuthConfig,
     /// Per-tool rate limits (comma-separated, e.g. "`search=60,execute_sql=30,default=120`")
     pub tool_rate_limits: String,

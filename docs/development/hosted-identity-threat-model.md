@@ -100,7 +100,7 @@ platform layer and does not construct request identity.
 1. JOE-665: accept this threat model and default-off hosted identity design.
 2. JOE-662: add a fail-closed config skeleton without changing effective
    runtime behavior for mode `off`.
-3. JOE-663: implement proxy-signed identity headers if the design remains
-   valid.
+3. JOE-663: implement proxy-signed identity headers as the first enforced
+   default-off hosted identity mode.
 4. JOE-664: implement JWT validation only after the skeleton and proxy mode are
    reviewed.

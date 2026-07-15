@@ -5,14 +5,16 @@ service on platforms like Cloud Run.
 
 ## Authentication Requirement
 
-Hosted `streamable_http` mode has no built-in authentication or authorization.
-If you expose it beyond loopback, you must place it behind an authenticating
-reverse proxy or platform auth layer first.
+Hosted `streamable_http` mode has no built-in authentication or authorization by
+default. If you expose it beyond loopback, you must place it behind an
+authenticating reverse proxy or platform auth layer first.
 
-Default-off hosted identity config is parsed as a fail-closed skeleton, but
-proxy-signed headers and JWT validation are not enforced yet. Non-`off`
-`DBT_NOVA_AUTH_MODE` values fail validation until their verifiers land, so the
-current runtime still relies on the proxy or platform layer for authentication.
+Default-off hosted identity config also supports
+`DBT_NOVA_AUTH_MODE=proxy_signed_headers`, where Nova verifies a small HMAC
+identity envelope produced by the trusted proxy. JWT validation remains planned
+and fail-closed until its verifier lands. Proxy identity is request attribution,
+not authorization; the proxy or platform layer remains responsible for
+authenticating users and stripping any client-supplied identity headers.
 See
 [Hosted Identity Threat Model](../development/hosted-identity-threat-model.md)
 and [Hosted Identity Contract](../development/hosted-identity-contract.md).
@@ -36,8 +38,9 @@ Recommended hosted posture:
   intentionally warming semantic caches.
 - Set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when the reverse proxy or
   platform auth layer is actually enforcing authentication.
-- Keep `DBT_NOVA_AUTH_MODE=off` until a verifier implementation lands; non-`off`
-  modes currently fail validation rather than running without enforcement.
+- Leave `DBT_NOVA_AUTH_MODE=off` unless the proxy-signed header contract is
+  configured end to end. JWT mode currently fails validation rather than running
+  without enforcement.
 
 ## Local HTTP Profile
 
@@ -102,6 +105,49 @@ Why these defaults matter:
 - `DBT_NOVA_EMBEDDINGS_CACHE_DIR=/tmp/dbt-nova/models` keeps model cache resolution deterministic.
 - `DBT_NOVA_BOOTSTRAP_URI` should point at the stable bootstrap alias published by the reusable asset workflow.
 - First start should **not** use strict read-only mode. Nova may need to materialize prebuilt assets locally before it can serve traffic.
+
+## Proxy-Signed Identity Mode
+
+Use this mode when a trusted reverse proxy has already authenticated the caller
+and you want Nova to fail closed unless that proxy signs a bounded request
+identity envelope.
+
+Nova config:
+
+```bash
+export DBT_NOVA_AUTH_MODE=proxy_signed_headers
+export DBT_NOVA_AUTH_REQUIRED=true
+export DBT_NOVA_PROXY_IDENTITY_HEADER=X-Nova-Identity
+export DBT_NOVA_PROXY_SIGNATURE_HEADER=X-Nova-Signature
+export DBT_NOVA_PROXY_IDENTITY_SECRET_FILE=/run/secrets/nova_proxy_identity_hmac
+export DBT_NOVA_PROXY_IDENTITY_MAX_AGE_SECS=300
+```
+
+The secret file must contain at least 32 bytes of HMAC secret material. Nova
+reads it locally at startup, trims surrounding ASCII whitespace, and never logs
+or returns the secret through config inspection.
+
+The proxy must:
+
+- authenticate the caller before forwarding to Nova;
+- remove any inbound client-supplied `X-Nova-Identity` and `X-Nova-Signature`
+  headers;
+- set the identity header to base64url-no-pad JSON with `iat` and the configured
+  subject field, default `sub`;
+- set the signature header to `sha256=<base64url-no-pad HMAC-SHA256>`, signing
+  the exact identity header value;
+- keep `/healthz`, `/readyz`, `/metrics`, and the MCP path behind the same
+  signing behavior when proxy mode is enabled.
+
+Example identity JSON before base64url encoding:
+
+```json
+{"sub":"user-123","email":"user@example.com","iat":1784097600}
+```
+
+Nova rejects missing, malformed, oversized, stale, or badly signed envelopes
+with `401 Unauthorized`. Verified identity is recorded as a SHA-256 subject hash
+in logs only; metrics do not add identity labels.
 
 ## Request Correlation
 

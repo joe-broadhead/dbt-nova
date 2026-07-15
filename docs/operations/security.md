@@ -54,14 +54,15 @@ it is privacy-safe by label design, but still exposes readiness, tool names,
 call counts, error counts, and latency. Restrict scrapes with the same
 proxy/network ACL as MCP, or set `DBT_NOVA_METRICS_ENABLED=false`.
 
-Hosted identity config is a fail-closed skeleton, not current request
-authentication behavior. `DBT_NOVA_AUTH_MODE=off` is the only effective mode;
-non-`off` proxy/JWT modes fail validation until verifier implementations land.
+Hosted identity is default-off. `DBT_NOVA_AUTH_MODE=proxy_signed_headers`
+enables fail-closed HMAC verification for trusted proxy identity envelopes; JWT
+mode remains planned and fails validation until its verifier implementation
+lands.
 See [Hosted Identity Threat Model](../development/hosted-identity-threat-model.md)
 and [Hosted Identity Contract](../development/hosted-identity-contract.md) for
-the default-off, proxy-first boundaries. Until an implementation lands, treat the
-reverse proxy or platform auth layer as the authentication and authorization
-boundary.
+the default-off, proxy-first boundaries. Treat the reverse proxy or platform
+auth layer as the authentication and authorization boundary; Nova's verified
+proxy identity is attribution context only.
 
 Some tools read from the server filesystem. `validate_nova_meta` validates dbt
 YAML under the server working directory and rejects absolute or traversal paths

@@ -27,6 +27,7 @@ use crate::manifest::bootstrap::prepare_runtime_config;
 use crate::manifest::search::ManifestSearchHandle;
 use crate::server::correlation::correlate_http_request;
 use crate::server::health::build_manifest_health_payload;
+use crate::server::identity::{ProxyIdentityVerifier, verify_proxy_identity_request};
 use crate::server::mcp::DbtNovaServer;
 use crate::utils::{ToolMetricsStore, sanitize_uri};
 
@@ -43,6 +44,7 @@ struct HttpServerSettings {
     max_body_bytes: usize,
     allowed_hosts: Vec<String>,
     metrics_enabled: bool,
+    proxy_identity_verifier: Option<Arc<ProxyIdentityVerifier>>,
 }
 
 #[derive(Clone)]
@@ -53,8 +55,8 @@ struct HostedProbeState {
 }
 
 impl HttpServerSettings {
-    fn from_config(config: &DbtNovaConfig) -> Self {
-        Self {
+    fn from_config(config: &DbtNovaConfig) -> Result<Self> {
+        Ok(Self {
             host: config.http_host.clone(),
             port: config.http_port,
             path: config.http_path.trim().to_string(),
@@ -64,7 +66,9 @@ impl HttpServerSettings {
             max_body_bytes: config.http_max_body_bytes,
             allowed_hosts: parse_http_allowed_hosts(&config.http_allowed_hosts),
             metrics_enabled: config.metrics_enabled,
-        }
+            proxy_identity_verifier: ProxyIdentityVerifier::from_config(&config.hosted_auth)?
+                .map(Arc::new),
+        })
     }
 }
 
@@ -172,7 +176,11 @@ async fn start_with_config_and_shutdown(
     }
 
     let transport = config.server_transport;
-    let http_settings = HttpServerSettings::from_config(&config);
+    let http_settings = if transport == ServerTransport::StreamableHttp {
+        Some(HttpServerSettings::from_config(&config)?)
+    } else {
+        None
+    };
     let exposed_tools = config.resolved_mcp_tool_names();
     let searcher = ManifestSearchHandle::spawn(config);
     let ready_handle = searcher.clone();
@@ -191,7 +199,13 @@ async fn start_with_config_and_shutdown(
     match transport {
         ServerTransport::Stdio => serve_stdio(server, shutdown).await,
         ServerTransport::StreamableHttp => {
-            serve_streamable_http(server, searcher, http_settings, shutdown).await
+            serve_streamable_http(
+                server,
+                searcher,
+                http_settings.expect("HTTP settings are initialized for streamable HTTP"),
+                shutdown,
+            )
+            .await
         }
     }
 }
@@ -282,6 +296,14 @@ async fn serve_streamable_http(
     };
     let app = if settings.max_body_bytes > 0 {
         app.layer(RequestBodyLimitLayer::new(settings.max_body_bytes))
+    } else {
+        app
+    };
+    let app = if let Some(verifier) = settings.proxy_identity_verifier {
+        app.layer(middleware::from_fn_with_state(
+            verifier,
+            verify_proxy_identity_request,
+        ))
     } else {
         app
     };
@@ -407,7 +429,7 @@ async fn wait_for_shutdown_signal() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use std::sync::{LazyLock, Mutex};
-    use std::time::Duration;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use reqwest::Client;
     use serde_json::{Value, json};
@@ -419,7 +441,10 @@ mod tests {
         HttpServerSettings, apply_start_args, build_start_config, start_with_config_and_shutdown,
     };
     use crate::cli::args::{ServerStartArgs, ServerTransportArg};
-    use crate::config::{DbtNovaConfig, RuntimePreset, SearchConfig, ServerTransport};
+    use crate::config::{
+        DbtNovaConfig, HostedAuthMode, RuntimePreset, SearchConfig, ServerTransport,
+    };
+    use crate::server::identity::{encode_proxy_identity_for_tests, sign_proxy_identity_for_tests};
     use crate::tests::common::fixture_manifest_path_string;
 
     static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -675,7 +700,7 @@ mod tests {
             ..Default::default()
         };
 
-        let settings = HttpServerSettings::from_config(&config);
+        let settings = HttpServerSettings::from_config(&config).expect("settings");
 
         assert_eq!(settings.max_body_bytes, 16 * 1024 * 1024);
         assert_eq!(
@@ -745,6 +770,35 @@ mod tests {
             }
             None => panic!("timed out waiting for {url} to return {expected_status}"),
         }
+    }
+
+    const TEST_PROXY_SECRET: &[u8] = b"0123456789abcdef0123456789abcdef";
+
+    fn enable_proxy_identity(config: &mut DbtNovaConfig, temp_dir: &TempDir) {
+        let secret_file = temp_dir.path().join("nova-proxy-identity-secret");
+        std::fs::write(&secret_file, TEST_PROXY_SECRET).expect("write proxy identity secret");
+        config.hosted_auth.mode = HostedAuthMode::ProxySignedHeaders;
+        config.hosted_auth.required = true;
+        config.hosted_auth.proxy_identity_header = "X-Nova-Identity".to_string();
+        config.hosted_auth.proxy_signature_header = "X-Nova-Signature".to_string();
+        config.hosted_auth.proxy_identity_secret_file = secret_file.display().to_string();
+        config.hosted_auth.proxy_identity_max_age_secs = 300;
+    }
+
+    fn unix_now_secs_for_test() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock after epoch")
+            .as_secs()
+    }
+
+    fn signed_proxy_identity_headers(subject: &str, iat: u64) -> (String, String) {
+        let identity = encode_proxy_identity_for_tests(&json!({
+            "sub": subject,
+            "iat": iat,
+        }));
+        let signature = sign_proxy_identity_for_tests(TEST_PROXY_SECRET, &identity);
+        (identity, signature)
     }
 
     #[tokio::test]
@@ -828,6 +882,150 @@ mod tests {
             "unexpected body: {body}"
         );
         assert!(body.contains(r#""id":1"#), "unexpected body: {body}");
+    }
+
+    #[tokio::test]
+    async fn http_transport_accepts_signed_proxy_identity_when_enabled() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let port = next_test_port().await;
+        let shutdown = CancellationToken::new();
+        let mut config = http_test_config(&temp_dir, fixture_manifest_path_string(), port);
+        enable_proxy_identity(&mut config, &temp_dir);
+        let (identity, signature) =
+            signed_proxy_identity_headers("user@example.com", unix_now_secs_for_test());
+
+        let server_task = tokio::spawn(start_with_config_and_shutdown(config, shutdown.clone()));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let client = Client::new();
+
+        let response = client
+            .get(format!("http://127.0.0.1:{port}/healthz"))
+            .header("X-Nova-Identity", identity)
+            .header("X-Nova-Signature", signature)
+            .send()
+            .await
+            .expect("liveness request should succeed");
+        let status = response.status();
+        let body = response.text().await.expect("liveness body");
+
+        shutdown.cancel();
+        let join_result = server_task.await.expect("server task");
+        assert!(
+            join_result.is_ok(),
+            "server should shut down cleanly: {join_result:?}"
+        );
+
+        assert_eq!(status, reqwest::StatusCode::OK, "{body}");
+        assert!(!body.contains("user@example.com"));
+    }
+
+    #[tokio::test]
+    async fn http_transport_rejects_missing_proxy_identity_when_enabled() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let port = next_test_port().await;
+        let shutdown = CancellationToken::new();
+        let mut config = http_test_config(&temp_dir, fixture_manifest_path_string(), port);
+        enable_proxy_identity(&mut config, &temp_dir);
+
+        let server_task = tokio::spawn(start_with_config_and_shutdown(config, shutdown.clone()));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let client = Client::new();
+
+        let response = client
+            .get(format!("http://127.0.0.1:{port}/healthz"))
+            .send()
+            .await
+            .expect("liveness request should succeed");
+        let status = response.status();
+        let body = response.text().await.expect("auth error body");
+
+        shutdown.cancel();
+        let join_result = server_task.await.expect("server task");
+        assert!(
+            join_result.is_ok(),
+            "server should shut down cleanly: {join_result:?}"
+        );
+
+        assert_eq!(status, reqwest::StatusCode::UNAUTHORIZED);
+        assert!(body.contains("UNAUTHORIZED"));
+        assert!(!body.contains("secret"));
+    }
+
+    #[tokio::test]
+    async fn http_transport_rejects_invalid_proxy_identity_signature() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let port = next_test_port().await;
+        let shutdown = CancellationToken::new();
+        let mut config = http_test_config(&temp_dir, fixture_manifest_path_string(), port);
+        enable_proxy_identity(&mut config, &temp_dir);
+        let identity = encode_proxy_identity_for_tests(&json!({
+            "sub": "user@example.com",
+            "iat": unix_now_secs_for_test(),
+        }));
+        let signature =
+            sign_proxy_identity_for_tests(b"abcdef0123456789abcdef0123456789", &identity);
+
+        let server_task = tokio::spawn(start_with_config_and_shutdown(config, shutdown.clone()));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let client = Client::new();
+
+        let response = client
+            .get(format!("http://127.0.0.1:{port}/healthz"))
+            .header("X-Nova-Identity", identity)
+            .header("X-Nova-Signature", signature)
+            .send()
+            .await
+            .expect("liveness request should succeed");
+        let status = response.status();
+        let body = response.text().await.expect("auth error body");
+
+        shutdown.cancel();
+        let join_result = server_task.await.expect("server task");
+        assert!(
+            join_result.is_ok(),
+            "server should shut down cleanly: {join_result:?}"
+        );
+
+        assert_eq!(status, reqwest::StatusCode::UNAUTHORIZED);
+        assert!(body.contains("hosted identity verification failed"));
+        assert!(!body.contains("user@example.com"));
+    }
+
+    #[tokio::test]
+    async fn http_transport_rejects_stale_proxy_identity() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let port = next_test_port().await;
+        let shutdown = CancellationToken::new();
+        let mut config = http_test_config(&temp_dir, fixture_manifest_path_string(), port);
+        enable_proxy_identity(&mut config, &temp_dir);
+        config.hosted_auth.proxy_identity_max_age_secs = 1;
+        let stale_iat = unix_now_secs_for_test().saturating_sub(10);
+        let (identity, signature) = signed_proxy_identity_headers("user@example.com", stale_iat);
+
+        let server_task = tokio::spawn(start_with_config_and_shutdown(config, shutdown.clone()));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let client = Client::new();
+
+        let response = client
+            .get(format!("http://127.0.0.1:{port}/healthz"))
+            .header("X-Nova-Identity", identity)
+            .header("X-Nova-Signature", signature)
+            .send()
+            .await
+            .expect("liveness request should succeed");
+        let status = response.status();
+        let body = response.text().await.expect("auth error body");
+
+        shutdown.cancel();
+        let join_result = server_task.await.expect("server task");
+        assert!(
+            join_result.is_ok(),
+            "server should shut down cleanly: {join_result:?}"
+        );
+
+        assert_eq!(status, reqwest::StatusCode::UNAUTHORIZED);
+        assert!(body.contains("hosted identity verification failed"));
+        assert!(!body.contains("user@example.com"));
     }
 
     #[tokio::test]

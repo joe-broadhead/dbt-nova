@@ -275,13 +275,23 @@ fn from_env_defaults_non_off_hosted_auth_to_required() {
 
     assert_eq!(config.hosted_auth.mode, HostedAuthMode::ProxySignedHeaders);
     assert!(config.hosted_auth.required);
+    config
+        .validate()
+        .expect("complete proxy-signed header mode should validate");
+}
+
+#[test]
+fn validate_rejects_incomplete_proxy_signed_header_mode() {
+    let config = with_env_vars(
+        &[("DBT_NOVA_AUTH_MODE", Some("proxy_signed_headers"))],
+        DbtNovaConfig::from_env,
+    );
+
     let error = config
         .validate()
-        .expect_err("parsed-but-unimplemented proxy mode should fail closed");
+        .expect_err("incomplete proxy mode should fail validation");
     assert!(
-        error
-            .to_string()
-            .contains("proxy_signed_headers is parsed but not implemented yet"),
+        error.to_string().contains("DBT_NOVA_PROXY_IDENTITY_HEADER"),
         "unexpected error: {error}"
     );
 }
@@ -727,6 +737,27 @@ fn validate_rejects_exposed_http_transport_without_auth_proxy_ack() {
     let error = config
         .validate()
         .expect_err("public HTTP bind without auth proxy acknowledgement should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true")
+    );
+}
+
+#[test]
+fn validate_rejects_exposed_proxy_identity_mode_without_auth_proxy_ack() {
+    let mut config = base_config();
+    config.server_transport = ServerTransport::StreamableHttp;
+    config.http_host = "0.0.0.0".to_string();
+    config.hosted_auth.mode = HostedAuthMode::ProxySignedHeaders;
+    config.hosted_auth.required = true;
+    config.hosted_auth.proxy_identity_header = "X-Nova-Identity".to_string();
+    config.hosted_auth.proxy_signature_header = "X-Nova-Signature".to_string();
+    config.hosted_auth.proxy_identity_secret_file = "/run/secrets/nova-proxy-key".to_string();
+
+    let error = config
+        .validate()
+        .expect_err("proxy identity mode still needs auth proxy acknowledgement");
     assert!(
         error
             .to_string()
