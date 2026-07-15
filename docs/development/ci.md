@@ -111,6 +111,22 @@ Operational defaults:
   selection modes, plus both structured and trusted dbt manifest generation
   paths
 
+### Hybrid Search Characterization
+
+- **File:** `.github/workflows/hybrid-search-characterization.yml`
+- **Trigger:** nightly schedule plus manual `workflow_dispatch`
+- **Action:** runs the ignored `search_eval` harness outside PR CI, uploads the
+  raw eval log and `/usr/bin/time -v` resource report, and writes quality,
+  latency, lifecycle, and maximum RSS snippets to the workflow summary.
+- **Model assets:** restores `~/.dbt-nova-models` from a GitHub Actions cache.
+  If cached model files are unavailable and `allow_embedding_download=false`,
+  the workflow skips the hybrid profile and records lexical-only output instead
+  of failing. Manual runs can opt into downloads and `require_models=true` when
+  a prepared runner/cache is expected.
+- **Product boundary:** advisory only. It is not a PR gate, not a release SLA,
+  and does not make vector, sparse, or reranker search required for Nova's
+  default metadata-bridge path.
+
 ### Prepare Release
 
 - **File:** `.github/workflows/release-prepare.yml`

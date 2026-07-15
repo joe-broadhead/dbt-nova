@@ -1,0 +1,226 @@
+name: Hybrid Search Characterization
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      allow_embedding_download:
+        description: "Allow Hugging Face/model downloads when cache is missing"
+        required: false
+        type: boolean
+        default: false
+      require_models:
+        description: "Fail if hybrid components do not initialize"
+        required: false
+        type: boolean
+        default: false
+      enable_lifecycle:
+        description: "Measure cold start and reload swap timings"
+        required: false
+        type: boolean
+        default: true
+      top_k:
+        description: "Evaluation k"
+        required: false
+        type: string
+        default: "10"
+      min_query_count:
+        description: "Minimum qrels query count"
+        required: false
+        type: string
+        default: "10"
+      manifest_path:
+        description: "Manifest path for characterization"
+        required: false
+        type: string
+        default: "tests/fixtures/nova_manifest.json"
+      qrels_path:
+        description: "Search qrels path"
+        required: false
+        type: string
+        default: "tests/fixtures/search_eval_qrels.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  characterize:
+    name: Optional hybrid search characterization
+    if: github.event_name == 'workflow_dispatch' || github.repository == 'joe-broadhead/dbt-nova'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    env:
+      DBT_NOVA_STRICT_SCHEMA: "1"
+      CARGO_BUILD_JOBS: "1"
+      RUSTFLAGS: "-C debuginfo=0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+
+      - name: Restore optional model cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+        with:
+          path: ~/.dbt-nova-models
+          key: hybrid-search-models-${{ runner.os }}-${{ hashFiles('scripts/warm_models.checksums.example') }}
+          restore-keys: |
+            hybrid-search-models-${{ runner.os }}-
+
+      - name: Resolve characterization mode
+        id: mode
+        shell: bash
+        env:
+          INPUT_ALLOW_EMBEDDING_DOWNLOAD: ${{ inputs.allow_embedding_download }}
+          INPUT_REQUIRE_MODELS: ${{ inputs.require_models }}
+          INPUT_ENABLE_LIFECYCLE: ${{ inputs.enable_lifecycle }}
+          INPUT_TOP_K: ${{ inputs.top_k }}
+          INPUT_MIN_QUERY_COUNT: ${{ inputs.min_query_count }}
+          INPUT_MANIFEST_PATH: ${{ inputs.manifest_path }}
+          INPUT_QRELS_PATH: ${{ inputs.qrels_path }}
+        run: |
+          set -euo pipefail
+
+          allow_download="${INPUT_ALLOW_EMBEDDING_DOWNLOAD:-false}"
+          require_models="${INPUT_REQUIRE_MODELS:-false}"
+          enable_lifecycle="${INPUT_ENABLE_LIFECYCLE:-true}"
+          top_k="${INPUT_TOP_K:-10}"
+          min_query_count="${INPUT_MIN_QUERY_COUNT:-10}"
+          manifest_path="${INPUT_MANIFEST_PATH:-tests/fixtures/nova_manifest.json}"
+          qrels_path="${INPUT_QRELS_PATH:-tests/fixtures/search_eval_qrels.json}"
+
+          if ! [[ "${top_k}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::top_k must be a positive integer"
+            exit 1
+          fi
+          if ! [[ "${min_query_count}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::min_query_count must be a positive integer"
+            exit 1
+          fi
+          if [[ "${manifest_path}" == *$'\n'* || "${qrels_path}" == *$'\n'* ]]; then
+            echo "::error::manifest_path and qrels_path must be single-line paths"
+            exit 1
+          fi
+          if [[ ! -f "${manifest_path}" ]]; then
+            echo "::error::manifest_path does not exist: ${manifest_path}"
+            exit 1
+          fi
+          if [[ ! -f "${qrels_path}" ]]; then
+            echo "::error::qrels_path does not exist: ${qrels_path}"
+            exit 1
+          fi
+
+          model_cache="${HOME}/.dbt-nova-models"
+          model_files=0
+          if [[ -d "${model_cache}" ]]; then
+            model_files="$(
+              find "${model_cache}" -type f \( -name '*.onnx' -o -name 'tokenizer.json' -o -name 'config.json' \) \
+                | wc -l \
+                | tr -d ' '
+            )"
+          fi
+
+          run_hybrid=0
+          skip_reason="no cached model assets and downloads disabled"
+          if [[ "${allow_download}" == "true" ]]; then
+            run_hybrid=1
+            skip_reason="model downloads explicitly allowed"
+          elif [[ "${model_files}" -gt 0 ]]; then
+            run_hybrid=1
+            skip_reason="model cache has ${model_files} candidate files"
+          fi
+
+          {
+            echo "allow_download=${allow_download}"
+            echo "require_models=${require_models}"
+            echo "enable_lifecycle=${enable_lifecycle}"
+            echo "top_k=${top_k}"
+            echo "min_query_count=${min_query_count}"
+            echo "manifest_path=${manifest_path}"
+            echo "qrels_path=${qrels_path}"
+            echo "model_files=${model_files}"
+            echo "run_hybrid=${run_hybrid}"
+            echo "skip_reason=${skip_reason}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Run characterization
+        shell: bash
+        env:
+          DBT_NOVA_EVAL_ENABLE_HYBRID: ${{ steps.mode.outputs.run_hybrid }}
+          DBT_NOVA_EVAL_ENABLE_LIFECYCLE: ${{ steps.mode.outputs.enable_lifecycle }}
+          DBT_NOVA_EVAL_ALLOW_EMBEDDING_DOWNLOAD: ${{ steps.mode.outputs.allow_download }}
+          DBT_NOVA_EVAL_REQUIRE_MODELS: ${{ steps.mode.outputs.require_models }}
+          DBT_NOVA_EVAL_TOP_K: ${{ steps.mode.outputs.top_k }}
+          DBT_NOVA_EVAL_MIN_QUERY_COUNT: ${{ steps.mode.outputs.min_query_count }}
+          DBT_NOVA_EVAL_MANIFEST_PATH: ${{ steps.mode.outputs.manifest_path }}
+          DBT_NOVA_EVAL_QRELS_PATH: ${{ steps.mode.outputs.qrels_path }}
+          MODE_REASON: ${{ steps.mode.outputs.skip_reason }}
+          MODEL_FILES: ${{ steps.mode.outputs.model_files }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          export DBT_NOVA_EVAL_EMBEDDINGS_CACHE_DIR="${HOME}/.dbt-nova-models"
+
+          {
+            echo "## Hybrid Search Characterization"
+            echo
+            echo "- Hybrid profile enabled: \`${DBT_NOVA_EVAL_ENABLE_HYBRID}\`"
+            echo "- Mode reason: ${MODE_REASON}"
+            echo "- Model cache candidate files: \`${MODEL_FILES}\`"
+            echo "- Embedding downloads allowed: \`${DBT_NOVA_EVAL_ALLOW_EMBEDDING_DOWNLOAD}\`"
+            echo "- Require models: \`${DBT_NOVA_EVAL_REQUIRE_MODELS}\`"
+            echo "- Lifecycle timing: \`${DBT_NOVA_EVAL_ENABLE_LIFECYCLE}\`"
+            echo "- Model cache dir: \`${DBT_NOVA_EVAL_EMBEDDINGS_CACHE_DIR}\`"
+            echo "- Manifest: \`${DBT_NOVA_EVAL_MANIFEST_PATH}\`"
+            echo "- Qrels: \`${DBT_NOVA_EVAL_QRELS_PATH}\`"
+            echo
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          /usr/bin/time -v -o out/resource-usage.txt \
+            cargo test --locked --test search_eval compare_lexical_vs_hybrid_search_quality -- --ignored --nocapture \
+            2>&1 | tee out/search-eval.log
+
+          {
+            echo "## Search Quality and Latency"
+            echo
+            echo '```text'
+            awk '
+              /^=== Search Quality Evaluation/ { capture = 1 }
+              capture { print }
+              /^Top hit per query/ { exit }
+            ' out/search-eval.log
+            echo '```'
+            echo
+            echo "## Lifecycle Timing"
+            echo
+            echo '```text'
+            awk '
+              /^=== Lifecycle Timing/ { capture = 1 }
+              capture { print }
+            ' out/search-eval.log
+            echo '```'
+            echo
+            echo "## Runner Resource Usage"
+            echo
+            echo '```text'
+            grep -E 'Elapsed \\(wall clock\\)|Maximum resident set size|Percent of CPU' out/resource-usage.txt || true
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload characterization artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: hybrid-search-characterization
+          path: |
+            out/search-eval.log
+            out/resource-usage.txt
+          if-no-files-found: error

@@ -74,6 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   header verification plus bearer JWT/JWKS validation for streamable HTTP.
 - Added hosted identity threat-model docs, config contract docs, and guardrail
   tests for the default-off identity milestone.
+- Added an optional nightly/manual hybrid search characterization workflow that
+  records search quality, latency, lifecycle, and runner memory evidence outside
+  PR CI without making semantic search required.
 - Added machine-checked MCP tool stability metadata, profile membership docs,
   and safety-gate posture for the canonical 53-tool catalog while preserving
   v0.0.x versioning.
