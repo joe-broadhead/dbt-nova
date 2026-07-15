@@ -21,13 +21,13 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tracing::{error, info, warn};
 
 use crate::cli::args::{ServerStartArgs, ServerTransportArg};
-use crate::config::{DbtNovaConfig, ServerTransport};
+use crate::config::{DbtNovaConfig, HostedAuthMode, ServerTransport};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::bootstrap::prepare_runtime_config;
 use crate::manifest::search::ManifestSearchHandle;
 use crate::server::correlation::correlate_http_request;
 use crate::server::health::build_manifest_health_payload;
-use crate::server::identity::{ProxyIdentityVerifier, verify_proxy_identity_request};
+use crate::server::identity::{HostedIdentityVerifier, verify_hosted_identity_request};
 use crate::server::mcp::DbtNovaServer;
 use crate::utils::{ToolMetricsStore, sanitize_uri};
 
@@ -44,7 +44,7 @@ struct HttpServerSettings {
     max_body_bytes: usize,
     allowed_hosts: Vec<String>,
     metrics_enabled: bool,
-    proxy_identity_verifier: Option<Arc<ProxyIdentityVerifier>>,
+    hosted_identity_verifier: Option<Arc<HostedIdentityVerifier>>,
 }
 
 #[derive(Clone)]
@@ -66,7 +66,7 @@ impl HttpServerSettings {
             max_body_bytes: config.http_max_body_bytes,
             allowed_hosts: parse_http_allowed_hosts(&config.http_allowed_hosts),
             metrics_enabled: config.metrics_enabled,
-            proxy_identity_verifier: ProxyIdentityVerifier::from_config(&config.hosted_auth)?
+            hosted_identity_verifier: HostedIdentityVerifier::from_config(&config.hosted_auth)?
                 .map(Arc::new),
         })
     }
@@ -211,6 +211,16 @@ async fn start_with_config_and_shutdown(
 }
 
 fn log_streamable_http_auth_posture(config: &DbtNovaConfig) {
+    if config.hosted_auth.mode != HostedAuthMode::Off {
+        info!(
+            http_host = %config.http_host,
+            http_port = config.http_port,
+            http_path = %config.http_path,
+            auth_mode = config.hosted_auth.mode.as_str(),
+            "streamable HTTP hosted identity verification enabled; keep authorization and proxy/network access controls outside Nova"
+        );
+        return;
+    }
     if config.http_transport_binds_non_loopback() {
         warn!(
             http_host = %config.http_host,
@@ -299,10 +309,10 @@ async fn serve_streamable_http(
     } else {
         app
     };
-    let app = if let Some(verifier) = settings.proxy_identity_verifier {
+    let app = if let Some(verifier) = settings.hosted_identity_verifier {
         app.layer(middleware::from_fn_with_state(
             verifier,
-            verify_proxy_identity_request,
+            verify_hosted_identity_request,
         ))
     } else {
         app

@@ -49,7 +49,7 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_HTTP_SSE_RETRY_SECS` – SSE retry hint for streamable HTTP mode (`0` disables retry hints, default: `3`)
 - `DBT_NOVA_HTTP_MAX_BODY_BYTES` – global streamable HTTP request body cap (`0` disables the in-process cap, default: `16777216`)
 - `DBT_NOVA_METRICS_ENABLED` – expose the Prometheus-compatible `GET /metrics` endpoint in streamable HTTP mode (`true`|`false`, default: `true`)
-- `DBT_NOVA_AUTH_MODE` – default-off hosted identity mode (`off`, `proxy_signed_headers`, or `jwt`; default: `off`). `proxy_signed_headers` is enforced when configured; `jwt` remains planned and fails validation until its verifier is implemented.
+- `DBT_NOVA_AUTH_MODE` – default-off hosted identity mode (`off`, `proxy_signed_headers`, or `jwt`; default: `off`). `proxy_signed_headers` and `jwt` are enforced when configured.
 - `DBT_NOVA_AUTH_REQUIRED` – require hosted identity for non-`off` modes (`true`|`false`, default: `false`; non-`off` modes default to required when this is unset and fail closed if explicitly false)
 - `DBT_NOVA_IDENTITY_SUBJECT_CLAIM` – stable subject claim/field for proxy/JWT identity (`sub` by default; required for non-`off` modes)
 - `DBT_NOVA_IDENTITY_EMAIL_CLAIM` – optional email claim/field for proxy/JWT identity (`email` by default)
@@ -59,11 +59,11 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_PROXY_SIGNATURE_HEADER` – proxy-signed identity signature header carrying `sha256=<base64url-no-pad HMAC-SHA256>` over the exact identity header value (required for `proxy_signed_headers`)
 - `DBT_NOVA_PROXY_IDENTITY_SECRET_FILE` – local HMAC verification secret file for proxy-signed identity envelopes (required for `proxy_signed_headers`; at least 32 bytes; redacted from config inspection)
 - `DBT_NOVA_PROXY_IDENTITY_MAX_AGE_SECS` – proxy identity envelope freshness window (`300` by default; must be greater than `0`)
-- `DBT_NOVA_JWT_ISSUER` – planned JWT issuer allowlist entry (required for `jwt`; parsed but not enforced yet)
-- `DBT_NOVA_JWT_AUDIENCE` – planned JWT audience allowlist entry (required for `jwt`; parsed but not enforced yet)
-- `DBT_NOVA_JWT_JWKS_URL` – planned HTTPS JWKS endpoint for JWT signature verification (required for `jwt`; sanitized in config inspection; parsed but not enforced yet)
-- `DBT_NOVA_JWT_ALGORITHMS` – comma-separated planned JWT algorithm allowlist (required for `jwt`; `none` is rejected; parsed but not enforced yet)
-- `DBT_NOVA_JWT_CLOCK_SKEW_SECS` – planned JWT clock skew leeway for `exp` and `nbf` checks (`60` by default)
+- `DBT_NOVA_JWT_ISSUER` – JWT issuer allowlist entry (required for `jwt`)
+- `DBT_NOVA_JWT_AUDIENCE` – JWT audience allowlist entry (required for `jwt`)
+- `DBT_NOVA_JWT_JWKS_URL` – HTTPS JWKS endpoint for JWT signature verification (required for `jwt`; sanitized in config inspection)
+- `DBT_NOVA_JWT_ALGORITHMS` – comma-separated JWT algorithm allowlist (required for `jwt`; `none` and HS* algorithms are rejected; asymmetric/EdDSA algorithms only)
+- `DBT_NOVA_JWT_CLOCK_SKEW_SECS` – JWT clock skew leeway for `exp` and `nbf` checks (`60` by default)
 - `DBT_NOVA_STRICT_SCHEMA` – fail build if schema files are missing or invalid (`true`|`false`, default: `false`; forced `true` in CI)
 - `DBT_NOVA_S3_MODE` – S3 fetch mode (`https` or `sdk`, default: `https`)
 - `DBT_NOVA_GCS_MODE` – GCS fetch mode (`https` or `sdk`, default: `https`)
@@ -187,7 +187,7 @@ Remote manifest notes:
 - Published container images set `DBT_NOVA_PRESET=hosted-discovery` by default
   so hosted image starts are discovery-only and non-admin unless an operator
   overrides the preset or clears/customizes the denylist.
-- Streamable HTTP mode has **no built-in authentication** by default. Keep it bound to loopback for local use, or set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when an authenticating reverse proxy is enforcing access in front of dbt-nova. `DBT_NOVA_AUTH_MODE=proxy_signed_headers` adds default-off HMAC verification for proxy-provided identity envelopes; JWT mode remains fail-closed until implemented. For hosted/proxied deployments, set `DBT_NOVA_HTTP_ALLOWED_HOSTS` to the public/proxy hostnames clients send in `Host`. Published container images do not set these acknowledgements by default.
+- Streamable HTTP mode has **no built-in authentication** by default. Keep it bound to loopback for local use, or set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when an authenticating reverse proxy is enforcing access in front of dbt-nova. `DBT_NOVA_AUTH_MODE=proxy_signed_headers` adds default-off HMAC verification for proxy-provided identity envelopes. `DBT_NOVA_AUTH_MODE=jwt` adds default-off bearer JWT verification using the configured HTTPS JWKS, issuer, audience, and asymmetric algorithm allowlist. For hosted/proxied deployments, set `DBT_NOVA_HTTP_ALLOWED_HOSTS` to the public/proxy hostnames clients send in `Host`. Published container images do not set these acknowledgements by default.
 - Streamable HTTP mode applies a global request body cap before the mounted MCP transport reads request bodies. Keep `DBT_NOVA_HTTP_MAX_BODY_BYTES` bounded in hosted deployments unless an outer proxy enforces a stricter limit.
 - The MCP endpoint is mounted at `DBT_NOVA_HTTP_PATH`; plain operational
   endpoints are reserved at `/healthz`, `/readyz`, and `/metrics`.

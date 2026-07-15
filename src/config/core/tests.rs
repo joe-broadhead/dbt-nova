@@ -92,7 +92,7 @@ fn server_transport_parse_is_case_insensitive() {
 }
 
 #[test]
-fn hosted_auth_mode_parse_accepts_planned_modes() {
+fn hosted_auth_mode_parse_accepts_supported_modes() {
     assert_eq!(HostedAuthMode::parse("off"), Some(HostedAuthMode::Off));
     assert_eq!(
         HostedAuthMode::parse("proxy_signed_headers"),
@@ -313,7 +313,7 @@ fn validate_rejects_incomplete_jwt_hosted_auth_skeleton() {
 }
 
 #[test]
-fn validate_rejects_complete_jwt_until_verifier_lands() {
+fn validate_accepts_complete_jwt_hosted_auth() {
     let config = with_env_vars(
         &[
             ("DBT_NOVA_AUTH_MODE", Some("jwt")),
@@ -334,13 +334,57 @@ fn validate_rejects_complete_jwt_until_verifier_lands() {
         config.hosted_auth.jwt_algorithms,
         vec!["RS256".to_string(), "ES256".to_string()]
     );
+    config
+        .validate()
+        .expect("complete jwt mode should validate");
+}
+
+#[test]
+fn validate_rejects_hmac_jwt_algorithm() {
+    let config = with_env_vars(
+        &[
+            ("DBT_NOVA_AUTH_MODE", Some("jwt")),
+            ("DBT_NOVA_JWT_ISSUER", Some("https://issuer.example")),
+            ("DBT_NOVA_JWT_AUDIENCE", Some("dbt-nova")),
+            (
+                "DBT_NOVA_JWT_JWKS_URL",
+                Some("https://issuer.example/.well-known/jwks.json"),
+            ),
+            ("DBT_NOVA_JWT_ALGORITHMS", Some("HS256")),
+        ],
+        DbtNovaConfig::from_env,
+    );
+
     let error = config
         .validate()
-        .expect_err("complete jwt skeleton should still fail closed until implemented");
+        .expect_err("HMAC JWT algorithms should fail validation");
     assert!(
-        error
-            .to_string()
-            .contains("jwt is parsed but not implemented yet"),
+        error.to_string().contains("HS256"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn validate_rejects_unknown_jwt_algorithm() {
+    let config = with_env_vars(
+        &[
+            ("DBT_NOVA_AUTH_MODE", Some("jwt")),
+            ("DBT_NOVA_JWT_ISSUER", Some("https://issuer.example")),
+            ("DBT_NOVA_JWT_AUDIENCE", Some("dbt-nova")),
+            (
+                "DBT_NOVA_JWT_JWKS_URL",
+                Some("https://issuer.example/.well-known/jwks.json"),
+            ),
+            ("DBT_NOVA_JWT_ALGORITHMS", Some("none")),
+        ],
+        DbtNovaConfig::from_env,
+    );
+
+    let error = config
+        .validate()
+        .expect_err("unsupported JWT algorithms should fail validation");
+    assert!(
+        error.to_string().contains("unsupported algorithm"),
         "unexpected error: {error}"
     );
 }

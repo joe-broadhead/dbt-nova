@@ -33,7 +33,7 @@ fn hosted_identity_docs_lock_default_off_guardrails() {
 }
 
 #[test]
-fn hosted_identity_contract_documents_proxy_mode_and_jwt_fail_closed() {
+fn hosted_identity_contract_documents_proxy_and_jwt_modes() {
     let contract = read_doc("docs/development/hosted-identity-contract.md");
     let config_reference = read_doc("docs/configuration/reference.md");
     let hosted_deployment = read_doc("docs/operations/hosted-deployment.md");
@@ -44,10 +44,9 @@ fn hosted_identity_contract_documents_proxy_mode_and_jwt_fail_closed() {
     assert!(contract.contains("Proxy Envelope"));
     assert!(contract.contains("HMAC-SHA256"));
     assert!(config_reference.contains("DBT_NOVA_AUTH_MODE"));
-    assert!(config_reference.contains("proxy_signed_headers` is enforced"));
+    assert!(config_reference.contains("proxy_signed_headers` and `jwt` are enforced"));
     assert!(hosted_deployment.contains("Proxy-Signed Identity Mode"));
-    assert!(
-        config_reference.contains("`jwt` remains planned and fails validation"),
-        "runtime config reference must describe JWT as fail-closed"
-    );
+    assert!(hosted_deployment.contains("JWT Identity Mode"));
+    assert!(contract.contains("HS* algorithms are never accepted"));
+    assert!(config_reference.contains("asymmetric/EdDSA algorithms only"));
 }

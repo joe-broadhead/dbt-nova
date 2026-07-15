@@ -1,3 +1,6 @@
+use std::str::FromStr;
+
+use jsonwebtoken::Algorithm;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{DbtNovaError, Result};
@@ -11,7 +14,7 @@ pub enum HostedAuthMode {
     Off,
     /// Signed identity envelope from a trusted reverse proxy.
     ProxySignedHeaders,
-    /// Planned bearer JWT validation at the Nova HTTP boundary.
+    /// Bearer JWT validation at the Nova HTTP boundary.
     Jwt,
 }
 
@@ -42,7 +45,7 @@ impl HostedAuthMode {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct HostedAuthConfig {
-    /// Hosted auth mode. Proxy mode is implemented; JWT remains planned.
+    /// Hosted auth mode. Proxy and JWT modes are implemented.
     pub mode: HostedAuthMode,
     /// Whether authentication must be present for hosted requests.
     pub required: bool,
@@ -118,7 +121,7 @@ impl HostedAuthConfig {
             }
             HostedAuthMode::Jwt => {
                 self.validate_jwt()?;
-                Err(non_off_auth_mode_unimplemented_error(self.mode))
+                Ok(())
             }
         }
     }
@@ -151,21 +154,7 @@ impl HostedAuthConfig {
         require_non_empty("DBT_NOVA_JWT_AUDIENCE", &self.jwt_audience)?;
         require_non_empty("DBT_NOVA_JWT_JWKS_URL", &self.jwt_jwks_url)?;
         require_https_url("DBT_NOVA_JWT_JWKS_URL", &self.jwt_jwks_url)?;
-        if self.jwt_algorithms.is_empty() {
-            return Err(DbtNovaError::InvalidParams(
-                "DBT_NOVA_JWT_ALGORITHMS must include at least one accepted algorithm for JWT mode"
-                    .to_string(),
-            ));
-        }
-        if self
-            .jwt_algorithms
-            .iter()
-            .any(|algorithm| algorithm.trim().eq_ignore_ascii_case("none"))
-        {
-            return Err(DbtNovaError::InvalidParams(
-                "DBT_NOVA_JWT_ALGORITHMS must not include `none`".to_string(),
-            ));
-        }
+        parse_jwt_algorithms(&self.jwt_algorithms)?;
         Ok(())
     }
 
@@ -182,13 +171,6 @@ impl HostedAuthConfig {
     }
 }
 
-fn non_off_auth_mode_unimplemented_error(mode: HostedAuthMode) -> DbtNovaError {
-    DbtNovaError::InvalidParams(format!(
-        "DBT_NOVA_AUTH_MODE={} is parsed but not implemented yet; use DBT_NOVA_AUTH_MODE=proxy_signed_headers or off until its verifier lands",
-        mode.as_str()
-    ))
-}
-
 fn require_non_empty(name: &str, value: &str) -> Result<()> {
     if value.trim().is_empty() {
         return Err(DbtNovaError::InvalidParams(format!(
@@ -196,6 +178,44 @@ fn require_non_empty(name: &str, value: &str) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+pub(crate) fn parse_jwt_algorithms(values: &[String]) -> Result<Vec<Algorithm>> {
+    let mut algorithms = Vec::with_capacity(values.len());
+    for value in values {
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        let algorithm = Algorithm::from_str(value).map_err(|_| {
+            DbtNovaError::InvalidParams(format!(
+                "DBT_NOVA_JWT_ALGORITHMS contains unsupported algorithm `{value}`"
+            ))
+        })?;
+        if is_hmac_algorithm(algorithm) {
+            return Err(DbtNovaError::InvalidParams(
+                "DBT_NOVA_JWT_ALGORITHMS must use asymmetric algorithms; HS256, HS384, and HS512 are not accepted for hosted JWT mode"
+                    .to_string(),
+            ));
+        }
+        if !algorithms.contains(&algorithm) {
+            algorithms.push(algorithm);
+        }
+    }
+    if algorithms.is_empty() {
+        return Err(DbtNovaError::InvalidParams(
+            "DBT_NOVA_JWT_ALGORITHMS must include at least one accepted algorithm for JWT mode"
+                .to_string(),
+        ));
+    }
+    Ok(algorithms)
+}
+
+const fn is_hmac_algorithm(algorithm: Algorithm) -> bool {
+    matches!(
+        algorithm,
+        Algorithm::HS256 | Algorithm::HS384 | Algorithm::HS512
+    )
 }
 
 fn require_https_url(name: &str, value: &str) -> Result<()> {
