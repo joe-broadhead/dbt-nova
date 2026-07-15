@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Hardened Databricks and BigQuery SQL execution so local poll timeouts attempt
   provider-side cancellation, and Databricks now enforces local row/byte caps
   while merging inline and fetched result chunks.
+- Added Snowflake SQL API workload identity federation auth as a pass-through
+  bearer-token mode (`DBT_NOVA_SNOWFLAKE_AUTH=wif`) for caller-supplied
+  AWS/Azure/GCP/OIDC workload identity tokens.
 - Enforced `manifest_max_bytes` for local manifest paths and auto-discovered
   sibling `catalog.json` files before parsing.
 - Fixed storage loading so readers reuse complete published versions without

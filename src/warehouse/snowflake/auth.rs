@@ -600,6 +600,10 @@ pub(super) fn resolve_auth_from_env(
                 Some("pat".to_string())
             } else if read_optional_env("DBT_NOVA_SNOWFLAKE_OAUTH_TOKEN").is_some() {
                 Some("oauth".to_string())
+            } else if read_optional_env("DBT_NOVA_SNOWFLAKE_WIF_TOKEN").is_some()
+                || read_optional_env("DBT_NOVA_SNOWFLAKE_WIF_TOKEN_PATH").is_some()
+            {
+                Some("wif".to_string())
             } else {
                 Some("keypair".to_string())
             }
@@ -627,6 +631,14 @@ pub(super) fn resolve_auth_from_mode(
                 "DBT_NOVA_SNOWFLAKE_PAT is required for Snowflake PAT auth",
             )?,
         }),
+        "wif" | "workload_identity" | "workload_identity_federation" => {
+            let provider = read_optional_env("DBT_NOVA_SNOWFLAKE_WIF_PROVIDER");
+            build_workload_identity_auth_config(
+                provider.as_deref(),
+                read_optional_env("DBT_NOVA_SNOWFLAKE_WIF_TOKEN"),
+                read_optional_env("DBT_NOVA_SNOWFLAKE_WIF_TOKEN_PATH"),
+            )
+        }
         "externalbrowser" | "external_browser" | "browser" => {
             ensure_external_browser_allowed_from_env(streamable_http_env_binds_non_loopback())?;
             let timeout = Duration::from_secs(
@@ -675,6 +687,53 @@ pub(super) fn resolve_auth_from_mode(
         other => Err(DbtNovaError::InvalidParams(format!(
             "Unsupported DBT_NOVA_SNOWFLAKE_AUTH '{other}' (expected {SUPPORTED_SNOWFLAKE_AUTH_MODES})"
         ))),
+    }
+}
+
+pub(super) fn build_workload_identity_auth_config(
+    provider: Option<&str>,
+    token: Option<String>,
+    token_path: Option<String>,
+) -> Result<SnowflakeAuthConfig> {
+    Ok(SnowflakeAuthConfig::WorkloadIdentityFederation {
+        provider: normalize_workload_identity_provider(provider)?,
+        token_source: resolve_workload_identity_token_source(token, token_path)?,
+    })
+}
+
+pub(super) fn normalize_workload_identity_provider(provider: Option<&str>) -> Result<String> {
+    let provider = provider
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            DbtNovaError::InvalidParams(
+                "DBT_NOVA_SNOWFLAKE_WIF_PROVIDER is required for Snowflake workload identity federation auth".to_string(),
+            )
+        })?
+        .to_ascii_uppercase();
+    if matches!(provider.as_str(), "AWS" | "AZURE" | "GCP" | "OIDC") {
+        Ok(provider)
+    } else {
+        Err(DbtNovaError::InvalidParams(format!(
+            "Unsupported DBT_NOVA_SNOWFLAKE_WIF_PROVIDER '{provider}' (expected AWS, AZURE, GCP, or OIDC)"
+        )))
+    }
+}
+
+pub(super) fn resolve_workload_identity_token_source(
+    token: Option<String>,
+    token_path: Option<String>,
+) -> Result<SnowflakeWifTokenSource> {
+    match (token, token_path) {
+        (Some(token), None) => Ok(SnowflakeWifTokenSource::Inline(token)),
+        (None, Some(path)) => Ok(SnowflakeWifTokenSource::FilePath(path)),
+        (Some(_), Some(_)) => Err(DbtNovaError::InvalidParams(
+            "Set only one of DBT_NOVA_SNOWFLAKE_WIF_TOKEN or DBT_NOVA_SNOWFLAKE_WIF_TOKEN_PATH"
+                .to_string(),
+        )),
+        (None, None) => Err(DbtNovaError::InvalidParams(
+            "DBT_NOVA_SNOWFLAKE_WIF_TOKEN or DBT_NOVA_SNOWFLAKE_WIF_TOKEN_PATH is required for Snowflake workload identity federation auth".to_string(),
+        )),
     }
 }
 
@@ -779,12 +838,12 @@ pub(super) fn ensure_external_browser_allowed(
 ) -> Result<()> {
     if running_in_ci {
         return Err(DbtNovaError::InvalidParams(
-            "Snowflake externalbrowser auth is interactive and cannot run in CI; use keypair, oauth, or pat auth".to_string(),
+            "Snowflake externalbrowser auth is interactive and cannot run in CI; use keypair, oauth, pat, or wif auth".to_string(),
         ));
     }
     if non_loopback_http_bind {
         return Err(DbtNovaError::InvalidParams(
-            "Snowflake externalbrowser auth is local-only and cannot be used with non-loopback streamable HTTP binds; use keypair, oauth, or pat auth for hosted deployments".to_string(),
+            "Snowflake externalbrowser auth is local-only and cannot be used with non-loopback streamable HTTP binds; use keypair, oauth, pat, or wif auth for hosted deployments".to_string(),
         ));
     }
     Ok(())
