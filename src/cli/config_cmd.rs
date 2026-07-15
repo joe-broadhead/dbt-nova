@@ -5,7 +5,9 @@ use serde_json::Value as JsonValue;
 
 use crate::cli::args::{ConfigShowArgs, ConfigValidateArgs};
 use crate::cli::output::{CliEnvelope, error_envelope};
-use crate::config::{ArtifactFetchPolicy, DbtNovaConfig, RuntimePreset, ServerTransport};
+use crate::config::{
+    ArtifactFetchPolicy, DbtNovaConfig, HostedAuthMode, RuntimePreset, ServerTransport,
+};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::bootstrap::prepare_runtime_config;
 use crate::params::{ConfigShowParams, ConfigValidateParams};
@@ -390,11 +392,17 @@ fn build_validation_checklist(config: &DbtNovaConfig) -> ConfigValidationCheckli
 }
 
 fn build_hosted_auth_posture(config: &DbtNovaConfig) -> HostedAuthPosture {
+    let proxy_mode_enabled = config.hosted_auth.mode == HostedAuthMode::ProxySignedHeaders;
+    let effective_mode = if proxy_mode_enabled {
+        HostedAuthMode::ProxySignedHeaders.as_str()
+    } else {
+        HostedAuthMode::Off.as_str()
+    };
     HostedAuthPosture {
         mode: config.hosted_auth.mode.as_str().to_string(),
-        effective_mode: "off".to_string(),
+        effective_mode: effective_mode.to_string(),
         required: config.hosted_auth.required,
-        non_off_modes_implemented: false,
+        non_off_modes_implemented: proxy_mode_enabled,
         proxy_identity_header_configured: !config
             .hosted_auth
             .proxy_identity_header
@@ -744,6 +752,42 @@ mod tests {
         );
         assert!(
             response["data"]["checklist"]["storage"]["access"]["local_writes_allowed"].is_boolean()
+        );
+    }
+
+    #[test]
+    fn config_validate_reports_proxy_signed_headers_as_effective_auth_mode() {
+        let config = DbtNovaConfig {
+            hosted_auth: HostedAuthConfig {
+                mode: HostedAuthMode::ProxySignedHeaders,
+                required: true,
+                proxy_identity_header: "X-Nova-Identity".to_string(),
+                proxy_signature_header: "X-Nova-Signature".to_string(),
+                proxy_identity_secret_file: "/run/secrets/nova-proxy-key".to_string(),
+                ..HostedAuthConfig::default()
+            },
+            ..DbtNovaConfig::default()
+        };
+
+        let response =
+            build_config_validate_tool_response(&config, &ConfigValidateParams::default())
+                .expect("config validate response");
+
+        assert_eq!(
+            response["data"]["checklist"]["hosted_auth"]["mode"],
+            serde_json::json!("proxy_signed_headers")
+        );
+        assert_eq!(
+            response["data"]["checklist"]["hosted_auth"]["effective_mode"],
+            serde_json::json!("proxy_signed_headers")
+        );
+        assert_eq!(
+            response["data"]["checklist"]["hosted_auth"]["non_off_modes_implemented"],
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            response["data"]["checklist"]["hosted_auth"]["proxy_secret_file_configured"],
+            serde_json::json!(true)
         );
     }
 

@@ -70,8 +70,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed DuckDB `execute_sql`/`run_recipe` temporal result cells so DATE,
   TIMESTAMP, and TIME values serialize as ISO-style strings instead of raw
   epoch-day or tick integers.
-- Added a fail-closed hosted auth config skeleton for future proxy/JWT identity
-  work while keeping effective runtime behavior default-off.
+- Added default-off hosted identity config and implemented proxy-signed HMAC
+  header verification for streamable HTTP, while keeping JWT validation planned
+  and fail-closed.
 - Added design-only hosted identity and JWT threat-model docs, planned config
   contract docs, and guardrail tests for the default-off identity milestone.
 - Added machine-checked MCP tool stability metadata, profile membership docs,

@@ -33,17 +33,21 @@ fn hosted_identity_docs_lock_default_off_guardrails() {
 }
 
 #[test]
-fn hosted_identity_contract_is_documented_as_fail_closed_config_skeleton() {
+fn hosted_identity_contract_documents_proxy_mode_and_jwt_fail_closed() {
     let contract = read_doc("docs/development/hosted-identity-contract.md");
     let config_reference = read_doc("docs/configuration/reference.md");
+    let hosted_deployment = read_doc("docs/operations/hosted-deployment.md");
 
     assert!(contract.contains("DBT_NOVA_AUTH_MODE"));
     assert!(contract.contains("proxy_signed_headers"));
     assert!(contract.contains("jwt"));
-    assert!(contract.contains("parsed but not enforced"));
+    assert!(contract.contains("Proxy Envelope"));
+    assert!(contract.contains("HMAC-SHA256"));
     assert!(config_reference.contains("DBT_NOVA_AUTH_MODE"));
+    assert!(config_reference.contains("proxy_signed_headers` is enforced"));
+    assert!(hosted_deployment.contains("Proxy-Signed Identity Mode"));
     assert!(
-        config_reference.contains("fail validation until their verifiers are implemented"),
-        "runtime config reference must describe hosted auth as fail-closed skeleton"
+        config_reference.contains("`jwt` remains planned and fails validation"),
+        "runtime config reference must describe JWT as fail-closed"
     );
 }

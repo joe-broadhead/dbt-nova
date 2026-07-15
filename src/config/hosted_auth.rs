@@ -2,14 +2,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{DbtNovaError, Result};
 
-/// Planned hosted authentication modes for streamable HTTP deployments.
+/// Hosted authentication modes for streamable HTTP deployments.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum HostedAuthMode {
     /// Current behavior: rely on the external proxy/platform boundary.
     #[default]
     Off,
-    /// Planned signed identity envelope from a trusted reverse proxy.
+    /// Signed identity envelope from a trusted reverse proxy.
     ProxySignedHeaders,
     /// Planned bearer JWT validation at the Nova HTTP boundary.
     Jwt,
@@ -38,15 +38,15 @@ impl HostedAuthMode {
     }
 }
 
-/// Default-off skeleton for future hosted HTTP identity validation.
+/// Default-off hosted HTTP identity validation config.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct HostedAuthConfig {
-    /// Hosted auth mode. Non-off modes are parsed but not enforced yet.
+    /// Hosted auth mode. Proxy mode is implemented; JWT remains planned.
     pub mode: HostedAuthMode,
     /// Whether authentication must be present for hosted requests.
     pub required: bool,
-    /// Claim/field used as stable request subject in future modes.
+    /// Claim/field used as stable request subject.
     pub identity_subject_claim: String,
     /// Optional email claim/field.
     pub identity_email_claim: String,
@@ -54,9 +54,9 @@ pub struct HostedAuthConfig {
     pub identity_name_claim: String,
     /// Optional groups claim/field reserved for future policy hooks.
     pub identity_groups_claim: String,
-    /// Proxy-mode identity envelope header.
+    /// Proxy-mode base64url JSON identity envelope header.
     pub proxy_identity_header: String,
-    /// Proxy-mode signature header.
+    /// Proxy-mode HMAC-SHA256 signature header.
     pub proxy_signature_header: String,
     /// Proxy-mode local secret file used for envelope verification.
     pub proxy_identity_secret_file: String,
@@ -97,7 +97,7 @@ impl Default for HostedAuthConfig {
 }
 
 impl HostedAuthConfig {
-    /// Validate the skeleton without enabling authentication behavior.
+    /// Validate hosted auth configuration.
     ///
     /// # Errors
     /// Returns an error for unknown/incomplete/misleading auth configuration.
@@ -106,7 +106,7 @@ impl HostedAuthConfig {
             HostedAuthMode::Off => {
                 if self.required {
                     return Err(DbtNovaError::InvalidParams(
-                        "DBT_NOVA_AUTH_REQUIRED=true requires DBT_NOVA_AUTH_MODE=proxy_signed_headers or jwt, but non-off hosted auth modes are not implemented yet"
+                        "DBT_NOVA_AUTH_REQUIRED=true requires DBT_NOVA_AUTH_MODE=proxy_signed_headers or jwt"
                             .to_string(),
                     ));
                 }
@@ -114,7 +114,7 @@ impl HostedAuthConfig {
             }
             HostedAuthMode::ProxySignedHeaders => {
                 self.validate_proxy_signed_headers()?;
-                Err(non_off_auth_mode_unimplemented_error(self.mode))
+                Ok(())
             }
             HostedAuthMode::Jwt => {
                 self.validate_jwt()?;
@@ -184,7 +184,7 @@ impl HostedAuthConfig {
 
 fn non_off_auth_mode_unimplemented_error(mode: HostedAuthMode) -> DbtNovaError {
     DbtNovaError::InvalidParams(format!(
-        "DBT_NOVA_AUTH_MODE={} is parsed but not implemented yet; keep DBT_NOVA_AUTH_MODE=off until hosted identity verification lands",
+        "DBT_NOVA_AUTH_MODE={} is parsed but not implemented yet; use DBT_NOVA_AUTH_MODE=proxy_signed_headers or off until its verifier lands",
         mode.as_str()
     ))
 }
