@@ -11,10 +11,11 @@ authenticating reverse proxy or platform auth layer first.
 
 Default-off hosted identity config also supports
 `DBT_NOVA_AUTH_MODE=proxy_signed_headers`, where Nova verifies a small HMAC
-identity envelope produced by the trusted proxy. JWT validation remains planned
-and fail-closed until its verifier lands. Proxy identity is request attribution,
-not authorization; the proxy or platform layer remains responsible for
-authenticating users and stripping any client-supplied identity headers.
+identity envelope produced by the trusted proxy, and `DBT_NOVA_AUTH_MODE=jwt`,
+where Nova verifies inbound bearer JWTs against an operator-configured HTTPS
+JWKS. Hosted identity is request attribution and inbound access checking, not
+authorization; the proxy or platform layer remains responsible for coarse access
+control and network exposure.
 See
 [Hosted Identity Threat Model](../development/hosted-identity-threat-model.md)
 and [Hosted Identity Contract](../development/hosted-identity-contract.md).
@@ -38,9 +39,8 @@ Recommended hosted posture:
   intentionally warming semantic caches.
 - Set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when the reverse proxy or
   platform auth layer is actually enforcing authentication.
-- Leave `DBT_NOVA_AUTH_MODE=off` unless the proxy-signed header contract is
-  configured end to end. JWT mode currently fails validation rather than running
-  without enforcement.
+- Leave `DBT_NOVA_AUTH_MODE=off` unless the proxy-signed header or JWT contract
+  is configured end to end.
 
 ## Local HTTP Profile
 
@@ -148,6 +148,36 @@ Example identity JSON before base64url encoding:
 Nova rejects missing, malformed, oversized, stale, or badly signed envelopes
 with `401 Unauthorized`. Verified identity is recorded as a SHA-256 subject hash
 in logs only; metrics do not add identity labels.
+
+## JWT Identity Mode
+
+Use this mode when the caller presents a bearer token issued by a known issuer
+and Nova should verify it directly at the hosted HTTP boundary.
+
+Nova config:
+
+```bash
+export DBT_NOVA_AUTH_MODE=jwt
+export DBT_NOVA_AUTH_REQUIRED=true
+export DBT_NOVA_JWT_ISSUER=https://issuer.example
+export DBT_NOVA_JWT_AUDIENCE=dbt-nova
+export DBT_NOVA_JWT_JWKS_URL=https://issuer.example/.well-known/jwks.json
+export DBT_NOVA_JWT_ALGORITHMS=RS256
+export DBT_NOVA_JWT_CLOCK_SKEW_SECS=60
+```
+
+JWT mode requires `Authorization: Bearer <token>` on every hosted HTTP route,
+including `/healthz`, `/readyz`, `/metrics`, and the MCP path. Tokens must
+include `kid`, `iss`, `aud`, `exp`, `nbf`, and the configured subject claim
+(`sub` by default). Nova accepts only asymmetric/EdDSA algorithms in the
+explicit allowlist (`RS*`, `PS*`, `ES*`, `EdDSA`); `none` and HS* algorithms are
+rejected.
+
+Nova fetches JWKS at startup and caches it in process. On unknown `kid` or
+signature failure, Nova refreshes JWKS once and retries to support key rotation.
+If JWKS is unavailable at startup or refresh, JWT mode fails closed. Verified
+identity is recorded as a SHA-256 subject hash in logs only; metrics do not add
+identity labels.
 
 ## Request Correlation
 

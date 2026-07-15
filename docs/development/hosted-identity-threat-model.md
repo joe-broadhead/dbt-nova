@@ -1,16 +1,17 @@
 # Hosted Identity Threat Model
 
-Status: design contract for JOE-665. This page does not describe shipped
-runtime authentication behavior.
+Status: threat model for shipped proxy-signed identity and JWT hosted identity
+modes. Future identity work must keep these boundaries intact.
 
 ## Current State
 
-`streamable_http` has no built-in authentication. Non-loopback hosted
+`streamable_http` has no built-in authentication by default. Non-loopback hosted
 deployments must sit behind an authenticating reverse proxy or platform auth
 layer and set `DBT_NOVA_HTTP_EXPECT_AUTH_PROXY=true` only when that layer is
-actually enforcing access.
+actually enforcing access. Operators may additionally enable default-off
+`proxy_signed_headers` or `jwt` verification for hosted HTTP requests.
 
-The identity extension track is default-off and proxy-first. It is scoped to
+The identity extension track is default-off and hosted-only. It is scoped to
 request attribution and optional inbound authentication checks for hosted HTTP.
 It must not change stdio, CLI, loopback development, or the one-manifest
 metadata-bridge model.
@@ -66,7 +67,7 @@ Identity work must not add:
 
 ## Request Identity
 
-If implemented, request identity is limited to sanitized attribution context:
+Request identity is limited to sanitized attribution context:
 
 - Stable subject.
 - Optional display name.
@@ -95,12 +96,10 @@ Nova must reject startup or requests when:
 Mode `off` preserves current behavior: Nova relies on the external proxy or
 platform layer and does not construct request identity.
 
-## Sequencing
+## Shipped Sequence
 
 1. JOE-665: accept this threat model and default-off hosted identity design.
-2. JOE-662: add a fail-closed config skeleton without changing effective
-   runtime behavior for mode `off`.
-3. JOE-663: implement proxy-signed identity headers as the first enforced
-   default-off hosted identity mode.
-4. JOE-664: implement JWT validation only after the skeleton and proxy mode are
-   reviewed.
+2. JOE-662: add fail-closed config parsing without changing effective runtime
+   behavior for mode `off`.
+3. JOE-663: implement proxy-signed identity headers.
+4. JOE-664: implement JWT/JWKS validation.

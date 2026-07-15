@@ -75,11 +75,11 @@ authentication layer for `streamable_http`. The default remains `off`, and
 existing stdio, local CLI, and loopback development workflows must not require
 identity.
 
-The preferred sequence is design, fail-closed config skeleton,
-proxy-signed identity headers, then JWT validation only if the narrower proxy
-mode does not cover common hosted deployments. Any JWT support must validate
-issuer, audience, expiry, not-before, signature, and algorithm allowlists, and
-must treat claims as sanitized request identity only.
+Supported identity modes remain intentionally narrow: proxy-signed identity
+headers and bearer JWT validation. JWT support validates issuer, audience,
+expiry, not-before, signature, key ID, and algorithm allowlists through an
+operator-configured JWKS URL, and treats claims as sanitized request identity
+only.
 
 Identity must not become tenant routing, per-entity authorization, warehouse
 credential brokering, semantic-layer authorization, or a multi-manifest control

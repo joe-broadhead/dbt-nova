@@ -23,6 +23,7 @@ pub use core::{
     ArtifactFetchPolicy, DbtNovaConfig, GovernanceGateConfig, ResultProfile, RuntimePreset,
     ServerTransport,
 };
+pub(crate) use hosted_auth::parse_jwt_algorithms;
 pub use hosted_auth::{HostedAuthConfig, HostedAuthMode};
 pub use metadata_score::{
     MetadataCategoryWeights, MetadataScoreConfig, MetadataScoreWeightProfiles,

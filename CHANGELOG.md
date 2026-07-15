@@ -71,10 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   TIMESTAMP, and TIME values serialize as ISO-style strings instead of raw
   epoch-day or tick integers.
 - Added default-off hosted identity config and implemented proxy-signed HMAC
-  header verification for streamable HTTP, while keeping JWT validation planned
-  and fail-closed.
-- Added design-only hosted identity and JWT threat-model docs, planned config
-  contract docs, and guardrail tests for the default-off identity milestone.
+  header verification plus bearer JWT/JWKS validation for streamable HTTP.
+- Added hosted identity threat-model docs, config contract docs, and guardrail
+  tests for the default-off identity milestone.
 - Added machine-checked MCP tool stability metadata, profile membership docs,
   and safety-gate posture for the canonical 53-tool catalog while preserving
   v0.0.x versioning.
