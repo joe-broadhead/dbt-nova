@@ -658,6 +658,126 @@ async fn catalog_json_enriches_columns_and_surfaces_drift() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn catalog_backed_non_temporal_grain_time_field_emits_diagnostic() {
+    let manifest = r#"{
+      "metadata": {"dbt_version": "1.10.0"},
+      "nodes": {
+        "model.pkg.monthly_orders": {
+          "name": "monthly_orders",
+          "resource_type": "model",
+          "package_name": "pkg",
+          "columns": {
+            "month": {"name": "month", "data_type": "integer"},
+            "month_start": {"name": "month_start", "data_type": "date"},
+            "country": {"name": "country", "data_type": "text"}
+          },
+          "depends_on": {"nodes": [], "macros": []},
+          "meta": {
+            "nova": {
+              "grain": {
+                "time_field": "month",
+                "dimensions": ["country"]
+              }
+            }
+          }
+        }
+      },
+      "sources": {},
+      "macros": {},
+      "docs": {},
+      "groups": {},
+      "exposures": {},
+      "metrics": {},
+      "saved_queries": {},
+      "semantic_models": {},
+      "unit_tests": {}
+    }"#;
+    let catalog = serde_json::json!({
+        "nodes": {
+            "model.pkg.monthly_orders": {
+                "columns": {
+                    "month": {"type": "integer", "comment": "Calendar month number"},
+                    "month_start": {"type": "date", "comment": "Month start date"},
+                    "country": {"type": "varchar", "comment": "Country code"}
+                }
+            }
+        }
+    });
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = temp.path().join("nova_manifest.json");
+    let catalog_path = temp.path().join("catalog.json");
+    fs::write(&manifest_path, manifest).expect("write manifest");
+    fs::write(
+        &catalog_path,
+        serde_json::to_vec(&catalog).expect("serialize catalog"),
+    )
+    .expect("write catalog");
+    let (searcher, _guard) = load_searcher(&manifest_path, Some(&catalog_path));
+
+    let score = json(
+        searcher
+            .get_metadata_score(&GetMetadataScoreParams {
+                id_or_name: Some("model.pkg.monthly_orders".to_string()),
+                resource_type: Some("model".to_string()),
+                scope: Some("entity".to_string()),
+                include_breakdown: true,
+                include_recommendations: false,
+                ..GetMetadataScoreParams::default()
+            })
+            .await,
+    );
+    let diagnostics = score["data"]["diagnostics"]
+        .as_array()
+        .expect("diagnostics");
+    let diagnostic = diagnostics
+        .iter()
+        .find(|item| item["code"] == "grain_time_field_not_temporal")
+        .unwrap_or_else(|| panic!("missing grain time-field diagnostic: {score:#?}"));
+
+    assert_eq!(
+        diagnostic["field"].as_str(),
+        Some("meta.nova.grain.time_field")
+    );
+    assert_eq!(diagnostic["column"].as_str(), Some("month"));
+    assert_eq!(diagnostic["resolved_type"].as_str(), Some("integer"));
+    assert_eq!(
+        diagnostic["evidence_source"].as_str(),
+        Some("dbt catalog column type")
+    );
+    assert!(
+        diagnostic["hint"]
+            .as_str()
+            .is_some_and(|hint| hint.contains("integer month fields are dimensions")),
+        "{diagnostic:#?}"
+    );
+
+    let manifest_only_temp = tempfile::tempdir().expect("manifest-only tempdir");
+    let manifest_only_path = manifest_only_temp.path().join("nova_manifest.json");
+    fs::write(&manifest_only_path, manifest).expect("write manifest-only manifest");
+    let (manifest_only_searcher, _guard) = load_searcher(&manifest_only_path, None);
+    let manifest_only_score = json(
+        manifest_only_searcher
+            .get_metadata_score(&GetMetadataScoreParams {
+                id_or_name: Some("model.pkg.monthly_orders".to_string()),
+                resource_type: Some("model".to_string()),
+                scope: Some("entity".to_string()),
+                include_breakdown: true,
+                include_recommendations: false,
+                ..GetMetadataScoreParams::default()
+            })
+            .await,
+    );
+    assert!(
+        manifest_only_score["data"]["diagnostics"]
+            .as_array()
+            .is_some_and(|items| items
+                .iter()
+                .all(|item| item["code"] != "grain_time_field_not_temporal")),
+        "manifest-only load must not emit catalog-backed diagnostic: {manifest_only_score:#?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn agent_modelling_findings_use_catalog_and_semantic_artifact_evidence() {
     let manifest = r#"{
       "metadata": {"dbt_version": "1.10.0"},
