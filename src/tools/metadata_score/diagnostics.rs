@@ -153,6 +153,7 @@ pub(crate) fn build_entity_score_diagnostics(
     );
 
     push_grain_shape_diagnostics(&mut diagnostics, nova);
+    push_catalog_grain_time_field_diagnostics(&mut diagnostics, nova, entity_json);
     push_primary_key_integrity_diagnostics(&mut diagnostics, search, unique_id, entity_json);
 
     JsonValue::Array(diagnostics)
@@ -381,6 +382,130 @@ fn json_type_label(value: &JsonValue) -> &'static str {
     }
 }
 
+fn push_catalog_grain_time_field_diagnostics(
+    diagnostics: &mut Vec<JsonValue>,
+    nova: Option<&JsonValue>,
+    entity_json: &JsonValue,
+) {
+    let Some(grain) = nova
+        .and_then(|value| value.get("grain"))
+        .and_then(JsonValue::as_object)
+    else {
+        return;
+    };
+    let Some(time_field) = grain
+        .get("time_field")
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    let Some(column) = entity_column(entity_json, time_field) else {
+        return;
+    };
+    let Some(catalog_type) = column
+        .get("catalog_data_type")
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    if is_temporal_catalog_type(catalog_type) {
+        return;
+    }
+
+    diagnostics.push(json!({
+        "code": "grain_time_field_not_temporal",
+        "category": "semantic",
+        "severity": "warning",
+        "field": "meta.nova.grain.time_field",
+        "column": time_field,
+        "resolved_type": catalog_type,
+        "evidence_source": "dbt catalog column type",
+        "hint": grain_time_field_type_hint(time_field, catalog_type),
+        "message": format!("meta.nova.grain.time_field points at '{time_field}', but catalog type '{catalog_type}' is not temporal")
+    }));
+}
+
+fn entity_column<'a>(entity_json: &'a JsonValue, column_name: &str) -> Option<&'a JsonValue> {
+    let columns = entity_json.get("columns").and_then(JsonValue::as_object)?;
+    columns.get(column_name).or_else(|| {
+        columns
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(column_name))
+            .map(|(_, column)| column)
+    })
+}
+
+fn is_temporal_catalog_type(catalog_type: &str) -> bool {
+    let normalized = catalog_type.to_ascii_lowercase();
+    ["date", "time", "timestamp", "datetime"]
+        .iter()
+        .any(|token| normalized.contains(token))
+}
+
+fn grain_time_field_type_hint(time_field: &str, catalog_type: &str) -> String {
+    if is_integer_catalog_type(catalog_type)
+        && let Some(bucket) = calendar_bucket_token(time_field)
+    {
+        return format!(
+            "integer {bucket} fields are dimensions, not time fields; point `meta.nova.grain.time_field` at a date/timestamp column such as `{bucket}_start` or `{bucket}_date`, and keep `{time_field}` in `grain.dimensions` if agents should group by it"
+        );
+    }
+    format!(
+        "point `meta.nova.grain.time_field` at a date/timestamp column, or move `{time_field}` to `grain.dimensions` if it is a categorical grain"
+    )
+}
+
+fn is_integer_catalog_type(catalog_type: &str) -> bool {
+    catalog_type
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(str::to_ascii_lowercase)
+        .any(|token| {
+            matches!(
+                token.as_str(),
+                "int"
+                    | "integer"
+                    | "bigint"
+                    | "smallint"
+                    | "tinyint"
+                    | "mediumint"
+                    | "uint"
+                    | "uinteger"
+                    | "ubigint"
+                    | "usmallint"
+                    | "utinyint"
+                    | "number"
+                    | "numeric"
+                    | "decimal"
+            ) || token.strip_prefix("int").is_some_and(|suffix| {
+                !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())
+            }) || token.strip_prefix("uint").is_some_and(|suffix| {
+                !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())
+            })
+        })
+}
+
+fn calendar_bucket_token(field: &str) -> Option<&'static str> {
+    for token in field
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(str::to_ascii_lowercase)
+    {
+        match token.as_str() {
+            "year" => return Some("year"),
+            "month" => return Some("month"),
+            "week" => return Some("week"),
+            "quarter" | "qtr" => return Some("quarter"),
+            _ => {}
+        }
+    }
+    None
+}
+
 fn push_primary_key_integrity_diagnostics(
     diagnostics: &mut Vec<JsonValue>,
     search: &ManifestSearch,
@@ -471,4 +596,47 @@ fn constraint_count(column: &JsonValue) -> usize {
                 })
                 .count()
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{calendar_bucket_token, grain_time_field_type_hint, is_integer_catalog_type};
+
+    #[test]
+    fn integer_catalog_type_detection_uses_sql_type_tokens() {
+        for catalog_type in [
+            "integer",
+            "BIGINT",
+            "int64",
+            "UINT32",
+            "NUMBER(38,0)",
+            "numeric(10,0)",
+            "decimal",
+        ] {
+            assert!(
+                is_integer_catalog_type(catalog_type),
+                "{catalog_type} should be integer-like"
+            );
+        }
+
+        for catalog_type in ["interval", "point", "varchar", "timestamp"] {
+            assert!(
+                !is_integer_catalog_type(catalog_type),
+                "{catalog_type} should not be integer-like"
+            );
+        }
+    }
+
+    #[test]
+    fn calendar_bucket_hint_only_uses_integer_like_types() {
+        assert_eq!(calendar_bucket_token("fiscal_month"), Some("month"));
+        assert!(
+            grain_time_field_type_hint("fiscal_month", "integer")
+                .contains("integer month fields are dimensions")
+        );
+        assert!(
+            !grain_time_field_type_hint("fiscal_month", "interval")
+                .contains("integer month fields are dimensions")
+        );
+    }
 }

@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed storage loading so readers reuse complete published versions without
   taking the build lock, and fall back to `manifest.current.json` while another
   process builds a newer version.
+- Added catalog-backed metadata diagnostics for `meta.nova.grain.time_field`
+  values that resolve to non-temporal warehouse column types, without warning
+  for manifest-only projects that lack catalog type evidence.
 - Tightened release and reusable-workflow supply-chain posture: releases are
   tag-triggered only, release asset verification now requires tag-scoped
   identities, ARM64 images are smoked and Trivy-gated before push, Trivy no

@@ -90,6 +90,10 @@ declared columns absent from catalog remain visible in `catalog_drift` fields on
 Entity and column responses include `diagnostics` when Nova can explain partial
 or missing credit. Diagnostics are deterministic JSON rows with `code`,
 `category`, `field`, observed values, expected thresholds, and a short message.
+Catalog-backed grain diagnostics are evidence-gated: Nova only warns about
+`meta.nova.grain.time_field` type issues when the target column has
+`catalog_data_type` from dbt `catalog.json`. Manifest-only deployments do not
+receive type-based grain warnings.
 Common diagnostic codes:
 
 - `description_tier_progress`: shows observed character count, the 50-character
@@ -99,6 +103,10 @@ Common diagnostic codes:
 - `invalid_grain_shape`: identifies `meta.nova.grain`, `meta.nova.metric.grain`,
   or `meta.nova.metrics[].grain` values that are strings, empty objects, or
   otherwise not canonical grain objects
+- `grain_time_field_not_temporal`: warns when catalog evidence shows
+  `meta.nova.grain.time_field` points at a non-temporal column type, including
+  integer `year`, `month`, `week`, or `quarter` fields that should usually be
+  dimensions instead
 - `primary_key_integrity_missing_tests`: names the primary key column and the
   missing `unique` or `not_null` dbt manifest test evidence; Nova does not infer
   uniqueness from compiled SQL or warehouse introspection
