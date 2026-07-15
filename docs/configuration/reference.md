@@ -197,7 +197,9 @@ Remote manifest notes:
   `DBT_NOVA_METRICS_ENABLED=false` makes `/metrics` return `404` while keeping
   that path out of the MCP fallback. Protect `/metrics` with the same
   proxy/network ACL as MCP because it exposes tool names, call counts, latency,
-  and readiness posture.
+  and readiness posture. Nova does not expose a native OpenTelemetry exporter;
+  use a Prometheus scrape or an OpenTelemetry Collector Prometheus receiver for
+  OTLP pipelines.
 - Hosted HTTP requests propagate a safe `X-Request-ID` response header. Nova
   accepts proxy-provided `X-Request-ID` or `X-Correlation-ID` values when they
   are short printable identifiers, otherwise it generates a UUID. Request logs
