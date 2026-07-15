@@ -94,6 +94,61 @@ nova_manifest_ready_for_traffic == 0
 `/metrics` is an operator endpoint. In hosted deployments, restrict it with the
 same proxy or network ACL as MCP, or set `DBT_NOVA_METRICS_ENABLED=false`.
 
+## OpenTelemetry Decision
+
+Nova does not ship a native OTLP/OpenTelemetry exporter yet. The current
+production recommendation is to keep Nova's telemetry source simple and let an
+existing Prometheus or OpenTelemetry Collector deployment scrape `GET /metrics`.
+This preserves one recorder, one metric vocabulary, and the same privacy and
+cardinality rules across health JSON, Prometheus, and collector pipelines.
+
+Use native Prometheus scraping when your deployment already has Prometheus or
+Prometheus-compatible managed monitoring. Use an OpenTelemetry Collector when
+your organization standardizes on OTLP export, needs collector processors, or
+wants to fan Nova metrics out to multiple observability backends.
+
+Example collector scrape:
+
+```yaml
+receivers:
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: dbt-nova
+          metrics_path: /metrics
+          static_configs:
+            - targets: ["dbt-nova.example.internal:8080"]
+
+processors:
+  batch:
+
+exporters:
+  otlp:
+    endpoint: otel-collector.example.internal:4317
+
+service:
+  pipelines:
+    metrics:
+      receivers: [prometheus]
+      processors: [batch]
+      exporters: [otlp]
+```
+
+Do not add query text, entity names, manifest paths, user IDs, warehouse
+credentials, or other high-cardinality/sensitive values as collector labels or
+resource attributes. Nova's exported metric labels remain limited to `tool` and
+`result`; any collector-side enrichment should keep that boundary.
+
+A native OTLP exporter would only be worth adding if scraping `/metrics` is
+insufficient for a proven deployment shape. If that happens, it should be
+default-off, metrics-only first, reuse `ToolMetricsStore`, and emit the same
+metric names and low-cardinality attributes instead of adding a second recorder.
+
+References:
+- [OpenTelemetry Prometheus/OpenMetrics compatibility](https://opentelemetry.io/docs/specs/otel/compatibility/prometheus_and_openmetrics/)
+- [OpenTelemetry Collector Prometheus receiver](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/main/receiver/prometheusreceiver/README.md)
+- [Prometheus OTLP guide](https://prometheus.io/docs/guides/opentelemetry/)
+
 ## Search Concurrency
 
 `health` also reports search saturation under `search_concurrency`:

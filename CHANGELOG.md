@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added Snowflake SQL API workload identity federation auth as a pass-through
   bearer-token mode (`DBT_NOVA_SNOWFLAKE_AUTH=wif`) for caller-supplied
   AWS/Azure/GCP/OIDC workload identity tokens.
+- Documented the OpenTelemetry exporter decision: Nova keeps Prometheus as the
+  single metrics source for now and recommends collector scraping instead of
+  adding a native OTLP exporter.
 - Enforced `manifest_max_bytes` for local manifest paths and auto-discovered
   sibling `catalog.json` files before parsing.
 - Fixed storage loading so readers reuse complete published versions without
