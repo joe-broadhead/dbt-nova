@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: "Adversarially reviews high-stakes dbt-nova analytics answer drafts for evidence quality, semantic-layer bypass, stale or unknown freshness caveats, and provenance-backed fixes. Use before leadership-bound, launch-readiness, customer-facing, or recurring production answers."
+description: "Adversarially reviews high-stakes dbt-nova analytics answer drafts for evidence quality, semantic-layer bypass, unsafe raw joins, stale or unknown freshness caveats, and provenance-backed fixes. Use before leadership-bound, launch-readiness, customer-facing, or recurring production answers."
 license: MIT
 allowed-tools: "Read Bash mcp__nova__show_metadata mcp__nova__health mcp__nova__search mcp__nova__search_indicator mcp__nova__indicator_inventory mcp__nova__search_recipes mcp__nova__get_recipe mcp__nova__get_entity mcp__nova__batch_get_entities mcp__nova__get_columns mcp__nova__search_columns mcp__nova__column_inventory mcp__nova__get_lineage mcp__nova__get_column_lineage mcp__nova__get_context mcp__nova__get_test_coverage mcp__nova__get_metadata_score mcp__nova__find_by_path"
 metadata:
@@ -18,6 +18,8 @@ answer. The reviewer looks for evidence-backed correctness risks, especially:
 
 - semantic-layer bypass: the draft uses a raw/source table when a governed Nova
   metric, measure, or semantic parent was available
+- unsafe raw join: the draft joins raw facts for a metadata-only or
+  cross-grain indicator that Nova marked as non-queryable
 - stale or unknown freshness: the draft relies on stale or unknown-freshness
   evidence without warning the user
 
@@ -66,6 +68,9 @@ Severity values:
   semantic candidates.
 - Flag semantic-layer bypass when a governed source was available and the draft
   used raw/source table evidence without a documented fallback reason.
+- Flag raw fact joins when Nova evidence marks an indicator as metadata-only,
+  non-queryable, or `direct_sql_queryable: false` and no deterministic dbt
+  relation, semantic-engine artifact, saved query, or recipe owns the result.
 - Flag stale or unknown freshness when the draft omits a caveat that would
   materially affect interpretation.
 - Treat the review as explicit advisory workflow. Do not create a hidden
