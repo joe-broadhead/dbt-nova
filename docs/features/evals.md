@@ -507,8 +507,9 @@ user question, draft answer, selected entity/source, semantic discovery or
 fallback evidence, provenance/freshness blocks, and SQL or recipe summary when
 available.
 
-The packaged `evals/reviewer.yml` suite covers two reviewer failure modes:
-semantic-layer bypass and missing stale/unknown freshness caveats.
+The packaged `evals/reviewer.yml` suite covers reviewer failure modes around
+semantic-layer bypass, cross-grain raw joins without a deterministic surface,
+and missing stale/unknown freshness caveats.
 
 ```bash
 dbt-nova eval validate --suite evals/reviewer.yml
@@ -525,9 +526,9 @@ dbt-nova eval agent run \
 ```
 
 Prefer durable `final_answer.must_contain` verdict terms such as
-`fix_required`, `semantic-layer bypass`, `freshness`, `unknown`, and `caveat`.
-Use tool-trace expectations only when the provider reliably emits trace rows for
-reviewer evidence gathering.
+`fix_required`, `semantic-layer bypass`, `cross_grain_risk`, `freshness`,
+`unknown`, and `caveat`. Use tool-trace expectations only when the provider
+reliably emits trace rows for reviewer evidence gathering.
 
 Run against the default `opencode` adapter:
 

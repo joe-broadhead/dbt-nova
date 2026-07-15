@@ -44,6 +44,51 @@ agent_cases:
           - model.starter_eval.fct_orders
           - gross_revenue
 
+  - id: reviewer_flags_cross_grain_raw_join_without_surface
+    task: |
+      Review packet:
+
+      User question:
+      - What was revenue per session last week?
+
+      Nova evidence:
+      - `search_indicator` returned indicator `revenue_per_session`.
+      - `execution_surface`: `metadata_only`.
+      - `queryable`: `false`.
+      - `direct_sql_queryable`: `false`.
+      - `queryable_via`: `none`.
+      - Agent modelling findings include
+        `ratio_like_metric_without_deterministic_surface` with severity
+        `blocker` and category `cross_grain_risk`.
+      - Agent modelling findings also include
+        `cross_grain_kpi_without_semantic_artifact` with severity `high`.
+      - Evidence says the KPI combines order revenue and web session facts, but
+        no dbt relation, semantic-engine artifact, saved query, or recipe owns
+        the deterministic execution shape.
+
+      Draft route:
+      - The draft joined `source.starter_eval.raw.orders` directly to
+        `source.starter_eval.raw.web_sessions` on guessed user and date fields.
+      - The draft did not mention that Nova marked the indicator non-queryable.
+      - The draft did not ask for or propose a deterministic surface.
+
+      Draft final answer:
+      - Revenue per session was 12.40, calculated by joining raw orders to raw
+        web sessions.
+
+      Return the reviewer output contract.
+    expected:
+      final_answer:
+        must_contain:
+          - fix_required
+          - cross_grain_risk
+          - revenue_per_session
+          - direct_sql_queryable
+          - false
+          - source.starter_eval.raw.orders
+          - source.starter_eval.raw.web_sessions
+          - deterministic
+
   - id: reviewer_flags_unknown_freshness_without_caveat
     task: |
       Review packet:
