@@ -1284,7 +1284,7 @@ Notes:
   strings while `column_types` retains the provider type names.
 - Object-level preflight checks (`preflight_catalog`, `preflight_schema`, `preflight_relation`) require a non-empty probe result across providers; missing/inaccessible targets return `ok=false`.
 - BigQuery credentials can come from OAuth token env vars, `GOOGLE_APPLICATION_CREDENTIALS`, or gcloud ADC (same auth family used by GCS SDK mode).
-- Snowflake credentials can use key-pair JWT, a supplied OAuth bearer token, a Snowflake programmatic access token, or local interactive external browser SSO (`DBT_NOVA_SNOWFLAKE_AUTH=externalbrowser`). Snowflake SQL API workload identity federation is not implemented yet.
+- Snowflake credentials can use key-pair JWT, a supplied OAuth bearer token, a Snowflake programmatic access token, pass-through SQL API workload identity federation (`DBT_NOVA_SNOWFLAKE_AUTH=wif`), or local interactive external browser SSO (`DBT_NOVA_SNOWFLAKE_AUTH=externalbrowser`). Nova does not mint or refresh workload identity tokens; provide `DBT_NOVA_SNOWFLAKE_WIF_TOKEN` or `DBT_NOVA_SNOWFLAKE_WIF_TOKEN_PATH`.
 
 ```json
 {"name":"execute_sql","arguments":{"statement":"select * from orders where order_date > :date","parameters":{"date":"2024-01-01"},"row_limit":100}}

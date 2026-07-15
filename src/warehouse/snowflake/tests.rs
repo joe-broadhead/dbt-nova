@@ -1,21 +1,22 @@
 use super::auth::{
     BrowserCallback, BrowserCallbackPreflight, BrowserCallbackRequest,
     ExternalBrowserAuthenticatorRequest, ExternalBrowserAuthenticatorRequestData,
-    ExternalBrowserLoginRequest, ExternalBrowserLoginRequestData,
-    build_external_browser_auth_config, decode_external_browser_authenticator_response,
-    decode_external_browser_login_response, external_browser_session_cache, generate_keypair_jwt,
-    normalize_account_url, normalize_jwt_identifier, parse_browser_callback_request,
-    public_key_fingerprint, read_browser_callback_request,
+    ExternalBrowserLoginRequest, ExternalBrowserLoginRequestData, SnowflakeAuthorization,
+    build_external_browser_auth_config, build_workload_identity_auth_config,
+    decode_external_browser_authenticator_response, decode_external_browser_login_response,
+    external_browser_session_cache, generate_keypair_jwt, normalize_account_url,
+    normalize_jwt_identifier, normalize_workload_identity_provider, parse_browser_callback_request,
+    public_key_fingerprint, read_browser_callback_request, resolve_workload_identity_token_source,
     validate_external_browser_runtime_for_auth_with_ci,
 };
 use super::{
     DEFAULT_EXTERNAL_BROWSER_TIMEOUT_SECONDS, MAX_BROWSER_CALLBACK_REQUEST_BYTES, Result,
     ResultColumn, SnowflakeAuthConfig, SnowflakeExecuteOptions, SnowflakeQueryResult,
-    SnowflakeQueryStats, SnowflakeSqlClient, SnowflakeSqlConfig, build_bindings,
-    catalog_preflight_statement, decode_statement_status_response, normalize_preflight_relation,
-    parse_cell_value, preflight_show_result_has_exact_name, relation_preflight_statement,
-    resolve_schema_preflight_target, rewrite_named_parameters, schema_preflight_statement,
-    send_json, session_parameters, snowflake_err, summarize_error_body,
+    SnowflakeQueryStats, SnowflakeSqlClient, SnowflakeSqlConfig, SnowflakeWifTokenSource,
+    build_bindings, catalog_preflight_statement, decode_statement_status_response,
+    normalize_preflight_relation, parse_cell_value, preflight_show_result_has_exact_name,
+    relation_preflight_statement, resolve_schema_preflight_target, rewrite_named_parameters,
+    schema_preflight_statement, send_json, session_parameters, snowflake_err, summarize_error_body,
 };
 use crate::config::{DbtNovaConfig, ServerTransport};
 use flate2::{Compression, write::GzEncoder};
@@ -179,6 +180,99 @@ fn external_browser_auth_env_resolves_aliases_and_options() {
     assert_eq!(timeout, Duration::from_secs(45));
     assert!(!open_browser);
     assert_eq!(callback_port, Some(4567));
+}
+
+#[test]
+fn workload_identity_auth_config_validates_provider_and_token_source() {
+    let auth =
+        build_workload_identity_auth_config(Some("aws"), Some("inline-token".to_string()), None)
+            .expect("wif auth config");
+    let SnowflakeAuthConfig::WorkloadIdentityFederation {
+        provider,
+        token_source,
+    } = auth
+    else {
+        panic!("expected workload identity auth");
+    };
+    assert_eq!(provider, "AWS");
+    assert_eq!(
+        token_source,
+        SnowflakeWifTokenSource::Inline("inline-token".to_string())
+    );
+
+    assert_eq!(
+        normalize_workload_identity_provider(Some("azure")).expect("provider"),
+        "AZURE"
+    );
+    assert_eq!(
+        normalize_workload_identity_provider(Some("OIDC")).expect("provider"),
+        "OIDC"
+    );
+
+    let invalid_provider =
+        normalize_workload_identity_provider(Some("snowflake")).expect_err("invalid provider");
+    assert!(
+        invalid_provider
+            .to_string()
+            .contains("DBT_NOVA_SNOWFLAKE_WIF_PROVIDER")
+    );
+
+    let missing_source =
+        resolve_workload_identity_token_source(None, None).expect_err("missing source");
+    assert!(
+        missing_source
+            .to_string()
+            .contains("DBT_NOVA_SNOWFLAKE_WIF_TOKEN")
+    );
+
+    let ambiguous_source = resolve_workload_identity_token_source(
+        Some("inline-token".to_string()),
+        Some("/secure/token".to_string()),
+    )
+    .expect_err("ambiguous source");
+    assert!(ambiguous_source.to_string().contains("Set only one"));
+}
+
+#[tokio::test]
+async fn workload_identity_authorization_uses_sql_api_contract_and_rereads_token_file() {
+    let token_file = tempfile::NamedTempFile::new().expect("token file");
+    std::fs::write(token_file.path(), "token-v1\n").expect("write first token");
+    let client = SnowflakeSqlClient::new(SnowflakeSqlConfig {
+        base_url: "https://org-account.snowflakecomputing.com".to_string(),
+        warehouse: "COMPUTE_WH".to_string(),
+        database: None,
+        schema: None,
+        role: None,
+        timeout: Duration::from_secs(5),
+        default_statement_timeout_s: 60,
+        poll_interval: Duration::from_millis(1),
+        max_poll: Duration::from_secs(1),
+        max_chunks: 1,
+        auth: SnowflakeAuthConfig::WorkloadIdentityFederation {
+            provider: "AWS".to_string(),
+            token_source: SnowflakeWifTokenSource::FilePath(
+                token_file.path().to_string_lossy().into_owned(),
+            ),
+        },
+    })
+    .expect("client");
+
+    let SnowflakeAuthorization::Bearer { token, token_type } =
+        client.authorization().await.expect("first authorization")
+    else {
+        panic!("expected bearer auth");
+    };
+    assert_eq!(token, "WIF.AWS.token-v1");
+    assert_eq!(token_type, "WORKLOAD_IDENTITY_FEDERATION");
+
+    std::fs::write(token_file.path(), "token-v2\n").expect("write rotated token");
+    let SnowflakeAuthorization::Bearer { token, token_type } =
+        client.authorization().await.expect("second authorization")
+    else {
+        panic!("expected bearer auth");
+    };
+    assert_eq!(token, "WIF.AWS.token-v2");
+    assert_eq!(token_type, "WORKLOAD_IDENTITY_FEDERATION");
 }
 
 #[test]

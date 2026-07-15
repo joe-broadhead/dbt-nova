@@ -99,13 +99,16 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_SNOWFLAKE_DATABASE` – optional default Snowflake database
 - `DBT_NOVA_SNOWFLAKE_SCHEMA` – optional default Snowflake schema
 - `DBT_NOVA_SNOWFLAKE_ROLE` – optional default Snowflake role
-- `DBT_NOVA_SNOWFLAKE_AUTH` – Snowflake auth mode (`keypair`, `oauth`, `pat`, or `externalbrowser`; default: inferred from provided token variables, otherwise `keypair`)
+- `DBT_NOVA_SNOWFLAKE_AUTH` – Snowflake auth mode (`keypair`, `oauth`, `pat`, `wif`, or `externalbrowser`; default: inferred from provided token variables, otherwise `keypair`)
 - `DBT_NOVA_SNOWFLAKE_USER` – Snowflake user for key-pair or external browser auth
 - `DBT_NOVA_SNOWFLAKE_JWT_ACCOUNT` – account identifier override for key-pair JWT claims; required when key-pair auth uses `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` without `DBT_NOVA_SNOWFLAKE_ACCOUNT`. JWT account identifiers are uppercased, periods are replaced with hyphens, legacy locator-style region suffixes are excluded, and fully qualified organization/account names are preserved.
 - `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PATH` – path to an unencrypted RSA private key PEM for key-pair auth
 - `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PEM` – inline unencrypted RSA private key PEM for key-pair auth (`\n` escapes are accepted)
 - `DBT_NOVA_SNOWFLAKE_OAUTH_TOKEN` – OAuth bearer token for `DBT_NOVA_SNOWFLAKE_AUTH=oauth`
 - `DBT_NOVA_SNOWFLAKE_PAT` – programmatic access token for `DBT_NOVA_SNOWFLAKE_AUTH=pat`
+- `DBT_NOVA_SNOWFLAKE_WIF_PROVIDER` – workload identity federation provider for `DBT_NOVA_SNOWFLAKE_AUTH=wif` (`AWS`, `AZURE`, `GCP`, or `OIDC`)
+- `DBT_NOVA_SNOWFLAKE_WIF_TOKEN` – inline workload identity token for `DBT_NOVA_SNOWFLAKE_AUTH=wif`; set either this or `DBT_NOVA_SNOWFLAKE_WIF_TOKEN_PATH`
+- `DBT_NOVA_SNOWFLAKE_WIF_TOKEN_PATH` – path to a workload identity token file for `DBT_NOVA_SNOWFLAKE_AUTH=wif`; Nova rereads this file for each Snowflake authorization so projected tokens can rotate
 - `DBT_NOVA_SNOWFLAKE_EXTERNAL_BROWSER_TIMEOUT_S` – local browser SSO timeout for `DBT_NOVA_SNOWFLAKE_AUTH=externalbrowser` (default: `120`)
 - `DBT_NOVA_SNOWFLAKE_EXTERNAL_BROWSER_OPEN` – open the system browser automatically for external browser auth (`true`|`false`, default: `true`; when false, Nova prints the SSO URL for manual opening)
 - `DBT_NOVA_SNOWFLAKE_EXTERNAL_BROWSER_CALLBACK_PORT` – optional fixed loopback callback port for external browser auth (default: bind an ephemeral `127.0.0.1` port)
@@ -591,6 +594,7 @@ Supported providers:
   - Key-pair JWT auth: `DBT_NOVA_SNOWFLAKE_USER` plus `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PATH` or `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PEM`. This is the default when no token env vars are present. If only `DBT_NOVA_SNOWFLAKE_ACCOUNT_URL` is set, also set `DBT_NOVA_SNOWFLAKE_JWT_ACCOUNT`. Legacy locator-style region suffixes are excluded from JWT claims while organization/account identifiers are preserved.
   - OAuth token auth: `DBT_NOVA_SNOWFLAKE_AUTH=oauth` plus `DBT_NOVA_SNOWFLAKE_OAUTH_TOKEN`. Nova uses the supplied bearer token and does not mint or refresh OAuth tokens.
   - Programmatic access token auth: `DBT_NOVA_SNOWFLAKE_AUTH=pat` plus `DBT_NOVA_SNOWFLAKE_PAT`. PAT is inferred when `DBT_NOVA_SNOWFLAKE_AUTH` is omitted and `DBT_NOVA_SNOWFLAKE_PAT` is set.
+  - Workload identity federation auth: `DBT_NOVA_SNOWFLAKE_AUTH=wif`, `DBT_NOVA_SNOWFLAKE_WIF_PROVIDER` (`AWS`, `AZURE`, `GCP`, or `OIDC`), and exactly one of `DBT_NOVA_SNOWFLAKE_WIF_TOKEN` or `DBT_NOVA_SNOWFLAKE_WIF_TOKEN_PATH`. Nova passes the supplied token through to the Snowflake SQL API and does not mint cloud or IdP tokens.
   - External browser SSO auth: `DBT_NOVA_SNOWFLAKE_AUTH=externalbrowser` plus `DBT_NOVA_SNOWFLAKE_USER`; requires `DBT_NOVA_SNOWFLAKE_ACCOUNT` because browser SSO login needs the account name. This is local interactive auth only.
 - `duckdb`: requires `DBT_NOVA_DUCKDB_PATH` and executes queries against that file in read-only mode. Ad-hoc DuckDB file-scan functions in `execute_sql` text are rejected. Connection-level external access for trusted file-backed database objects is disabled by default; enabling it requires `DBT_NOVA_DUCKDB_ALLOW_EXTERNAL_ACCESS=true` and `DBT_NOVA_DUCKDB_FILE_SEARCH_PATH`, which is applied as both the DuckDB `file_search_path` and an `allowed_directories` bound before configuration is locked.
 
@@ -611,8 +615,10 @@ Snowflake notes:
   cancel endpoint before returning a timeout error.
 - Key-pair auth supports unencrypted RSA PEM keys. Encrypted private keys are not
   supported yet; use OAuth or PAT auth if a passphrase-protected key is required.
-- Snowflake SQL API workload identity federation is not implemented yet. Use
-  key-pair JWT, OAuth, or PAT auth for hosted automation.
+- Snowflake SQL API workload identity federation is supported as a pass-through
+  bearer-token mode. Nova does not mint or refresh AWS, Azure, GCP, Kubernetes,
+  or OIDC tokens; provide a token directly or through
+  `DBT_NOVA_SNOWFLAKE_WIF_TOKEN_PATH`.
 - External browser auth is a local interactive mode. It binds a loopback callback
   listener, opens the system browser to Snowflake SSO, keeps the returned session
   token only in process memory, rejects CI or non-loopback streamable HTTP

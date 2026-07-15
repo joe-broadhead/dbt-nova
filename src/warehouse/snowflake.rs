@@ -57,7 +57,7 @@ const SESSION_EXPIRY_SAFETY_WINDOW_SECONDS: u64 = 60;
 const MAX_BROWSER_CALLBACK_REQUEST_BYTES: usize = 1024 * 1024;
 const STATEMENT_STILL_EXECUTING_CODE: &str = "333333";
 const STATEMENT_ASYNC_EXECUTION_CODE: &str = "333334";
-const SUPPORTED_SNOWFLAKE_AUTH_MODES: &str = "keypair, oauth, pat, or externalbrowser";
+const SUPPORTED_SNOWFLAKE_AUTH_MODES: &str = "keypair, oauth, pat, wif, or externalbrowser";
 const EXTERNAL_BROWSER_AUTHENTICATOR: &str = "EXTERNALBROWSER";
 
 type ExternalBrowserSessionCache = Arc<TokioMutex<Option<SnowflakeSession>>>;
@@ -90,6 +90,10 @@ enum SnowflakeAuthConfig {
     ProgrammaticAccessToken {
         token: String,
     },
+    WorkloadIdentityFederation {
+        provider: String,
+        token_source: SnowflakeWifTokenSource,
+    },
     ExternalBrowser {
         user: String,
         account_identifier: String,
@@ -98,6 +102,32 @@ enum SnowflakeAuthConfig {
         callback_port: Option<u16>,
         session_cache: Arc<TokioMutex<Option<SnowflakeSession>>>,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SnowflakeWifTokenSource {
+    Inline(String),
+    FilePath(String),
+}
+
+impl SnowflakeWifTokenSource {
+    fn token(&self) -> Result<String> {
+        let token = match self {
+            Self::Inline(token) => token.clone(),
+            Self::FilePath(path) => std::fs::read_to_string(path).map_err(|err| {
+                DbtNovaError::InvalidParams(format!(
+                    "Failed to read DBT_NOVA_SNOWFLAKE_WIF_TOKEN_PATH '{path}': {err}"
+                ))
+            })?,
+        };
+        let token = token.trim();
+        if token.is_empty() {
+            return Err(DbtNovaError::InvalidParams(
+                "Snowflake workload identity token must not be empty".to_string(),
+            ));
+        }
+        Ok(token.to_string())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -545,6 +575,13 @@ impl SnowflakeSqlClient {
                     token_type: "PROGRAMMATIC_ACCESS_TOKEN",
                 })
             }
+            SnowflakeAuthConfig::WorkloadIdentityFederation {
+                provider,
+                token_source,
+            } => Ok(SnowflakeAuthorization::Bearer {
+                token: format!("WIF.{}.{}", provider, token_source.token()?),
+                token_type: "WORKLOAD_IDENTITY_FEDERATION",
+            }),
             SnowflakeAuthConfig::KeyPair {
                 user,
                 account_identifier,
