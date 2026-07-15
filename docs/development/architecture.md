@@ -270,7 +270,8 @@ cache (`.fastembed_cache`) and per-manifest instances:
 
 Key behaviors:
 - **Manifest hash instance IDs**: the same manifest path reuses the same instance dir.
-- **Build lock**: only one process builds indexes; others wait (configurable) or reuse.
+- **Build lock**: only one process builds indexes; readers reuse a complete
+  published version without taking the writer lock.
 - **In-use lock**: active instances are protected from pruning/cleanup.
 - **Versioned swaps**: refreshed manifests build into a new version directory and swap atomically.
 - **Pruning**: old instances/versions are removed by count and/or size limits.

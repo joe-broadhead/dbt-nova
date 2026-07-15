@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   while merging inline and fetched result chunks.
 - Enforced `manifest_max_bytes` for local manifest paths and auto-discovered
   sibling `catalog.json` files before parsing.
+- Fixed storage loading so readers reuse complete published versions without
+  taking the build lock, and fall back to `manifest.current.json` while another
+  process builds a newer version.
 - Tightened release and reusable-workflow supply-chain posture: releases are
   tag-triggered only, release asset verification now requires tag-scoped
   identities, ARM64 images are smoked and Trivy-gated before push, Trivy no

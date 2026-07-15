@@ -40,10 +40,12 @@ use runtime::has_apparent_malformed_ref;
 use runtime::{
     build_column_lineage_aliases, build_manifest_health, combine_index_build_results, panic_message,
 };
+#[cfg(test)]
+use storage::acquire_build_lock;
 use storage::{
-    MANIFEST_SIGNATURE_FILENAME, acquire_build_lock, acquire_in_use_locks, current_time_ms,
+    MANIFEST_SIGNATURE_FILENAME, acquire_in_use_locks, current_time_ms,
     manifest_signature_matches_for_reuse, read_current_version, read_manifest_signature,
-    write_current_version, write_manifest_signature,
+    select_storage_version_or_lock, write_current_version, write_manifest_signature,
 };
 
 /// Structured output from manifest loading/index build.
@@ -202,7 +204,8 @@ impl ManifestSearch {
             cached_indexes,
             indexes_reused,
         } = prepared_manifest_data;
-        let update_current_version = !needs_build
+        let update_current_version = storage.build_lock.is_some()
+            && !needs_build
             && !config.storage_read_only
             && reused.storage_dir == storage.storage_dir
             && reused.current_version.as_deref() != Some(storage.version_id.as_str());
@@ -239,6 +242,7 @@ impl ManifestSearch {
             accumulator: &accumulator,
             cached_indexes: &cached_indexes,
         };
+        let manifest_source_uri = storage.signature.source_uri.clone();
         persist_storage_outputs(&mut storage, &persist_context)?;
         Ok(ManifestLoadResult {
             search: assemble_manifest_search(AssembleContext {
@@ -250,7 +254,7 @@ impl ManifestSearch {
                 cached_indexes,
                 search_backends,
                 in_use_locks,
-                manifest_source_uri: sources.manifest_resolution.source_uri.clone(),
+                manifest_source_uri,
             }),
             entity_store_reused,
             tantivy_reused,
@@ -327,48 +331,66 @@ fn prepare_storage(
         version_id = "unknown".to_string();
     }
 
+    let target_version_hash = version_hash.clone();
     let storage_dir = versions_root.join(&version_id);
     let signature_path = storage_dir.join(MANIFEST_SIGNATURE_FILENAME);
-    let build_lock = Some(acquire_build_lock(
+    let selected = select_storage_version_or_lock(
+        config,
         &instance_root,
-        config.storage_build_lock_wait_secs,
-    )?);
-
-    let mut artifact_consumer_status = build_artifact_consumer_status(config, None, None);
-    if config.remote_artifact_mode_enabled() {
-        let evaluated_at_ms = current_time_ms();
-        let materialization = materialize_file_artifacts(config, &version_hash)?;
-        if let Some(outcome) = materialization {
-            let last_materialized_at_ms =
-                if outcome.storage_materialized || outcome.models_materialized {
-                    Some(evaluated_at_ms)
-                } else {
-                    None
-                };
-            artifact_consumer_status = build_artifact_consumer_status(
-                config,
-                Some(&outcome),
-                Some((evaluated_at_ms, last_materialized_at_ms)),
-            );
-            info!(
-                storage_materialized = outcome.storage_materialized,
-                models_materialized = outcome.models_materialized,
-                "evaluated remote artifact materialization"
-            );
-        }
-    }
-
-    Ok(StoragePreparation {
-        instance_root,
-        versions_root,
+        &versions_root,
         signature,
         version_id,
         storage_dir,
         signature_path,
-        build_lock,
+    )?;
+    let can_materialize = selected.build_lock.is_some();
+    let artifact_consumer_status =
+        evaluate_artifact_consumer_status(config, can_materialize, &target_version_hash)?;
+
+    Ok(StoragePreparation {
+        instance_root,
+        versions_root,
+        signature: selected.signature,
+        version_id: selected.version_id,
+        storage_dir: selected.storage_dir,
+        signature_path: selected.signature_path,
+        build_lock: selected.build_lock,
         artifact_consumer_status,
         bootstrap_status,
     })
+}
+
+fn evaluate_artifact_consumer_status(
+    config: &DbtNovaConfig,
+    can_materialize: bool,
+    target_version_hash: &str,
+) -> Result<JsonValue> {
+    let mut artifact_consumer_status = build_artifact_consumer_status(config, None, None);
+    if !can_materialize || !config.remote_artifact_mode_enabled() {
+        return Ok(artifact_consumer_status);
+    }
+
+    let evaluated_at_ms = current_time_ms();
+    let materialization = materialize_file_artifacts(config, target_version_hash)?;
+    if let Some(outcome) = materialization {
+        let last_materialized_at_ms = if outcome.storage_materialized || outcome.models_materialized
+        {
+            Some(evaluated_at_ms)
+        } else {
+            None
+        };
+        artifact_consumer_status = build_artifact_consumer_status(
+            config,
+            Some(&outcome),
+            Some((evaluated_at_ms, last_materialized_at_ms)),
+        );
+        info!(
+            storage_materialized = outcome.storage_materialized,
+            models_materialized = outcome.models_materialized,
+            "evaluated remote artifact materialization"
+        );
+    }
+    Ok(artifact_consumer_status)
 }
 
 fn resolve_catalog(
@@ -504,12 +526,14 @@ fn prepare_reuse_state(
         &storage.storage_dir,
         &storage.signature_path,
     )?;
-    prune_storage_versions(
-        config,
-        &storage.versions_root,
-        reused.current_version.as_deref(),
-        &storage.version_id,
-    )?;
+    if storage.build_lock.is_some() {
+        prune_storage_versions(
+            config,
+            &storage.versions_root,
+            reused.current_version.as_deref(),
+            &storage.version_id,
+        )?;
+    }
     Ok(reused)
 }
 
@@ -1552,7 +1576,7 @@ mod tests {
     }
 
     #[test]
-    fn manifest_search_updates_current_pointer_after_scoped_fallback_reuse() {
+    fn manifest_search_reuses_scoped_fallback_without_republishing_current() {
         let temp = tempdir().unwrap_or_else(|err| panic!("tempdir failed: {err}"));
         let manifest_path = temp.path().join("manifest.json");
         std::fs::copy(
@@ -1587,7 +1611,7 @@ mod tests {
         assert_ne!(allow_version, deny_version);
         assert_eq!(
             read_current_version(&instance_root).expect("read current after alternate"),
-            Some(deny_version)
+            Some(deny_version.clone())
         );
 
         let allow_second =
@@ -1596,9 +1620,55 @@ mod tests {
         assert!(allow_second.entity_store_reused);
         assert_eq!(allow_second.search.manifest_version, allow_version);
         assert_eq!(
-            read_current_version(&instance_root).expect("read refreshed current"),
-            Some(allow_version)
+            read_current_version(&instance_root).expect("read current after lockless reuse"),
+            Some(deny_version)
         );
+    }
+
+    #[test]
+    fn manifest_search_serves_current_version_when_build_lock_is_busy() {
+        let temp = tempdir().unwrap_or_else(|err| panic!("tempdir failed: {err}"));
+        let manifest_path = temp.path().join("manifest.json");
+        std::fs::copy(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/minimal.json"),
+            &manifest_path,
+        )
+        .expect("copy fixture manifest");
+
+        let config = DbtNovaConfig {
+            manifest_path: manifest_path.to_string_lossy().to_string(),
+            storage_dir: temp.path().join("storage").to_string_lossy().to_string(),
+            storage_instance_id: "lock-busy-current".to_string(),
+            storage_build_lock_wait_secs: 0,
+            ..DbtNovaConfig::default()
+        };
+
+        let first = ManifestSearch::new(config.clone()).expect("initial manifest load");
+        let first_version = first.search.manifest_version.clone();
+        let first_hash = first.search.manifest_hash.clone();
+        drop(first);
+
+        let instance_root = config.storage_instance_root_dir().expect("instance root");
+        let _held_lock = acquire_build_lock(&instance_root, 0).expect("hold build lock");
+
+        let mut manifest_json: JsonValue =
+            serde_json::from_slice(&std::fs::read(&manifest_path).expect("read manifest"))
+                .expect("parse manifest");
+        manifest_json["metadata"]["generated_at"] =
+            JsonValue::String("2026-01-01T00:00:00Z".to_string());
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_vec(&manifest_json).expect("serialize manifest"),
+        )
+        .expect("write changed manifest");
+
+        let loaded = ManifestSearch::new(config).expect("serve current version while lock is busy");
+
+        assert!(loaded.entity_store_reused);
+        assert!(loaded.tantivy_reused);
+        assert!(loaded.indexes_reused);
+        assert_eq!(loaded.search.manifest_version, first_version);
+        assert_eq!(loaded.search.manifest_hash, first_hash);
     }
 
     #[test]

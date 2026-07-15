@@ -193,6 +193,8 @@ To test fallback behavior:
 
 - **`manifest.current.json`** points at the active version.
 - **`versions/`** contains immutable, content-addressed index builds.
+- **`.build.lock`** serializes writers; readers use a complete published
+  version without taking this lock.
 - **`.in_use.lock`** protects active versions from pruning.
 
 ## Pruning Behavior

@@ -173,6 +173,10 @@ When `DBT_NOVA_MANIFEST_REFRESH_SECS` is enabled, Nova:
 4. Atomically swaps the active version once ready (no downtime).
 5. Keeps the previous version available for in-flight requests.
 
+Concurrent loaders do not need the build lock when a complete matching version
+already exists. If another process is building a newer version, Nova serves the
+published `manifest.current.json` version until the new build is complete.
+
 ## Multi‑repo / Multi‑manifest Workflow
 
 Nova isolates indexes by manifest path or URI. If you work across multiple repos or
