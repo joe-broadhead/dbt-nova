@@ -76,8 +76,19 @@ storage backend, and artifact reuse posture that production will use.
 
 ## Optional Semantic Search Evaluation
 
-The table below is generated from the `search_eval` harness on the fixture
-manifest/qrels and should be treated as a profile reference, not a hard SLA.
+Optional vector, sparse, and reranker search is characterized separately from
+the default lexical scale guard. The table below is generated from the
+`search_eval` harness on the fixture manifest/qrels and should be treated as a
+profile reference, not a hard SLA.
+
+Nightly/manual automation lives in
+`.github/workflows/hybrid-search-characterization.yml`. It runs outside PR CI,
+restores a model cache when available, uploads the raw eval log plus
+`/usr/bin/time -v` resource usage, and records quality, latency, lifecycle, and
+maximum RSS snippets in the workflow summary. If model assets are unavailable
+and downloads are not explicitly allowed, the workflow records lexical-only
+output and marks the hybrid profile as skipped instead of making PR or release
+CI flaky.
 
 Command:
 
