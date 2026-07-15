@@ -107,8 +107,11 @@ For cross-grain KPIs, prefer one of these surfaces:
 - a dbt model at the intended analysis grain;
 - an existing `meta.nova` measure or metric on a queryable dbt artifact;
 - a dbt Semantic Layer / MetricFlow artifact;
-- an OSI semantic artifact when the artifact is scoped and deterministic;
 - a saved query or Nova recipe for report-shaped outputs.
+
+When dbt parses an external semantic interchange file into manifest `metrics`
+or `semantic_models`, Nova treats it through the existing manifest-backed
+Semantic Layer evidence. Nova does not ingest those external files directly.
 
 `composite_metrics` and `NovaMetric.derivation` graphs are not part of the
 current Nova schema. They should not be used as metadata-only substitutes for a

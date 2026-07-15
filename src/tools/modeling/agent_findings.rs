@@ -610,7 +610,7 @@ pub(super) fn collect_single_metric_cross_grain_findings(
                 "direct_sql_queryable": execution.direct_sql_queryable(),
                 "queryable_via": execution.queryable_via()
             }),
-            recommendation: "Do not leave a ratio/cross-grain KPI as metadata-only. Expose a dbt model, MetricFlow metric, OSI-derived semantic artifact, recipe, or saved query.".to_string(),
+            recommendation: "Do not leave a ratio/cross-grain KPI as metadata-only. Expose a dbt model, manifest-backed Semantic Layer metric, recipe, or saved query.".to_string(),
             drill_down_hints: entity_drill_down_hints(unique_id),
         });
     }

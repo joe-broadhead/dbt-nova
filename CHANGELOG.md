@@ -80,6 +80,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a provider-backed reviewer eval case and reviewer skill guidance for
   flagging raw fact joins when Nova evidence marks a cross-grain KPI as
   metadata-only or not directly SQL-queryable.
+- Clarified that external semantic interchange files count as Nova evidence
+  only after dbt normalizes them into manifest-backed metrics or semantic
+  models, avoiding a direct ingestion path.
 - Added machine-checked MCP tool stability metadata, profile membership docs,
   and safety-gate posture for the canonical 53-tool catalog while preserving
   v0.0.x versioning.
