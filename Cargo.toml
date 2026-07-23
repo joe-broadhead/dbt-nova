@@ -12,6 +12,9 @@ documentation = "https://joe-broadhead.github.io/dbt-nova/"
 keywords = ["dbt", "mcp", "search", "metadata", "lineage"]
 categories = ["command-line-utilities", "development-tools"]
 
+[package.metadata.cargo-machete]
+ignored = ["ort-sys"]
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 rmcp = { version = "1.4.0", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
@@ -25,7 +28,6 @@ regress = "0.9"
 uuid = { version = "1", features = ["serde"] }
 rkyv = { version = "0.8", features = ["bytecheck", "std"] }
 rkyv_derive = { version = "0.8", features = ["bytecheck"] }
-bytecheck = "0.8"
 tokio = { version = "1.0", features = ["full"] }
 tokio-util = "0.7"
 thiserror = "1.0"

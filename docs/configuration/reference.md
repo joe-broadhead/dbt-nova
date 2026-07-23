@@ -84,6 +84,7 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD` – allow MCP `reload_manifest` to change `manifest_uri`, `manifest_path`, `refresh_secs`, or `storage_instance_id`; no-argument current-source reloads do not require this opt-in
 - `DBT_NOVA_MCP_ENABLE_MANIFEST_WARM` – allow MCP/`tool call` `warm_manifest` semantic cache writes
 - `DBT_NOVA_EVAL_UNSAFE_WRITE_RAW_PROVIDER_LOGS` – opt in to raw provider transcript artifacts during agent eval debugging; unsafe for shared CI or untrusted environments
+- `DBT_NOVA_TRACE_MAX_BYTES` – maximum local trace JSONL bytes that trace inspect, summarize, redact, replay, and eval trace readers will process before failing closed (default: `67108864`)
 - `DBT_NOVA_SQL_PROVIDER` – SQL backend for `execute_sql` (`databricks`, `bigquery`, `snowflake`, or `duckdb`, default: `databricks`)
 - `DBT_NOVA_GCP_PROJECT_ID` – shared Google project id alias (used by BigQuery fallback resolution)
 - `DBT_NOVA_GCP_ACCESS_TOKEN` – shared Google OAuth access token alias (used by BigQuery fallback resolution)
@@ -616,7 +617,8 @@ Snowflake notes:
 - If local polling exceeds `max_poll_seconds`, Nova calls Snowflake's statement
   cancel endpoint before returning a timeout error.
 - Key-pair auth supports unencrypted RSA PEM keys. Encrypted private keys are not
-  supported yet; use OAuth or PAT auth if a passphrase-protected key is required.
+  supported yet; setting `DBT_NOVA_SNOWFLAKE_PRIVATE_KEY_PASSPHRASE` fails
+  closed. Use OAuth or PAT auth if a passphrase-protected key is required.
 - Snowflake SQL API workload identity federation is supported as a pass-through
   bearer-token mode. Nova does not mint or refresh AWS, Azure, GCP, Kubernetes,
   or OIDC tokens; provide a token directly or through

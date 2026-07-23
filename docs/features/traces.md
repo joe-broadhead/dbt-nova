@@ -6,6 +6,9 @@ per observed Nova tool call. Use the `trace` commands to inspect, summarize,
 redact, and replay those files before attaching evidence to PRs, eval
 artifacts, or support threads.
 
+Trace readers fail closed when a local trace file exceeds
+`DBT_NOVA_TRACE_MAX_BYTES`, which defaults to 64 MiB.
+
 Hosted HTTP tool calls include `request_id` when request correlation is active,
 so redacted trace artifacts can be matched back to hosted request logs.
 
