@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documented the OpenTelemetry exporter decision: Nova keeps Prometheus as the
   single metrics source for now and recommends collector scraping instead of
   adding a native OTLP exporter.
+- Documented the trace file size guard `DBT_NOVA_TRACE_MAX_BYTES`, the exact
+  Snowflake passphrase sentinel, and removed redundant direct dependency edges
+  while preserving the intentional `ort-sys` release-stack pin.
 - Enforced `manifest_max_bytes` for local manifest paths and auto-discovered
   sibling `catalog.json` files before parsing.
 - Fixed storage loading so readers reuse complete published versions without
