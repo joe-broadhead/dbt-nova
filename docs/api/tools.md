@@ -996,7 +996,7 @@ The response `data` includes `valid`, `path`, `suite_name`, `version`,
 `bridge_case_count`, `agent_case_count`, and `safety_policy`.
 
 ```json
-{"name":"validate_eval_suite","arguments":{"suite":"evals/analyst-smoke.yml"}}
+{"name":"validate_eval_suite","arguments":{"suite":"evals/starter.yml"}}
 ```
 
 ### `get_eval_gate`
@@ -1007,7 +1007,7 @@ Required:
 - `suite`: suite name used in telemetry
 
 ```json
-{"name":"get_eval_gate","arguments":{"suite":"analyst-smoke"}}
+{"name":"get_eval_gate","arguments":{"suite":"starter"}}
 ```
 
 ### `get_eval_history`
@@ -1025,7 +1025,7 @@ returned as assertion evidence. The `safety_policy.raw_provider_logs_enabled_env
 field names the explicit unsafe local opt-in for writing raw provider logs.
 
 ```json
-{"name":"get_eval_history","arguments":{"suite":"analyst-smoke","since":"2026-06-01"}}
+{"name":"get_eval_history","arguments":{"suite":"starter","since":"2026-06-01"}}
 ```
 
 ### `compare_eval_runs`
@@ -1074,7 +1074,7 @@ scope, case counts, pass rate, gate evidence, telemetry status, and known gaps.
 CLI runs also write `card.md` and prepend the same card to `report.md`.
 
 ```json
-{"name":"run_eval","arguments":{"suite":"evals/analyst-smoke.yml","telemetry":true,"fail_under":1.0}}
+{"name":"run_eval","arguments":{"suite":"evals/starter.yml","telemetry":true,"fail_under":1.0}}
 ```
 
 ### `init_eval_suite`
@@ -1091,7 +1091,7 @@ This file-write capability is disabled unless
 `DBT_NOVA_MCP_ENABLE_EVAL_WRITES=1` is set.
 
 ```json
-{"name":"init_eval_suite","arguments":{"persona":"analyst","out":"evals/analyst-smoke.yml"}}
+{"name":"init_eval_suite","arguments":{"persona":"analyst","out":"evals/custom-analyst-discovery.yml"}}
 ```
 
 ### `run_agent_eval`
@@ -1116,7 +1116,7 @@ The response `data.eval_card` includes provider metadata when available,
 including provider preset, command preset, and provider model.
 
 ```json
-{"name":"run_agent_eval","arguments":{"suite":"evals/analyst-smoke.yml","provider":"opencode","case_ids":["metric_lookup_flow"]}}
+{"name":"run_agent_eval","arguments":{"suite":"evals/starter.yml","provider":"opencode","case_ids":["analyst_revenue_lookup_flow"]}}
 ```
 
 ## Trace Review

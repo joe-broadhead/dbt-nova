@@ -224,7 +224,7 @@ provided eval gate report is blocked.
 Agent readiness can include the current eval gate status:
 
 ```bash
-dbt-nova eval gate analyst-smoke --json > out/eval-gate.json
+dbt-nova eval gate custom-analyst-discovery --json > out/eval-gate.json
 
 dbt-nova audit agent-readiness \
   --manifest-path target/manifest.json \

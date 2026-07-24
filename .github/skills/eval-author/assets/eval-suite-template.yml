@@ -1,5 +1,5 @@
 version: 1
-name: nova-analyst-smoke
+name: nova-analyst-discovery
 purpose: Prove that analyst discovery uses semantic-first KPI lookup to find the canonical governed metric, model, and context for the target workflow.
 manifest_scope: target/manifest.json for the analytics project
 known_gaps:
