@@ -37,6 +37,7 @@ const MCP_SMOKE_ENV_REMOVE: &[&str] = &[
     "DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD",
     "DBT_NOVA_MCP_ENABLE_MANIFEST_WARM",
     "DBT_NOVA_MCP_ENABLE_STORAGE_ADMIN",
+    "DBT_NOVA_DISABLE_TOOL_SCHEMAS",
 ];
 
 async fn write_json_line(
@@ -131,6 +132,13 @@ fn relative_to_repo(path: &Path) -> String {
         .expect("test artifact should be under repo root")
         .to_string_lossy()
         .to_string()
+}
+
+fn listed_tool<'a>(tools: &'a [Value], name: &str) -> &'a Value {
+    tools
+        .iter()
+        .find(|tool| tool.get("name").and_then(Value::as_str) == Some(name))
+        .unwrap_or_else(|| panic!("tools/list response missing {name}"))
 }
 
 fn scrub_mcp_smoke_env(command: &mut Command) {
@@ -491,10 +499,43 @@ async fn mcp_stdio_round_trip_supports_initialize_and_tools_list() {
         .and_then(Value::as_array)
         .expect("tools/list response missing result.tools");
     assert_eq!(tools.len(), MCP_TOOL_COUNT);
-    let has_search = tools
-        .iter()
-        .any(|tool| tool.get("name").and_then(Value::as_str) == Some("search"));
-    assert!(has_search, "tools/list should include search tool");
+    let _search = listed_tool(tools, "search");
+
+    let get_entity = listed_tool(tools, "get_entity");
+    assert_eq!(
+        get_entity.get("description").and_then(Value::as_str),
+        Some(
+            "Inspect one manifest entity after discovery. Returns compact, standard, or full detail; omit detail to use the active result profile. Use full only when raw manifest fields are needed, and provide resource_type when names are ambiguous."
+        )
+    );
+
+    let get_context = listed_tool(tools, "get_context");
+    assert_eq!(
+        get_context.get("description").and_then(Value::as_str),
+        Some(
+            "Bundle selected lineage, columns, tests, docs, SQL, and summary data for one resolved entity. Use after discovery when several views are needed together; prefer a focused tool when only one view is required."
+        )
+    );
+
+    let get_agent_readiness = listed_tool(tools, "get_agent_readiness");
+    assert_eq!(
+        get_agent_readiness
+            .get("description")
+            .and_then(Value::as_str),
+        Some(
+            "Assess whether manifest metadata is ready for agent workflows. Returns score, band, gate status, persona results, blockers, prioritized improvements, suggested patches, eval seeds and status, and next actions; it does not validate warehouse answer correctness."
+        )
+    );
+
+    let run_recipe = listed_tool(tools, "run_recipe");
+    assert_eq!(
+        run_recipe
+            .pointer("/inputSchema/properties/stop_on_failure/description")
+            .and_then(Value::as_str),
+        Some(
+            "Stop executing after the first failed query. Set false to continue executing remaining selected queries."
+        )
+    );
 
     child.start_kill().expect("failed to terminate MCP child");
     let _ = child.wait().await;

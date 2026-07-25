@@ -10,7 +10,7 @@ use rayon::prelude::*;
 use tracing::instrument;
 
 impl ManifestSearch {
-    /// Get complete entity data by `unique_id` or name. Returns ALL fields from the manifest.
+    /// Get entity data by `unique_id` or name at the requested detail level.
     ///
     /// # Errors
     /// Returns an error if the entity cannot be resolved, is ambiguous, or the manifest is unavailable.

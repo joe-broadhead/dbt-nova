@@ -74,7 +74,7 @@ impl ServerHandler for DbtNovaServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("dbt-nova", env!("CARGO_PKG_VERSION")))
-            .with_instructions("DBT Manifest Search and Analysis MCP Server. Use 'search' for full-text discovery, 'search_indicator' for canonical measures and metrics, 'get_entity' for complete entity data, and 'execute_sql' to run warehouse queries with the configured SQL provider.")
+            .with_instructions("DBT Manifest Search and Analysis MCP Server. Use 'search' for full-text discovery, 'search_indicator' for canonical measures and metrics, 'get_entity' to inspect one entity at the needed detail level, and 'execute_sql' to run warehouse queries with the configured SQL provider.")
     }
 }
 
@@ -874,10 +874,10 @@ impl DbtNovaServer {
         .await
     }
 
-    /// Get complete entity data by `unique_id` or name. Returns ALL fields from the manifest.
+    /// Get entity data by `unique_id` or name at the requested detail level.
     #[tool(
         name = "get_entity",
-        description = "Fetch the full manifest object for a single entity. Use after search to inspect config, SQL, tags, meta, docs, and relation info. Provide resource_type when names are ambiguous."
+        description = "Inspect one manifest entity after discovery. Returns compact, standard, or full detail; omit detail to use the active result profile. Use full only when raw manifest fields are needed, and provide resource_type when names are ambiguous."
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn get_entity(&self, params: Parameters<GetEntityParams>) -> ToolCallResponse {
@@ -1459,7 +1459,7 @@ impl DbtNovaServer {
     /// Get the manifest-level agent-readiness report.
     #[tool(
         name = "get_agent_readiness",
-        description = "Agent readiness audit. Returns the same agent_readiness.v1 JSON report as the CLI audit command without writing files or applying CLI exit semantics."
+        description = "Assess whether manifest metadata is ready for agent workflows. Returns score, band, gate status, persona results, blockers, prioritized improvements, suggested patches, eval seeds and status, and next actions; it does not validate warehouse answer correctness."
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn get_agent_readiness(
@@ -1584,7 +1584,7 @@ impl DbtNovaServer {
     /// Get rich context for an entity.
     #[tool(
         name = "get_context",
-        description = "One-shot context bundle. Returns lineage, columns, tests, docs, and summary stats for an entity. Use when an agent needs full context quickly."
+        description = "Bundle selected lineage, columns, tests, docs, SQL, and summary data for one resolved entity. Use after discovery when several views are needed together; prefer a focused tool when only one view is required."
     )]
     #[instrument(level = "info", skip(self, params))]
     async fn get_context(&self, params: Parameters<GetContextParams>) -> ToolCallResponse {
@@ -1594,7 +1594,7 @@ impl DbtNovaServer {
         .await
     }
 
-    /// Execute SQL against a Databricks SQL warehouse.
+    /// Execute SQL against the configured warehouse provider.
     #[tool(
         name = "execute_sql",
         description = "Run SQL against the configured warehouse provider. Supports provider diagnostics with preflight_only=true and optional catalog/schema/relation checks."

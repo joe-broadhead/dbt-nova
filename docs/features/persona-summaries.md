@@ -1,19 +1,22 @@
 # Persona‑Aware Summary Payloads
 
-Status: **Implemented** (standard + full summaries live).
+Status: **Implemented** (`compact`, `standard`, and `full` detail levels are live).
 
 ## Why this exists
 
 Nova search/list results currently return more data than most agents need. This adds noise, slows decisions, and increases context usage. Persona‑aware summaries make discovery **fast, minimal, and decision‑ready**.
 
-## Two‑tier model
+## Detail model
 
-We standardize response detail to **two levels only**:
+Search, inventory, and entity inspection support three detail levels:
 
-- **Standard**: persona‑optimized summary (default)
-- **Full**: complete entity payload (same as `get_entity`)
+- **Compact**: identity, relation, grain, primary-key, and compact Nova signals
+- **Standard**: persona‑optimized summary
+- **Full**: complete entity payload (same as `get_entity` with `detail: "full"`)
 
-This removes compact/rich variants and makes tool flows predictable.
+When omitted, the active result profile selects the detail level. CLI/tool calls
+default to `standard`; MCP defaults to `compact`. An explicit `detail` value
+always overrides the profile.
 
 ## Summary payloads (Standard)
 
@@ -108,13 +111,24 @@ This removes compact/rich variants and makes tool flows predictable.
 - `relation_name` (or `database` + `schema`), `original_file_path`
 - `description` (truncated)
 
-## Canonical representation (no duplicates, low-noise)
+## Canonical representation and compatibility mirrors
 
-**Summaries never repeat the same concept** (no parallel lists of columns/roles/semantics).
-Summaries also strip null/empty values so agent context is compact by default.
+Summaries avoid parallel representations of columns, roles, and semantics, and
+strip null/empty values so agent context stays compact. Two v0.0.x compatibility
+mirrors remain:
 
-Full payloads return the **raw dbt manifest entity**, where `columns` is a map keyed by
-column name. We do not add duplicate column lists in summaries.
+- Analyst summaries expose `semantic_preview` both at the root and inside
+  `persona_payload`.
+- Engineer summaries expose `has_compiled_sql` both at the root and inside
+  `persona_payload`.
+
+These mirrors let generic consumers read root signals while persona-aware
+consumers keep a self-contained nested contract. They are retained for wire
+compatibility.
+
+Full payloads preserve the **complete dbt manifest entity** and add Nova's
+`provenance` object. Manifest fields are not rewritten; `columns` remains a map
+keyed by column name, and summaries do not add duplicate column lists.
 
 ## Computed fields
 
@@ -164,7 +178,7 @@ column name. We do not add duplicate column lists in summaries.
 
 - Summary `description`: ~120 chars
 - Measure/metric `description`: ~80 chars
-- Full payloads are unmodified.
+- Full payloads preserve manifest fields and add Nova provenance.
 
 ## Example usage
 

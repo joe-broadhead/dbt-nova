@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Corrected agent-facing MCP contracts for entity detail, context selection,
+  readiness output, and recipe failure handling, and aligned persona-summary
+  documentation with the live three-level detail model.
 - Added opt-in `diff_entities` sections for manifest-native modelling
   comparison: `grain`, `indicators`, `governance`, `tests`, and `all`, while
   preserving the columns-only default.

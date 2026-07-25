@@ -390,7 +390,7 @@ pub struct RunRecipeParams {
     /// Optional explicit 1-based query order indexes to execute.
     #[serde(default)]
     pub query_indexes: Vec<usize>,
-    /// Continue executing remaining queries when one fails.
+    /// Stop executing after the first failed query. Set false to continue executing remaining selected queries.
     #[serde(default = "default_true")]
     pub stop_on_failure: bool,
     /// Include SQL text in response payload.
