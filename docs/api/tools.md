@@ -822,7 +822,8 @@ Required:
 Optional:
 - `query_names` (list of SQL file names)
 - `query_indexes` (1-based indexes by execution order)
-- `stop_on_failure` (bool, default: `true`)
+- `stop_on_failure` (bool, default: `true`): stop after the first failed query;
+  set `false` to continue with the remaining selected queries
 - `include_sql` (bool)
 - SQL execution controls: `row_limit`, `byte_limit`, `wait_timeout_s`, `poll_interval_ms`, `max_poll_seconds`, `parameters`, `placeholder_types`, `sql_parameter_types`, `fetch_all_chunks`, `max_chunks`
 - `parameter_types` (legacy compatibility fallback alias; prefer `placeholder_types` and `sql_parameter_types`)
