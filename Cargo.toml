@@ -41,7 +41,7 @@ memmap2 = "0.9"
 blake3 = "1.5"
 fs4 = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking", "gzip"] }
-jsonwebtoken = "10"
+jsonwebtoken = "9"
 base64 = "0.22"
 sha2 = "0.10"
 hmac = "0.12"
