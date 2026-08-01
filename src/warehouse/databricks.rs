@@ -31,6 +31,7 @@ use tracing::{debug, warn};
 use crate::error::{DbtNovaError, Result};
 use crate::params::ExecuteSqlParams;
 use crate::responses::SuccessResponse;
+use crate::utils::http_client::async_client_builder;
 use crate::utils::{redact_sensitive_text, summarize_http_error_body};
 use crate::warehouse::SqlProvider;
 use crate::warehouse::preflight::{
@@ -152,7 +153,7 @@ impl DatabricksSqlClient {
     /// # Errors
     /// Returns an error if the HTTP client cannot be constructed.
     pub fn new(cfg: DatabricksSqlConfig) -> Result<Self> {
-        let http = Client::builder()
+        let http = async_client_builder()?
             .timeout(cfg.timeout)
             .user_agent(format!("dbt-nova/{}", env!("CARGO_PKG_VERSION")))
             .build()

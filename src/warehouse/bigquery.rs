@@ -15,6 +15,7 @@ use tracing::warn;
 use crate::error::{DbtNovaError, Result};
 use crate::params::ExecuteSqlParams;
 use crate::responses::SuccessResponse;
+use crate::utils::http_client::async_client_builder;
 use crate::utils::{
     redact_sensitive_text, resolve_gcp_access_token_async, resolve_gcp_project_id,
     summarize_http_error_body,
@@ -112,7 +113,7 @@ fn bigquery_token_cache_ttl() -> Duration {
 }
 
 fn build_bigquery_client(timeout: Duration) -> Result<Client> {
-    Client::builder()
+    async_client_builder()?
         .timeout(timeout)
         .build()
         .map_err(|err| bq_err(format!("failed to build HTTP client: {err}")))

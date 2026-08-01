@@ -125,6 +125,30 @@ see [Modes & Combinations](../getting-started/modes-and-combinations.md).
 - `DATABRICKS_HOST` – Databricks workspace URL for `dbfs://` manifests and `execute_sql`
 - `DATABRICKS_ACCESS_TOKEN` – Databricks access token for `dbfs://` and `execute_sql`
 
+## Outbound HTTPS Trust
+
+Nova-owned HTTP clients keep certificate verification enabled and trust both
+Mozilla WebPKI roots and the host platform's native certificate store. This
+policy applies to Databricks, Snowflake, BigQuery, remote HTTPS manifests and
+artifacts, JWT JWKS retrieval, and Google service-account token exchange.
+
+- `SSL_CERT_FILE` – PEM CA bundle consumed by the native-root loader. When set,
+  the native loader uses the configured file instead of the platform store;
+  Nova's WebPKI roots remain available.
+- `SSL_CERT_DIR` – platform-supported certificate directories consumed by the
+  native-root loader. On Unix, separate multiple directories with `:`.
+- `REQUESTS_CA_BUNDLE` – additive PEM CA bundle compatibility for environments
+  already configured for Python Requests. The file must contain at least one
+  certificate and may not exceed 8 MiB; unreadable, malformed, empty, or
+  oversized bundles fail client construction.
+- `CURL_CA_BUNDLE` – additive fallback when `REQUESTS_CA_BUNDLE` is unset or
+  empty, with the same validation and 8 MiB limit.
+
+If both compatibility aliases are set, `REQUESTS_CA_BUNDLE` takes precedence.
+Do not replace HTTPS endpoints with plaintext forwarding or disable certificate
+verification; install the corporate root in the platform trust store or provide
+one of the bounded PEM bundle variables above.
+
 For auth details by source, see `docs/configuration/manifest-sources.md`.
 
 Remote manifest notes:

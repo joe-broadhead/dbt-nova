@@ -34,6 +34,7 @@ use crate::config::DbtNovaConfig;
 use crate::error::{DbtNovaError, Result};
 use crate::params::ExecuteSqlParams;
 use crate::responses::SuccessResponse;
+use crate::utils::http_client::async_client_builder;
 use crate::warehouse::SqlProvider;
 use crate::warehouse::preflight::{
     PreflightReport, ProbePresence, build_configuration_failure_response, build_preflight_response,
@@ -255,7 +256,7 @@ impl SnowflakeSqlClient {
     /// # Errors
     /// Returns an error when the HTTP client cannot be created.
     pub fn new(cfg: SnowflakeSqlConfig) -> Result<Self> {
-        let http = Client::builder()
+        let http = async_client_builder()?
             .timeout(cfg.timeout)
             .user_agent(format!("dbt-nova/{}", env!("CARGO_PKG_VERSION")))
             .gzip(true)

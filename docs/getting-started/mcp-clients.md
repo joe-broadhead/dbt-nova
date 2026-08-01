@@ -207,6 +207,28 @@ hints from tool definitions.
 }
 ```
 
+## Corporate TLS and Custom Root CAs
+
+Nova keeps TLS certificate verification enabled while using both public WebPKI
+roots and the operating system's native trust store. A corporate root installed
+in the macOS Keychain, Windows certificate store, or supported Unix trust store
+is therefore available to Nova-owned Databricks, Snowflake, BigQuery, manifest,
+JWKS, and Google token clients.
+
+For an explicit PEM bundle, pass `SSL_CERT_FILE` in the same environment as the
+Nova process. Existing environments may instead use `REQUESTS_CA_BUNDLE`, with
+`CURL_CA_BUNDLE` as a fallback:
+
+```toml
+[mcp_servers.dbt-nova.env]
+SSL_CERT_FILE = "/path/to/corporate-ca-bundle.pem"
+```
+
+`REQUESTS_CA_BUNDLE` and `CURL_CA_BUNDLE` are additive, limited to 8 MiB, and
+fail closed when the configured file is missing, empty, malformed, or
+oversized. See [Configuration Reference](../configuration/reference.md#outbound-https-trust)
+for precedence and platform details.
+
 ## Databricks SQL Variables
 
 Required:

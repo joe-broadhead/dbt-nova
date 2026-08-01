@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added OS-native and custom corporate CA trust for Nova-owned outbound HTTPS
+  clients while preserving WebPKI roots and certificate verification. Databricks,
+  Snowflake, BigQuery, remote manifest, JWT JWKS, and GCP token requests now
+  honor platform trust stores plus `SSL_CERT_FILE`/`SSL_CERT_DIR`, with bounded,
+  fail-closed `REQUESTS_CA_BUNDLE` and `CURL_CA_BUNDLE` compatibility.
 - Corrected agent-facing MCP contracts for entity detail, context selection,
   readiness output, and recipe failure handling, and aligned persona-summary
   documentation with the live three-level detail model.

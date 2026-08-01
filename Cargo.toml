@@ -40,7 +40,7 @@ moka = { version = "0.12", features = ["sync"] }
 memmap2 = "0.9"
 blake3 = "1.5"
 fs4 = "0.8"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking", "gzip"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "rustls-tls-native-roots", "blocking", "gzip"] }
 jsonwebtoken = "9"
 base64 = "0.22"
 sha2 = "0.10"
@@ -72,6 +72,7 @@ wiremock = "0.6"
 criterion = "0.5"
 insta = { version = "1.39", features = ["json"] }
 hf-hub = "0.3.2"
+tokio-rustls = "0.26"
 
 [build-dependencies]
 typify = "0.1"

@@ -20,6 +20,7 @@ use tracing::warn;
 
 use crate::config::DbtNovaConfig;
 use crate::error::{DbtNovaError, Result};
+use crate::utils::http_client::blocking_client_builder;
 use crate::utils::unique_suffix;
 
 use dbfs::resolve_dbfs;
@@ -199,7 +200,7 @@ fn split_scheme(uri: &str) -> Option<(String, String)> {
 }
 
 fn http_client(config: &DbtNovaConfig) -> Result<Client> {
-    let mut builder = Client::builder();
+    let mut builder = blocking_client_builder()?;
     if config.manifest_http_connect_timeout_secs > 0 {
         builder = builder.connect_timeout(Duration::from_secs(
             config.manifest_http_connect_timeout_secs,

@@ -3,10 +3,11 @@ use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
-use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{DbtNovaError, Result};
+
+use super::http_client::blocking_client_builder;
 
 const DEFAULT_TOKEN_URI: &str = "https://oauth2.googleapis.com/token";
 const CLOUD_PLATFORM_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform";
@@ -206,7 +207,8 @@ fn token_from_service_account_file(path: &str) -> std::result::Result<String, St
     )
     .map_err(|err| format!("failed to sign JWT assertion: {err}"))?;
 
-    let client = Client::builder()
+    let client = blocking_client_builder()
+        .map_err(|err| format!("failed to configure HTTP client: {err}"))?
         .timeout(Duration::from_secs(TOKEN_TIMEOUT_SECS))
         .build()
         .map_err(|err| format!("failed to create HTTP client: {err}"))?;

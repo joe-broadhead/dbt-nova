@@ -21,6 +21,7 @@ use tracing::warn;
 
 use crate::config::{HostedAuthConfig, HostedAuthMode, parse_jwt_algorithms};
 use crate::error::{DbtNovaError, Result};
+use crate::utils::http_client::{async_client_builder, blocking_client_builder};
 
 const SIGNATURE_PREFIX: &str = "sha256=";
 const MAX_IDENTITY_HEADER_BYTES: usize = 8 * 1024;
@@ -518,7 +519,7 @@ fn bearer_token(headers: &HeaderMap) -> std::result::Result<&str, VerificationEr
 }
 
 fn build_jwks_client() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
+    async_client_builder()?
         .timeout(Duration::from_secs(JWKS_FETCH_TIMEOUT_SECS))
         .build()
         .map_err(|error| {
@@ -529,7 +530,7 @@ fn build_jwks_client() -> Result<reqwest::Client> {
 }
 
 fn build_blocking_jwks_client() -> Result<reqwest::blocking::Client> {
-    reqwest::blocking::Client::builder()
+    blocking_client_builder()?
         .timeout(Duration::from_secs(JWKS_FETCH_TIMEOUT_SECS))
         .build()
         .map_err(|error| {

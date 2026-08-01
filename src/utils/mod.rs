@@ -1,6 +1,7 @@
 pub mod circuit_breaker;
 pub mod gcp_auth;
 pub mod glob;
+pub(crate) mod http_client;
 pub mod id;
 pub mod metrics;
 pub mod persona;

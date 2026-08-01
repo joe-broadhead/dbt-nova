@@ -22,6 +22,16 @@ Embeddings/reranker startup validates proxy env vars. If `HTTP_PROXY`, `HTTPS_PR
 `ALL_PROXY` (or lowercase variants) are set to non-URL values, initialization fails fast
 with a configuration error.
 
+## Outbound TLS Trust
+
+Nova-owned outbound HTTPS clients verify certificates against both WebPKI roots
+and the host platform's native trust store. Corporate deployments can use an
+OS-installed root, `SSL_CERT_FILE`/`SSL_CERT_DIR`, or the bounded
+`REQUESTS_CA_BUNDLE`/`CURL_CA_BUNDLE` compatibility aliases. Explicit
+Requests/curl bundle files fail closed when unreadable, empty, malformed, or
+larger than 8 MiB. Nova does not expose a skip-verification switch; use a trusted
+root rather than a plaintext bridge or an accept-invalid-certificates mode.
+
 Storage path checks prevent traversal, and checksums validate entity store integrity.
 See [Configuration](../configuration/reference.md) for full limits.
 
