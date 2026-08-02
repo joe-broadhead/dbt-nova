@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Hardened the dependency supply chain by updating OpenSSL, Rand, Tar, Rkyv,
+  JSON Web Token handling, Tantivy/LRU, the Google Cloud Storage SDK, and the
+  documentation toolchain, and removed advisory exemptions made obsolete by
+  the upgrades.
 - Corrected agent-facing MCP contracts for entity detail, context selection,
   readiness output, and recipe failure handling, and aligned persona-summary
   documentation with the live three-level detail model.

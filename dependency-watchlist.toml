@@ -14,13 +14,3 @@ current_state = "Cargo.toml pins ort-sys = \"=2.0.0-rc.4\"."
 upgrade_trigger = "fastembed/ort ecosystem supports stable (non-RC) ort-sys without local patching."
 upgrade_plan = "Upgrade fastembed + ort-sys together, run full CI/release checks, then remove the exact RC pin."
 state_checks = ["cargo_toml_has_ort_sys_rc_pin", "cargo_lock_has_ort_sys_rc4"]
-
-[[item]]
-id = "reqwest-transitive-split"
-owner = "@joe-broadhead"
-review_by = "2026-09-30"
-summary = "Dependency graph currently contains reqwest 0.11, 0.12, and 0.13."
-current_state = "reqwest 0.11 is pulled transitively by google-cloud-storage, dbt-nova uses reqwest 0.12 directly, and jsonschema currently pulls reqwest 0.13."
-upgrade_trigger = "google-cloud-storage and jsonschema stacks converge on reqwest 0.12+ or 0.13+ without forcing multiple major lines."
-upgrade_plan = "Upgrade GCS/jsonschema dependencies together where possible, confirm cargo-deny and provider integration tests pass, then collapse to the smallest supported reqwest version set."
-state_checks = ["cargo_toml_has_reqwest_012_direct", "cargo_lock_has_reqwest_011", "cargo_lock_has_reqwest_012", "cargo_lock_has_reqwest_013"]

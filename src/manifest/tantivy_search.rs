@@ -861,7 +861,10 @@ impl TantivySearcher {
                 .saturating_mul(config.dedup_fetch_multiplier.max(1)),
             MAX_FETCH_LIMIT,
         );
-        let top_docs = searcher.search(&final_query, &TopDocs::with_limit(fetch_limit))?;
+        let top_docs = searcher.search(
+            &final_query,
+            &TopDocs::with_limit(fetch_limit).order_by_score(),
+        )?;
 
         let highlight_enabled = request.include_highlights
             && config.highlight_max_fields > 0

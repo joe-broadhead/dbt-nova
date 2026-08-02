@@ -5,12 +5,8 @@ yanked = "deny"
 unmaintained = "transitive"
 unsound = "transitive"
 ignore = [
-  { id = "RUSTSEC-2024-0384", reason = "owner=@joe-broadhead; review_by=2026-09-30; transitive via tantivy -> measure_time -> instant. No upstream fix; upgrade tantivy when feasible." },
   { id = "RUSTSEC-2024-0436", reason = "owner=@joe-broadhead; review_by=2026-09-30; transitive via fastembed -> tokenizers -> paste. No safe upgrade; monitor tokenizers." },
   { id = "RUSTSEC-2025-0119", reason = "owner=@joe-broadhead; review_by=2026-09-30; transitive via fastembed -> hf-hub -> indicatif -> number_prefix. No safe upgrade; monitor hf-hub/indicatif." },
-  { id = "RUSTSEC-2025-0134", reason = "owner=@joe-broadhead; review_by=2026-09-30; transitive via google-cloud-storage -> reqwest 0.11 -> rustls-pemfile. Upgrade gcs stack when available." },
-  { id = "RUSTSEC-2026-0002", reason = "owner=@joe-broadhead; review_by=2026-09-30; transitive via tantivy -> lru 0.12. Upgrade tantivy to pull lru >=0.16.3." },
-  { id = "RUSTSEC-2026-0097", reason = "owner=@joe-broadhead; review_by=2026-09-30; transitive via fastembed/tokenizers, tantivy/rand_distr, rmcp, and proptest. No semver-compatible upstream fix is available in the current graph. dbt-nova uses tracing_subscriber::fmt() and does not define a custom log::Log or call rand::rng() from logger code, so the reported UB path is not reachable in this codebase. Remove once upstreams move to rand >=0.9.3 or >=0.10.1." },
 ]
 unused-ignored-advisory = "warn"
 

@@ -1099,23 +1099,25 @@ fn fetch_gcs_manifest_sdk(
         let object = object.clone();
         run_async_fetch_blocking(move || async move {
             let fetch = async {
-                let gcs_config = google_cloud_storage::client::ClientConfig::default()
-                    .with_auth()
+                let client = google_cloud_storage::client::Storage::builder()
+                    .build()
                     .await
                     .map_err(|e| DbtNovaError::ServerError(format!("GCS auth failed: {e}")))?;
-                let client = google_cloud_storage::client::Client::new(gcs_config);
-                let req = google_cloud_storage::http::objects::get::GetObjectRequest {
-                    bucket: bucket.clone(),
-                    object: object.clone(),
-                    ..Default::default()
-                };
-                client
-                    .download_object(
-                        &req,
-                        &google_cloud_storage::http::objects::download::Range::default(),
-                    )
+                let bucket_resource = format!("projects/_/buckets/{bucket}");
+                let mut response = client
+                    .read_object(bucket_resource, object)
+                    .send()
                     .await
-                    .map_err(|e| DbtNovaError::ServerError(format!("GCS download failed: {e}")))
+                    .map_err(|e| DbtNovaError::ServerError(format!("GCS download failed: {e}")))?;
+                let mut data = Vec::new();
+                while let Some(chunk) =
+                    response.next().await.transpose().map_err(|e| {
+                        DbtNovaError::ServerError(format!("GCS download failed: {e}"))
+                    })?
+                {
+                    data.extend_from_slice(&chunk);
+                }
+                Ok::<_, DbtNovaError>(data)
             };
             if timeout_secs > 0 {
                 tokio::time::timeout(Duration::from_secs(timeout_secs), fetch)
