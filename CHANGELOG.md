@@ -12,9 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   documentation toolchain, and removed advisory exemptions made obsolete by
   the upgrades.
 - Hardened reusable workflow source installs by resolving refs to a detached
-  commit, using step-scoped fetch credentials, validating installer refs, and
-  removing unnecessary OIDC grants from PR CI, while preserving inherited-secret
-  fallback, source+OIDC compatibility, and caller warm-script fallback.
+  commit, using step-scoped fetch credentials, and validating installer refs,
+  while preserving inherited-secret fallback, source+OIDC compatibility, caller
+  warm-script fallback, and caller `id-token` grants required by the reusable
+  asset workflow.
 - Corrected agent-facing MCP contracts for entity detail, context selection,
   readiness output, and recipe failure handling, and aligned persona-summary
   documentation with the live three-level detail model.
