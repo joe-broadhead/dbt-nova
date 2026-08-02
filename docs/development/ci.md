@@ -65,11 +65,7 @@ Operational defaults:
   exclusive when `dbt_generate_manifest=true`
 - **Source-install safety:** requested refs are validated, resolved to a commit,
   fetched with step-scoped credentials, and stripped of Git metadata before
-  compilation. Source mode fails closed when GitHub OIDC request credentials
-  are present; OIDC-capable jobs must use signed release mode.
-- **Secret contract:** mapped dbt secrets come only from the explicitly passed
-  `DBT_NOVA_SECRET_BUNDLE_JSON`; the workflow does not serialize inherited
-  repository or organization secrets.
+  compilation.
 - **Outputs:** manifest metadata (`manifest_hash`, `manifest_version`,
   `entity_count`), artifact names (including manifest/bootstrap), and optional
   remote publish metadata (`published_targets`,
@@ -94,9 +90,10 @@ Operational defaults:
   `installer_install_mode`, `allow_mutable_installer_ref` for trusted branch-ref
   development runs), plus optional runner selection (`runner` or
   `runner_labels_json`)
-- **Secret contract:** `dbt_secret_env_map_json` resolves keys only from
-  `DBT_NOVA_SECRET_BUNDLE_JSON`; downstream wrappers should pass that explicit
-  bundle for same-owner and cross-owner calls
+- **Secret contract:** `dbt_secret_env_map_json` resolves keys from
+  `DBT_NOVA_SECRET_BUNDLE_JSON` first, then same-owner inherited workflow
+  secrets; downstream wrappers should prefer the bundle pattern for cross-owner
+  calls and provider-neutral secret schemas
 - **Audit inputs:** `selection_mode` (`project|changed|entities`),
   `changed_files_json`, `entity_ids_json`, `resource_types_json`,
   `personas_json`, `thresholds_json`, `include_breakdown`,

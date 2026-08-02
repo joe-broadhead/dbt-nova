@@ -49,9 +49,6 @@ Reusable workflows reject branch-like installer refs unless
 `allow_mutable_installer_ref: true` is set for a trusted development run.
 Source installs resolve the requested ref to one commit, use credentials only
 during that fetch, and remove the source checkout's Git metadata before build.
-They refuse to run whenever the job exposes GitHub OIDC request credentials.
-Remove `id-token: write` for source-based development jobs; use
-`installer_install_mode: release` when OIDC is required.
 
 ```yaml
 name: Build Nova Assets
@@ -89,7 +86,7 @@ Alternative producer inputs:
 - `runner_labels_json` (JSON array of runner labels, overriding `runner` when
   a self-hosted pool requires multiple labels)
 - workflow_call secret `DBT_NOVA_SECRET_BUNDLE_JSON` (optional JSON object of
-  the exact `secret-name -> secret-value` entries exposed to the workflow)
+  `secret-name -> secret-value` entries for cross-owner reusable workflow calls)
 
 Structured mode is the recommended default:
 
@@ -160,9 +157,9 @@ does not forward the dbt secret bundle into the later publish shell.
 Notes:
 
 - `dbt_env_json` values are plain strings.
-- `dbt_secret_env_map_json` values are looked up only in
-  `DBT_NOVA_SECRET_BUNDLE_JSON`; inherited repository and organization secrets
-  are never enumerated.
+- `dbt_secret_env_map_json` values are looked up in this order:
+  1) keys in `DBT_NOVA_SECRET_BUNDLE_JSON` (when provided),
+  2) inherited workflow secrets (`secrets: inherit`, same-owner/org calls).
 - Missing mapped secrets fail fast before dbt invocation.
 - Use trusted `dbt_command` only when you explicitly need shell semantics.
 - Keep `search_warm_strategy: staged` for large manifests or memory-constrained
@@ -177,8 +174,8 @@ Secret setup patterns:
 
 | Call pattern | How secrets are resolved |
 |---|---|
-| Same-owner or cross-owner reusable call | Pass one `DBT_NOVA_SECRET_BUNDLE_JSON` secret containing only the required keys and map them via `dbt_secret_env_map_json` |
-| `secrets: inherit` | Not enumerated by Nova; explicitly pass `DBT_NOVA_SECRET_BUNDLE_JSON` instead |
+| Same org/user, reusable workflow call | `secrets: inherit` can expose caller secrets directly |
+| Cross-owner call or strict least-privilege | Pass one `DBT_NOVA_SECRET_BUNDLE_JSON` secret and map keys via `dbt_secret_env_map_json` |
 | No dbt manifest generation | `dbt_secret_env_map_json` is not required |
 
 Publish target auth requirements:
@@ -189,10 +186,9 @@ Publish target auth requirements:
 | `gcs` | Token via one of `DBT_NOVA_GCP_ACCESS_TOKEN`, `DBT_NOVA_BIGQUERY_ACCESS_TOKEN`, `GCP_ACCESS_TOKEN`, `GOOGLE_OAUTH_ACCESS_TOKEN`, or GitHub OIDC via `gcp_workload_identity_provider` + `gcp_service_account` |
 | `dbfs` | `DATABRICKS_HOST` and `DATABRICKS_ACCESS_TOKEN` |
 
-OIDC-backed GCS publish requires `installer_install_mode: release` and is not
-allowed in the same reusable job that generates a manifest from caller dbt
-code. Generate the manifest before calling the reusable workflow and use a
-signed Nova release binary, or use token-based GCS credentials for that run.
+OIDC-backed GCS publish is intentionally not allowed in the same reusable job
+that generates a manifest from caller dbt code. Generate the manifest before
+calling the reusable workflow, or use token-based GCS credentials for that run.
 
 Common downstream pattern: keep a repo-local `workflow_dispatch` wrapper and
 call this reusable workflow from it. This lets each repo set its own target
