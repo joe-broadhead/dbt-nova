@@ -356,7 +356,6 @@ jobs:
     name: reusable-assets-producer
     permissions:
       contents: read
-      id-token: write
     uses: ./.github/workflows/nova-build-assets.yml
     with:
       runner: ubuntu-22.04
@@ -371,7 +370,6 @@ jobs:
     name: reusable-assets-semantic-producer
     permissions:
       contents: read
-      id-token: write
     uses: ./.github/workflows/nova-build-assets.yml
     with:
       manifest_path: tests/fixtures/nova_manifest.json
@@ -386,7 +384,6 @@ jobs:
     name: reusable-assets-producer-structured-dbt
     permissions:
       contents: read
-      id-token: write
     uses: ./.github/workflows/nova-build-assets.yml
     with:
       dbt_generate_manifest: true
@@ -404,7 +401,6 @@ jobs:
     name: reusable-assets-producer-trusted-dbt
     permissions:
       contents: read
-      id-token: write
     uses: ./.github/workflows/nova-build-assets.yml
     with:
       dbt_generate_manifest: true
@@ -498,7 +494,6 @@ jobs:
     name: reusable-assets-remote-publish-dryrun
     permissions:
       contents: read
-      id-token: write
     uses: ./.github/workflows/nova-build-assets.yml
     with:
       manifest_path: tests/fixtures/nova_manifest.json

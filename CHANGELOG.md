@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   JSON Web Token handling, Tantivy/LRU, the Google Cloud Storage SDK, and the
   documentation toolchain, and removed advisory exemptions made obsolete by
   the upgrades.
+- Hardened reusable workflows by eliminating bulk inherited-secret exposure,
+  fetching source installs at a resolved commit without persistent checkout
+  credentials, validating installer refs, refusing source compilation in
+  OIDC-capable jobs, avoiding caller-provided warm scripts in release mode, and
+  removing unnecessary OIDC grants from PR CI.
 - Corrected agent-facing MCP contracts for entity detail, context selection,
   readiness output, and recipe failure handling, and aligned persona-summary
   documentation with the live three-level detail model.

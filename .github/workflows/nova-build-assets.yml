@@ -23,7 +23,7 @@ on:
         type: string
         default: "joe-broadhead/dbt-nova"
       installer_ref:
-        description: "Git ref to checkout for installer_repository (defaults to resolved reusable workflow ref)"
+        description: "Git ref to fetch for installer_repository (defaults to resolved reusable workflow ref)"
         required: false
         type: string
         default: ""
@@ -598,6 +598,11 @@ jobs:
                 echo "gcp_workload_identity_provider and gcp_service_account must both be set when using OIDC-backed GCS publish."
                 exit 1
               fi
+              if [[ "${installer_install_mode}" != "release" ]]; then
+                echo "OIDC-backed GCS publish requires installer_install_mode=release."
+                echo "Source builds can execute build scripts and must not run in an OIDC-enabled publish job."
+                exit 1
+              fi
               if [[ "${dbt_generate_manifest}" == "true" ]]; then
                 echo "OIDC-backed GCS publish cannot run in the same reusable workflow job that generates a manifest from caller dbt code."
                 echo "Generate and validate the manifest before invoking this workflow, or publish with non-OIDC credentials until publish is split into a separate job."
@@ -664,6 +669,10 @@ jobs:
           if [[ -z "${installer_ref}" ]]; then
             echo "failed to resolve immutable installer ref for '${installer_repository}'."
             echo "Set installer_ref explicitly when invoking the reusable workflow."
+            exit 1
+          fi
+          if ! git check-ref-format --branch "${installer_ref}" >/dev/null 2>&1; then
+            echo "installer_ref is not a valid Git ref or full commit SHA: '${installer_ref}'."
             exit 1
           fi
           if [[ "${allow_mutable_installer_ref}" != "true" ]]; then
@@ -909,14 +918,50 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "installed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout installer source
+      - name: Fetch installer source at resolved commit
+        id: fetch_installer_source
         if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
-        with:
-          repository: ${{ needs.prepare.outputs.installer_repository }}
-          ref: ${{ needs.prepare.outputs.installer_ref }}
-          path: .nova-installer-source
-          fetch-depth: 1
+        shell: bash
+        env:
+          INSTALLER_SERVER_URL: ${{ github.server_url }}
+          INSTALLER_REPOSITORY: ${{ needs.prepare.outputs.installer_repository }}
+          INSTALLER_REF: ${{ needs.prepare.outputs.installer_ref }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" || -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]]; then
+            echo "Source installer mode refuses to run with GitHub OIDC credentials available."
+            echo "Use installer_install_mode=release or remove id-token: write from the caller job."
+            exit 1
+          fi
+
+          source_dir="${GITHUB_WORKSPACE}/.nova-installer-source"
+          rm -rf "${source_dir}"
+          git init --quiet "${source_dir}"
+          installer_origin="${INSTALLER_SERVER_URL%/}/${INSTALLER_REPOSITORY}.git"
+          git -C "${source_dir}" remote add origin "${installer_origin}"
+
+          auth_header="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 | tr -d '\r\n')"
+          echo "::add-mask::${auth_header}"
+          git -C "${source_dir}" \
+            -c "http.extraHeader=AUTHORIZATION: basic ${auth_header}" \
+            fetch --quiet --force --depth=1 --no-tags origin "${INSTALLER_REF}"
+          unset GH_TOKEN auth_header
+
+          resolved_sha="$(git -C "${source_dir}" rev-parse 'FETCH_HEAD^{commit}')"
+          if [[ "${INSTALLER_REF}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            expected_sha="$(printf '%s' "${INSTALLER_REF}" | tr '[:upper:]' '[:lower:]')"
+            if [[ "${resolved_sha}" != "${expected_sha}" ]]; then
+              echo "Installer source resolved to ${resolved_sha}, expected ${INSTALLER_REF}."
+              exit 1
+            fi
+          fi
+
+          git -C "${source_dir}" -c advice.detachedHead=false checkout --quiet --detach "${resolved_sha}"
+          git -C "${source_dir}" remote remove origin
+          rm -rf "${source_dir}/.git"
+          echo "resolved_sha=${resolved_sha}" >> "$GITHUB_OUTPUT"
 
       - name: Validate installer source
         if: ${{ needs.prepare.outputs.installer_install_mode == 'source' || (needs.prepare.outputs.installer_install_mode == 'auto' && steps.install_release.outputs.installed != 'true') }}
@@ -981,8 +1026,6 @@ jobs:
           warm_script=""
           if [[ -f ".nova-installer-source/scripts/warm_models.sh" ]]; then
             warm_script=".nova-installer-source/scripts/warm_models.sh"
-          elif [[ -f "scripts/warm_models.sh" ]]; then
-            warm_script="scripts/warm_models.sh"
           fi
 
           if [[ -z "${warm_script}" ]]; then
@@ -1006,7 +1049,6 @@ jobs:
           INPUT_DBT_EXECUTABLE: ${{ needs.prepare.outputs.dbt_executable }}
           INPUT_DBT_ENV_JSON: ${{ needs.prepare.outputs.dbt_env_json }}
           INPUT_DBT_SECRET_ENV_MAP_JSON: ${{ needs.prepare.outputs.dbt_secret_env_map_json }}
-          INHERITED_SECRETS_JSON: ${{ toJSON(secrets) }}
           DBT_NOVA_SECRET_BUNDLE_JSON: ${{ secrets.DBT_NOVA_SECRET_BUNDLE_JSON || '' }}
         run: |
           set -euo pipefail
@@ -1023,7 +1065,6 @@ jobs:
           executable = os.environ["INPUT_DBT_EXECUTABLE"]
           plain_env = json.loads(os.environ["INPUT_DBT_ENV_JSON"])
           secret_env_map = json.loads(os.environ["INPUT_DBT_SECRET_ENV_MAP_JSON"])
-          inherited_secrets = json.loads(os.environ["INHERITED_SECRETS_JSON"])
           secret_bundle_raw = os.environ.get("DBT_NOVA_SECRET_BUNDLE_JSON", "").strip()
           if secret_bundle_raw:
               try:
@@ -1045,7 +1086,6 @@ jobs:
 
           runtime_env = os.environ.copy()
           for helper_var in (
-              "INHERITED_SECRETS_JSON",
               "INPUT_DBT_ENV_JSON",
               "INPUT_DBT_SECRET_ENV_MAP_JSON",
               "INPUT_DBT_COMMAND",
@@ -1068,10 +1108,12 @@ jobs:
           for env_name, secret_name in secret_env_map.items():
               secret_value = secret_bundle.get(secret_name)
               if not isinstance(secret_value, str) or not secret_value:
-                  secret_value = inherited_secrets.get(secret_name, "")
-              if not secret_value:
                   print(
-                      f"missing secret '{secret_name}' requested by dbt_secret_env_map_json for env var '{env_name}'",
+                      (
+                          f"missing secret '{secret_name}' requested by "
+                          f"dbt_secret_env_map_json for env var '{env_name}'. "
+                          "Provide it via DBT_NOVA_SECRET_BUNDLE_JSON."
+                      ),
                       file=sys.stderr,
                   )
                   sys.exit(1)
@@ -2263,7 +2305,7 @@ jobs:
           ARTIFACT_NAME_BOOTSTRAP: ${{ steps.collect.outputs.artifact_name_bootstrap }}
           ARTIFACT_NAME_PUBLISH_SUMMARY: ${{ steps.collect.outputs.artifact_name_publish_summary }}
           ARTIFACT_NAME_MODELS: ${{ steps.collect.outputs.artifact_name_models }}
-        run: bash "${RUNNER_TEMP}/nova_optional_publish.sh"
+        run: /bin/bash "${RUNNER_TEMP}/nova_optional_publish.sh"
 
       - name: Upload bootstrap contract artifact
         if: ${{ steps.publish.outputs.published_targets != '' }}

@@ -264,6 +264,10 @@ safe default, and use `installer_install_mode=source` for older runner images
 or unreleased installer commits. Reusable workflows reject branch-like
 `installer_ref` values by default; use a release tag or full commit SHA, and set
 `allow_mutable_installer_ref: true` only for trusted development runs.
+Source installs resolve the requested ref once, check out the resulting commit
+without persisting workflow credentials, and remove Git metadata before build.
+They fail closed when the caller grants `id-token: write`; use a signed release
+install for any OIDC-capable job.
 
 If you generate manifests in the reusable workflow (`dbt_generate_manifest: true`),
 prefer structured invocation with `dbt_command_args_json` (and optional
@@ -274,10 +278,11 @@ for trusted advanced cases (for example internal CI fixtures). Keep
 `dbt_command_args_json` are mutually exclusive.
 
 Use `dbt_env_json` and `dbt_secret_env_map_json` to pass profile-specific
-env/secret variables generically (Databricks, BigQuery, Snowflake, DuckDB, etc.). For
-cross-owner reusable workflow calls, pass one declared secret
-`DBT_NOVA_SECRET_BUNDLE_JSON` (JSON object of key->value) and reference those keys
-in `dbt_secret_env_map_json`.
+env/secret variables generically (Databricks, BigQuery, Snowflake, DuckDB, etc.).
+Pass the declared `DBT_NOVA_SECRET_BUNDLE_JSON` secret (a JSON object of
+key-to-value entries) and reference only those keys in
+`dbt_secret_env_map_json`; the reusable workflows never enumerate inherited
+repository or organization secrets.
 
 Most teams keep a repo-local `workflow_dispatch` wrapper around this reusable
 workflow, then add release/tag triggers later after validating publish paths
