@@ -141,7 +141,7 @@ on:
         default: ""
     secrets:
       DBT_NOVA_SECRET_BUNDLE_JSON:
-        description: "Optional JSON object of secret-name -> secret-value pairs used by dbt_secret_env_map_json"
+        description: "JSON object of explicitly selected secret-name -> secret-value pairs used by dbt_secret_env_map_json"
         required: false
     outputs:
       gate_status:
@@ -746,7 +746,6 @@ jobs:
           INPUT_DBT_EXECUTABLE: ${{ needs.prepare.outputs.dbt_executable }}
           INPUT_DBT_ENV_JSON: ${{ needs.prepare.outputs.dbt_env_json }}
           INPUT_DBT_SECRET_ENV_MAP_JSON: ${{ needs.prepare.outputs.dbt_secret_env_map_json }}
-          INHERITED_SECRETS_JSON: ${{ toJSON(secrets) }}
           DBT_NOVA_SECRET_BUNDLE_JSON: ${{ secrets.DBT_NOVA_SECRET_BUNDLE_JSON || '' }}
         run: |
           set -euo pipefail
@@ -762,7 +761,6 @@ jobs:
           executable = os.environ["INPUT_DBT_EXECUTABLE"]
           plain_env = json.loads(os.environ["INPUT_DBT_ENV_JSON"])
           secret_env_map = json.loads(os.environ["INPUT_DBT_SECRET_ENV_MAP_JSON"])
-          inherited_secrets = json.loads(os.environ["INHERITED_SECRETS_JSON"])
           secret_bundle_raw = os.environ.get("DBT_NOVA_SECRET_BUNDLE_JSON", "").strip()
           if secret_bundle_raw:
               try:
@@ -784,7 +782,6 @@ jobs:
 
           runtime_env = os.environ.copy()
           for helper_var in (
-              "INHERITED_SECRETS_JSON",
               "INPUT_DBT_ENV_JSON",
               "INPUT_DBT_SECRET_ENV_MAP_JSON",
               "INPUT_DBT_COMMAND",
@@ -807,14 +804,11 @@ jobs:
           for env_name, secret_name in secret_env_map.items():
               secret_value = secret_bundle.get(secret_name)
               if not isinstance(secret_value, str) or not secret_value:
-                  secret_value = inherited_secrets.get(secret_name, "")
-              if not secret_value:
                   print(
                       (
                           f"missing secret '{secret_name}' requested by "
                           f"dbt_secret_env_map_json for env var '{env_name}'. "
-                          "Provide it via DBT_NOVA_SECRET_BUNDLE_JSON or "
-                          "same-owner inherited workflow secrets."
+                          "Add the key to DBT_NOVA_SECRET_BUNDLE_JSON."
                       ),
                       file=sys.stderr,
                   )

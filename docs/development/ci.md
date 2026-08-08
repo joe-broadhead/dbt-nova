@@ -34,6 +34,8 @@ Operational defaults:
   - read-only consumer behavior from extracted artifacts
   - native remote consumer behavior via `file://` artifact URIs
   - negative-path behavior (missing/mismatched storage + invalid metadata)
+  - persisted-storage upgrade and rollback behavior against the released
+    `v0.0.6` binary
 - **Note:** sets `DBT_NOVA_STRICT_SCHEMA=1` so schema parsing failures break the build
 - **Note:** release artifacts ship with default features enabled, so lint/test jobs now exercise `--all-features` for parity.
 
@@ -46,8 +48,8 @@ Operational defaults:
   (`dbt_command_args_json`, optional `dbt_executable`,
   optional `dbt_allow_unsafe_executable`) or trusted shell
   invocation (`dbt_command`), plus `dbt_env_json`,
-  `dbt_secret_env_map_json`, optional workflow_call secret bundle
-  (`DBT_NOVA_SECRET_BUNDLE_JSON`), optional installer source override
+  `dbt_secret_env_map_json`, workflow_call secret bundle
+  (`DBT_NOVA_SECRET_BUNDLE_JSON`, required when the map is non-empty), optional installer source override
   (`installer_repository`, `installer_ref`, `installer_install_mode`,
   `allow_mutable_installer_ref` for trusted branch-ref development runs), optional models artifact, staged/full semantic warmup
   (`search_warm_strategy`), configurable build timeout
@@ -67,7 +69,8 @@ Operational defaults:
   fetched with step-scoped credentials, and stripped of Git metadata before
   compilation.
 - **Outputs:** manifest metadata (`manifest_hash`, `manifest_version`,
-  `entity_count`), artifact names (including manifest/bootstrap), and optional
+  `storage_format_version`, `entity_count`), artifact names (including
+  manifest/bootstrap), and optional
   remote publish metadata (`published_targets`,
   `artifact_name_publish_summary`). Legacy `published_*_uris` outputs remain
   for compatibility and currently return `{}`; consumers should read the
@@ -90,10 +93,9 @@ Operational defaults:
   `installer_install_mode`, `allow_mutable_installer_ref` for trusted branch-ref
   development runs), plus optional runner selection (`runner` or
   `runner_labels_json`)
-- **Secret contract:** `dbt_secret_env_map_json` resolves keys from
-  `DBT_NOVA_SECRET_BUNDLE_JSON` first, then same-owner inherited workflow
-  secrets; downstream wrappers should prefer the bundle pattern for cross-owner
-  calls and provider-neutral secret schemas
+- **Secret contract:** `dbt_secret_env_map_json` resolves only keys explicitly
+  included in `DBT_NOVA_SECRET_BUNDLE_JSON`; whole inherited secret contexts are
+  never serialized into the called workflow
 - **Audit inputs:** `selection_mode` (`project|changed|entities`),
   `changed_files_json`, `entity_ids_json`, `resource_types_json`,
   `personas_json`, `thresholds_json`, `include_breakdown`,

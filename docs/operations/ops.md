@@ -17,8 +17,10 @@ Use the `health` tool to verify readiness and see the active manifest details:
 - `ready`: healthy active index serving traffic
 - `refreshing`: rebuilding in background while serving the existing active index
 - `failed`: initial manifest load failed (common after bad JSON, bad permissions, or temporary source failure)
-- `manifest.hash`: content hash of the active manifest (`ready` / `refreshing`)
+- `manifest.hash`: storage-scoped hash of the active manifest, including
+  content and storage-affecting configuration (`ready` / `refreshing`)
 - `manifest.version`: version directory name (hash prefix)
+- `manifest.storage_format_version`: persisted-storage compatibility identity
 - `manifest.age_ms`: age of the manifest file based on its `modified_ms`
 - `manifest.loaded_at_ms`: when this index version was built
 - `manifest.loaded_age_ms`: time since build

@@ -12,7 +12,7 @@ use serde_json::Value as JsonValue;
 use crate::config::DbtNovaConfig;
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::bootstrap::prepare_runtime_config;
-use crate::manifest::prebuilt_assets_resolver::materialize_file_artifacts;
+use crate::manifest::prebuilt_assets_resolver::materialize_file_artifacts_with_legacy_hash;
 use crate::manifest::rkyv_indexes;
 use crate::manifest::rkyv_types::{PersistedIndexes, RKYV_SCHEMA_VERSION};
 use crate::manifest::search::{
@@ -40,13 +40,13 @@ use runtime::has_apparent_malformed_ref;
 use runtime::{
     build_column_lineage_aliases, build_manifest_health, combine_index_build_results, panic_message,
 };
-#[cfg(test)]
-use storage::acquire_build_lock;
 use storage::{
     MANIFEST_SIGNATURE_FILENAME, acquire_in_use_locks, current_time_ms,
-    manifest_signature_matches_for_reuse, read_current_version, read_manifest_signature,
+    manifest_signature_matches_for_runtime_read, read_current_version, read_manifest_signature,
     select_storage_version_or_lock, write_current_version, write_manifest_signature,
 };
+#[cfg(test)]
+use storage::{acquire_build_lock, manifest_signature_matches_for_reuse};
 
 /// Structured output from manifest loading/index build.
 pub struct ManifestLoadResult {
@@ -76,6 +76,7 @@ struct ReuseArtifacts {
     entities: Option<EntityStore>,
     reuse_store: bool,
     tantivy_opened: Option<TantivySearcher>,
+    open_errors: Vec<String>,
 }
 
 struct CachedIndexData {
@@ -326,6 +327,10 @@ fn prepare_storage(
     signature.prune_fingerprint = config.manifest_prune_fingerprint();
     signature.search_index_fingerprint = config.search.index_fingerprint();
     let version_hash = scoped_manifest_hash(&signature);
+    let mut legacy_signature = signature.clone();
+    legacy_signature.search_index_fingerprint = config.search.legacy_index_fingerprint();
+    legacy_signature.storage_format_version.clear();
+    let legacy_version_hash = scoped_manifest_hash(&legacy_signature);
     let mut version_id = version_hash.chars().take(12).collect::<String>();
     if version_id.is_empty() {
         version_id = "unknown".to_string();
@@ -344,8 +349,12 @@ fn prepare_storage(
         signature_path,
     )?;
     let can_materialize = selected.build_lock.is_some();
-    let artifact_consumer_status =
-        evaluate_artifact_consumer_status(config, can_materialize, &target_version_hash)?;
+    let artifact_consumer_status = evaluate_artifact_consumer_status(
+        config,
+        can_materialize,
+        &target_version_hash,
+        &legacy_version_hash,
+    )?;
 
     Ok(StoragePreparation {
         instance_root,
@@ -364,6 +373,7 @@ fn evaluate_artifact_consumer_status(
     config: &DbtNovaConfig,
     can_materialize: bool,
     target_version_hash: &str,
+    legacy_version_hash: &str,
 ) -> Result<JsonValue> {
     let mut artifact_consumer_status = build_artifact_consumer_status(config, None, None);
     if !can_materialize || !config.remote_artifact_mode_enabled() {
@@ -371,7 +381,11 @@ fn evaluate_artifact_consumer_status(
     }
 
     let evaluated_at_ms = current_time_ms();
-    let materialization = materialize_file_artifacts(config, target_version_hash)?;
+    let materialization = materialize_file_artifacts_with_legacy_hash(
+        config,
+        target_version_hash,
+        legacy_version_hash,
+    )?;
     if let Some(outcome) = materialization {
         let last_materialized_at_ms = if outcome.storage_materialized || outcome.models_materialized
         {
@@ -454,6 +468,41 @@ fn apply_catalog_signature(
     Ok(())
 }
 
+fn open_reusable_artifacts(
+    config: &DbtNovaConfig,
+    storage_dir: &Path,
+    entities: &mut Option<EntityStore>,
+    reuse_store: &mut bool,
+    tantivy_opened: &mut Option<TantivySearcher>,
+    open_errors: &mut Vec<String>,
+) {
+    match EntityStore::open(storage_dir) {
+        Ok(store) => {
+            *entities = Some(store);
+            *reuse_store = true;
+        }
+        Err(error) => {
+            warn!(
+                storage_dir = %storage_dir.display(),
+                error = %error,
+                "failed to open reusable entity store"
+            );
+            open_errors.push(format!("entity store: {error}"));
+        }
+    }
+    match TantivySearcher::open(storage_dir, &config.search) {
+        Ok(opened) => *tantivy_opened = opened,
+        Err(error) => {
+            warn!(
+                storage_dir = %storage_dir.display(),
+                error = %error,
+                "failed to open reusable Tantivy index"
+            );
+            open_errors.push(format!("Tantivy index: {error}"));
+        }
+    }
+}
+
 fn load_reusable_artifacts(
     config: &DbtNovaConfig,
     instance_root: &Path,
@@ -469,39 +518,42 @@ fn load_reusable_artifacts(
     let mut reuse_store = false;
     let mut tantivy_opened: Option<TantivySearcher> = None;
     let mut matched_signature = false;
+    let mut open_errors = Vec::new();
 
     if let Some(current) = &current_version {
         let current_dir = versions_root.join(current);
         let current_sig_path = current_dir.join(MANIFEST_SIGNATURE_FILENAME);
         if let Some(existing) = read_manifest_signature(&current_sig_path)?
-            && manifest_signature_matches_for_reuse(&existing, signature)
+            && manifest_signature_matches_for_runtime_read(config, &existing, signature)
         {
             storage_dir = current_dir;
             signature_path = current_sig_path;
             matched_signature = true;
-            if let Ok(store) = EntityStore::open(&storage_dir) {
-                entities = Some(store);
-                reuse_store = true;
-            }
-            if let Ok(opened) = TantivySearcher::open(&storage_dir, &config.search) {
-                tantivy_opened = opened;
-            }
+            open_reusable_artifacts(
+                config,
+                &storage_dir,
+                &mut entities,
+                &mut reuse_store,
+                &mut tantivy_opened,
+                &mut open_errors,
+            );
         }
     }
 
     if !matched_signature
         && let Some(existing) = read_manifest_signature(initial_signature_path)?
-        && manifest_signature_matches_for_reuse(&existing, signature)
+        && manifest_signature_matches_for_runtime_read(config, &existing, signature)
     {
         storage_dir = initial_storage_dir.to_path_buf();
         signature_path = initial_signature_path.to_path_buf();
-        if let Ok(store) = EntityStore::open(&storage_dir) {
-            entities = Some(store);
-            reuse_store = true;
-        }
-        if let Ok(opened) = TantivySearcher::open(&storage_dir, &config.search) {
-            tantivy_opened = opened;
-        }
+        open_reusable_artifacts(
+            config,
+            &storage_dir,
+            &mut entities,
+            &mut reuse_store,
+            &mut tantivy_opened,
+            &mut open_errors,
+        );
     }
 
     Ok(ReuseArtifacts {
@@ -511,6 +563,7 @@ fn load_reusable_artifacts(
         entities,
         reuse_store,
         tantivy_opened,
+        open_errors,
     })
 }
 
@@ -630,9 +683,14 @@ fn ensure_build_reuse_state(
     }
     if config.storage_read_only && needs_build {
         storage.build_lock.take();
-        return Err(DbtNovaError::ServerError(
-            "Storage is read-only and no reusable index is available".to_string(),
-        ));
+        let detail = if reused.open_errors.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", reused.open_errors.join("; "))
+        };
+        return Err(DbtNovaError::ServerError(format!(
+            "Storage is read-only and no reusable index is available{detail}"
+        )));
     }
     Ok(())
 }
@@ -999,6 +1057,10 @@ fn assemble_manifest_search(context: AssembleContext) -> ManifestSearch {
         in_use_locks,
         manifest_source_uri,
     } = context;
+    let storage_format_version = storage
+        .signature
+        .effective_storage_format_version()
+        .to_string();
     ManifestSearch {
         config,
         entities: Arc::new(entities),
@@ -1036,6 +1098,7 @@ fn assemble_manifest_search(context: AssembleContext) -> ManifestSearch {
         manifest_len: storage.signature.len,
         manifest_modified_ms: storage.signature.modified_ms,
         manifest_version: storage.version_id,
+        storage_format_version,
         loaded_at_ms: current_time_ms(),
         vector_breaker: runtime.vector_breaker,
         sparse_breaker: runtime.sparse_breaker,
@@ -1090,6 +1153,9 @@ fn build_artifact_consumer_status(
         "models_uri": sanitize_uri(&config.models_artifact_uri),
         "metadata_validated": outcome.is_some(),
         "metadata_contract_version": outcome.map(|value| value.metadata.contract_version.clone()),
+        "metadata_storage_format_version": outcome.map(|value| {
+            value.metadata.effective_storage_format_version().to_string()
+        }),
         "storage_materialized": outcome.is_some_and(|value| value.storage_materialized),
         "models_materialized": outcome.is_some_and(|value| value.models_materialized),
         "last_evaluated_at_ms": last_evaluated_at_ms,
@@ -1330,6 +1396,7 @@ mod tests {
             content_hash: "same-hash".to_string(),
             prune_fingerprint: String::new(),
             search_index_fingerprint: String::new(),
+            storage_format_version: String::new(),
             source_uri: "file:///new/path".to_string(),
         };
         let existing = ManifestSignature {
@@ -1339,6 +1406,7 @@ mod tests {
             content_hash: "same-hash".to_string(),
             prune_fingerprint: String::new(),
             search_index_fingerprint: String::new(),
+            storage_format_version: String::new(),
             source_uri: "file:///old/path".to_string(),
         };
         assert!(
@@ -1356,6 +1424,7 @@ mod tests {
             content_hash: "expected-hash".to_string(),
             prune_fingerprint: String::new(),
             search_index_fingerprint: String::new(),
+            storage_format_version: String::new(),
             source_uri: "file:///new/path".to_string(),
         };
         let different_hash = ManifestSignature {
@@ -1365,6 +1434,7 @@ mod tests {
             content_hash: "different-hash".to_string(),
             prune_fingerprint: String::new(),
             search_index_fingerprint: String::new(),
+            storage_format_version: String::new(),
             source_uri: "file:///old/path".to_string(),
         };
         let missing_hash = ManifestSignature {
@@ -1374,6 +1444,7 @@ mod tests {
             content_hash: String::new(),
             prune_fingerprint: String::new(),
             search_index_fingerprint: String::new(),
+            storage_format_version: String::new(),
             source_uri: "file:///old/path".to_string(),
         };
         assert!(!manifest_signature_matches_for_reuse(
@@ -1395,6 +1466,7 @@ mod tests {
             content_hash: "same-hash".to_string(),
             prune_fingerprint: "fingerprint-a".to_string(),
             search_index_fingerprint: String::new(),
+            storage_format_version: String::new(),
             source_uri: "file:///new/path".to_string(),
         };
         let existing = ManifestSignature {
@@ -1404,6 +1476,7 @@ mod tests {
             content_hash: "same-hash".to_string(),
             prune_fingerprint: "fingerprint-b".to_string(),
             search_index_fingerprint: String::new(),
+            storage_format_version: String::new(),
             source_uri: "file:///old/path".to_string(),
         };
         assert!(!manifest_signature_matches_for_reuse(&existing, &expected));
@@ -1566,6 +1639,7 @@ mod tests {
             manifest_signature(&manifest_path, manifest_path.to_string_lossy().as_ref())
                 .expect("manifest signature");
         signature.prune_fingerprint = config.manifest_prune_fingerprint();
+        signature.search_index_fingerprint = config.search.index_fingerprint();
         let expected_hash = scoped_manifest_hash(&signature);
 
         assert_ne!(expected_hash, signature.content_hash);

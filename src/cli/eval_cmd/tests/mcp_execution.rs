@@ -242,6 +242,9 @@ fn eval_mcp_writable_paths_reject_absolute_parent_traversal() {
 #[tokio::test]
 async fn bridge_eval_writes_result_artifacts() {
     let temp_dir = TempDir::new().expect("output dir");
+    let manifest_path = temp_dir.path().join("manifest.json");
+    std::fs::copy(fixture_manifest_path("nova_manifest.json"), &manifest_path)
+        .expect("copy manifest fixture");
     let suite_path = temp_dir.path().join("suite.yml");
     std::fs::write(
         &suite_path,
@@ -265,11 +268,7 @@ cases:
     let output_dir = temp_dir.path().join("out");
     let result = run_eval_command(&EvalRunArgs {
         suite: suite_path.display().to_string(),
-        manifest_path: Some(
-            fixture_manifest_path("nova_manifest.json")
-                .display()
-                .to_string(),
-        ),
+        manifest_path: Some(manifest_path.display().to_string()),
         output_dir: Some(output_dir.display().to_string()),
         fail_under: Some(1.0),
         telemetry: true,

@@ -51,6 +51,7 @@ fn bootstrap_disabled_status() -> JsonValue {
         "enabled": false,
         "uri": "",
         "contract_version": JsonValue::Null,
+        "storage_format_version": JsonValue::Null,
         "loaded": false,
         "validated": false,
         "applied_fields": [],
@@ -126,6 +127,7 @@ pub fn apply_bootstrap_defaults(config: &mut DbtNovaConfig) -> Result<BootstrapR
     ensure_regular_file("DBT_NOVA_BOOTSTRAP_URI", &local_path)?;
     let raw = read_small_text_file(Path::new(&local_path), config.manifest_max_bytes)?;
     let bootstrap = PrebuiltAssetsBootstrap::from_json_str(&raw)?;
+    let storage_format_version = bootstrap.effective_storage_format_version().to_string();
     validate_models_metadata_contract(config, &bootstrap)?;
 
     let mut applied_fields = Vec::new();
@@ -164,6 +166,7 @@ pub fn apply_bootstrap_defaults(config: &mut DbtNovaConfig) -> Result<BootstrapR
         "enabled": true,
         "uri": sanitize_uri(&bootstrap_uri),
         "contract_version": bootstrap.contract_version,
+        "storage_format_version": storage_format_version,
         "loaded": true,
         "validated": true,
         "applied_fields": applied_fields,
@@ -223,7 +226,8 @@ mod tests {
 
     fn write_bootstrap(path: &std::path::Path) {
         let payload = r#"{
-  "contract_version":"v1",
+  "contract_version":"v2",
+  "storage_format_version":"nova-storage-v2",
   "profile":"prod",
   "storage_instance_id":"analytics-prod",
   "manifest_uri":"dbfs:/FileStore/manifests/prod/manifest.json",
@@ -240,7 +244,8 @@ mod tests {
     fn write_bootstrap_with_uris(path: &std::path::Path, metadata_uri: &str, models_uri: &str) {
         let payload = format!(
             r#"{{
-  "contract_version":"v1",
+  "contract_version":"v2",
+  "storage_format_version":"nova-storage-v2",
   "profile":"prod",
   "storage_instance_id":"analytics-prod",
   "manifest_uri":"dbfs:/FileStore/manifests/prod/manifest.json",
@@ -258,7 +263,8 @@ mod tests {
     fn write_metadata(path: &std::path::Path, artifact_name_models: &str) {
         let payload = format!(
             r#"{{
-  "contract_version":"v1",
+  "contract_version":"v2",
+  "storage_format_version":"nova-storage-v2",
   "manifest_hash":"abc123",
   "manifest_version":"abc123",
   "entity_count":1,
@@ -308,6 +314,14 @@ mod tests {
 
         let resolution = apply_bootstrap_defaults(&mut config).expect("bootstrap loaded");
         assert_eq!(resolution.status["enabled"], serde_json::json!(true));
+        assert_eq!(
+            resolution.status["contract_version"],
+            serde_json::json!("v2")
+        );
+        assert_eq!(
+            resolution.status["storage_format_version"],
+            serde_json::json!("nova-storage-v2")
+        );
         assert_eq!(
             config.storage_instance_id, "analytics-prod",
             "bootstrap should fill missing storage instance id"

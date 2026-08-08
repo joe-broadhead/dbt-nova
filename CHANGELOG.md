@@ -13,9 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the upgrades.
 - Hardened reusable workflow source installs by resolving refs to a detached
   commit, using step-scoped fetch credentials, and validating installer refs,
-  while preserving inherited-secret fallback, source+OIDC compatibility, caller
-  warm-script fallback, and caller `id-token` grants required by the reusable
-  asset workflow.
+  while preserving source+OIDC compatibility, caller warm-script fallback, and
+  caller `id-token` grants required by the reusable asset workflow. Reusable
+  dbt invocation now resolves only explicitly selected values from
+  `DBT_NOVA_SECRET_BUNDLE_JSON`; whole inherited secret contexts are no longer
+  serialized into workflow jobs.
+- Added a Nova-owned persisted-storage format identity, v2 prebuilt metadata and
+  bootstrap contracts, legacy v1 read compatibility, and a release-binary CI
+  gate so index-engine upgrades retain rollback versions and fail explicitly
+  across incompatible producer/consumer generations.
 - Corrected agent-facing MCP contracts for entity detail, context selection,
   readiness output, and recipe failure handling, and aligned persona-summary
   documentation with the live three-level detail model.

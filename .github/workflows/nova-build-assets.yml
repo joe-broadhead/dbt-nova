@@ -164,17 +164,20 @@ on:
         default: false
     secrets:
       DBT_NOVA_SECRET_BUNDLE_JSON:
-        description: "Optional JSON object of secret-name -> secret-value pairs used by dbt_secret_env_map_json"
+        description: "JSON object of explicitly selected secret-name -> secret-value pairs used by dbt_secret_env_map_json"
         required: false
     outputs:
       manifest_hash:
-        description: "Manifest content hash (populated by producer build in follow-up step)"
+        description: "Storage-scoped manifest hash (populated by producer build)"
         value: ${{ jobs.build.outputs.manifest_hash }}
       manifest_version:
-        description: "Manifest version directory (populated by producer build in follow-up step)"
+        description: "Manifest version directory (populated by producer build)"
         value: ${{ jobs.build.outputs.manifest_version }}
+      storage_format_version:
+        description: "Nova persisted-storage compatibility identity"
+        value: ${{ jobs.build.outputs.storage_format_version }}
       entity_count:
-        description: "Entity count loaded from manifest (populated by producer build in follow-up step)"
+        description: "Entity count loaded from manifest (populated by producer build)"
         value: ${{ jobs.build.outputs.entity_count }}
       artifact_name_storage:
         description: "Planned storage artifact name"
@@ -771,6 +774,7 @@ jobs:
     outputs:
       manifest_hash: ${{ steps.collect.outputs.manifest_hash }}
       manifest_version: ${{ steps.collect.outputs.manifest_version }}
+      storage_format_version: ${{ steps.collect.outputs.storage_format_version }}
       entity_count: ${{ steps.collect.outputs.entity_count }}
       artifact_name_storage: ${{ steps.collect.outputs.artifact_name_storage }}
       artifact_name_models: ${{ steps.collect.outputs.artifact_name_models }}
@@ -1040,7 +1044,6 @@ jobs:
           INPUT_DBT_EXECUTABLE: ${{ needs.prepare.outputs.dbt_executable }}
           INPUT_DBT_ENV_JSON: ${{ needs.prepare.outputs.dbt_env_json }}
           INPUT_DBT_SECRET_ENV_MAP_JSON: ${{ needs.prepare.outputs.dbt_secret_env_map_json }}
-          INHERITED_SECRETS_JSON: ${{ toJSON(secrets) }}
           DBT_NOVA_SECRET_BUNDLE_JSON: ${{ secrets.DBT_NOVA_SECRET_BUNDLE_JSON || '' }}
         run: |
           set -euo pipefail
@@ -1057,7 +1060,6 @@ jobs:
           executable = os.environ["INPUT_DBT_EXECUTABLE"]
           plain_env = json.loads(os.environ["INPUT_DBT_ENV_JSON"])
           secret_env_map = json.loads(os.environ["INPUT_DBT_SECRET_ENV_MAP_JSON"])
-          inherited_secrets = json.loads(os.environ["INHERITED_SECRETS_JSON"])
           secret_bundle_raw = os.environ.get("DBT_NOVA_SECRET_BUNDLE_JSON", "").strip()
           if secret_bundle_raw:
               try:
@@ -1079,7 +1081,6 @@ jobs:
 
           runtime_env = os.environ.copy()
           for helper_var in (
-              "INHERITED_SECRETS_JSON",
               "INPUT_DBT_ENV_JSON",
               "INPUT_DBT_SECRET_ENV_MAP_JSON",
               "INPUT_DBT_COMMAND",
@@ -1102,10 +1103,12 @@ jobs:
           for env_name, secret_name in secret_env_map.items():
               secret_value = secret_bundle.get(secret_name)
               if not isinstance(secret_value, str) or not secret_value:
-                  secret_value = inherited_secrets.get(secret_name, "")
-              if not secret_value:
                   print(
-                      f"missing secret '{secret_name}' requested by dbt_secret_env_map_json for env var '{env_name}'",
+                      (
+                          f"missing secret '{secret_name}' requested by "
+                          f"dbt_secret_env_map_json for env var '{env_name}'. "
+                          "Add the key to DBT_NOVA_SECRET_BUNDLE_JSON."
+                      ),
                       file=sys.stderr,
                   )
                   sys.exit(1)
@@ -1240,9 +1243,10 @@ jobs:
 
           manifest_hash="$(jq -r '.data.manifest_hash // empty' out/manifest-load.json)"
           manifest_version="$(jq -r '.data.manifest_version // empty' out/manifest-load.json)"
+          storage_format_version="$(jq -r '.data.storage_format_version // empty' out/manifest-load.json)"
           entity_count="$(jq -r '.data.entity_count // 0' out/manifest-load.json)"
-          if [[ -z "${manifest_hash}" || -z "${manifest_version}" ]]; then
-            echo "manifest load output missing manifest_hash/manifest_version"
+          if [[ -z "${manifest_hash}" || -z "${manifest_version}" || -z "${storage_format_version}" ]]; then
+            echo "manifest load output missing manifest_hash/manifest_version/storage_format_version"
             exit 1
           fi
           hash_short="${manifest_hash:0:12}"
@@ -1316,7 +1320,8 @@ jobs:
 
           metadata_path="out/nova-build-metadata.json"
           jq -n \
-            --arg contract_version "v1" \
+            --arg contract_version "v2" \
+            --arg storage_format_version "${storage_format_version}" \
             --arg manifest_hash "${manifest_hash}" \
             --arg manifest_version "${manifest_version}" \
             --arg storage_instance_id "${DBT_NOVA_STORAGE_INSTANCE_ID}" \
@@ -1327,6 +1332,7 @@ jobs:
             --argjson entity_count "${entity_count}" \
             '{
               contract_version: $contract_version,
+              storage_format_version: $storage_format_version,
               manifest_hash: $manifest_hash,
               manifest_version: $manifest_version,
               entity_count: $entity_count,
@@ -1338,7 +1344,8 @@ jobs:
             }' > "${metadata_path}"
 
           jq -e '
-            .contract_version == "v1" and
+            .contract_version == "v2" and
+            (.storage_format_version | type == "string" and length > 0) and
             (.manifest_hash | type == "string" and length > 0) and
             (.manifest_version | type == "string" and length > 0) and
             (.entity_count | type == "number" and . >= 0) and
@@ -1352,6 +1359,7 @@ jobs:
           {
             echo "manifest_hash=${manifest_hash}"
             echo "manifest_version=${manifest_version}"
+            echo "storage_format_version=${storage_format_version}"
             echo "entity_count=${entity_count}"
             echo "artifact_name_storage=${artifact_name_storage}"
             echo "artifact_name_models=${artifact_name_models}"
@@ -1371,7 +1379,8 @@ jobs:
             echo "- artifact_name_manifest: \`${artifact_name_manifest}\`"
             echo "- artifact_name_bootstrap: \`${artifact_name_bootstrap}\`"
             echo "- artifact_name_publish_summary: \`${artifact_name_publish_summary}\`"
-            echo "- contract_version: \`v1\`"
+            echo "- contract_version: \`v2\`"
+            echo "- storage_format_version: \`${storage_format_version}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Package storage directory
@@ -1953,10 +1962,11 @@ jobs:
           }
           
           manifest_hash="$(jq -r '.manifest_hash // empty' "${metadata_source}")"
+          storage_format_version="$(jq -r '.storage_format_version // empty' "${metadata_source}")"
           dbt_nova_version="$(jq -r '.dbt_nova_version // empty' "${metadata_source}")"
           build_timestamp="$(jq -r '.build_timestamp // empty' "${metadata_source}")"
-          if [[ -z "${manifest_hash}" || -z "${dbt_nova_version}" || -z "${build_timestamp}" ]]; then
-            echo "metadata contract is missing manifest_hash/dbt_nova_version/build_timestamp"
+          if [[ -z "${manifest_hash}" || -z "${storage_format_version}" || -z "${dbt_nova_version}" || -z "${build_timestamp}" ]]; then
+            echo "metadata contract is missing manifest_hash/storage_format_version/dbt_nova_version/build_timestamp"
             exit 1
           fi
           
@@ -1968,7 +1978,8 @@ jobs:
             local metadata_uri_value="$5"
             local models_uri_value="$6"
             jq -n \
-              --arg contract_version "v1" \
+              --arg contract_version "v2" \
+              --arg storage_format_version "${storage_format_version}" \
               --arg profile "${profile}" \
               --arg storage_instance_id "${DBT_NOVA_STORAGE_INSTANCE_ID}" \
               --arg manifest_uri "${manifest_uri_value}" \
@@ -1980,6 +1991,7 @@ jobs:
               --arg build_timestamp "${build_timestamp}" \
               '{
                 contract_version: $contract_version,
+                storage_format_version: $storage_format_version,
                 profile: $profile,
                 storage_instance_id: $storage_instance_id,
                 manifest_uri: $manifest_uri,

@@ -8,6 +8,7 @@ use flate2::read::GzDecoder;
 use tar::Archive;
 use tracing::{info, warn};
 
+use crate::config::search::LEGACY_STORAGE_FORMAT_VERSION;
 use crate::config::{ArtifactFetchPolicy, DbtNovaConfig, SearchConfig};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::prebuilt_assets::PrebuiltAssetsMetadata;
@@ -68,6 +69,18 @@ pub fn materialize_file_artifacts(
     config: &DbtNovaConfig,
     expected_manifest_hash: &str,
 ) -> Result<Option<FileArtifactMaterialization>> {
+    materialize_file_artifacts_with_legacy_hash(
+        config,
+        expected_manifest_hash,
+        expected_manifest_hash,
+    )
+}
+
+pub(crate) fn materialize_file_artifacts_with_legacy_hash(
+    config: &DbtNovaConfig,
+    expected_manifest_hash: &str,
+    legacy_manifest_hash: &str,
+) -> Result<Option<FileArtifactMaterialization>> {
     if !config.remote_artifact_mode_enabled() {
         return Ok(None);
     }
@@ -93,7 +106,12 @@ pub fn materialize_file_artifacts(
     ensure_regular_file("DBT_NOVA_METADATA_ARTIFACT_URI", &metadata_path)?;
     let metadata_raw = read_small_text_file(&metadata_path, config.manifest_max_bytes)?;
     let metadata = PrebuiltAssetsMetadata::from_json_str(&metadata_raw)?;
-    validate_metadata_against_runtime(&metadata, config, expected_manifest_hash)?;
+    validate_metadata_against_runtime(
+        &metadata,
+        config,
+        expected_manifest_hash,
+        legacy_manifest_hash,
+    )?;
 
     if !config.models_artifact_uri.trim().is_empty() && !metadata.has_models_artifact() {
         return Err(DbtNovaError::InvalidParams(
@@ -104,7 +122,7 @@ pub fn materialize_file_artifacts(
 
     let storage_materialized = materialize_storage_artifact(config, &storage_target)?;
     let models_materialized =
-        materialize_models_artifact(config, &models_target, expected_manifest_hash)?;
+        materialize_models_artifact(config, &models_target, metadata.manifest_hash.trim())?;
 
     info!(
         storage_uri = %sanitize_uri(&config.storage_artifact_uri),
@@ -463,10 +481,18 @@ fn validate_metadata_against_runtime(
     metadata: &PrebuiltAssetsMetadata,
     config: &DbtNovaConfig,
     expected_manifest_hash: &str,
+    legacy_manifest_hash: &str,
 ) -> Result<()> {
+    let expected_manifest_hash =
+        if metadata.effective_storage_format_version() == LEGACY_STORAGE_FORMAT_VERSION {
+            legacy_manifest_hash
+        } else {
+            expected_manifest_hash
+        };
     let instance_id = config.storage_instance_id.trim();
     info!(
         contract_version = %metadata.contract_version,
+        storage_format_version = %metadata.effective_storage_format_version(),
         metadata_storage_instance_id = %metadata.storage_instance_id,
         runtime_storage_instance_id = %instance_id,
         metadata_manifest_hash = %metadata.manifest_hash,

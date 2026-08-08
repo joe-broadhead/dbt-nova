@@ -129,6 +129,14 @@ Logging privacy:
 - MCP tool logs include tool name, success/failure, duration, and request ID
   when one is available. Tool response payload contracts are unchanged.
 
+## Reusable Workflow Secrets
+
+Reusable dbt generation resolves mapped credentials only from the caller-built
+`DBT_NOVA_SECRET_BUNDLE_JSON` secret. `dbt_secret_env_map_json` selects the keys
+passed to the dbt subprocess, and Nova removes the bundle itself from that
+subprocess environment. The workflows do not serialize or enumerate inherited
+repository and organization secrets.
+
 ## Advisory Exceptions
 
 The following RustSec advisories are explicitly ignored in `deny.toml` with documented rationale.
@@ -137,19 +145,14 @@ dependency refreshes. Each ignore entry includes `owner=...` and `review_by=YYYY
 metadata in the `reason` field. CI enforces that review dates are not expired via
 `scripts/check_advisory_ignores.sh`.
 
-- `RUSTSEC-2024-0384`: `instant` via `tantivy` -> `measure_time`
 - `RUSTSEC-2024-0436`: `paste` via `fastembed` -> `tokenizers`
 - `RUSTSEC-2025-0119`: `number_prefix` via `fastembed` -> `hf-hub` -> `indicatif`
-- `RUSTSEC-2025-0134`: `rustls-pemfile` via `google-cloud-storage` -> `reqwest 0.11`
-- `RUSTSEC-2026-0002`: `lru 0.12` via `tantivy`
-- `RUSTSEC-2026-0097`: `rand` via `fastembed`/`tokenizers`, `tantivy`/`rand_distr`,
-  `rmcp`, and `proptest`
 
 ## Dependency Watchlist
 
-Beyond RustSec advisories, Nova tracks known dependency constraints (for example,
-the `ort-sys` RC pin and the `reqwest` 0.11/0.12/0.13 transitive split) in a
-machine-readable watchlist with owners, review dates, and upgrade triggers.
+Beyond RustSec advisories, Nova tracks known dependency constraints such as the
+`ort-sys` RC pin in a machine-readable watchlist with owners, review dates, and
+upgrade triggers.
 
 - Watchlist file: `dependency-watchlist.toml`
 - Validation script: `scripts/check_dependency_watchlist.sh`

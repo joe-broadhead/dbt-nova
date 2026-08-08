@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::warn;
 
 use crate::config::DbtNovaConfig;
+use crate::config::search::{LEGACY_STORAGE_FORMAT_VERSION, STORAGE_FORMAT_VERSION};
 use crate::error::{DbtNovaError, Result};
 use crate::utils::unique_suffix;
 
@@ -133,7 +134,18 @@ pub(crate) struct ManifestSignature {
     pub content_hash: String,
     pub prune_fingerprint: String,
     pub search_index_fingerprint: String,
+    pub storage_format_version: String,
     pub source_uri: String,
+}
+
+impl ManifestSignature {
+    pub(crate) fn effective_storage_format_version(&self) -> &str {
+        if self.storage_format_version.is_empty() {
+            LEGACY_STORAGE_FORMAT_VERSION
+        } else {
+            &self.storage_format_version
+        }
+    }
 }
 
 static CACHE_HITS: AtomicU64 = AtomicU64::new(0);
@@ -171,6 +183,7 @@ pub(crate) fn manifest_signature(path: &Path, source_uri: &str) -> Result<Manife
         content_hash,
         prune_fingerprint: String::new(),
         search_index_fingerprint: String::new(),
+        storage_format_version: STORAGE_FORMAT_VERSION.to_string(),
         source_uri: source_uri.to_string(),
     })
 }

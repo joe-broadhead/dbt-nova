@@ -243,7 +243,7 @@ fn metadata_support_env_overrides_apply() {
 fn extended_meta_is_default_off() {
     let config = SearchConfig::default();
     assert!(config.extended_meta.fields.is_empty());
-    assert_eq!(config.index_fingerprint(), "");
+    assert_eq!(config.index_fingerprint().len(), 64);
     config.validate().expect("default config should validate");
 }
 
