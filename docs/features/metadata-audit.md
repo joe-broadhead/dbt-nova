@@ -169,11 +169,8 @@ jobs:
       DBT_NOVA_SECRET_BUNDLE_JSON: ${{ secrets.DBT_NOVA_SECRET_BUNDLE_JSON }}
 ```
 
-Secret resolution order for `dbt_secret_env_map_json` values:
-
-1. keys in `DBT_NOVA_SECRET_BUNDLE_JSON`
-2. inherited workflow secrets for same-owner calls
-
-Use `DBT_NOVA_SECRET_BUNDLE_JSON` as the default integration pattern for
-cross-owner reusable workflow calls or when you want one portable secret schema
-across Databricks, BigQuery, Snowflake, DuckDB, and mixed-profile repos.
+`dbt_secret_env_map_json` resolves only keys in
+`DBT_NOVA_SECRET_BUNDLE_JSON`. Construct that bundle explicitly in the caller so
+the reusable workflow receives only the credentials needed for the selected dbt
+profile. This provider-neutral contract works across same-owner and cross-owner
+calls without exposing unrelated inherited secrets.

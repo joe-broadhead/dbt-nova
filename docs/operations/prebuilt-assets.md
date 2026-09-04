@@ -20,15 +20,24 @@ read-only reuse after local materialization.
 7. Use the produced stable bootstrap alias in consumer env (`DBT_NOVA_BOOTSTRAP_URI`).
 8. On first consumer run, keep `DBT_NOVA_STORAGE_READ_ONLY` unset and hydrate locally with `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing`.
 9. Switch to strict read-only only after local artifacts already exist (`DBT_NOVA_STORAGE_READ_ONLY=true`, `DBT_NOVA_ARTIFACT_FETCH_POLICY=never`).
+10. For a storage-format upgrade, deploy consumers before publishing with the
+    upgraded producer.
 
 ## What this solves
 
 - Removes repeated index builds on consumer jobs.
 - Makes consumer startup deterministic.
-- Enforces a strict contract (`storage_instance_id` + manifest content hash).
+- Enforces a strict contract (`storage_instance_id` + storage-scoped manifest
+  hash + storage format).
 
-## v1 boundaries
+## Contract boundaries
 
+- Producers emit metadata/bootstrap contract `v2` with an explicit
+  `storage_format_version`.
+- Current consumers continue to accept legacy `v1` artifacts produced by Nova
+  `v0.0.6`.
+- Legacy consumers reject `v2` contracts before extracting an index they cannot
+  read. Upgrade consumers before producers during a format transition.
 - Producer workflow + GitHub Artifacts are supported.
 - Optional models distribution is controlled by `models_distribution_mode`.
 - Consumers can hydrate artifacts locally on first run, then optionally switch
@@ -47,6 +56,8 @@ aligned with the workflow ref. `v0.0.6` includes the runner override inputs; use
 `v0.0.6`, a newer release tag, or an immutable commit SHA when passing them.
 Reusable workflows reject branch-like installer refs unless
 `allow_mutable_installer_ref: true` is set for a trusted development run.
+Source installs resolve the requested ref to one commit, use credentials only
+during that fetch, and remove the source checkout's Git metadata before build.
 
 ```yaml
 name: Build Nova Assets
@@ -83,8 +94,9 @@ Alternative producer inputs:
   `ubuntu-22.04`)
 - `runner_labels_json` (JSON array of runner labels, overriding `runner` when
   a self-hosted pool requires multiple labels)
-- workflow_call secret `DBT_NOVA_SECRET_BUNDLE_JSON` (optional JSON object of
-  `secret-name -> secret-value` entries for cross-owner reusable workflow calls)
+- workflow_call secret `DBT_NOVA_SECRET_BUNDLE_JSON` (required when
+  `dbt_secret_env_map_json` is non-empty; explicitly selected
+  `secret-name -> secret-value` entries for any reusable workflow call)
 
 Structured mode is the recommended default:
 
@@ -148,15 +160,17 @@ jobs:
 ```
 
 For DBFS publish with `publish_dry_run: false`, `DATABRICKS_HOST` and
-`DATABRICKS_ACCESS_TOKEN` must be present at publish time. The example above
-wires both through `dbt_env_json` + `dbt_secret_env_map_json`.
+`DATABRICKS_ACCESS_TOKEN` must already be present in the runner environment at
+publish time. The example above maps them into the dbt invocation only; Nova
+does not forward the dbt secret bundle into the later publish shell.
 
 Notes:
 
 - `dbt_env_json` values are plain strings.
-- `dbt_secret_env_map_json` values are looked up in this order:
-  1) keys in `DBT_NOVA_SECRET_BUNDLE_JSON` (when provided),
-  2) inherited workflow secrets (`secrets: inherit`, same-owner/org calls).
+- `dbt_secret_env_map_json` values are looked up only in
+  `DBT_NOVA_SECRET_BUNDLE_JSON`.
+- Build the bundle explicitly in the caller. Unrelated inherited secrets are
+  never serialized into the reusable workflow job.
 - Missing mapped secrets fail fast before dbt invocation.
 - Use trusted `dbt_command` only when you explicitly need shell semantics.
 - Keep `search_warm_strategy: staged` for large manifests or memory-constrained
@@ -171,8 +185,7 @@ Secret setup patterns:
 
 | Call pattern | How secrets are resolved |
 |---|---|
-| Same org/user, reusable workflow call | `secrets: inherit` can expose caller secrets directly |
-| Cross-owner call or strict least-privilege | Pass one `DBT_NOVA_SECRET_BUNDLE_JSON` secret and map keys via `dbt_secret_env_map_json` |
+| Any reusable workflow call with mapped dbt credentials | Pass one explicitly constructed `DBT_NOVA_SECRET_BUNDLE_JSON` and map its keys via `dbt_secret_env_map_json` |
 | No dbt manifest generation | `dbt_secret_env_map_json` is not required |
 
 Publish target auth requirements:
@@ -425,12 +438,14 @@ Recommended consumer pattern:
 
 Use `health` to verify runtime decisions:
 
+- `manifest.storage_format_version`
 - `artifact_consumer.enabled`
 - `artifact_consumer.storage_read_only`
 - `artifact_consumer.consumer_mode_hint`
 - `artifact_consumer.guidance`
 - `artifact_consumer.fetch_policy`
 - `artifact_consumer.metadata_validated`
+- `artifact_consumer.metadata_storage_format_version`
 - `artifact_consumer.storage_materialized`
 - `artifact_consumer.models_materialized`
 - `artifact_consumer.last_evaluated_at_ms`
@@ -438,6 +453,7 @@ Use `health` to verify runtime decisions:
 - `bootstrap.enabled`
 - `bootstrap.uri`
 - `bootstrap.contract_version`
+- `bootstrap.storage_format_version`
 - `bootstrap.loaded`
 - `bootstrap.validated`
 - `bootstrap.applied_fields`
@@ -502,11 +518,15 @@ tar -xzf <artifact_name_storage>.tar.gz
 
 ## Compatibility guidance
 
-- Keep producer and consumer on the same released Nova version when possible.
+- Upgrade consumers before producers when `storage_format_version` changes.
+  New consumers can read retained legacy storage; old consumers cannot read a
+  newly written Tantivy format.
+- Keep producer and consumer on the same released Nova version after rollout.
 - `storage_instance_id` must match between producer and consumer.
-- Consumer manifest content must match the producer-built manifest hash.
-  Path differences are allowed; content differences are not.
-- Metadata contract version must be compatible (`v1` currently).
+- Consumer manifest content and storage-affecting configuration must match the
+  producer-built scoped hash. Path differences are allowed.
+- Metadata/bootstrap `v2` requires `storage_format_version`; current consumers
+  also accept legacy `v1` contracts.
 
 ## Failure modes and fixes
 
@@ -514,7 +534,7 @@ tar -xzf <artifact_name_storage>.tar.gz
 | --- | --- | --- |
 | `Storage is read-only; cannot materialize storage artifacts on first-run hydration` | Cold machine is configured with `DBT_NOVA_STORAGE_READ_ONLY=true` and `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing|always` | First hydrate with writable storage (`DBT_NOVA_STORAGE_READ_ONLY=false` or unset), then switch to `DBT_NOVA_STORAGE_READ_ONLY=true` with `DBT_NOVA_ARTIFACT_FETCH_POLICY=never` after assets exist locally |
 | `Storage is read-only and no reusable index is available` | Missing storage files, mismatched `storage_instance_id`, or manifest content mismatch | Re-download artifacts, verify instance id, verify manifest is identical to producer input |
-| Metadata contract validation fails | Missing/corrupt `nova-build-metadata.json` or unsupported contract version | Re-run producer and consume both storage + metadata artifacts together |
+| Metadata contract validation fails | Missing/corrupt metadata, unsupported contract version, or incompatible storage format | Upgrade the consumer first, then re-run the producer and consume storage + metadata artifacts together |
 | Health passes but embeddings are missing | Models artifact not provided in consumer setup | Native mode: set `DBT_NOVA_MODELS_ARTIFACT_URI` to the producer models artifact URI. Manual mode: extract models artifact and set `DBT_NOVA_EMBEDDINGS_CACHE_DIR`. |
 
 ## Related docs

@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::warn;
 
 use crate::config::DbtNovaConfig;
+use crate::config::search::{LEGACY_STORAGE_FORMAT_VERSION, STORAGE_FORMAT_VERSION};
 use crate::error::{DbtNovaError, Result};
 use crate::utils::unique_suffix;
 
@@ -133,7 +134,18 @@ pub(crate) struct ManifestSignature {
     pub content_hash: String,
     pub prune_fingerprint: String,
     pub search_index_fingerprint: String,
+    pub storage_format_version: String,
     pub source_uri: String,
+}
+
+impl ManifestSignature {
+    pub(crate) fn effective_storage_format_version(&self) -> &str {
+        if self.storage_format_version.is_empty() {
+            LEGACY_STORAGE_FORMAT_VERSION
+        } else {
+            &self.storage_format_version
+        }
+    }
 }
 
 static CACHE_HITS: AtomicU64 = AtomicU64::new(0);
@@ -171,6 +183,7 @@ pub(crate) fn manifest_signature(path: &Path, source_uri: &str) -> Result<Manife
         content_hash,
         prune_fingerprint: String::new(),
         search_index_fingerprint: String::new(),
+        storage_format_version: STORAGE_FORMAT_VERSION.to_string(),
         source_uri: source_uri.to_string(),
     })
 }
@@ -1099,23 +1112,25 @@ fn fetch_gcs_manifest_sdk(
         let object = object.clone();
         run_async_fetch_blocking(move || async move {
             let fetch = async {
-                let gcs_config = google_cloud_storage::client::ClientConfig::default()
-                    .with_auth()
+                let client = google_cloud_storage::client::Storage::builder()
+                    .build()
                     .await
                     .map_err(|e| DbtNovaError::ServerError(format!("GCS auth failed: {e}")))?;
-                let client = google_cloud_storage::client::Client::new(gcs_config);
-                let req = google_cloud_storage::http::objects::get::GetObjectRequest {
-                    bucket: bucket.clone(),
-                    object: object.clone(),
-                    ..Default::default()
-                };
-                client
-                    .download_object(
-                        &req,
-                        &google_cloud_storage::http::objects::download::Range::default(),
-                    )
+                let bucket_resource = format!("projects/_/buckets/{bucket}");
+                let mut response = client
+                    .read_object(bucket_resource, object)
+                    .send()
                     .await
-                    .map_err(|e| DbtNovaError::ServerError(format!("GCS download failed: {e}")))
+                    .map_err(|e| DbtNovaError::ServerError(format!("GCS download failed: {e}")))?;
+                let mut data = Vec::new();
+                while let Some(chunk) =
+                    response.next().await.transpose().map_err(|e| {
+                        DbtNovaError::ServerError(format!("GCS download failed: {e}"))
+                    })?
+                {
+                    data.extend_from_slice(&chunk);
+                }
+                Ok::<_, DbtNovaError>(data)
             };
             if timeout_secs > 0 {
                 tokio::time::timeout(Duration::from_secs(timeout_secs), fetch)

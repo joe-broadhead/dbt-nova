@@ -605,7 +605,15 @@ impl SearchConfig {
     /// Deterministic fingerprint for search-index-affecting config.
     #[must_use]
     pub fn index_fingerprint(&self) -> String {
-        if self.extended_meta.fields.is_empty() {
+        self.index_fingerprint_for_format(Some(STORAGE_FORMAT_VERSION))
+    }
+
+    pub(crate) fn legacy_index_fingerprint(&self) -> String {
+        self.index_fingerprint_for_format(None)
+    }
+
+    fn index_fingerprint_for_format(&self, storage_format_version: Option<&str>) -> String {
+        if storage_format_version.is_none() && self.extended_meta.fields.is_empty() {
             return String::new();
         }
 
@@ -625,19 +633,36 @@ impl SearchConfig {
             .collect::<Vec<_>>();
         fields.sort_by_key(std::string::ToString::to_string);
 
-        let payload = json!({
-            "extended_meta": {
-                "fields": fields,
-                "max_fields": self.extended_meta.max_fields,
-                "max_values_per_field": self.extended_meta.max_values_per_field,
-                "max_bytes_per_value": self.extended_meta.max_bytes_per_value,
-            }
+        let extended_meta = json!({
+            "fields": fields,
+            "max_fields": self.extended_meta.max_fields,
+            "max_values_per_field": self.extended_meta.max_values_per_field,
+            "max_bytes_per_value": self.extended_meta.max_bytes_per_value,
         });
+        let payload = if let Some(storage_format_version) = storage_format_version {
+            json!({
+                "storage_format_version": storage_format_version,
+                "extended_meta": extended_meta,
+            })
+        } else {
+            json!({
+                "extended_meta": extended_meta,
+            })
+        };
         blake3::hash(payload.to_string().as_bytes())
             .to_hex()
             .to_string()
     }
 }
+
+/// Nova-owned compatibility identity for persisted storage and lexical indexes.
+///
+/// Increment this value whenever a dependency or schema change makes newly
+/// written storage unreadable by an older Nova binary.
+pub const STORAGE_FORMAT_VERSION: &str = "nova-storage-v2";
+/// Persisted-storage identity emitted by Nova releases before explicit
+/// storage-format versioning was introduced.
+pub const LEGACY_STORAGE_FORMAT_VERSION: &str = "nova-storage-v1";
 
 /// Semantic startup behavior when manifest-scoped caches are missing.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Default)]

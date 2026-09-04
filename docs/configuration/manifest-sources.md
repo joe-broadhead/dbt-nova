@@ -153,7 +153,9 @@ ready. Without that opt-in, MCP reloads can refresh only the current source.
 
 ## Versioned Indexes & Atomic Swaps
 
-Nova keeps versioned index directories per manifest content hash:
+Nova keeps versioned index directories per storage-scoped manifest hash. The
+scope includes manifest content, pruning/search configuration, and Nova's
+persisted-storage format identity:
 
 ```
 <storage_root>/instances/<instance_id>/versions/<hash>/
@@ -168,7 +170,7 @@ The active version is tracked in:
 When `DBT_NOVA_MANIFEST_REFRESH_SECS` is enabled, Nova:
 
 1. Resolves the manifest source (local or cached remote).
-2. Computes the content hash.
+2. Computes the storage-scoped manifest hash.
 3. Builds new indexes in a new version directory in the background.
 4. Atomically swaps the active version once ready (no downtime).
 5. Keeps the previous version available for in-flight requests.

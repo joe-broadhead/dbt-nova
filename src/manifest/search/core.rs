@@ -86,6 +86,7 @@ pub struct ManifestSearch {
     pub(crate) manifest_len: u64,
     pub(crate) manifest_modified_ms: u128,
     pub(crate) manifest_version: String,
+    pub(crate) storage_format_version: String,
     pub(crate) loaded_at_ms: u128,
 
     // === Circuit breakers for optional search components ===
@@ -519,6 +520,7 @@ impl ManifestSearch {
                 "len": self.manifest_len,
                 "modified_ms": self.manifest_modified_ms,
                 "version": self.manifest_version,
+                "storage_format_version": self.storage_format_version,
                 "age_ms": manifest_age_ms,
                 "loaded_at_ms": self.loaded_at_ms,
                 "loaded_age_ms": loaded_age_ms,
@@ -1322,7 +1324,7 @@ mod tests {
     }
 
     #[test]
-    fn scoped_refresh_hash_includes_prune_and_search_fingerprints() {
+    fn scoped_refresh_hash_includes_storage_prune_and_search_fingerprints() {
         let signature = ManifestSignature {
             content_hash: "same-content".to_string(),
             ..ManifestSignature::default()
@@ -1348,7 +1350,8 @@ mod tests {
         let pruned_hash = scoped_refresh_manifest_hash(signature.clone(), &pruned);
         let search_scoped_hash = scoped_refresh_manifest_hash(signature, &search_scoped);
 
-        assert_eq!(unscoped_hash, "same-content");
+        assert_ne!(unscoped_hash, "same-content");
+        assert_eq!(unscoped_hash.len(), 64);
         assert_ne!(pruned_hash, unscoped_hash);
         assert_ne!(search_scoped_hash, unscoped_hash);
         assert_ne!(pruned_hash, search_scoped_hash);

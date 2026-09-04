@@ -28,6 +28,7 @@ pub struct ManifestLoadData {
     pub entity_count: usize,
     pub manifest_hash: String,
     pub manifest_version: String,
+    pub storage_format_version: String,
     pub storage_path: String,
     pub elapsed_ms: u128,
     pub reused: ReuseInfo,
@@ -295,6 +296,10 @@ fn print_human_summary(payload: &ManifestLoadData) {
     println!("  entity_count: {}", payload.entity_count);
     println!("  manifest_hash: {}", payload.manifest_hash);
     println!("  manifest_version: {}", payload.manifest_version);
+    println!(
+        "  storage_format_version: {}",
+        payload.storage_format_version
+    );
     println!("  storage_path: {}", payload.storage_path);
     println!("  elapsed_ms: {}", payload.elapsed_ms);
     println!("  entity_store_reused: {}", payload.reused.entity_store);
@@ -354,6 +359,7 @@ fn payload_from_result(
         entity_count: search.entity_count(),
         manifest_hash: search.manifest_hash.clone(),
         manifest_version: search.manifest_version.clone(),
+        storage_format_version: search.storage_format_version.clone(),
         storage_path: storage_path.to_string_lossy().to_string(),
         elapsed_ms: result.elapsed_ms,
         reused: ReuseInfo {
@@ -836,6 +842,7 @@ mod tests {
     use crate::cli::args::{ManifestLoadArgs, ManifestReloadArgs, ManifestWarmArgs};
     use crate::config::DbtNovaConfig;
     use crate::config::SearchConfig;
+    use crate::config::search::STORAGE_FORMAT_VERSION;
     use crate::manifest::rkyv_embeddings::save_embeddings;
     use crate::manifest::rkyv_sparse_embeddings::save_sparse_embeddings;
     use crate::manifest::rkyv_types::{
@@ -1272,6 +1279,10 @@ mod tests {
         assert!(parsed["data"]["entity_count"].as_u64().is_some());
         assert!(parsed["data"]["manifest_hash"].as_str().is_some());
         assert!(parsed["data"]["manifest_version"].as_str().is_some());
+        assert_eq!(
+            parsed["data"]["storage_format_version"],
+            serde_json::json!(STORAGE_FORMAT_VERSION)
+        );
         assert!(parsed["data"]["storage_path"].as_str().is_some());
         assert!(parsed["data"]["reused"].is_object());
         assert!(parsed["data"]["search_ready"].is_object());

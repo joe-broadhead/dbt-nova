@@ -264,6 +264,8 @@ safe default, and use `installer_install_mode=source` for older runner images
 or unreleased installer commits. Reusable workflows reject branch-like
 `installer_ref` values by default; use a release tag or full commit SHA, and set
 `allow_mutable_installer_ref: true` only for trusted development runs.
+Source installs resolve the requested ref once, check out the resulting commit
+without persisting workflow credentials, and remove Git metadata before build.
 
 If you generate manifests in the reusable workflow (`dbt_generate_manifest: true`),
 prefer structured invocation with `dbt_command_args_json` (and optional
@@ -274,10 +276,10 @@ for trusted advanced cases (for example internal CI fixtures). Keep
 `dbt_command_args_json` are mutually exclusive.
 
 Use `dbt_env_json` and `dbt_secret_env_map_json` to pass profile-specific
-env/secret variables generically (Databricks, BigQuery, Snowflake, DuckDB, etc.). For
-cross-owner reusable workflow calls, pass one declared secret
-`DBT_NOVA_SECRET_BUNDLE_JSON` (JSON object of key->value) and reference those keys
-in `dbt_secret_env_map_json`.
+env/secret variables generically (Databricks, BigQuery, Snowflake, DuckDB, etc.).
+Pass one explicitly constructed `DBT_NOVA_SECRET_BUNDLE_JSON` secret (a JSON
+object of key-to-value pairs) and reference only those keys in
+`dbt_secret_env_map_json`. Nova does not serialize inherited workflow secrets.
 
 Most teams keep a repo-local `workflow_dispatch` wrapper around this reusable
 workflow, then add release/tag triggers later after validating publish paths
@@ -293,6 +295,9 @@ Recommended consumer setup:
 - keep `DBT_NOVA_STORAGE_READ_ONLY` unset for first-run hydration and use `DBT_NOVA_ARTIFACT_FETCH_POLICY=if_missing`
 - switch to `DBT_NOVA_STORAGE_READ_ONLY=true` plus `DBT_NOVA_ARTIFACT_FETCH_POLICY=never` only after assets already exist locally
 - keep versioned bootstrap URIs only for rollback/debugging
+- for storage-format upgrades, deploy the new consumer binary before publishing
+  assets with the new producer; current Nova accepts legacy v1 artifacts, while
+  legacy consumers reject v2 contracts
 - after a producer publishes new assets, run `reload_manifest` with no arguments
   to adopt the new asset set without editing MCP config; changing live source,
   refresh, or storage settings from MCP requires `DBT_NOVA_MCP_ENABLE_MANIFEST_RELOAD=1`

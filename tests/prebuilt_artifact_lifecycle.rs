@@ -135,12 +135,13 @@ fn to_file_uri(path: &Path) -> String {
     format!("file://{}", path.display())
 }
 
-fn manifest_content_hash() -> String {
-    let raw = fs::read(fixture_manifest_path()).expect("read fixture manifest");
-    blake3::hash(&raw).to_hex().to_string()
+struct SourceStorageFixture {
+    root: PathBuf,
+    manifest_hash: String,
+    manifest_version: String,
 }
 
-fn build_source_storage(workspace: &TempDir) -> PathBuf {
+fn build_source_storage(workspace: &TempDir) -> SourceStorageFixture {
     let source_storage_dir = workspace.path().join("source-storage");
     let source_config = build_config(&source_storage_dir);
     let source_storage_root = source_config
@@ -152,19 +153,44 @@ fn build_source_storage(workspace: &TempDir) -> PathBuf {
         source_storage_root.is_dir(),
         "source storage root should exist"
     );
-    source_storage_root
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let health = runtime.block_on(load.search.health_snapshot());
+    assert_eq!(
+        health["manifest"]["storage_format_version"],
+        serde_json::json!("nova-storage-v2")
+    );
+    SourceStorageFixture {
+        root: source_storage_root,
+        manifest_hash: health["manifest"]["hash"]
+            .as_str()
+            .expect("manifest hash")
+            .to_string(),
+        manifest_version: health["manifest"]["version"]
+            .as_str()
+            .expect("manifest version")
+            .to_string(),
+    }
 }
 
-fn write_metadata(path: &Path, manifest_hash: &str, include_models_artifact: bool) {
+fn write_metadata(
+    path: &Path,
+    manifest_hash: &str,
+    manifest_version: &str,
+    include_models_artifact: bool,
+) {
     let artifact_name_models = if include_models_artifact {
         "models-asset"
     } else {
         ""
     };
     let payload = serde_json::json!({
-        "contract_version": "v1",
+        "contract_version": "v2",
+        "storage_format_version": "nova-storage-v2",
         "manifest_hash": manifest_hash,
-        "manifest_version": "v12",
+        "manifest_version": manifest_version,
         "entity_count": 1,
         "storage_instance_id": "analytics-prod",
         "dbt_nova_version": "0.0.2",
@@ -186,13 +212,18 @@ fn manifest_load_materializes_file_artifacts_before_reuse() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let workspace = TempDir::new().expect("tempdir");
-    let source_storage_dir = build_source_storage(&workspace);
+    let source = build_source_storage(&workspace);
 
     let storage_archive_path = workspace.path().join("storage.tar.gz");
-    create_archive_from_dir(&source_storage_dir, &storage_archive_path);
+    create_archive_from_dir(&source.root, &storage_archive_path);
 
     let metadata_path = workspace.path().join("nova-build-metadata.json");
-    write_metadata(&metadata_path, &manifest_content_hash(), false);
+    write_metadata(
+        &metadata_path,
+        &source.manifest_hash,
+        &source.manifest_version,
+        false,
+    );
 
     let destination_storage_dir = workspace.path().join("destination-storage");
     let mut destination_config = build_config(&destination_storage_dir);
@@ -243,13 +274,18 @@ fn manifest_load_rejects_artifact_metadata_hash_mismatch() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let workspace = TempDir::new().expect("tempdir");
-    let source_storage_dir = build_source_storage(&workspace);
+    let source = build_source_storage(&workspace);
 
     let storage_archive_path = workspace.path().join("storage.tar.gz");
-    create_archive_from_dir(&source_storage_dir, &storage_archive_path);
+    create_archive_from_dir(&source.root, &storage_archive_path);
 
     let metadata_path = workspace.path().join("nova-build-metadata.json");
-    write_metadata(&metadata_path, "mismatched-hash", false);
+    write_metadata(
+        &metadata_path,
+        "mismatched-hash",
+        &source.manifest_version,
+        false,
+    );
 
     let destination_storage_dir = workspace.path().join("destination-storage");
     let mut destination_config = build_config(&destination_storage_dir);
@@ -270,13 +306,18 @@ fn manifest_load_read_only_rejects_artifact_materialization_when_missing() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let workspace = TempDir::new().expect("tempdir");
-    let source_storage_dir = build_source_storage(&workspace);
+    let source = build_source_storage(&workspace);
 
     let storage_archive_path = workspace.path().join("storage.tar.gz");
-    create_archive_from_dir(&source_storage_dir, &storage_archive_path);
+    create_archive_from_dir(&source.root, &storage_archive_path);
 
     let metadata_path = workspace.path().join("nova-build-metadata.json");
-    write_metadata(&metadata_path, &manifest_content_hash(), false);
+    write_metadata(
+        &metadata_path,
+        &source.manifest_hash,
+        &source.manifest_version,
+        false,
+    );
 
     let destination_storage_dir = workspace.path().join("destination-storage");
     let mut destination_config = build_config(&destination_storage_dir);

@@ -68,6 +68,34 @@ jobs:
       - name: Test
         run: cargo test --locked --all-features
 
+      - name: Storage format compatibility with v0.0.6
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --all-features --bin dbt-nova
+
+          legacy_dir="${RUNNER_TEMP}/dbt-nova-v0.0.6"
+          mkdir -p "${legacy_dir}"
+          base_url="https://github.com/joe-broadhead/dbt-nova/releases/download/v0.0.6"
+          curl --fail --location --silent --show-error \
+            --output "${legacy_dir}/dbt-nova-linux-x86_64.tar.gz" \
+            "${base_url}/dbt-nova-linux-x86_64.tar.gz"
+          (
+            cd "${legacy_dir}"
+            printf '%s  %s\n' \
+              '2c3fdd6e284c6b1f83006e08b7d16a8eea5adcb84b76ffbdfb5af64dadad530c' \
+              'dbt-nova-linux-x86_64.tar.gz' | sha256sum --check -
+            tar -xzf dbt-nova-linux-x86_64.tar.gz
+          )
+          legacy_binary="$(find "${legacy_dir}" -maxdepth 2 -type f -name dbt-nova | head -n 1)"
+          test -n "${legacy_binary}"
+          chmod +x "${legacy_binary}"
+
+          scripts/check_storage_format_compatibility.sh \
+            ./target/debug/dbt-nova \
+            "${legacy_binary}" \
+            tests/fixtures/nova_manifest.json
+
   macos-smoke:
     runs-on: macos-14
     timeout-minutes: 45
@@ -393,12 +421,15 @@ jobs:
       dbt_executable: python3
       dbt_allow_unsafe_executable: true
       dbt_command_args_json: >-
-        ["-c","from pathlib import Path; Path('target').mkdir(exist_ok=True); Path('target/manifest.json').write_text(Path('tests/fixtures/nova_manifest.json').read_text(encoding='utf-8'), encoding='utf-8')"]
+        ["-c","import os; from pathlib import Path; assert os.environ['NOVA_CI_SECRET'] == 'bundle-only-smoke'; Path('target').mkdir(exist_ok=True); Path('target/manifest.json').write_text(Path('tests/fixtures/nova_manifest.json').read_text(encoding='utf-8'), encoding='utf-8')"]
+      dbt_secret_env_map_json: '{"NOVA_CI_SECRET":"NOVA_CI_SECRET"}'
       storage_instance_id: ci-structured-dbt-smoke
       artifact_name_prefix: ci-structured-dbt-smoke
       retention_days: 1
       installer_repository: ${{ github.repository }}
       installer_ref: ${{ github.sha }}
+    secrets:
+      DBT_NOVA_SECRET_BUNDLE_JSON: ${{ '{"NOVA_CI_SECRET":"bundle-only-smoke"}' }}
 
   reusable-assets-producer-trusted-dbt:
     name: reusable-assets-producer-trusted-dbt
@@ -464,7 +495,8 @@ jobs:
       dbt_executable: python3
       dbt_allow_unsafe_executable: true
       dbt_command_args_json: >-
-        ["-c","from pathlib import Path; Path('target').mkdir(exist_ok=True); Path('target/manifest.json').write_text(Path('tests/fixtures/nova_manifest.json').read_text(encoding='utf-8'), encoding='utf-8')"]
+        ["-c","import os; from pathlib import Path; assert os.environ['NOVA_CI_SECRET'] == 'bundle-only-smoke'; Path('target').mkdir(exist_ok=True); Path('target/manifest.json').write_text(Path('tests/fixtures/nova_manifest.json').read_text(encoding='utf-8'), encoding='utf-8')"]
+      dbt_secret_env_map_json: '{"NOVA_CI_SECRET":"NOVA_CI_SECRET"}'
       storage_instance_id: ci-metadata-audit-structured
       artifact_name_prefix: ci-metadata-audit-structured
       retention_days: 1
@@ -473,6 +505,8 @@ jobs:
       selection_mode: changed
       changed_files_json: '["models/staging/traffic/stg__traffic_sessions.sql"]'
       thresholds_json: '{"entity":{"engineer":{"min_score":0,"severity":"required"}}}'
+    secrets:
+      DBT_NOVA_SECRET_BUNDLE_JSON: ${{ '{"NOVA_CI_SECRET":"bundle-only-smoke"}' }}
 
   reusable-metadata-audit-trusted-dbt:
     name: reusable-metadata-audit-trusted-dbt
@@ -721,7 +755,8 @@ jobs:
         run: |
           set -euo pipefail
           jq -e --arg storage_instance_id "${STORAGE_INSTANCE_ID}" '
-            .contract_version == "v1" and
+            .contract_version == "v2" and
+            .storage_format_version == "nova-storage-v2" and
             (.storage_instance_id == $storage_instance_id) and
             (.manifest_hash | type == "string" and length > 0) and
             (.manifest_version | type == "string" and length > 0) and
@@ -1216,7 +1251,8 @@ jobs:
           validate_metadata_contract() {
             local metadata_file="$1"
             jq -e --arg storage_instance_id "${STORAGE_INSTANCE_ID}" '
-              .contract_version == "v1" and
+              .contract_version == "v2" and
+              .storage_format_version == "nova-storage-v2" and
               (.storage_instance_id == $storage_instance_id) and
               (.manifest_hash | type == "string" and length > 0) and
               (.manifest_version | type == "string" and length > 0) and

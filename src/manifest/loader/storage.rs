@@ -8,6 +8,7 @@ use fs4::FileExt;
 use serde::{Deserialize, Serialize};
 
 use crate::config::DbtNovaConfig;
+use crate::config::search::{LEGACY_STORAGE_FORMAT_VERSION, STORAGE_FORMAT_VERSION};
 use crate::error::{DbtNovaError, Result};
 use crate::manifest::rkyv_indexes;
 use crate::manifest::search::InUseLocks;
@@ -72,6 +73,23 @@ pub(super) fn manifest_signature_matches_for_reuse(
         && existing.content_hash == expected.content_hash
         && existing.prune_fingerprint == expected.prune_fingerprint
         && existing.search_index_fingerprint == expected.search_index_fingerprint
+        && existing.effective_storage_format_version()
+            == expected.effective_storage_format_version()
+}
+
+pub(super) fn manifest_signature_matches_for_runtime_read(
+    config: &DbtNovaConfig,
+    existing: &ManifestSignature,
+    expected: &ManifestSignature,
+) -> bool {
+    manifest_signature_matches_for_reuse(existing, expected)
+        || (config.storage_read_only
+            && existing.effective_storage_format_version() == LEGACY_STORAGE_FORMAT_VERSION
+            && expected.effective_storage_format_version() == STORAGE_FORMAT_VERSION
+            && !existing.content_hash.is_empty()
+            && existing.content_hash == expected.content_hash
+            && existing.prune_fingerprint == expected.prune_fingerprint
+            && existing.search_index_fingerprint == config.search.legacy_index_fingerprint())
 }
 
 pub(super) fn read_current_version(path: &Path) -> Result<Option<String>> {
@@ -190,18 +208,24 @@ pub(super) fn select_storage_version_or_lock(
         build_lock: None,
     };
 
-    if storage_version_has_lockless_read_artifacts(
+    if let Some(published) = find_lockless_storage_version(
         config,
         instance_root,
         versions_root,
         &selection.signature,
         &selection.storage_dir,
         &selection.signature_path,
+        &selection.version_id,
     )? {
         tracing::info!(
-            version_id = %selection.version_id,
+            requested_version_id = %selection.version_id,
+            served_version_id = %published.version_id,
             "serving complete storage version without acquiring build lock"
         );
+        selection.signature = published.signature;
+        selection.version_id = published.version_id;
+        selection.storage_dir = published.storage_dir;
+        selection.signature_path = published.signature_path;
         return Ok(selection);
     }
 
@@ -240,28 +264,45 @@ fn serve_current_or_wait_for_build_lock(
     acquire_build_lock(instance_root, config.storage_build_lock_wait_secs).map(Some)
 }
 
-fn storage_version_has_lockless_read_artifacts(
+fn find_lockless_storage_version(
     config: &DbtNovaConfig,
     instance_root: &Path,
     versions_root: &Path,
     signature: &ManifestSignature,
     initial_storage_dir: &Path,
     initial_signature_path: &Path,
-) -> Result<bool> {
+    initial_version_id: &str,
+) -> Result<Option<PublishedStorageVersion>> {
     if let Some(current) = read_current_version(instance_root)? {
-        let current_dir = versions_root.join(current);
+        let current_dir = versions_root.join(&current);
         let current_sig_path = current_dir.join(MANIFEST_SIGNATURE_FILENAME);
-        if storage_signature_matches(&current_sig_path, signature)?
-            && storage_dir_has_lockless_read_artifacts(config, &current_dir, signature)
+        if let Some(current_signature) = read_manifest_signature(&current_sig_path)?
+            && manifest_signature_matches_for_runtime_read(config, &current_signature, signature)
+            && storage_dir_has_lockless_read_artifacts(config, &current_dir, &current_signature)
         {
-            return Ok(true);
+            return Ok(Some(PublishedStorageVersion {
+                version_id: current,
+                storage_dir: current_dir,
+                signature_path: current_sig_path,
+                signature: current_signature,
+            }));
         }
     }
 
-    Ok(
-        storage_signature_matches(initial_signature_path, signature)?
-            && storage_dir_has_lockless_read_artifacts(config, initial_storage_dir, signature),
-    )
+    let Some(initial_signature) = read_manifest_signature(initial_signature_path)? else {
+        return Ok(None);
+    };
+    if manifest_signature_matches_for_runtime_read(config, &initial_signature, signature)
+        && storage_dir_has_lockless_read_artifacts(config, initial_storage_dir, &initial_signature)
+    {
+        return Ok(Some(PublishedStorageVersion {
+            version_id: initial_version_id.to_string(),
+            storage_dir: initial_storage_dir.to_path_buf(),
+            signature_path: initial_signature_path.to_path_buf(),
+            signature: initial_signature,
+        }));
+    }
+    Ok(None)
 }
 
 fn load_complete_published_storage_version(
@@ -286,12 +327,6 @@ fn load_complete_published_storage_version(
         signature_path,
         signature,
     }))
-}
-
-fn storage_signature_matches(path: &Path, signature: &ManifestSignature) -> Result<bool> {
-    Ok(read_manifest_signature(path)?
-        .as_ref()
-        .is_some_and(|existing| manifest_signature_matches_for_reuse(existing, signature)))
 }
 
 fn storage_dir_has_lockless_read_artifacts(
@@ -331,4 +366,44 @@ fn acquire_in_use_lock(lock_dir: &Path) -> Result<File> {
     file.lock_shared()
         .map_err(|e| DbtNovaError::ServerError(format!("Storage in-use lock failed: {e}")))?;
     Ok(file)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_read_accepts_legacy_storage_only_in_read_only_mode() {
+        let mut config = DbtNovaConfig::default();
+        let expected = ManifestSignature {
+            content_hash: "same-hash".to_string(),
+            search_index_fingerprint: config.search.index_fingerprint(),
+            storage_format_version: STORAGE_FORMAT_VERSION.to_string(),
+            ..ManifestSignature::default()
+        };
+        let existing = ManifestSignature {
+            content_hash: "same-hash".to_string(),
+            search_index_fingerprint: config.search.legacy_index_fingerprint(),
+            ..ManifestSignature::default()
+        };
+
+        assert!(!manifest_signature_matches_for_runtime_read(
+            &config, &existing, &expected
+        ));
+
+        config.storage_read_only = true;
+        assert!(manifest_signature_matches_for_runtime_read(
+            &config, &existing, &expected
+        ));
+
+        let mismatched = ManifestSignature {
+            content_hash: "different-hash".to_string(),
+            ..existing
+        };
+        assert!(!manifest_signature_matches_for_runtime_read(
+            &config,
+            &mismatched,
+            &expected
+        ));
+    }
 }
